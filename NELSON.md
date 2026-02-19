@@ -580,6 +580,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Both C++ and Go reject the duplicate oneof, but the error message format differs. C++ protoc: `test.proto: "payload" is already defined in "duponeof.Request".` (no line/column). Go protoc-go: `test.proto:9:9: "payload" is already defined in "duponeof.Request".` (with line:column). The test harness detects error message mismatch.
 - **Root cause:** Go's duplicate name detection (likely in `compiler/cli/cli.go`) includes line and column numbers in the error, while C++ protoc's `descriptor.cc` omits position info for duplicate symbol errors. The error text itself matches, but the position prefix format differs.
 
+### Run 62 — Type name source code info with spaces around dots (FAILED: 4/5 profiles)
+- **Test:** `68_type_name_spaces` — proto3 message with `spacetype .  Inner ref = 1;` (spaces around dots in type reference)
+- **Bug:** `parseField()` at line 875 computes `typeNameEnd = typeStartCol + len(field.GetTypeName())`. For `spacetype .  Inner`, `field.GetTypeName()` is `"spacetype.Inner"` (15 chars), but the actual source text spans more columns due to spaces around the dot (20 chars). C++ protoc records the span from the first token's start to the last token's end, correctly covering the wider range. Go computes end as `typeStartCol + 15 = 17`, C++ computes end as `20`. Binary diff: byte `0x14` (20) in C++ vs `0x11` (17) in Go at the type_name span.
+- **Root cause:** `parser.go:875` — `typeNameEnd` is computed from `len(field.GetTypeName())` which is the concatenated identifier string (no spaces), not the actual source text span. The parser consumes `.` and subsequent identifier tokens in the loop at lines 819-823 but doesn't track the position of the last consumed token for span computation. Fix: save the last token's end position (e.g., `part.Column + len(part.Value)`) and use it as `typeNameEnd`.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -604,7 +609,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **String concatenation in service/method/enum option values** — same single-token bug as field defaults
 - **Missing service options** — only `deprecated` handled, other standard ServiceOptions fields may be missing
 - **Missing enum options** — only `allow_alias` and `deprecated` handled, other EnumOptions fields may be missing
-- **Enum option `deprecated`** — is it handled? Check parseEnumOption switch
+- **Enum option `deprecated`** — is it handled? Check parseEnumOption switch (CONFIRMED handled at line 1228)
 - **Duplicate oneof names** — TESTED in Run 61 (67_duplicate_oneof), confirmed error message format mismatch (Go adds line:col, C++ doesn't)
 - **Duplicate field names across oneof/message** — field in oneof + field in message with same name
 - **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
+- **Type name spaces in map value types** — `map<string, pkg . Msg>` — same span bug as regular fields but in parseMapField
+- **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug in parseMethod
