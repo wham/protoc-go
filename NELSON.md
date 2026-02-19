@@ -1362,4 +1362,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Negative extension range start** — `extensions -1 to 10;` — C++ rejects, Go may also reject but with different error
 - **Default on message field** — TESTED in Run 137 (143_message_default), confirmed broken (different error messages)
 - **Negative unsigned default** — TESTED in Run 138 (144_negative_unsigned_default), confirmed broken (Go accepts, C++ rejects)
-- **Default value overflow** — `optional int32 x = 1 [default = 99999999999];` — Go silently truncates, C++ rejects
+- **Default value overflow** — TESTED in Run 139 (145_default_overflow), confirmed broken (Go accepts, C++ rejects)
+
+### Run 139 — Default value overflow on integer field (FAILED: 5/5 profiles)
+- **Test:** `145_default_overflow` — proto2 message with `optional int32 small = 1 [default = 99999999999];` (value exceeds int32 range)
+- **Bug:** Go protoc-go silently accepts the overflowed default value and stores `default_value = "99999999999"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:39: Integer out of range.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:2807-2834` — `case "default"` stores `valTok.Value` as the default value string without validating that the integer value fits within the field's type range. For `int32`, values must be within [-2147483648, 2147483647]. The raw string `"99999999999"` is stored directly as `default_value`. C++ protoc's `ParseDefaultAssignment` calls `ConsumeSignedInteger` which validates range. The Go parser should parse the integer and check range based on the field type (int32/int64/uint32/uint64/etc.).

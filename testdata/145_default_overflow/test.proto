@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package defoverflow;
+
+message Config {
+  optional int32 small = 1 [default = 99999999999];
+  optional int32 normal = 2 [default = 42];
+}
