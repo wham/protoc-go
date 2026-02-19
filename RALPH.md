@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 68/68 tests passing.
+ALL DONE — 73/73 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -68,6 +68,7 @@ ALL DONE — 68/68 tests passing.
 18. ✅ Import public support with cross-file type resolution, public_dependency, source code info for imports, dependency-ordered output
 19. ✅ Proto2 support: required/optional labels, default values, proto2 syntax handling
 20. ✅ Proto3 optional fields: synthetic oneofs (`_<field_name>`), `proto3_optional` flag, `oneof_index`
+21. ✅ Extension range parsing (`extensions 100 to 199; extensions 1000 to max;`) with extensionRange + source code info
 
 ## Notes
 
@@ -94,3 +95,4 @@ ALL DONE — 68/68 tests passing.
 - Proto2 support: parser handles `required`, `optional`, `repeated` labels (previously only `repeated`); `default` option sets FieldDescriptorProto.DefaultValue with source code info at path [..., 7]; proto2 syntax declaration omits fd.Syntax (C++ protoc leaves it unset for proto2)
 - Label source code info (path [..., 4]) is emitted for ALL explicit labels, not just `repeated`
 - Proto3 optional: when syntax=proto3 and `optional` keyword is used, set `Proto3Optional=true` on field, create synthetic `OneofDecl` named `_<fieldname>`, set `OneofIndex` on field. No source code info is generated for synthetic oneofs.
+- Extension ranges: field 5 of DescriptorProto. Similar to reserved ranges (field 9). `max` keyword maps to 536870912 (2^29, kMaxRangeSentinel). Source code info paths: [4,msgIdx,5] (stmt), [4,msgIdx,5,rangeIdx] (range), [4,msgIdx,5,rangeIdx,1] (start), [4,msgIdx,5,rangeIdx,2] (end).
