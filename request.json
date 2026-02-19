@@ -5,24 +5,27 @@
   "protoFile": [
     {
       "name": "test.proto",
-      "package": "jsonconflict",
+      "package": "extoverlap",
       "messageType": [
         {
-          "name": "User",
+          "name": "Extendable",
           "field": [
             {
-              "name": "foo_bar",
+              "name": "name",
               "number": 1,
-              "label": "LABEL_OPTIONAL",
+              "label": "LABEL_REQUIRED",
               "type": "TYPE_STRING",
-              "jsonName": "fooBar"
+              "jsonName": "name"
+            }
+          ],
+          "extensionRange": [
+            {
+              "start": 100,
+              "end": 201
             },
             {
-              "name": "fooBar",
-              "number": 2,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_STRING",
-              "jsonName": "fooBar"
+              "start": 150,
+              "end": 301
             }
           ]
         }
@@ -33,7 +36,7 @@
             "span": [
               0,
               0,
-              7,
+              8,
               1
             ]
           },
@@ -54,7 +57,7 @@
             "span": [
               2,
               0,
-              21
+              19
             ]
           },
           {
@@ -65,7 +68,7 @@
             "span": [
               4,
               0,
-              7,
+              8,
               1
             ]
           },
@@ -78,7 +81,7 @@
             "span": [
               4,
               8,
-              12
+              18
             ]
           },
           {
@@ -91,7 +94,21 @@
             "span": [
               5,
               2,
-              21
+              27
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              4
+            ],
+            "span": [
+              5,
+              2,
+              10
             ]
           },
           {
@@ -104,8 +121,8 @@
             ],
             "span": [
               5,
-              2,
-              8
+              11,
+              17
             ]
           },
           {
@@ -118,7 +135,60 @@
             ],
             "span": [
               5,
-              9,
+              18,
+              22
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              5,
+              25,
+              26
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              5
+            ],
+            "span": [
+              6,
+              2,
+              24
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              5,
+              0
+            ],
+            "span": [
+              6,
+              13,
+              23
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              5,
+              0,
+              1
+            ],
+            "span": [
+              6,
+              13,
               16
             ]
           },
@@ -126,97 +196,97 @@
             "path": [
               4,
               0,
-              2,
-              0,
-              3
-            ],
-            "span": [
               5,
-              19,
-              20
-            ]
-          },
-          {
-            "path": [
-              4,
               0,
-              2,
-              1
+              2
             ],
             "span": [
               6,
-              2,
-              20
+              20,
+              23
             ]
           },
           {
             "path": [
               4,
               0,
-              2,
-              1,
               5
             ],
             "span": [
-              6,
+              7,
               2,
-              8
+              24
             ]
           },
           {
             "path": [
               4,
               0,
-              2,
+              5,
+              1
+            ],
+            "span": [
+              7,
+              13,
+              23
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              5,
               1,
               1
             ],
             "span": [
-              6,
-              9,
-              15
+              7,
+              13,
+              16
             ]
           },
           {
             "path": [
               4,
               0,
-              2,
+              5,
               1,
-              3
+              2
             ],
             "span": [
-              6,
-              18,
-              19
+              7,
+              20,
+              23
             ]
           }
         ]
-      },
-      "syntax": "proto3"
+      }
     }
   ],
   "sourceFileDescriptors": [
     {
       "name": "test.proto",
-      "package": "jsonconflict",
+      "package": "extoverlap",
       "messageType": [
         {
-          "name": "User",
+          "name": "Extendable",
           "field": [
             {
-              "name": "foo_bar",
+              "name": "name",
               "number": 1,
-              "label": "LABEL_OPTIONAL",
+              "label": "LABEL_REQUIRED",
               "type": "TYPE_STRING",
-              "jsonName": "fooBar"
+              "jsonName": "name"
+            }
+          ],
+          "extensionRange": [
+            {
+              "start": 100,
+              "end": 201
             },
             {
-              "name": "fooBar",
-              "number": 2,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_STRING",
-              "jsonName": "fooBar"
+              "start": 150,
+              "end": 301
             }
           ]
         }
@@ -227,7 +297,7 @@
             "span": [
               0,
               0,
-              7,
+              8,
               1
             ]
           },
@@ -248,7 +318,7 @@
             "span": [
               2,
               0,
-              21
+              19
             ]
           },
           {
@@ -259,7 +329,7 @@
             "span": [
               4,
               0,
-              7,
+              8,
               1
             ]
           },
@@ -272,7 +342,7 @@
             "span": [
               4,
               8,
-              12
+              18
             ]
           },
           {
@@ -285,7 +355,21 @@
             "span": [
               5,
               2,
-              21
+              27
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              4
+            ],
+            "span": [
+              5,
+              2,
+              10
             ]
           },
           {
@@ -298,8 +382,8 @@
             ],
             "span": [
               5,
-              2,
-              8
+              11,
+              17
             ]
           },
           {
@@ -312,7 +396,60 @@
             ],
             "span": [
               5,
-              9,
+              18,
+              22
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              5,
+              25,
+              26
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              5
+            ],
+            "span": [
+              6,
+              2,
+              24
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              5,
+              0
+            ],
+            "span": [
+              6,
+              13,
+              23
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              5,
+              0,
+              1
+            ],
+            "span": [
+              6,
+              13,
               16
             ]
           },
@@ -320,74 +457,71 @@
             "path": [
               4,
               0,
-              2,
-              0,
-              3
-            ],
-            "span": [
               5,
-              19,
-              20
-            ]
-          },
-          {
-            "path": [
-              4,
               0,
-              2,
-              1
+              2
             ],
             "span": [
               6,
-              2,
-              20
+              20,
+              23
             ]
           },
           {
             "path": [
               4,
               0,
-              2,
-              1,
               5
             ],
             "span": [
-              6,
+              7,
               2,
-              8
+              24
             ]
           },
           {
             "path": [
               4,
               0,
-              2,
+              5,
+              1
+            ],
+            "span": [
+              7,
+              13,
+              23
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              5,
               1,
               1
             ],
             "span": [
-              6,
-              9,
-              15
+              7,
+              13,
+              16
             ]
           },
           {
             "path": [
               4,
               0,
-              2,
+              5,
               1,
-              3
+              2
             ],
             "span": [
-              6,
-              18,
-              19
+              7,
+              20,
+              23
             ]
           }
         ]
-      },
-      "syntax": "proto3"
+      }
     }
   ],
   "compilerVersion": {

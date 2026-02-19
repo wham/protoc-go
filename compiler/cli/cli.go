@@ -244,6 +244,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate overlapping extension ranges within a message
+	if errs := validateExtensionRangeOverlaps(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate extension field numbers are within declared extension ranges
 	if errs := validateExtensionRanges(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -1392,6 +1397,42 @@ func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgP
 		oFQN := msgFQN + "." + oneof.GetName()
 		// C++ protoc omits line:col for duplicate oneof names
 		check(oFQN, oneof.GetName(), msgFQN, 0, 0, "")
+	}
+}
+
+// validateExtensionRangeOverlaps checks that extension ranges within a message don't overlap.
+func validateExtensionRangeOverlaps(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectExtensionRangeOverlapErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectExtensionRangeOverlapErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	ranges := msg.GetExtensionRange()
+	for i := 0; i < len(ranges); i++ {
+		for j := i + 1; j < len(ranges); j++ {
+			if ranges[i].GetEnd() > ranges[j].GetStart() && ranges[j].GetEnd() > ranges[i].GetStart() {
+				path := append(append([]int32{}, msgPath...), 5, int32(i), 1)
+				line, col := findLocationByPath(path, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extension range %d to %d overlaps with already-defined range %d to %d.",
+					filename, line, col,
+					ranges[j].GetStart(), ranges[j].GetEnd()-1,
+					ranges[i].GetStart(), ranges[i].GetEnd()-1))
+			}
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectExtensionRangeOverlapErrors(filename, nested, nestedPath, sci, errs)
 	}
 }
 
