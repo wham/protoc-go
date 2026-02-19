@@ -482,8 +482,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts an empty enum and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:6: Enums must contain at least one value.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enums must have at least one value. The Go `descriptor/pool.go` is an empty stub with no enum value count validation. The parser accepts empty enum bodies without checking.
 
+### Run 53 — Proto3 with groups (FAILED: 5/5 profiles)
+- **Test:** `59_proto3_group` — proto3 message with `repeated group Result = 1 { string url = 1; string title = 2; }`
+- **Bug:** Go protoc-go silently accepts groups in proto3 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Groups are not supported in proto3 syntax.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that groups are not allowed in proto3. The Go parser has group parsing support (`isGroupField` + `parseGroupField`) but never checks the syntax version. The `parseGroupField` function works identically for proto2 and proto3. The Go `descriptor/pool.go` is an empty stub with no proto3 constraint validation.
+
 ### Known gaps still unexplored (updated):
-- **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth

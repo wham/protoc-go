@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package proto3group;
+
+message SearchResponse {
+  repeated group Result = 1 {
+    string url = 1;
+    string title = 2;
+  }
+}
