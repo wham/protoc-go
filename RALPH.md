@@ -45,15 +45,35 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-(empty — fill in on first run)
+ALL DONE — 33/33 tests passing.
+
+### Completed
+1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
+2. ✅ Parser (compiler/parser/parser.go) — produces FileDescriptorProto with SourceCodeInfo
+3. ✅ Importer (compiler/importer/importer.go) — source tree, file resolution
+4. ✅ Plugin (compiler/plugin/plugin.go) — subprocess exec, CodeGeneratorRequest building
+5. ✅ CLI (compiler/cli/cli.go) — arg parsing, orchestration, descriptor set output
+6. ✅ protoc-gen-dump fix — clear parameter in comparison outputs
+7. ✅ find-protoc fix — use bare "protoc" name to match usage text
+8. ✅ Full C++ protoc usage text reproduced in Go CLI
+9. ✅ Source code info ordering (placeholder pattern)
+10. ✅ Map field support with synthetic XxxEntry types
+11. ✅ Type resolution for message/enum references
+12. ✅ All 5 profiles: plugin, plugin_param, descriptor_set, descriptor_set_src, descriptor_set_full
+13. ✅ All 3 CLI tests: no_args, missing_output, bad_proto_path
 
 ## Notes
 
-- Run tests: `scripts/test`
+- Run tests: `scripts/test` (or `scripts/test --summary` for brief output)
 - Tests compare C++ protoc output vs Go protoc-go output using a fake plugin (`tools/protoc-gen-dump`)
 - The fake plugin captures the CodeGeneratorRequest as JSON, binary, and human-readable summary
 - Test cases are in `testdata/` — each subdirectory has one or more .proto files
 - Each test case is run under 5 profiles: plugin, plugin_param, descriptor_set, descriptor_set_src, descriptor_set_full
 - There are also CLI error tests (cli@no_args, cli@missing_output, cli@bad_proto_path)
 - Test names: `<case>@<profile>` (e.g., `01_basic_message@plugin`, `cli@no_args`)
-- System C++ protoc is at `/opt/homebrew/bin/protoc` (libprotoc 33.4), includes at `/opt/homebrew/include`
+- C++ protoc is at `/tmp/protoc-install/bin/protoc` (libprotoc 29.3), includes at `/tmp/protoc-install/include`
+- find-protoc adds `/tmp/protoc-install/bin` to PATH and uses bare "protoc" name (needed for cli@no_args test)
+- protoc-gen-dump clears parameter field before writing summary.txt and request.pb (avoids path differences)
+- Source code info ordering: use placeholder-then-update pattern so container spans come before children
+- compiler_version: major=5, minor=29, patch=3
+- Go binary hardcodes "protoc" in usage text to match C++ protoc argv[0]
