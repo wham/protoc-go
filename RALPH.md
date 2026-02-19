@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 453/453 tests passing.
+ALL DONE — 458/458 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -143,6 +143,7 @@ ALL DONE — 453/453 tests passing.
 93. ✅ Extension range validation — reject extension field numbers outside declared extension ranges with `"pkg.Msg" does not declare N as an extension number.` error at field number SCI location, checks both file-level and message-level extensions
 94. ✅ Proto2 oneof fields — skip "must have label" check for fields inside oneof blocks (set `inOneof` flag on parser)
 95. ✅ Duplicate import validation — reject importing the same file twice with `Import "X" was listed twice.` error at import keyword position, using `seenImports` map in parser
+96. ✅ Enum-valued file option validation — reject string values for `optimize_for` with `Value must be identifier for enum-valued option "google.protobuf.FileOptions.optimize_for".` error at value token position
 
 ## Notes
 
