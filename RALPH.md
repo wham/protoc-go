@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 503/503 tests passing.
+ALL DONE — 508/508 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -153,6 +153,7 @@ ALL DONE — 503/503 tests passing.
 103. ✅ Enum reserved range overlap validation — reject overlapping reserved ranges within an enum with `Reserved range X to Y overlaps with already-defined range A to B.` error at already-defined range's start SCI location (path `[5, enumIdx, 4, i, 1]` for top-level, `[msgPath..., 4, enumIdx, 4, i, 1]` for nested), enum ranges have inclusive end (no -1 in display), recurses into nested messages
 104. ✅ Enum reserved value conflict validation — reject enum values whose number falls in a reserved range with `Enum value "NAME" uses reserved number N.` error at reserved range start SCI location (path `[enumPath..., 4, rangeIdx, 1]`), enum reserved ranges have inclusive end, handles both top-level and nested enums
 105. ✅ Enum reserved name conflict validation — reject enum values whose name appears in the enum's `reserved_name` list with `Enum value "NAME" is reserved.` error at enum value name SCI location (path `[enumPath..., 2, valIdx, 1]`), handles both top-level and nested enums
+106. ✅ Explicit map_entry option validation — reject `option map_entry = true;` in messages with `map_entry should not be set explicitly. Use map<KeyType, ValueType> instead.` error at option name position
 
 ## Notes
 
@@ -240,3 +241,4 @@ ALL DONE — 503/503 tests passing.
 - Reserved range overlap validation: C++ protoc rejects overlapping reserved ranges within a message. Error format: `filename:line:col: Reserved range X to Y overlaps with already-defined range A to B.` Same pattern as extension range overlaps — iterate i=0..n-1, j=i+1..n-1; error text shows range j ("Reserved range") then range i ("already-defined"); location from SCI path `[4, msgIdx, 9, i, 1]` (already-defined range's start). End values displayed as End-1 (inclusive). Validated in `validateReservedRangeOverlaps` (cli.go), called before extension range overlap validation. Recurses into nested messages, skips map entry types.
 - Enum reserved value conflict validation: C++ protoc rejects enum values whose number falls in a reserved range. Error format: `filename:line:col: Enum value "NAME" uses reserved number N.` Location from SCI path `[enumPath..., 4, rangeIdx, 1]` (reserved range start). Enum reserved ranges have inclusive end (start <= value <= end). Validated in `validateEnumReservedValueConflicts` (cli.go) with `collectEnumReservedValueConflictErrors` and `collectEnumReservedValueConflictInMsg` recursing into nested messages. Placed after enum reserved range overlap validation in the validation chain.
 - Enum reserved name conflict validation: C++ protoc rejects enum values whose name appears in the enum's `reserved_name` list. Error format: `filename:line:col: Enum value "NAME" is reserved.` Location from SCI path `[enumPath..., 2, valIdx, 1]` (enum value name). Validated in `validateEnumReservedNameConflicts` (cli.go) with `collectEnumReservedNameConflictErrors` and `collectEnumReservedNameConflictInMsg` recursing into nested messages. Placed after enum reserved value conflict validation in the validation chain.
+- Explicit map_entry option validation: C++ protoc rejects `option map_entry = true;` when set explicitly in a message definition. Error format: `filename:line:col: map_entry should not be set explicitly. Use map<KeyType, ValueType> instead.` at option name position. Handled in `parseMessageOption` in parser.go — the `map_entry` case returns an error immediately.
