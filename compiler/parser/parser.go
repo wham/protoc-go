@@ -2812,10 +2812,10 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 		}
 	}
 
-	resolveMessageFields(fd.GetMessageType(), prefix, types)
-
 	var errors []string
 	filename := fd.GetName()
+
+	resolveMessageFieldsWithErrors(fd.GetMessageType(), prefix, types, filename, fd, &errors)
 
 	for svcIdx, svc := range fd.GetService() {
 		for methodIdx, m := range svc.GetMethod() {
@@ -2823,7 +2823,12 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 				origName := m.GetInputType()
 				resolved := resolveTypeName(origName, prefix, types)
 				m.InputType = proto.String(resolved)
-				if tp, ok := types[resolved]; ok && tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+				if tp, ok := types[resolved]; !ok {
+					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 2}
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					}
+				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 2}
 					if line, col, ok := findSCISpanStart(fd, path); ok {
 						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not a message type.", filename, line, col, origName))
@@ -2834,7 +2839,12 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 				origName := m.GetOutputType()
 				resolved := resolveTypeName(origName, prefix, types)
 				m.OutputType = proto.String(resolved)
-				if tp, ok := types[resolved]; ok && tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+				if tp, ok := types[resolved]; !ok {
+					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 3}
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					}
+				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 3}
 					if line, col, ok := findSCISpanStart(fd, path); ok {
 						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not a message type.", filename, line, col, origName))
@@ -2926,6 +2936,53 @@ func resolveMessageFields(msgs []*descriptorpb.DescriptorProto, prefix string, t
 			}
 		}
 		resolveMessageFields(msg.GetNestedType(), msgPrefix, types)
+		// Resolve nested extension field types and extendee names
+		for _, ext := range msg.GetExtension() {
+			if ext.Extendee != nil {
+				ext.Extendee = proto.String(resolveTypeName(ext.GetExtendee(), msgPrefix, types))
+			}
+			if ext.TypeName != nil {
+				resolved := resolveTypeName(ext.GetTypeName(), msgPrefix, types)
+				ext.TypeName = proto.String(resolved)
+				if tp, ok := types[resolved]; ok {
+					ext.Type = tp.Enum()
+				}
+			}
+		}
+	}
+}
+
+func resolveMessageFieldsWithErrors(msgs []*descriptorpb.DescriptorProto, prefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, filename string, fd *descriptorpb.FileDescriptorProto, errors *[]string) {
+	resolveMessageFieldsWithErrorsPath(msgs, prefix, types, filename, fd, nil, errors)
+}
+
+func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, prefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, filename string, fd *descriptorpb.FileDescriptorProto, parentPath []int32, errors *[]string) {
+	for msgIdx, msg := range msgs {
+		msgPrefix := prefix + "." + msg.GetName()
+		var msgPath []int32
+		if parentPath == nil {
+			msgPath = []int32{4, int32(msgIdx)}
+		} else {
+			msgPath = append(copyPath(parentPath), 3, int32(msgIdx))
+		}
+		for fieldIdx, f := range msg.GetField() {
+			if f.TypeName != nil {
+				origName := f.GetTypeName()
+				resolved := resolveTypeName(origName, msgPrefix, types)
+				f.TypeName = proto.String(resolved)
+				if f.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					if tp, ok := types[resolved]; ok {
+						f.Type = tp.Enum()
+					} else {
+						path := append(copyPath(msgPath), 2, int32(fieldIdx), 6)
+						if line, col, ok := findSCISpanStart(fd, path); ok {
+							*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						}
+					}
+				}
+			}
+		}
+		resolveMessageFieldsWithErrorsPath(msg.GetNestedType(), msgPrefix, types, filename, fd, msgPath, errors)
 		// Resolve nested extension field types and extendee names
 		for _, ext := range msg.GetExtension() {
 			if ext.Extendee != nil {
