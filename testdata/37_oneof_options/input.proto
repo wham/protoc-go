@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package oneofopt;
+
+message Request {
+  string id = 1;
+
+  oneof payload {
+    option deprecated = true;
+    string text = 2;
+    int32 number = 3;
+    bool flag = 4;
+  }
+}

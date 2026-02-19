@@ -258,9 +258,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseMethodOption()` at lines 1421-1427 only handles `deprecated` in its switch. The `default` case at line 1425-1426 does `return nil`, silently discarding `idempotency_level` (field 34 of MethodOptions). C++ protoc populates `MethodOptions.idempotency_level` with the enum value. Go produces 33 SourceCodeInfo locations vs C++ protoc's 37 — the 4 missing locations are for the two option statements (2 locations each: option container path + specific field path).
 - **Root cause:** `parser.go:1421-1427` — `parseMethodOption` switch only handles `deprecated`. `idempotency_level` (and any other method option) hits the `default` case and is silently dropped. Same pattern as `parseMessageOption` (only handles `deprecated`), `parseServiceOption` (only handles `deprecated`).
 
+### Run 31 — Oneof options (FAILED: 5/5 profiles)
+- **Test:** `37_oneof_options` — proto3 message with `oneof payload { option deprecated = true; ... }` (without importing descriptor.proto)
+- **Bug:** `parseOneof()` at lines 1607-1611 skips oneof-level `option` via `skipStatement()`. Go silently accepts the option and produces a valid descriptor (without the option populated). C++ protoc correctly rejects it with `Option "deprecated" unknown. Ensure that your proto definition file imports the proto which defines the option.` because `OneofOptions.deprecated` requires importing `descriptor.proto`.
+- **Root cause:** `parser.go:1607-1611` — oneof-level `option` is silently discarded by `skipStatement()`. No validation is performed. Two bugs: (1) options are never stored on `OneofDescriptorProto.Options`, and (2) unknown options are not rejected. C++ protoc validates that the option name maps to a known field in the relevant options message.
+
 ### Known gaps still unexplored (updated):
 - **Empty statements inside oneof bodies** — C++ protoc also rejects these, so NOT a valid test (tested and discarded in Run 29)
-- **Oneof options** — not tested (oneof-level options likely skipped at line 1593-1597)
 - **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
 - **Map field with enum value type** — tested in Run 29 prep, passes (type resolution works correctly)
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth
@@ -275,3 +279,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Edition features** — `edition = "2023"` with feature overrides on fields/messages/enums
 - **Enum options beyond allow_alias** — `deprecated` on enum (field 3 of EnumOptions) — check if handled
 - **Field option `unverified_lazy`** (field 15), `debug_redact` (field 16) — not in parseFieldOptions switch
+- **Option validation** — Go silently accepts ANY option name without validation (tested in Run 31). Try completely bogus option names on messages/enums/fields/services/methods — Go will accept, C++ will reject
