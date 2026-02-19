@@ -339,17 +339,27 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 			endNumLine, endNumCol, endNumLen := numTok.Line, numTok.Column, len(numTok.Value)
 			if p.tok.Peek().Value == "to" {
 				p.tok.Next()
-				endNumTok, err := p.tok.ExpectInt()
-				if err != nil {
-					return err
+				if p.tok.Peek().Value == "max" {
+					maxTok := p.tok.Next()
+					endNum = 536870912 // kMaxRangeSentinel (2^29)
+					endSpanLine = maxTok.Line
+					endSpanCol = maxTok.Column + len(maxTok.Value)
+					endNumLine = maxTok.Line
+					endNumCol = maxTok.Column
+					endNumLen = len(maxTok.Value)
+				} else {
+					endNumTok, err := p.tok.ExpectInt()
+					if err != nil {
+						return err
+					}
+					e, _ := strconv.ParseInt(endNumTok.Value, 0, 32)
+					endNum = e + 1 // exclusive
+					endSpanLine = endNumTok.Line
+					endSpanCol = endNumTok.Column + len(endNumTok.Value)
+					endNumLine = endNumTok.Line
+					endNumCol = endNumTok.Column
+					endNumLen = len(endNumTok.Value)
 				}
-				e, _ := strconv.ParseInt(endNumTok.Value, 0, 32)
-				endNum = e + 1 // exclusive
-				endSpanLine = endNumTok.Line
-				endSpanCol = endNumTok.Column + len(endNumTok.Value)
-				endNumLine = endNumTok.Line
-				endNumCol = endNumTok.Column
-				endNumLen = len(endNumTok.Value)
 			}
 
 			msg.ReservedRange = append(msg.ReservedRange, &descriptorpb.DescriptorProto_ReservedRange{
