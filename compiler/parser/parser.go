@@ -1778,8 +1778,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 
 		// Handle negative values for default
 		negative := false
+		var minusTok tokenizer.Token
 		if optName == "default" && p.tok.Peek().Value == "-" {
-			p.tok.Next()
+			minusTok = p.tok.Next()
 			negative = true
 		}
 
@@ -1843,8 +1844,12 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		switch optName {
 		case "default":
 			// default_value is field 7 of FieldDescriptorProto (not under options)
+			defStartCol := valTok.Column
+			if negative {
+				defStartCol = minusTok.Column
+			}
 			addLoc(append(copyPath(fieldPath), 7),
-				valTok.Line, valTok.Column, valTok.Line, valEnd)
+				valTok.Line, defStartCol, valTok.Line, valEnd)
 		case "json_name":
 			// json_name goes to path [10] (field 10 of FieldDescriptorProto)
 			addLoc(append(copyPath(fieldPath), 10),
