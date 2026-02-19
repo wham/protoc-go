@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 373/373 tests passing.
+ALL DONE — 378/378 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -128,6 +128,7 @@ ALL DONE — 373/373 tests passing.
 78. ✅ Proto3 extension range validation — reject `extensions` declarations in proto3 messages with `Extension ranges are not allowed in proto3.` error at extension range start location
 79. ✅ Proto3 extend block validation — reject `extend` blocks in proto3 files (file-level and message-level) unless extending an allowed option type (`google.protobuf.*Options`, `FeatureSet`, etc.) with `Extensions in proto3 are only allowed for defining options.` error at extendee name location
 80. ✅ Unknown file option validation — reject unknown file options (e.g., `php_generic_services`) with `Option "X" unknown. Ensure that your proto definition file imports the proto which defines the option.` error at option name position
+81. ✅ `message_set_wire_format` message option (field 1 of MessageOptions) with source code info, and INT32_MAX (2147483647) extension range end when enabled (instead of 536870912)
 
 ## Notes
 
