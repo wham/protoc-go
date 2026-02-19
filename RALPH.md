@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 128/128 tests passing.
+ALL DONE — 133/133 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -80,6 +80,7 @@ ALL DONE — 128/128 tests passing.
 30. ✅ Empty statements (standalone `;`) at top-level file scope
 31. ✅ Empty statements inside message, enum, and service bodies
 32. ✅ `max` keyword in message reserved ranges (`reserved 100 to max;`)
+33. ✅ String escape sequences in tokenizer (`\n`, `\t`, `\r`, `\\`, `\"`, `\'`, hex `\xHH`, octal `\NNN`)
 
 ## Notes
 
@@ -118,3 +119,4 @@ ALL DONE — 128/128 tests passing.
 - Enum reserved names: field 5 of EnumDescriptorProto (`reserved_name`). Source code info: [5,enumIdx,5] (stmt), [5,enumIdx,5,nameIdx] (individual name). Name spans include +2 for quotes.
 - Empty statements (`;`) must be handled not only at top-level file scope but also inside message, enum, and service body loops. Just consume the token and continue.
 - Message reserved ranges support `max` keyword same as extension ranges: maps to 536870912 (kMaxRangeSentinel, 2^29). Parsed in `parseMessageReserved`.
+- String escape sequences: tokenizer's `readString()` now handles C-style escapes (`\n`, `\t`, `\r`, `\a`, `\b`, `\f`, `\v`, `\\`, `\'`, `\"`, `\?`), hex escapes (`\xHH`), and octal escapes (`\NNN` up to 3 digits). Values stored unescaped in token.
