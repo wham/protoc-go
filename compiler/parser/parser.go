@@ -628,8 +628,67 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		}
 
 		// Optional options [deprecated = true]
+		var enumValOpts *descriptorpb.EnumValueOptions
+		var hasOpts bool
+		var optsBracketStartLine, optsBracketStartCol, optsBracketEndCol int
+		type enumValOptInfo struct {
+			fieldNum             int32
+			nameStartCol, endCol int
+		}
+		var parsedEnumValOpts []enumValOptInfo
+
 		if p.tok.Peek().Value == "[" {
-			p.skipBracketedOptions()
+			bracketTok := p.tok.Next() // consume "["
+			p.trackEnd(bracketTok)
+			hasOpts = true
+			optsBracketStartLine = bracketTok.Line
+			optsBracketStartCol = bracketTok.Column
+
+			for {
+				optNameTok := p.tok.Next()
+				p.trackEnd(optNameTok)
+				optName := optNameTok.Value
+
+				if _, err := p.tok.Expect("="); err != nil {
+					return nil, err
+				}
+
+				optValTok := p.tok.Next()
+				p.trackEnd(optValTok)
+
+				if enumValOpts == nil {
+					enumValOpts = &descriptorpb.EnumValueOptions{}
+				}
+
+				var fieldNum int32
+				switch optName {
+				case "deprecated":
+					enumValOpts.Deprecated = proto.Bool(optValTok.Value == "true")
+					fieldNum = 1
+				}
+
+				if fieldNum != 0 {
+					endCol := optValTok.Column + len(optValTok.Value)
+					parsedEnumValOpts = append(parsedEnumValOpts, enumValOptInfo{
+						fieldNum:     fieldNum,
+						nameStartCol: optNameTok.Column,
+						endCol:       endCol,
+					})
+				}
+
+				if p.tok.Peek().Value == "," {
+					p.tok.Next() // consume ","
+				} else {
+					break
+				}
+			}
+
+			closeBracket, err := p.tok.Expect("]")
+			if err != nil {
+				return nil, err
+			}
+			p.trackEnd(closeBracket)
+			optsBracketEndCol = closeBracket.Column
 		}
 
 		endValTok, err := p.tok.Expect(";")
@@ -642,10 +701,14 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		if negative {
 			num = -num
 		}
-		e.Value = append(e.Value, &descriptorpb.EnumValueDescriptorProto{
+		evd := &descriptorpb.EnumValueDescriptorProto{
 			Name:   proto.String(valNameTok.Value),
 			Number: proto.Int32(int32(num)),
-		})
+		}
+		if enumValOpts != nil {
+			evd.Options = enumValOpts
+		}
+		e.Value = append(e.Value, evd)
 
 		// Source code info for enum value
 		valuePath := append(copyPath(path), 2, valueIdx)
@@ -656,6 +719,17 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		// Value number - path [2]
 		p.addLocationSpan(append(copyPath(valuePath), 2),
 			valNumTok.Line, valNumTok.Column, valNumTok.Line, valNumTok.Column+len(valNumTok.Value))
+
+		// Source code info for enum value options
+		if hasOpts {
+			optPath := append(copyPath(valuePath), 3)
+			p.addLocationSpan(optPath, optsBracketStartLine, optsBracketStartCol,
+				optsBracketStartLine, optsBracketEndCol+1)
+			for _, oi := range parsedEnumValOpts {
+				p.addLocationSpan(append(copyPath(optPath), oi.fieldNum),
+					optsBracketStartLine, oi.nameStartCol, optsBracketStartLine, oi.endCol)
+			}
+		}
 
 		valueIdx++
 	}
