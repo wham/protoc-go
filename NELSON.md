@@ -1255,5 +1255,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Undefined extension field type** — `extend Base { optional NonExistent foo = 100; }` — checkMsgUnresolved doesn't check extension field types
 - **Negative enum value overflow** — `FOO = -2147483649;` — silent truncation of absolute value
 - **Minimum int32 enum value** — `FOO = -2147483648;` — ParseInt overflow on absolute value even though -2^31 is valid
-- **ctype on non-string field** — `int32 x = 1 [ctype = CORD];` — same validation gap as jstype
+- **ctype on non-string field** — `int32 x = 1 [ctype = CORD];` — tested, NOT a gap (C++ also accepts)
 - **jstype on non-int64 field** — TESTED in Run 127 (133_jstype_nonint64), confirmed broken
+- **Undefined extension field type** — TESTED in Run 128 (134_ext_field_undefined), confirmed broken (Go accepts, C++ rejects)
+
+### Run 128 — Undefined extension field type (FAILED: 5/5 profiles)
+- **Test:** `134_ext_field_undefined` — proto2 file with `message Base { extensions 100 to 200; }` and `extend Base { optional NonExistent payload = 100; }` where `NonExistent` is never defined as a message or enum
+- **Bug:** Go protoc-go silently accepts an extension field with an undefined type and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:11:12: "NonExistent" is not defined.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:2919-2925` — `resolveAndSetTypes` resolves extension field types via `resolveTypeName` and looks them up in the `types` map. If the type is found, it sets `ext.Type`. But if the type is NOT found, it silently continues — no error is appended. Compare to the extendee check at lines 2912-2917 which DOES report errors for undefined extendees, and `checkMsgUnresolved` at lines 3173-3183 which reports errors for undefined message field types. The extension field type validation is simply missing — the `if tp, ok := types[resolved]; ok` check at line 2922 has no corresponding `else` branch to report the undefined type.
