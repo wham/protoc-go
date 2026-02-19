@@ -1840,6 +1840,13 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 		stmtPath := append(copyPath(enumPath), 4) // field 4 = reserved_range
 		startCount := *rangeIdx
 		for {
+			// Handle negative numbers in enum reserved ranges
+			startNeg := false
+			var startMinusTok tokenizer.Token
+			if p.tok.Peek().Value == "-" {
+				startMinusTok = p.tok.Next()
+				startNeg = true
+			}
 			numTok, err := p.tok.ExpectInt()
 			if err != nil {
 				return err
@@ -1848,10 +1855,26 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 			if parseErr != nil || startNum > math.MaxInt32 || startNum < math.MinInt32 {
 				return fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 			}
+			if startNeg {
+				startNum = -startNum
+				if startNum < math.MinInt32 {
+					return fmt.Errorf("%d:%d: Integer out of range.", startMinusTok.Line+1, startMinusTok.Column+1)
+				}
+			}
+			spanStartLine, spanStartCol := numTok.Line, numTok.Column
+			if startNeg {
+				spanStartLine = startMinusTok.Line
+				spanStartCol = startMinusTok.Column
+			}
 			endNum := startNum // inclusive for enums
 			endSpanLine, endSpanCol := numTok.Line, numTok.Column+len(numTok.Value)
 			endNumLine, endNumCol, endNumLen := numTok.Line, numTok.Column, len(numTok.Value)
-
+			if startNeg {
+				// For single value (no "to"), C++ protoc sets end location to
+				// start_token (the minus sign only). We match that here.
+				endNumCol = startMinusTok.Column
+				endNumLen = len(startMinusTok.Value) // just the "-" character
+			}
 			if p.tok.Peek().Value == "to" {
 				p.tok.Next()
 				if p.tok.Peek().Value == "max" {
@@ -1863,6 +1886,13 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 					endNumCol = maxTok.Column
 					endNumLen = len(maxTok.Value)
 				} else {
+					// Handle negative end number
+					endNeg := false
+					var endMinusTok tokenizer.Token
+					if p.tok.Peek().Value == "-" {
+						endMinusTok = p.tok.Next()
+						endNeg = true
+					}
 					endNumTok, err := p.tok.ExpectInt()
 					if err != nil {
 						return err
@@ -1871,12 +1901,22 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 					if parseErr != nil || en > math.MaxInt32 || en < math.MinInt32 {
 						return fmt.Errorf("%d:%d: Integer out of range.", endNumTok.Line+1, endNumTok.Column+1)
 					}
+					if endNeg {
+						en = -en
+						if en < math.MinInt32 {
+							return fmt.Errorf("%d:%d: Integer out of range.", endMinusTok.Line+1, endMinusTok.Column+1)
+						}
+					}
 					endNum = en
 					endSpanLine = endNumTok.Line
 					endSpanCol = endNumTok.Column + len(endNumTok.Value)
 					endNumLine = endNumTok.Line
 					endNumCol = endNumTok.Column
 					endNumLen = len(endNumTok.Value)
+					if endNeg {
+						endNumCol = endMinusTok.Column
+						endNumLen = (endNumTok.Column + len(endNumTok.Value)) - endMinusTok.Column
+					}
 				}
 			}
 
@@ -1886,8 +1926,8 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 			})
 
 			rangePath := append(copyPath(stmtPath), *rangeIdx)
-			p.addLocationSpan(rangePath, numTok.Line, numTok.Column, endSpanLine, endSpanCol)
-			p.addLocationSpan(append(copyPath(rangePath), 1), numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+			p.addLocationSpan(rangePath, spanStartLine, spanStartCol, endSpanLine, endSpanCol)
+			p.addLocationSpan(append(copyPath(rangePath), 1), spanStartLine, spanStartCol, numTok.Line, numTok.Column+len(numTok.Value))
 			p.addLocationSpan(append(copyPath(rangePath), 2), endNumLine, endNumCol, endNumLine, endNumCol+endNumLen)
 			*rangeIdx++
 
