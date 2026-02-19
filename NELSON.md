@@ -684,8 +684,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts duplicate service options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:10:10: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:1475-1481` — `parseServiceOption` unconditionally sets `svc.Options.Deprecated` without checking if it was already set. No duplicate option tracking exists (no `seenOptions` map passed in). Same pattern as duplicate file-level options (Run 71), duplicate message options (Run 73), duplicate field options (Run 74), and duplicate enum options (Run 75).
 
+### Run 77 — Duplicate method options (FAILED: 5/5 profiles)
+- **Test:** `83_duplicate_method_option` — proto3 service with a method containing `option deprecated = true;` followed by `option deprecated = false;`
+- **Bug:** Go protoc-go silently accepts duplicate method options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:16:12: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1503-1550` — `parseMethodOption` unconditionally sets `method.Options.Deprecated` without checking if it was already set. No duplicate option tracking exists (no `seenOptions` map passed in). Same pattern as duplicate file-level options (Run 71), duplicate message options (Run 73), duplicate field options (Run 74), duplicate enum options (Run 75), and duplicate service options (Run 76).
+
 ### Known gaps still unexplored (updated):
-- **Duplicate method options** — `option deprecated = true; option deprecated = true;` — same pattern, no tracking
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
 - **Type shadowing** — same nested type name in different parent messages
@@ -704,4 +708,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts
 - **Extension number out of range** — extension using number outside declared range
 - **Proto3 optional inside nested messages** — synthetic oneof ordering bug would apply recursively
-- **Duplicate service options** — TESTED in Run 76 (82_duplicate_service_option), confirmed broken
+- **Duplicate method options** — TESTED in Run 77 (83_duplicate_method_option), confirmed broken
+- **Duplicate enum value options** — `ACTIVE = 1 [deprecated = true, deprecated = false];` — same pattern
+- **Duplicate idempotency_level** — `option idempotency_level = IDEMPOTENT; option idempotency_level = NO_SIDE_EFFECTS;` — same pattern
