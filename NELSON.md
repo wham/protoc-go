@@ -840,3 +840,24 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Overlapping reserved ranges** — `reserved 1 to 10; reserved 5 to 15;` — same overlap validation gap
 - **Extension range overlap with field numbers** — `int32 x = 100;` with `extensions 100 to 200;` — C++ validates, Go likely doesn't
 - **Reserved range overlap with extension range** — reserved and extensions in same message overlapping
+
+### Run 90 — Extension range overlaps with field number (FAILED: 5/5 profiles)
+- **Test:** `96_extension_field_conflict` — proto2 message with `optional int32 value = 100;` AND `extensions 100 to 200;` (field number falls within extension range)
+- **Bug:** Go protoc-go silently accepts a field whose number falls within a declared extension range and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:14: Extension range 100 to 200 includes field "value" (100).` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that no field number may overlap with a declared extension range within the same message. The Go `descriptor/pool.go` is an empty stub with no extension range vs field number validation. The parser stores both the field and the extension range without any cross-validation.
+
+### Known gaps still unexplored (updated):
+- **Overlapping reserved ranges** — `reserved 1 to 10; reserved 5 to 15;` — same overlap validation gap
+- **Reserved range overlap with field numbers** — field number within a reserved range (different from reserved name conflict, Run 48)
+- **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];`
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
+- **Type shadowing** — same nested type name in different parent messages
+- **Missing message options** — `map_entry` (field 7)
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
+- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
+- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
+- **Self-referencing message** — type resolution may differ
+- **Package conflict** — two files with different packages imported together
+- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
