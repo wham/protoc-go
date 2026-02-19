@@ -1632,6 +1632,10 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32) ([
 			ltTok := p.tok.Peek()
 			return nil, nil, fmt.Errorf("%d:%d: Map fields are not allowed in oneofs.", ltTok.Line+1, ltTok.Column+1)
 		}
+		if v := p.tok.Peek().Value; v == "required" || v == "optional" || v == "repeated" {
+			tok := p.tok.Peek()
+			return nil, nil, fmt.Errorf("%d:%d: Fields in oneofs must not have labels (required / optional / repeated).", tok.Line+1, tok.Column+1)
+		}
 		fieldPath := append(copyPath(msgPath), 2, *fieldIdx)
 		field, err := p.parseField(fieldPath)
 		if err != nil {
