@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 618/618 tests passing.
+ALL DONE — 623/623 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -165,6 +165,7 @@ ALL DONE — 618/618 tests passing.
 124. ✅ Required extension field validation — reject `required` label on extension fields with `The extension X cannot be required.` error at type SCI location (field 5), handles both file-level and message-level extensions
 125. ✅ Duplicate extension number validation — reject duplicate extension numbers targeting the same extendee with `Extension number N has already been used in "pkg.Msg" by extension "pkg.name".` error at field number SCI location, collects extensions across all files and extend blocks per extendee
 126. ✅ Map-in-extend validation — reject `map<K,V>` fields inside `extend` blocks with `Map fields are not allowed to be extensions.` error at `<` token position, handles both file-level (`parseExtend`) and message-level (`parseNestedExtend`) extend blocks
+128. ✅ String default value rejection for bool fields — reject string literals (e.g., `[default = "true"]`) as default values for TYPE_BOOL fields with `Expected "true" or "false".` error at value token position, using error recovery to continue parsing
 114. ✅ Extension range options (`[verification = UNVERIFIED]`) — parse options on extension ranges, set `ExtensionRangeOptions` with verification field, SCI entries for options bracket and individual options, source retention stripping for `proto_file` and descriptor_set (keep full options only in `source_file_descriptors`)
 115. ✅ RPC enum type validation — reject enum types used as RPC input/output types with `"X" is not a message type.` error at type reference location, checked during `ResolveTypes` using original unresolved name
 116. ✅ Negative field number error message — peek for non-integer token after `=` in field number parsing, produce `Expected field number.` error matching C++ protoc (instead of generic `expected integer` from tokenizer)
