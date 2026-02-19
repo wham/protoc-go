@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 178/178 tests passing.
+ALL DONE — 183/183 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -90,6 +90,7 @@ ALL DONE — 178/178 tests passing.
 40. ✅ Nested extend blocks (`extend` inside message bodies) with `DescriptorProto.extension` (field 6), source code info, and type resolution
 41. ✅ String escape raw length tracking — Token.RawLen field for correct source code info spans on strings with escape sequences
 42. ✅ Edition support (`edition = "2023"`) — sets `syntax="editions"` and `edition=EDITION_2023`, fields default to LABEL_OPTIONAL without synthetic oneofs
+43. ✅ Method `idempotency_level` option (`NO_SIDE_EFFECTS`, `IDEMPOTENT`, `IDEMPOTENCY_UNKNOWN`) with MethodOptions field 34 and source code info
 
 ## Notes
 
