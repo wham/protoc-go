@@ -192,6 +192,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate duplicate field numbers
+	if errs := validateDuplicateFieldNumbers(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate proto3 constraints
 	if errs := validateProto3(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -453,6 +458,73 @@ func collectReservedFieldNumberErrors(filename string, msgs []*descriptorpb.Desc
 		}
 		collectReservedFieldNumberErrors(filename, msg.GetNestedType(), errs, first, last)
 	}
+}
+
+// validateDuplicateFieldNumbers checks that no two fields in a message share the same field number.
+func validateDuplicateFieldNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		for i, msg := range fd.GetMessageType() {
+			fqn := msg.GetName()
+			if pkg != "" {
+				fqn = pkg + "." + fqn
+			}
+			collectDuplicateFieldNumberErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+	}
+	return errs
+}
+
+func collectDuplicateFieldNumberErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	// Map field number -> first field name
+	seen := make(map[int32]string)
+	for i, field := range msg.GetField() {
+		num := field.GetNumber()
+		if firstName, ok := seen[num]; ok {
+			line, col := findFieldNumberLocation(msgPath, i, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Field number %d has already been used in \"%s\" by field \"%s\".",
+				filename, line, col, num, fqn, firstName))
+		} else {
+			seen[num] = field.GetName()
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedFqn := fqn + "." + nested.GetName()
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectDuplicateFieldNumberErrors(filename, nested, nestedFqn, nestedPath, sci, errs)
+	}
+}
+
+func findFieldNumberLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if sci == nil {
+		return 0, 0
+	}
+	// Path: msgPath + [2, fieldIdx, 3] where 2=field list, 3=number field of FieldDescriptorProto
+	target := append(append([]int32{}, msgPath...), 2, int32(fieldIdx), 3)
+	for _, loc := range sci.GetLocation() {
+		path := loc.GetPath()
+		if len(path) == len(target) {
+			match := true
+			for i := range path {
+				if path[i] != target[i] {
+					match = false
+					break
+				}
+			}
+			if match {
+				span := loc.GetSpan()
+				if len(span) >= 2 {
+					return int(span[0]) + 1, int(span[1]) + 1
+				}
+			}
+		}
+	}
+	return 0, 0
 }
 
 // validateProto3 checks proto3-specific constraints and returns error strings.
