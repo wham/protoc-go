@@ -902,9 +902,9 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	if err != nil {
 		return nil, err
 	}
-	num, err := strconv.ParseInt(numTok.Value, 0, 32)
-	if err != nil {
-		return nil, fmt.Errorf("invalid field number: %s", numTok.Value)
+	num, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
+		return nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 	}
 	field.Number = proto.Int32(int32(num))
 
@@ -1013,9 +1013,9 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 	if err != nil {
 		return nil, nil, err
 	}
-	num, parseErr := strconv.ParseInt(numTok.Value, 0, 32)
-	if parseErr != nil {
-		return nil, nil, fmt.Errorf("invalid field number: %s", numTok.Value)
+	num, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
+		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 	}
 	field.Number = proto.Int32(int32(num))
 
@@ -1870,7 +1870,10 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 	if err != nil {
 		return nil, nil, err
 	}
-	num, _ := strconv.ParseInt(numTok.Value, 0, 32)
+	num, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
+		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
+	}
 
 	// Build entry type name
 	entryName := toCamelCase(nameTok.Value) + "Entry"
