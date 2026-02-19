@@ -192,6 +192,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate max field numbers (> 536870911)
+	if errs := validateMaxFieldNumbers(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate reserved field numbers (applies to all syntaxes)
 	if errs := validateReservedFieldNumbers(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -481,6 +486,54 @@ func suggestFieldNumber(msg *descriptorpb.DescriptorProto) int32 {
 		n++
 	}
 	return n
+}
+
+const kMaxFieldNumber = 536870911 // 2^29 - 1
+
+// validateMaxFieldNumbers checks that no field number exceeds 536870911.
+func validateMaxFieldNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		for i, msg := range fd.GetMessageType() {
+			fqn := msg.GetName()
+			if pkg != "" {
+				fqn = pkg + "." + fqn
+			}
+			collectMaxFieldNumberErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+		for _, ext := range fd.GetExtension() {
+			if ext.GetNumber() > kMaxFieldNumber {
+				errs = append(errs, fmt.Sprintf("%s: Field numbers cannot be greater than %d.", fd.GetName(), kMaxFieldNumber))
+			}
+		}
+	}
+	return errs
+}
+
+func collectMaxFieldNumberErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, field := range msg.GetField() {
+		if field.GetNumber() > kMaxFieldNumber {
+			line, col := findFieldNumberLocation(msgPath, i, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Field numbers cannot be greater than %d.", filename, line, col, kMaxFieldNumber))
+			next := suggestFieldNumber(msg)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Suggested field numbers for %s: %d", filename, line, col, fqn, next))
+		}
+	}
+	for _, ext := range msg.GetExtension() {
+		if ext.GetNumber() > kMaxFieldNumber {
+			*errs = append(*errs, fmt.Sprintf("%s: Field numbers cannot be greater than %d.", filename, kMaxFieldNumber))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedFqn := fqn + "." + nested.GetName()
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectMaxFieldNumberErrors(filename, nested, nestedFqn, nestedPath, sci, errs)
+	}
 }
 
 // validateReservedFieldNumbers checks that no field uses numbers 19000-19999.
