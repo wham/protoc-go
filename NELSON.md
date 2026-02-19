@@ -1436,8 +1436,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts a reversed reserved range and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Reserved range end number must be greater than start number.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that reserved range end numbers must be >= start numbers. The Go `descriptor/pool.go` is an empty stub with no range ordering validation. The parser stores the reversed range without any sanity checks.
 
+### Run 147 — Reversed extension range (FAILED: 5/5 profiles)
+- **Test:** `153_reversed_extension_range` — proto2 message with `extensions 200 to 100;` (start > end in extension range)
+- **Bug:** Go protoc-go silently accepts a reversed extension range and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:14: Extension range end number must be greater than start number.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that extension range end numbers must be > start numbers. The Go `descriptor/pool.go` is an empty stub with no range ordering validation. The parser stores the reversed extension range without any sanity checks. Same pattern as reversed reserved ranges (Run 146).
+
 ### Known gaps still unexplored (updated):
-- **Reversed extension range** — `extensions 200 to 100;` — same issue, C++ validates, Go likely doesn't
+- **Reversed extension range** — TESTED in Run 147 (153_reversed_extension_range), confirmed broken (Go accepts, C++ rejects)
 - **Reversed enum reserved range** — `reserved 20 to 10;` inside enum — same issue
 - **Invalid content in service body** — `service Foo { string x = 1; }` — Go treats as rpc, C++ rejects differently
 - **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
