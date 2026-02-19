@@ -1422,6 +1422,20 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 	case "deprecated":
 		method.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 33
+	case "idempotency_level":
+		var lvl descriptorpb.MethodOptions_IdempotencyLevel
+		switch valTok.Value {
+		case "IDEMPOTENCY_UNKNOWN":
+			lvl = descriptorpb.MethodOptions_IDEMPOTENCY_UNKNOWN
+		case "NO_SIDE_EFFECTS":
+			lvl = descriptorpb.MethodOptions_NO_SIDE_EFFECTS
+		case "IDEMPOTENT":
+			lvl = descriptorpb.MethodOptions_IDEMPOTENT
+		default:
+			return fmt.Errorf("line %d:%d: unknown idempotency_level %q", valTok.Line+1, valTok.Column+1, valTok.Value)
+		}
+		method.Options.IdempotencyLevel = lvl.Enum()
+		fieldNum = 34
 	default:
 		return nil
 	}
