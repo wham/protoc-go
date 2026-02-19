@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 538/538 tests passing.
+ALL DONE — 543/543 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -159,6 +159,7 @@ ALL DONE — 538/538 tests passing.
 109. ✅ Reserved/extension range integer overflow validation — reject reserved and extension range numbers exceeding int32 range with `Integer out of range.` error at number token position, parse as int64 first then range-check (message reserved, enum reserved, extension ranges)
 110. ✅ Field number integer overflow validation — reject field numbers exceeding int32 range (regular fields, map fields, group fields) with `Integer out of range.` error at parse time, parse as int64 first then range-check
 111. ✅ Custom vs default JSON name conflict messages — distinguish explicit `json_name` (custom) from auto-generated (default) in conflict error messages, matching C++ protoc's two-pass approach (default-only pass + custom-aware pass) with `GetJsonNameDetails` logic
+112. ✅ Stream keyword as type name validation — reject `stream` used as a message type name in RPC input/output with `Expected type name.` error at the non-type token position, matching C++ protoc behavior
 
 ## Notes
 
