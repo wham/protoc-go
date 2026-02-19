@@ -923,3 +923,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
 - **Negative field numbers** — `string name = -1;` — C++ rejects, Go may accept
 - **Map field with message key type** — `map<MyMsg, string>` — C++ rejects, Go likely accepts
+
+### Run 96 — Enum value name collides with message name (FAILED: 5/5 profiles)
+- **Test:** `102_enum_msg_name_conflict` — proto3 file with `message Foo { ... }` and `enum Bar { Foo = 0; }` (enum value name "Foo" collides with message name "Foo" at package scope)
+- **Bug:** Both C++ and Go detect the duplicate name and reject with exit code 1. Both emit: `test.proto:10:3: "Foo" is already defined in "enumconflict".` However, C++ protoc also emits a second explanatory line: `test.proto:10:3: Note that enum values use C++ scoping rules, meaning that enum values are siblings of their type, not children of it.  Therefore, "Foo" must be unique within "enumconflict", not just within "Bar".` Go is missing this explanatory note. The test harness detects error message mismatch.
+- **Root cause:** Go's duplicate symbol validation (likely in `compiler/cli/cli.go`) emits only the base error. C++ protoc's `descriptor.cc` emits an additional note about C++ scoping rules for enum values when an enum value name conflicts with another symbol. Same issue as Run 61 (duplicate oneof names) — Go error output is missing supplementary diagnostic messages that C++ includes.
