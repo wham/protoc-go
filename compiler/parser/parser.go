@@ -2917,10 +2917,16 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 			}
 		}
 		if ext.TypeName != nil {
-			resolved := resolveTypeName(ext.GetTypeName(), prefix, types)
+			origName := ext.GetTypeName()
+			resolved := resolveTypeName(origName, prefix, types)
 			ext.TypeName = proto.String(resolved)
 			if tp, ok := types[resolved]; ok {
 				ext.Type = tp.Enum()
+			} else {
+				path := []int32{7, int32(extIdx), 6}
+				if line, col, ok := findSCISpanStart(fd, path); ok {
+					errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+				}
 			}
 		}
 	}
@@ -3054,10 +3060,16 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 				}
 			}
 			if ext.TypeName != nil {
-				resolved := resolveTypeName(ext.GetTypeName(), msgPrefix, types)
+				origName := ext.GetTypeName()
+				resolved := resolveTypeName(origName, msgPrefix, types)
 				ext.TypeName = proto.String(resolved)
 				if tp, ok := types[resolved]; ok {
 					ext.Type = tp.Enum()
+				} else {
+					path := append(copyPath(msgPath), 6, int32(extIdx), 6)
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					}
 				}
 			}
 		}
