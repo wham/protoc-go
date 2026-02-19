@@ -1273,3 +1273,24 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `135_hex_escape_digits` — proto3 file with `option java_package = "com.example.\x4Eelson";` where `\x4E` is a hex escape followed by `e` (also a hex digit) and `lson`
 - **Bug:** Go tokenizer's `readString()` hex escape handler at lines 301-310 reads ALL hex digits greedily (unlimited loop: `for t.pos < len(t.input) && isHexDigit(t.input[t.pos])`). C++ protoc's `ConsumeStringAppend` reads at most 2 hex digits. For `\x4Eelson`: Go reads `4Ee` (3 hex digits) → `byte(0x4Ee) = byte(0xEE)`, leaving `lson`. C++ reads `4E` (2 hex digits) → `byte(0x4E) = 'N'`, leaving `elson`. String values differ: Go produces `"com.example.\xEElson"` (invalid UTF-8), C++ produces `"com.example.Nelson"`. Binary descriptor sizes differ (101 vs 100 bytes for descriptor_set). Plugin profiles fail because Go's invalid UTF-8 causes JSON marshaling error in protoc-gen-dump.
 - **Root cause:** `tokenizer.go:305-307` — the hex escape loop reads hex digits without a 2-digit limit. C++ protoc uses `TryConsumeOne` twice (max 2 digits). The fix: add a counter to limit hex digit consumption to 2, matching C++ behavior. This affects any string containing `\xHH` followed by additional hex-digit characters (0-9, a-f, A-F).
+
+### Run 131 — Numeric package name (FAILED: 5/5 profiles)
+- **Test:** `137_numeric_package` — proto3 file with `package 123;` (integer literal instead of identifier for package name)
+- **Bug:** Go protoc-go silently accepts a numeric package name and produces a valid descriptor with `package = "123"` (exit 0). C++ protoc rejects with: `test.proto:3:9: Expected identifier.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:332` — `nameTok := p.tok.Next()` reads the next token without any type check. An integer token `TokenInt("123")` is accepted as the package name. C++ protoc's `ParsePackage` calls `ConsumeIdentifier` which requires `TYPE_IDENTIFIER`, rejecting integer tokens. The Go parser should use `p.tok.ExpectIdent()` instead of `p.tok.Next()` to validate the package name is an identifier.
+
+### Known gaps still unexplored (updated):
+- **Package name with leading dot** — `package .foo;` — C++ may reject, Go may accept
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **`option` as type name** — Go switch matches keyword before checking context
+- **`reserved` as type name** — same pattern
+- **`extensions` as type name** — same pattern
+- **Missing message options** — `map_entry` (field 7)
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Error column positions** — many Go validation errors report wrong column
+- **String literal as package name** — `package "foo";` — Go likely accepts, C++ rejects (same missing type check)
+- **Numeric message/enum/service name** — `message 123 {}` — Go uses ExpectIdent, probably rejects
+- **Integer syntax value** — `syntax = 3;` — Go's parseSyntax uses ExpectString, probably rejects
