@@ -224,6 +224,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 	var fieldIdx, nestedMsgIdx, nestedEnumIdx, oneofIdx int32
 	var reservedRangeIdx, reservedNameIdx int32
 	var extensionRangeIdx int32
+	var nestedExtIdx int32
 
 	for p.tok.Peek().Value != "}" {
 		tok := p.tok.Peek()
@@ -266,6 +267,10 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 			}
 		case "option":
 			if err := p.parseMessageOption(msg, path); err != nil {
+				return nil, err
+			}
+		case "extend":
+			if err := p.parseNestedExtend(msg, path, &nestedExtIdx); err != nil {
 				return nil, err
 			}
 		case "extensions":
@@ -550,6 +555,69 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 		p.locations[insertIdx] = extendeeLoc
 
 		fd.Extension = append(fd.Extension, field)
+	}
+
+	endTok = p.tok.Next() // consume "}"
+	p.trackEnd(endTok)
+
+	// Update extend block span
+	p.locations[blockLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+
+	return nil
+}
+
+func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []int32, extIdx *int32) error {
+	firstIdx := p.tok.CurrentIndex()
+	startTok := p.tok.Next() // consume "extend"
+
+	// Parse extendee type name
+	extNameTok := p.tok.Next()
+	extendeeName := extNameTok.Value
+	extNameStartLine, extNameStartCol := extNameTok.Line, extNameTok.Column
+	if extendeeName == "." {
+		part := p.tok.Next()
+		extendeeName += part.Value
+	}
+	for p.tok.Peek().Value == "." {
+		p.tok.Next()
+		part := p.tok.Next()
+		extendeeName += "." + part.Value
+	}
+	extNameEndCol := extNameStartCol + len(extendeeName)
+
+	if _, err := p.tok.Expect("{"); err != nil {
+		return err
+	}
+
+	// Placeholder for extend block span — field 6 = extension in DescriptorProto
+	blockPath := append(copyPath(msgPath), 6)
+	blockLocIdx := p.addLocationPlaceholder(blockPath)
+	p.attachComments(blockLocIdx, firstIdx)
+
+	var endTok tokenizer.Token
+	for p.tok.Peek().Value != "}" {
+		fieldPath := append(copyPath(msgPath), 6, *extIdx)
+
+		locCountBefore := len(p.locations)
+
+		field, err := p.parseField(fieldPath)
+		if err != nil {
+			return err
+		}
+		field.Extendee = proto.String(extendeeName)
+
+		// Insert extendee source code info right after field declaration span
+		extendeeLoc := &descriptorpb.SourceCodeInfo_Location{
+			Path: append(copyPath(fieldPath), 2),
+			Span: multiSpan(extNameStartLine, extNameStartCol, extNameStartLine, extNameEndCol),
+		}
+		insertIdx := locCountBefore + 1
+		p.locations = append(p.locations, nil)
+		copy(p.locations[insertIdx+1:], p.locations[insertIdx:])
+		p.locations[insertIdx] = extendeeLoc
+
+		msg.Extension = append(msg.Extension, field)
+		*extIdx++
 	}
 
 	endTok = p.tok.Next() // consume "}"
@@ -2169,6 +2237,19 @@ func resolveMessageFields(msgs []*descriptorpb.DescriptorProto, prefix string, t
 			}
 		}
 		resolveMessageFields(msg.GetNestedType(), msgPrefix, types)
+		// Resolve nested extension field types and extendee names
+		for _, ext := range msg.GetExtension() {
+			if ext.Extendee != nil {
+				ext.Extendee = proto.String(resolveTypeName(ext.GetExtendee(), msgPrefix, types))
+			}
+			if ext.TypeName != nil {
+				resolved := resolveTypeName(ext.GetTypeName(), msgPrefix, types)
+				ext.TypeName = proto.String(resolved)
+				if tp, ok := types[resolved]; ok {
+					ext.Type = tp.Enum()
+				}
+			}
+		}
 	}
 }
 
