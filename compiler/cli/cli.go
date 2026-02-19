@@ -187,6 +187,11 @@ func Run(args []string) error {
 		parser.ResolveTypes(parsed[name], parsed)
 	}
 
+	// Validate non-positive field numbers
+	if errs := validatePositiveFieldNumbers(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate reserved field numbers (applies to all syntaxes)
 	if errs := validateReservedFieldNumbers(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -425,6 +430,57 @@ func parseArgs(args []string) (*config, error) {
 	}
 
 	return cfg, nil
+}
+
+// validatePositiveFieldNumbers checks that all field numbers are positive integers.
+func validatePositiveFieldNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		for i, msg := range fd.GetMessageType() {
+			fqn := msg.GetName()
+			if pkg != "" {
+				fqn = pkg + "." + fqn
+			}
+			collectPositiveFieldNumberErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+	}
+	return errs
+}
+
+func collectPositiveFieldNumberErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, field := range msg.GetField() {
+		if field.GetNumber() <= 0 {
+			line, col := findFieldNumberLocation(msgPath, i, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Field numbers must be positive integers.", filename, line, col))
+			// Suggest next available field number
+			next := suggestFieldNumber(msg)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Suggested field numbers for %s: %d", filename, line, col, fqn, next))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedFqn := fqn + "." + nested.GetName()
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectPositiveFieldNumberErrors(filename, nested, nestedFqn, nestedPath, sci, errs)
+	}
+}
+
+func suggestFieldNumber(msg *descriptorpb.DescriptorProto) int32 {
+	used := make(map[int32]bool)
+	for _, field := range msg.GetField() {
+		if field.GetNumber() > 0 {
+			used[field.GetNumber()] = true
+		}
+	}
+	var n int32 = 1
+	for used[n] {
+		n++
+	}
+	return n
 }
 
 // validateReservedFieldNumbers checks that no field uses numbers 19000-19999.
