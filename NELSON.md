@@ -1014,15 +1014,22 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts an enum as an RPC input type and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:16:17: "Status" is not a message type.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that RPC method input and output types must be message types, not enums. The Go `descriptor/pool.go` is an empty stub with no method type validation. The parser stores the type name string without checking whether it resolves to a message or an enum.
 
+### Run 106 — Negative field numbers (FAILED: 5/5 profiles)
+- **Test:** `112_negative_field_number` — proto3 message with `string name = -1;` (negative field number)
+- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:6:17: Expected field number.` Go protoc-go: `test.proto:line 6:17: expected integer, got "-"`. C++ treats the `-` as an unexpected token and reports "Expected field number." Go's `ExpectInt()` at line 892 fails because `-` is not an integer token.
+- **Root cause:** `parser.go:892` — `ExpectInt()` encounters `-` (a symbol token) and produces a generic "expected integer" error. C++ protoc's parser produces a domain-specific "Expected field number" error. Both correctly reject negative field numbers, but the error message format and content differ. The test harness detects error message mismatch.
+
 ### Known gaps still unexplored (updated):
 - **RPC output type as enum** — same bug, `rpc Foo(Msg) returns (SomeEnum);` — Go accepts, C++ rejects
 - **RPC type referencing non-existent message** — C++ rejects, Go likely accepts (no type resolution validation)
 - **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
 - **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
-- **Negative field numbers** — `string name = -1;` — C++ rejects, Go may accept
+- **Negative field numbers** — TESTED in Run 106 (112_negative_field_number), confirmed broken (error message mismatch)
 - **Package conflict** — two files with different packages imported together
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **String concatenation in enum/service/method option values** — same single-token bug as field defaults
 - **Map field with message key type** — `map<MyMsg, string>` — Go rejects at parse time, C++ at validation with different error
+- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
+- **RPC output type as enum** — `rpc Foo(Msg) returns (SomeEnum);` — Go accepts, C++ rejects
