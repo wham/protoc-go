@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 473/473 tests passing.
+ALL DONE — 478/478 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -147,6 +147,7 @@ ALL DONE — 473/473 tests passing.
 97. ✅ JSON name conflict validation — reject fields whose default JSON names (camelCase) conflict with `The default JSON name of field "X" ("jsonName") conflicts with the default JSON name of field "Y".` error at second field's name location, recurses into nested messages, skips map entry types
 98. ✅ String file option validation — reject non-string values for string-typed file options (java_package, java_outer_classname, go_package, php_namespace, etc.) with `Value must be quoted string for string option "google.protobuf.FileOptions.X".` error at value token position
 99. ✅ JSON name string validation — reject non-string values for `json_name` field option with `Expected string for JSON name.` error at value token position
+100. ✅ Extension range overlap validation — reject overlapping extension ranges within a message with `Extension range X to Y overlaps with already-defined range A to B.` error at the already-defined range's start number SCI location
 
 ## Notes
 
@@ -229,3 +230,4 @@ ALL DONE — 473/473 tests passing.
 - Proto2 oneof fields: fields inside `oneof` blocks do NOT require `required`/`optional`/`repeated` labels even in proto2 syntax. Parser uses `p.inOneof` flag (set in `parseOneof` before calling `parseField`, cleared after) to skip the label check in `parseField`'s default case. No label SCI is emitted for oneof fields (labelTok stays nil).
 - Duplicate import validation: C++ protoc rejects importing the same file twice with `Import "X" was listed twice.` error at the `import` keyword position (1-indexed line:col). Parser tracks `seenImports` map (set in `parseImport`). Error returned before adding to `fd.Dependency`, so the duplicate never enters the dependency list.
 - String file option validation: string-typed file options (java_package, java_outer_classname, go_package, php_namespace, php_class_prefix, php_metadata_namespace, ruby_package, objc_class_prefix, csharp_namespace, swift_prefix) must use quoted string values (TokenString). Reject integers/identifiers with `Value must be quoted string for string option "google.protobuf.FileOptions.X".` at value token position. Uses `validateString` helper in `parseFileOption` — checks `valTok.Type == TokenString`.
+- Extension range overlap validation: C++ protoc rejects overlapping extension ranges within a message. Error format: `filename:line:col: Extension range X to Y overlaps with already-defined range A to B.` Iterate i=0..n-1 (outer), j=i+1..n-1 (inner). Error text shows range j first ("Extension range") then range i ("already-defined range"). Location from SCI path `[4, msgIdx, 5, i, 1]` (the already-defined range's start, NOT the new range). End values displayed as `End-1` (user-visible inclusive). Validated in `validateExtensionRangeOverlaps` (cli.go) with `collectExtensionRangeOverlapErrors` recursing into nested messages.
