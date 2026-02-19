@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 333/333 tests passing.
+ALL DONE — 338/338 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -115,8 +115,8 @@ ALL DONE — 333/333 tests passing.
 65. ✅ Empty enum validation — reject enums with zero values with `Enums must contain at least one value.` error at enum name location, handles both top-level and nested enums
 66. ✅ Proto3 group validation — reject `group` fields in proto3 syntax with `Groups are not supported in proto3 syntax.` error at group keyword location
 68. ✅ Duplicate syntax/edition declaration validation — reject second `syntax` or `edition` statement with `Expected top-level statement (e.g. "message").` error at duplicate keyword position
-
 69. ✅ Duplicate package declaration validation — reject second `package` statement with `Multiple package definitions.` error at duplicate `package` keyword position (1-indexed line:col, no filename prefix since CLI adds it)
+70. ✅ Duplicate oneof name validation — C++ protoc omits line:col for duplicate oneof names (`filename: "X" is already defined in "Y".`), pass 0,0 for oneofs in `collectDupNamesInMsg` and format without line:col when both are 0
 70. ✅ Late syntax/edition rejection — reject `syntax` or `edition` statements that appear after any other non-syntax statement (e.g., `package`) with `Expected top-level statement` error, using error recovery to continue parsing and collect subsequent errors (e.g., missing labels in proto2 mode)
 71. ✅ Octal/hex integer default value normalization — convert octal (`0755`) and hex (`0xFF`) integer literals in `[default = ...]` to decimal strings to match C++ protoc behavior (`isIntegerType` + `normalizeIntDefault` helpers in parser.go)
 72. ✅ Adjacent string concatenation in field default values (`[default = "hello" " world"]`) — concatenate adjacent string tokens in `parseFieldOptions`, updating `valEnd` to last token's end position
@@ -189,3 +189,4 @@ ALL DONE — 333/333 tests passing.
 - Proto3 group validation: C++ protoc rejects groups in proto3 with `Groups are not supported in proto3 syntax.` at the "group" keyword position. Validated in `collectProto3GroupErrors` (cli.go), called first in `collectProto3MessageErrors` before required/default checks. Uses existing `findFieldTypeLocation` to get the TYPE_GROUP field's type SCI path position.
 - Late syntax/edition rejection: `syntax` or `edition` must be the very first statement. If any other statement (e.g., `package`, `import`, `message`) appears before it, `syntax`/`edition` is rejected with `Expected top-level statement (e.g. "message").` error. Uses error recovery (skips to `;` and continues parsing) so subsequent errors (e.g., missing labels in proto2 default mode) are also collected. `hadNonSyntaxStmt` flag in parser tracks this.
 - Octal/hex integer default values: C++ protoc converts octal (0755) and hex (0xFF) integer literals in default values to decimal strings (493, 255). Handled by `isIntegerType` and `normalizeIntDefault` in parser.go. Applied after float normalization in `parseFieldOptions` for all integer field types (int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64).
+- Duplicate oneof name error format: C++ protoc omits line:col for duplicate oneof names, outputting `filename: "X" is already defined in "Y".` (with space after colon, no line:col). Other duplicate symbols (messages, fields, enums, etc.) include line:col. In `collectDupNamesInMsg`, oneofs pass 0,0 to the `check` function, and `check` formats without line:col when both are 0.

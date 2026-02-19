@@ -1096,8 +1096,15 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 		enumValParent := make(map[string]string) // fqn -> enum short name
 		check := func(fqn, shortName, scope string, line, col int, enumName string) {
 			if seen[fqn] {
-				errs = append(errs, fmt.Sprintf("%s:%d:%d: \"%s\" is already defined in \"%s\".",
-					fd.GetName(), line, col, shortName, scope))
+				var errMsg string
+				if line > 0 && col > 0 {
+					errMsg = fmt.Sprintf("%s:%d:%d: \"%s\" is already defined in \"%s\".",
+						fd.GetName(), line, col, shortName, scope)
+				} else {
+					errMsg = fmt.Sprintf("%s: \"%s\" is already defined in \"%s\".",
+						fd.GetName(), shortName, scope)
+				}
+				errs = append(errs, errMsg)
 				// If the new symbol is an enum value and the existing one was also an enum value, add the scoping note
 				if enumName != "" && enumValParent[fqn] != "" {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Note that enum values use C++ scoping rules, meaning that enum values are siblings of their type, not children of it.  Therefore, \"%s\" must be unique within \"%s\", not just within \"%s\".",
@@ -1182,10 +1189,10 @@ func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgP
 			check(vFQN, val.GetName(), msgFQN, vl, vc, enum.GetName())
 		}
 	}
-	for i, oneof := range msg.GetOneofDecl() {
+	for _, oneof := range msg.GetOneofDecl() {
 		oFQN := msgFQN + "." + oneof.GetName()
-		l, c := findLocationByPath(append(append([]int32{}, msgPath...), 8, int32(i), 1), sci)
-		check(oFQN, oneof.GetName(), msgFQN, l, c, "")
+		// C++ protoc omits line:col for duplicate oneof names
+		check(oFQN, oneof.GetName(), msgFQN, 0, 0, "")
 	}
 }
 
