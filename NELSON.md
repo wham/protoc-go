@@ -1234,6 +1234,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Both C++ and Go reject the file (exit 1), but with completely different error messages. C++ protoc: `test.proto:9:8: "NonExistent" is not defined.` — catches the undefined type at the `extend` declaration. Go protoc-go: `test.proto:10:25: "NonExistent" does not declare 100 as an extension number.` — doesn't check if the extendee exists, but a downstream extension range validation produces a different error. Error messages differ in content, line number, and column.
 - **Root cause:** `CheckUnresolvedTypes` in `parser.go:3080-3148` checks message field types (line 3107-3108) and RPC input/output types (lines 3111-3144), but does NOT check extendee types in `fd.GetExtension()`. The extendee name `NonExistent` is never validated as a defined type. Instead, the extension range validation in `cli.go` fires later because `NonExistent` (as an undefined type) has no declared extension ranges, producing a semantically different error. C++ protoc catches the undefined type first during linking in `descriptor.cc`.
 
+### Run 127 — jstype on non-int64 field (FAILED: 5/5 profiles)
+- **Test:** `133_jstype_nonint64` — proto3 message with `int32 count = 1 [jstype = JS_STRING];` and `string name = 2 [jstype = JS_NUMBER];` (jstype on non-int64 fields)
+- **Bug:** Go protoc-go silently accepts `jstype` on non-int64 fields and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:3: jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.` (exit 1 for each field). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:2529-2540` — `case "jstype"` stores the jstype option on `FieldOptions` without checking the field's type. No validation in `compiler/cli/cli.go` either. C++ protoc validates in `descriptor.cc` that `jstype` can only be used on 64-bit integral fields (int64/uint64/sint64/fixed64/sfixed64). Same gap applies to `ctype` — Go likely accepts `ctype = CORD` on non-string fields without validation.
+
 ### Known gaps still unexplored (updated):
 - **Package conflict** — two files with different packages imported together
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
@@ -1250,3 +1255,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Undefined extension field type** — `extend Base { optional NonExistent foo = 100; }` — checkMsgUnresolved doesn't check extension field types
 - **Negative enum value overflow** — `FOO = -2147483649;` — silent truncation of absolute value
 - **Minimum int32 enum value** — `FOO = -2147483648;` — ParseInt overflow on absolute value even though -2^31 is valid
+- **ctype on non-string field** — `int32 x = 1 [ctype = CORD];` — same validation gap as jstype
+- **jstype on non-int64 field** — TESTED in Run 127 (133_jstype_nonint64), confirmed broken

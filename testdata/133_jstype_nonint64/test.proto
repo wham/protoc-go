@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package jstypetest;
+
+message Config {
+  int32 count = 1 [jstype = JS_STRING];
+  string name = 2 [jstype = JS_NUMBER];
+}
