@@ -35,6 +35,13 @@ type TokenComments struct {
 	Leading      string   // leading comment for this token
 }
 
+// TokenError represents an error detected during tokenization.
+type TokenError struct {
+	Line    int    // 0-based
+	Column  int    // 0-based
+	Message string
+}
+
 type Tokenizer struct {
 	input    string
 	pos      int
@@ -43,6 +50,7 @@ type Tokenizer struct {
 	tokens   []Token
 	comments []TokenComments // parallel to tokens
 	idx      int
+	Errors   []TokenError
 }
 
 func New(input string) *Tokenizer {
@@ -259,6 +267,10 @@ func (t *Tokenizer) readString() {
 	t.advance() // skip opening quote
 	var sb strings.Builder
 	for t.pos < len(t.input) && t.input[t.pos] != quote {
+		if t.input[t.pos] == '\n' {
+			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Multiline strings are not allowed. Did you miss a \"?."})
+			break
+		}
 		if t.input[t.pos] == '\\' {
 			t.advance()
 			if t.pos < len(t.input) {
@@ -439,7 +451,7 @@ func (t *Tokenizer) Next() Token {
 func (t *Tokenizer) Expect(value string) (Token, error) {
 	tok := t.Next()
 	if tok.Value != value {
-		return tok, fmt.Errorf("line %d:%d: expected %q, got %q", tok.Line+1, tok.Column+1, value, tok.Value)
+		return tok, fmt.Errorf("%d:%d: Expected %q.", tok.Line+1, tok.Column+1, value)
 	}
 	return tok, nil
 }
@@ -448,7 +460,7 @@ func (t *Tokenizer) Expect(value string) (Token, error) {
 func (t *Tokenizer) ExpectIdent() (Token, error) {
 	tok := t.Next()
 	if tok.Type != TokenIdent {
-		return tok, fmt.Errorf("line %d:%d: expected identifier, got %q", tok.Line+1, tok.Column+1, tok.Value)
+		return tok, fmt.Errorf("%d:%d: Expected identifier.", tok.Line+1, tok.Column+1)
 	}
 	return tok, nil
 }
@@ -457,7 +469,7 @@ func (t *Tokenizer) ExpectIdent() (Token, error) {
 func (t *Tokenizer) ExpectInt() (Token, error) {
 	tok := t.Next()
 	if tok.Type != TokenInt {
-		return tok, fmt.Errorf("line %d:%d: expected integer, got %q", tok.Line+1, tok.Column+1, tok.Value)
+		return tok, fmt.Errorf("%d:%d: Expected integer.", tok.Line+1, tok.Column+1)
 	}
 	return tok, nil
 }
@@ -466,7 +478,7 @@ func (t *Tokenizer) ExpectInt() (Token, error) {
 func (t *Tokenizer) ExpectString() (Token, error) {
 	tok := t.Next()
 	if tok.Type != TokenString {
-		return tok, fmt.Errorf("line %d:%d: expected string, got %q", tok.Line+1, tok.Column+1, tok.Value)
+		return tok, fmt.Errorf("%d:%d: Expected string.", tok.Line+1, tok.Column+1)
 	}
 	return tok, nil
 }

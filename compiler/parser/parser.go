@@ -5,6 +5,7 @@ package parser
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -49,6 +50,9 @@ type ParseResult struct {
 func ParseFile(filename string, content string) (*ParseResult, error) {
 	p := &parser{tok: tokenizer.New(content), filename: filename, syntax: "proto2", seenFileOptions: map[string]bool{}, seenImports: map[string]bool{}, explicitJsonNames: map[*descriptorpb.FieldDescriptorProto]bool{}}
 
+	// If the tokenizer has errors, we still parse to collect parser errors too
+	// (C++ protoc interleaves tokenizer and parser errors)
+
 	fd := &descriptorpb.FileDescriptorProto{
 		Name: proto.String(filename),
 	}
@@ -61,6 +65,7 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 	fileStartLine := firstTok.Line
 	fileStartCol := firstTok.Column
 
+	var parseErr error
 	for p.tok.Peek().Type != tokenizer.TokenEOF {
 		tok := p.tok.Peek()
 
@@ -83,7 +88,8 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 				continue
 			}
 			if err := p.parseSyntax(fd); err != nil {
-				return nil, err
+				parseErr = err
+				break
 			}
 		case "edition":
 			if p.syntaxParsed || p.hadNonSyntaxStmt {
@@ -97,51 +103,91 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 				continue
 			}
 			if err := p.parseEdition(fd); err != nil {
-				return nil, err
+				parseErr = err
+				break
 			}
 		case "package":
 			if err := p.parsePackage(fd); err != nil {
-				return nil, err
+				parseErr = err
+				break
 			}
 		case "import":
 			if err := p.parseImport(fd); err != nil {
-				return nil, err
+				parseErr = err
+				break
 			}
 		case "message":
 			msgIdx := int32(len(fd.MessageType))
 			msg, err := p.parseMessage([]int32{4, msgIdx})
 			if err != nil {
-				return nil, err
+				parseErr = err
+				break
 			}
 			fd.MessageType = append(fd.MessageType, msg)
 		case "enum":
 			enumIdx := int32(len(fd.EnumType))
 			e, err := p.parseEnum([]int32{5, enumIdx})
 			if err != nil {
-				return nil, err
+				parseErr = err
+				break
 			}
 			fd.EnumType = append(fd.EnumType, e)
 		case "service":
 			svcIdx := int32(len(fd.Service))
 			svc, err := p.parseService([]int32{6, svcIdx})
 			if err != nil {
-				return nil, err
+				parseErr = err
+				break
 			}
 			fd.Service = append(fd.Service, svc)
 		case "option":
 			if err := p.parseFileOption(fd); err != nil {
-				return nil, err
+				parseErr = err
+				break
 			}
 		case "extend":
 			if err := p.parseExtend(fd); err != nil {
-				return nil, err
+				parseErr = err
+				break
 			}
 		case ";":
 			// Empty statement — consume and continue (C++ protoc allows these)
 			p.tok.Next()
 		default:
-			return nil, fmt.Errorf("line %d:%d: unexpected token %q", tok.Line+1, tok.Column+1, tok.Value)
+			parseErr = fmt.Errorf("%d:%d: unexpected token %q", tok.Line+1, tok.Column+1, tok.Value)
 		}
+		if parseErr != nil {
+			break
+		}
+	}
+
+	// If there are tokenizer errors, merge them with any parser errors
+	if len(p.tok.Errors) > 0 {
+		var allErrs []posError
+		for _, te := range p.tok.Errors {
+			allErrs = append(allErrs, posError{te.Line, te.Column, fmt.Sprintf("%s:%d:%d: %s", p.filename, te.Line+1, te.Column+1, te.Message)})
+		}
+		if parseErr != nil {
+			// Parse the line:col from the error string
+			errStr := parseErr.Error()
+			eLine, eCol := parseErrorPos(errStr)
+			allErrs = append(allErrs, posError{eLine, eCol, fmt.Sprintf("%s:%s", p.filename, errStr)})
+		}
+		for _, e := range p.errors {
+			eLine, eCol := parseErrorPosFromFormatted(e, p.filename)
+			allErrs = append(allErrs, posError{eLine, eCol, e})
+		}
+		// Sort by position
+		sortPosErrors(allErrs)
+		var msgs []string
+		for _, e := range allErrs {
+			msgs = append(msgs, e.msg)
+		}
+		return nil, &MultiError{Errors: msgs}
+	}
+
+	if parseErr != nil {
+		return nil, parseErr
 	}
 
 	// Update file-level span using first token start and last real token end
@@ -156,6 +202,42 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 	}
 
 	return &ParseResult{FD: fd, ExplicitJsonNames: p.explicitJsonNames}, nil
+}
+
+// parseErrorPos extracts 0-based line/col from an error string formatted as "line:col: message"
+func parseErrorPos(s string) (int, int) {
+	parts := strings.SplitN(s, ":", 3)
+	if len(parts) >= 2 {
+		line, e1 := strconv.Atoi(parts[0])
+		col, e2 := strconv.Atoi(parts[1])
+		if e1 == nil && e2 == nil {
+			return line - 1, col - 1
+		}
+	}
+	return 0, 0
+}
+
+// parseErrorPosFromFormatted extracts 0-based line/col from "filename:line:col: message"
+func parseErrorPosFromFormatted(s string, filename string) (int, int) {
+	prefix := filename + ":"
+	if strings.HasPrefix(s, prefix) {
+		return parseErrorPos(s[len(prefix):])
+	}
+	return 0, 0
+}
+
+type posError struct {
+	line, col int
+	msg       string
+}
+
+func sortPosErrors(errs []posError) {
+	sort.Slice(errs, func(i, j int) bool {
+		if errs[i].line != errs[j].line {
+			return errs[i].line < errs[j].line
+		}
+		return errs[i].col < errs[j].col
+	})
 }
 
 func (p *parser) parseSyntax(fd *descriptorpb.FileDescriptorProto) error {
