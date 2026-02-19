@@ -63,7 +63,10 @@ func run() error {
 	}
 
 	// Write a minimal successful response back to protoc
-	resp := &pluginpb.CodeGeneratorResponse{}
+	supportedFeatures := uint64(pluginpb.CodeGeneratorResponse_FEATURE_PROTO3_OPTIONAL)
+	resp := &pluginpb.CodeGeneratorResponse{
+		SupportedFeatures: &supportedFeatures,
+	}
 	respBytes, err := proto.Marshal(resp)
 	if err != nil {
 		return fmt.Errorf("marshaling response: %w", err)
