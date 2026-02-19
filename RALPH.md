@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 238/238 tests passing.
+ALL DONE — 243/243 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -102,6 +102,7 @@ ALL DONE — 238/238 tests passing.
 52. ✅ Duplicate field number validation — reject duplicate field numbers within a message with `Field number N has already been used in "pkg.Msg" by field "name".` error, location from SCI path for field number
 53. ✅ Non-positive field number validation — reject field numbers ≤ 0 with `Field numbers must be positive integers.` error and `Suggested field numbers for pkg.Msg: N` suggestion, location from SCI path for field number
 54. ✅ Max field number validation — reject field numbers > 536870911 (2^29-1) with `Field numbers cannot be greater than 536870911.` error and suggestion, location from SCI path for field number
+55. ✅ Duplicate enum value validation — reject duplicate enum value numbers without `allow_alias = true` with `"pkg.VALUE" uses the same enum value as "pkg.FIRST"` error, next available value suggestion, handles top-level and nested enums
 
 ## Notes
 
@@ -159,3 +160,4 @@ ALL DONE — 238/238 tests passing.
 - Duplicate field number validation: C++ protoc rejects duplicate field numbers within a message. Error format is `filename:line:col: Field number N has already been used in "pkg.Msg" by field "name".` Location from SCI path `[msgPath..., 2, fieldIdx, 3]` (field 3=number in FieldDescriptorProto). Validated in `validateDuplicateFieldNumbers` (cli.go). Recurses into nested messages, skips map entry types.
 - Non-positive field number validation: C++ protoc rejects field numbers ≤ 0 with two error lines: `Field numbers must be positive integers.` and `Suggested field numbers for pkg.Msg: N` where N is the smallest available positive integer. Location from SCI path `[msgPath..., 2, fieldIdx, 3]`. Validated in `validatePositiveFieldNumbers` (cli.go) before reserved number validation. `suggestFieldNumber` finds the smallest unused positive field number in the message.
 - Max field number validation: C++ protoc rejects field numbers > 536870911 (2^29-1, kMaxFieldNumber) with `Field numbers cannot be greater than 536870911.` error plus suggestion. Validated in `validateMaxFieldNumbers` (cli.go) between positive and reserved field number validation. Handles message fields, extensions, and nested messages. Uses same `findFieldNumberLocation` and `suggestFieldNumber` helpers.
+- Duplicate enum value validation: C++ protoc rejects duplicate enum value numbers when `allow_alias` is not set. Error format: `"pkg.VALUE" uses the same enum value as "pkg.FIRST". If this is intended, set 'option allow_alias = true;' to the enum definition. The next available enum value is N.` IMPORTANT: enum values are scoped to the parent (package or message), NOT the enum name — so the FQN is `pkg.VALUE` not `pkg.EnumName.VALUE`. Validated in `validateDuplicateEnumValues` (cli.go). `nextAvailableEnumValue` finds the smallest non-negative integer not used. Handles top-level enums and enums nested in messages.
