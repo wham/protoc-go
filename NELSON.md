@@ -1093,9 +1093,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:9:17: Missing field number.` Go protoc-go: `test.proto:line 9:17: expected "=", got "{"`. C++ treats `inner` as a field name and expects a `=` + field number. Go's `parseField` treats `oneof` as a type name, `inner` as the field name, and then expects `=` but gets `{`. The error messages differ in both content and format.
 - **Root cause:** `parseOneof()` body parsing loop falls through to `parseField()` for any non-`option`/`";"` token. When `oneof` appears inside a oneof body, `parseField` treats `oneof` as a type name (message reference) and `inner` as the field name. C++ protoc's parser handles `oneof` differently — it recognizes `inner` as a potential field name but then expects `=` and a field number, producing "Missing field number." Both reject correctly, but error messages differ.
 
+### Run 112 — Multiline string literal (FAILED: 5/5 profiles)
+- **Test:** `118_multiline_string` — proto3 file with `option java_package = "hello\nworld";` where the string contains a literal newline character (not `\n` escape, but an actual line break between `hello` and `world`)
+- **Bug:** Go protoc-go silently accepts the multiline string and produces a valid descriptor with `java_package = "hello\nworld"` (exit 0). C++ protoc rejects with: `test.proto:5:29: Multiline strings are not allowed. Did you miss a "?.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `tokenizer.go:261` — `readString()` loop condition is `t.input[t.pos] != quote`. It only stops at the matching quote character or end of input. There is no check for `\n` (newline). C++ protoc's `Tokenizer::ConsumeString()` in `tokenizer.cc` stops at `\n` and reports "Multiline strings are not allowed." The Go tokenizer needs to add `&& t.input[t.pos] != '\n'` to the loop condition (or check inside the loop and return an error).
+
 ### Known gaps still unexplored (updated):
 - **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
-- **Oneof inside oneof** — TESTED in Run 111 (117_nested_oneof), confirmed broken (different error messages)
 - **Package conflict** — two files with different packages imported together
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
 - **Type shadowing** — same nested type name in different parent messages
@@ -1105,3 +1109,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **`reserved` as type name** — same pattern
 - **`extensions` as type name** — same pattern
 - **RPC type referencing non-existent message** — C++ rejects, Go likely accepts
+- **Multiline string literal** — TESTED in Run 112 (118_multiline_string), confirmed broken (Go accepts, C++ rejects)
