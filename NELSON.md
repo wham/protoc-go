@@ -1167,8 +1167,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts string literals `"1.5"`/`"3.14"` as default values for float/double fields and stores `default_value = "1.5"` / `"3.14"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Expected number for field default value.` and `test.proto:7:41: Expected number for field default value.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go` — `case "default"` stores `valTok.Value` as the default value without validating that the token type matches the field type. For float/double fields, the value must be a numeric literal (`TokenInt` or `TokenFloat`) or special identifiers (`inf`, `nan`), not a string literal (`TokenString`). C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeNumber` for float fields which rejects string literal tokens. Same category as Runs 108-110, 117-118 (default value type validation).
 
+### Run 120 — Enum default value with nonexistent enum member (FAILED: 5/5 profiles)
+- **Test:** `126_enum_default_invalid` — proto2 message with `optional Priority level = 1 [default = NONEXISTENT];` where `NONEXISTENT` is not a member of the `Priority` enum
+- **Bug:** Go protoc-go silently accepts a default value that names a nonexistent enum member and stores `default_value = "NONEXISTENT"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:12:42: Enum type "enumdefault.Priority" has no value named "NONEXISTENT".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` during linking that enum default values must name a valid member of the field's enum type. The Go `descriptor/pool.go` is an empty stub with no enum default value validation. The parser stores the raw identifier string as `default_value` without checking if it resolves to a valid enum value in the enum type.
+
 ### Known gaps still unexplored (updated):
-- **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
+- **Enum default for wrong enum type** — TESTED in Run 120 (126_enum_default_invalid), confirmed broken (no enum value validation)
 - **Package conflict** — two files with different packages imported together
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
 - **Type shadowing** — same nested type name in different parent messages
@@ -1179,3 +1184,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **`extensions` as type name** — same pattern
 - **Missing message options** — `map_entry` (field 7)
 - **String literal for float default** — TESTED in Run 119 (125_string_default_float), confirmed broken
+- **Syntax string concatenation** — `syntax = "proto" "3";` — C++ concatenates, Go reads single token
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
