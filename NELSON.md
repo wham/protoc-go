@@ -585,13 +585,18 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseField()` at line 875 computes `typeNameEnd = typeStartCol + len(field.GetTypeName())`. For `spacetype .  Inner`, `field.GetTypeName()` is `"spacetype.Inner"` (15 chars), but the actual source text spans more columns due to spaces around the dot (20 chars). C++ protoc records the span from the first token's start to the last token's end, correctly covering the wider range. Go computes end as `typeStartCol + 15 = 17`, C++ computes end as `20`. Binary diff: byte `0x14` (20) in C++ vs `0x11` (17) in Go at the type_name span.
 - **Root cause:** `parser.go:875` — `typeNameEnd` is computed from `len(field.GetTypeName())` which is the concatenated identifier string (no spaces), not the actual source text span. The parser consumes `.` and subsequent identifier tokens in the loop at lines 819-823 but doesn't track the position of the last consumed token for span computation. Fix: save the last token's end position (e.g., `part.Column + len(part.Value)`) and use it as `typeNameEnd`.
 
+### Run 63 — Self-import / circular import (FAILED: 5/5 profiles)
+- **Test:** `69_self_import` — proto3 file with `import "test.proto";` importing itself
+- **Bug:** Go protoc-go silently accepts the self-import and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:3:1: File recursively imports itself: test.proto -> test.proto` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parseRecursive()` in `compiler/cli/cli.go:326-355` checks if a file is already in the `parsed` map (line 327) and returns nil if so. For self-import, the file adds itself to `parsed` at line 344 before processing dependencies at line 347. When the self-import dependency is encountered, it's already in `parsed`, so it returns nil — no error. C++ protoc's `Importer` tracks "currently being imported" files separately from "already imported" files, detecting cycles in the import chain.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth
 - **Type shadowing** — same nested type name in different parent messages
 - **Negative float default span** — `[default = -1.5]` likely has same column offset bug
-- **Missing message options** — `message_set_wire_format` (field 1), `map_entry` (field 7) — TESTED `no_standard_descriptor_accessor` (field 2) in Run 60
+- **Missing message options** — `message_set_wire_format` (field 1), `map_entry` (field 7)
 - **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]`
 - **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
 - **Edition features** — `edition = "2023"` with feature overrides
@@ -600,18 +605,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
 - **Self-referencing message** — type resolution may differ
 - **Package conflict** — two files with different packages imported together
-- **Self-import / circular import** — cycle detection may differ
+- **Circular import (two files)** — A imports B, B imports A — C++ detects cycle, Go likely doesn't
 - **Map key type `bytes`/`float`** — accepted by Go, rejected by C++
 - **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
 - **Hex default values** — `[default = 0x1F]` — same bug as octal defaults (raw text vs decimal)
 - **String concatenation in service/method/enum option values** — same single-token bug as field defaults
-- **Missing service options** — only `deprecated` handled, other standard ServiceOptions fields may be missing
-- **Missing enum options** — only `allow_alias` and `deprecated` handled, other EnumOptions fields may be missing
-- **Enum option `deprecated`** — is it handled? Check parseEnumOption switch (CONFIRMED handled at line 1228)
-- **Duplicate oneof names** — TESTED in Run 61 (67_duplicate_oneof), confirmed error message format mismatch (Go adds line:col, C++ doesn't)
+- **Missing service options** — only `deprecated` handled
 - **Duplicate field names across oneof/message** — field in oneof + field in message with same name
 - **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
-- **Type name spaces in map value types** — `map<string, pkg . Msg>` — same span bug as regular fields but in parseMapField
-- **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug in parseMethod
+- **Type name spaces in map value types** — `map<string, pkg . Msg>` — same span bug
+- **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
