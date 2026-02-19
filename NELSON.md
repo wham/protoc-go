@@ -900,3 +900,26 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `100_enum_reserved_name_conflict` — proto3 enum with `reserved "DELETED", "ARCHIVED";` and `DELETED = 3;` (enum value name matches reserved name)
 - **Bug:** Go protoc-go silently accepts an enum value whose name is in the reserved name list and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:9:3: Enum value "DELETED" is reserved.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enum value names must not match any reserved name declared in the same enum. The Go `descriptor/pool.go` is an empty stub with no enum reserved name vs enum value name validation. The parser stores both the reserved names and the conflicting enum value without any cross-validation. Same pattern as message reserved name conflicts (Run 48) and enum reserved value number conflicts (Run 93).
+
+### Run 95 — Explicit map_entry option (FAILED: 5/5 profiles)
+- **Test:** `101_map_entry_explicit` — proto3 message with `option map_entry = true;` explicitly set on a user-defined message (with key/value fields)
+- **Bug:** Go protoc-go silently discards the `map_entry` option (default case in `parseMessageOption` returns nil) and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:10: map_entry should not be set explicitly. Use map<KeyType, ValueType> instead.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:789-800` — `parseMessageOption` switch handles `deprecated` (field 3), `no_standard_descriptor_accessor` (field 2), and `message_set_wire_format` (field 1) but NOT `map_entry` (field 7). The `default` case at line 800 does `return nil`, silently discarding the option. Even if `map_entry` were added to the switch, C++ protoc explicitly rejects it in `descriptor.cc` validation — `map_entry` can only be set by the compiler on synthetic map entry messages, not by users. The Go implementation lacks both: (1) the option storage, and (2) the validation that rejects explicit usage.
+
+### Known gaps still unexplored (updated):
+- **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];`
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
+- **Type shadowing** — same nested type name in different parent messages
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
+- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
+- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
+- **Self-referencing message** — type resolution may differ
+- **Package conflict** — two files with different packages imported together
+- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
+- **Explicit map_entry option** — TESTED in Run 95 (101_map_entry_explicit), confirmed broken
+- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
+- **Negative field numbers** — `string name = -1;` — C++ rejects, Go may accept
+- **Map field with message key type** — `map<MyMsg, string>` — C++ rejects, Go likely accepts
