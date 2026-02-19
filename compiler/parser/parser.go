@@ -1627,6 +1627,11 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32) ([
 			nameTk := p.tok.Peek()
 			return nil, nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTk.Line+1, nameTk.Column+1, nameTk.Value)
 		}
+		if p.tok.Peek().Value == "map" && p.tok.PeekAt(1).Value == "<" {
+			p.tok.Next() // consume "map"
+			ltTok := p.tok.Peek()
+			return nil, nil, fmt.Errorf("%d:%d: Map fields are not allowed in oneofs.", ltTok.Line+1, ltTok.Column+1)
+		}
 		fieldPath := append(copyPath(msgPath), 2, *fieldIdx)
 		field, err := p.parseField(fieldPath)
 		if err != nil {
