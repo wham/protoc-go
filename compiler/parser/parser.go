@@ -2438,8 +2438,8 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 					return optLocs, nil
 				}
 			}
-			// Integer fields reject string literal and float literal default values
-			if isIntegerType(field.GetType()) && (valTok.Type == tokenizer.TokenString || valTok.Type == tokenizer.TokenFloat) {
+			// Integer fields reject string literal, float literal, and identifier default values
+			if isIntegerType(field.GetType()) && (valTok.Type == tokenizer.TokenString || valTok.Type == tokenizer.TokenFloat || valTok.Type == tokenizer.TokenIdent) {
 				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected integer for field default value.", p.filename, valTok.Line+1, valTok.Column+1))
 				p.skipToToken("]")
 				return optLocs, nil
