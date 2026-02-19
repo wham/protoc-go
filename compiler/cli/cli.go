@@ -479,7 +479,44 @@ func collectProto3DefaultErrors(filename string, msg *descriptorpb.DescriptorPro
 	}
 }
 
+func collectProto3RequiredErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, field := range msg.GetField() {
+		if field.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REQUIRED {
+			line, col := findFieldTypeLocation(msgPath, i, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Required fields are not allowed in proto3.", filename, line, col))
+		}
+	}
+}
+
+func findFieldTypeLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if sci == nil {
+		return 0, 0
+	}
+	// Path: msgPath + [2, fieldIdx, 5] where 2=field, 5=type
+	target := append(append([]int32{}, msgPath...), 2, int32(fieldIdx), 5)
+	for _, loc := range sci.GetLocation() {
+		path := loc.GetPath()
+		if len(path) == len(target) {
+			match := true
+			for i := range path {
+				if path[i] != target[i] {
+					match = false
+					break
+				}
+			}
+			if match {
+				span := loc.GetSpan()
+				if len(span) >= 2 {
+					return int(span[0]) + 1, int(span[1]) + 1
+				}
+			}
+		}
+	}
+	return 0, 0
+}
+
 func collectProto3MessageErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	collectProto3RequiredErrors(filename, msg, msgPath, sci, errs)
 	collectProto3DefaultErrors(filename, msg, msgPath, sci, errs)
 	for i, e := range msg.GetEnumType() {
 		collectProto3EnumZeroErrors(filename, e, append(append([]int32{}, msgPath...), 4, int32(i)), sci, errs)
