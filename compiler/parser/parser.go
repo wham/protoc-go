@@ -244,6 +244,14 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 			if err != nil {
 				return nil, err
 			}
+			if field.Proto3Optional != nil && *field.Proto3Optional {
+				syntheticName := "_" + field.GetName()
+				field.OneofIndex = proto.Int32(oneofIdx)
+				msg.OneofDecl = append(msg.OneofDecl, &descriptorpb.OneofDescriptorProto{
+					Name: proto.String(syntheticName),
+				})
+				oneofIdx++
+			}
 			msg.Field = append(msg.Field, field)
 			fieldIdx++
 		}
@@ -376,6 +384,9 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 		lt := p.tok.Next()
 		labelTok = &lt
 		field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+		if p.syntax == "proto3" {
+			field.Proto3Optional = proto.Bool(true)
+		}
 	case "repeated":
 		lt := p.tok.Next()
 		labelTok = &lt
