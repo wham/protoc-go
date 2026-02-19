@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 663/663 tests passing.
+ALL DONE — 668/668 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -183,6 +183,7 @@ ALL DONE — 663/663 tests passing.
 121. ✅ Nested oneof error message — when `oneof` is used inside another `oneof` block, produce `Missing field number.` error (matching C++ protoc) instead of generic `expected "=", got "{"` by checking for `=` before consuming it in `parseField`
 122. ✅ Multiline string rejection — tokenizer detects `\n` inside string literals and reports `Multiline strings are not allowed. Did you miss a "?.` error, terminates string at newline. Parser merges tokenizer errors with parser errors sorted by position. `Expect` format updated to `Expected "X".` matching C++ protoc.
 123. ✅ Undefined RPC type validation — `ResolveTypes` now checks for undefined types in RPC input/output (not just enum-as-RPC), and `resolveMessageFieldsWithErrors` checks for undefined field types during resolution, reporting `"X" is not defined.` errors with SCI location
+136. ✅ Jstype non-int64 field validation — reject `[jstype = JS_STRING]` etc. on fields that are not int64, uint64, sint64, fixed64, or sfixed64 with `jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.` error at field type SCI location, checks message fields, file-level and message-level extensions, recurses into nested messages
 
 ## Notes
 
@@ -286,3 +287,4 @@ ALL DONE — 663/663 tests passing.
 - Enum default value validation: C++ protoc rejects enum fields with default values referencing nonexistent enum value names. Error format: `filename:line:col: Enum type "pkg.EnumName" has no value named "X".` Location from SCI path `[msgPath..., 2, fieldIdx, 7]` (field 7=default_value). Validated in `validateEnumDefaultValues` (cli.go) with `collectEnumDefaultErrors` recursing into nested messages. Builds `enumValues` map of enum FQN → value name set across all files. Placed before proto3 validation in the validation chain.
 - Packed option validation: C++ protoc rejects `[packed = true]` on non-repeated fields or non-primitive types (string, bytes, message, group) with `[packed = true] can only be specified for repeated primitive fields.` error at field TYPE location (SCI path `[..., 5]` for field type, not field span). Packable types: int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64, float, double, bool, enum. Validated in `validatePackedNonRepeated` (cli.go) with `collectPackedErrors` recursing into nested messages. Also checks file-level and message-level extensions.
 - Lazy option validation: C++ protoc rejects `[lazy = true]` on non-submessage fields with `[lazy = true] can only be specified for submessage fields.` error at field TYPE location (SCI path `[..., 5]`). Only TYPE_MESSAGE and TYPE_GROUP are allowed. Validated in `validateLazyNonMessage` (cli.go) with `collectLazyErrors` recursing into nested messages. Also checks file-level and message-level extensions. Same pattern as packed validation.
+- Jstype non-int64 validation: C++ protoc rejects `jstype` option on non-int64-family fields with `jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.` error at field TYPE location (SCI path `[..., 5]`). Allowed types: TYPE_INT64, TYPE_UINT64, TYPE_SINT64, TYPE_FIXED64, TYPE_SFIXED64. Validated in `validateJstypeNonInt64` (cli.go) with `collectJstypeErrors` recursing into nested messages. Also checks file-level and message-level extensions. Same pattern as packed/lazy validation.
