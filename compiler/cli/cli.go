@@ -187,6 +187,11 @@ func Run(args []string) error {
 		parser.ResolveTypes(parsed[name], parsed)
 	}
 
+	// Validate proto3 constraints
+	if errs := validateProto3(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Build ordered list of FileDescriptorProtos
 	var protoFiles []*descriptorpb.FileDescriptorProto
 	for _, name := range orderedFiles {
@@ -410,5 +415,67 @@ func parseArgs(args []string) (*config, error) {
 	}
 
 	return cfg, nil
+}
+
+// validateProto3 checks proto3-specific constraints and returns error strings.
+func validateProto3(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "proto3" {
+			continue
+		}
+		for _, msg := range fd.GetMessageType() {
+			collectProto3DefaultErrors(fd.GetName(), msg, fd.GetSourceCodeInfo(), &errs)
+		}
+	}
+	return errs
+}
+
+func collectProto3DefaultErrors(filename string, msg *descriptorpb.DescriptorProto, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for _, field := range msg.GetField() {
+		if field.DefaultValue != nil {
+			line, col := findDefaultValueLocation(field, msg, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Explicit default values are not allowed in proto3.", filename, line, col))
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		collectProto3DefaultErrors(filename, nested, sci, errs)
+	}
+}
+
+func findDefaultValueLocation(field *descriptorpb.FieldDescriptorProto, msg *descriptorpb.DescriptorProto, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if sci == nil {
+		return 0, 0
+	}
+	// Find field index in message
+	fieldIdx := -1
+	for i, f := range msg.GetField() {
+		if f == field {
+			fieldIdx = i
+			break
+		}
+	}
+	if fieldIdx < 0 {
+		return 0, 0
+	}
+	// Search for source code info location with path ending in [2, fieldIdx, 7]
+	// where 7 = default_value field number of FieldDescriptorProto
+	for _, loc := range sci.GetLocation() {
+		path := loc.GetPath()
+		if len(path) >= 3 &&
+			path[len(path)-1] == 7 &&
+			path[len(path)-2] == int32(fieldIdx) &&
+			path[len(path)-3] == 2 {
+			span := loc.GetSpan()
+			if len(span) >= 2 {
+				return int(span[0]) + 1, int(span[1]) + 1
+			}
+		}
+	}
+	return 0, 0
 }
 
