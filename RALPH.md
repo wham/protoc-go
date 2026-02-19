@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 323/323 tests passing.
+ALL DONE — 328/328 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -119,6 +119,7 @@ ALL DONE — 323/323 tests passing.
 69. ✅ Duplicate package declaration validation — reject second `package` statement with `Multiple package definitions.` error at duplicate `package` keyword position (1-indexed line:col, no filename prefix since CLI adds it)
 70. ✅ Late syntax/edition rejection — reject `syntax` or `edition` statements that appear after any other non-syntax statement (e.g., `package`) with `Expected top-level statement` error, using error recovery to continue parsing and collect subsequent errors (e.g., missing labels in proto2 mode)
 71. ✅ Octal/hex integer default value normalization — convert octal (`0755`) and hex (`0xFF`) integer literals in `[default = ...]` to decimal strings to match C++ protoc behavior (`isIntegerType` + `normalizeIntDefault` helpers in parser.go)
+72. ✅ Adjacent string concatenation in field default values (`[default = "hello" " world"]`) — concatenate adjacent string tokens in `parseFieldOptions`, updating `valEnd` to last token's end position
 
 ## Notes
 
