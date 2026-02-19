@@ -738,6 +738,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go rejects valid proto2 oneof fields with: `Expected "required", "optional", or "repeated".` (exit 1). C++ protoc accepts the file and produces a valid descriptor (exit 0). Proto2 oneof fields must NOT have labels, but the Go parser requires labels for all proto2 fields — creating a dead-end where `parseOneof` rejects labels (line 1751-1753) but `parseField` requires them (line 762).
 - **Root cause:** `parser.go:756-762` — `parseField` checks `if p.syntax == "proto2"` and requires explicit labels. But oneof fields in proto2 are an exception — they must NOT have labels. When `parseOneof` calls `parseField` (line 1756), the field has no label, so `parseField` errors. The fix should skip the proto2 label requirement when parsing inside a oneof. Secondary bug: if the label issue is fixed, C++ protoc still accepts `[default = "hello"]` on oneof fields, but Go would need to handle it correctly too.
 
+### Run 83 — Duplicate imports (FAILED: 5/5 profiles)
+- **Test:** `89_duplicate_import` — proto3 file with `import "base.proto";` listed twice, referencing a base.proto with a Timestamp message
+- **Bug:** Go protoc-go silently accepts duplicate imports and stores `"base.proto"` twice in `fd.Dependency`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:1: Import "base.proto" was listed twice.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:275-276` — `parseImport` unconditionally appends `pathTok.Value` to `fd.Dependency` without checking if the import path already exists in the dependency list. No deduplication or duplicate detection. C++ protoc tracks imported files and rejects duplicates in `descriptor.cc`. Same issue applies to `import public` and `import weak` — importing the same file twice with different modifiers would also be silently accepted.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -760,4 +765,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Invalid edition value** — `edition = "2025"` — Go has editionMap check but C++ might differ
 - **Proto2 oneof fields** — TESTED in Run 82 (88_oneof_default), confirmed broken (label conflict makes proto2 oneofs unparseable)
 - **Proto2 oneof default values** — secondary bug behind the label issue (if label fix applied, default handling still differs)
-- **Duplicate imports** — `import "same.proto"; import "same.proto";` — Go likely lists file twice in dependency, C++ deduplicates
+- **Duplicate imports** — TESTED in Run 83 (89_duplicate_import), confirmed broken (no dedup, Go accepts, C++ rejects)
+- **Duplicate `import public`** — same file imported as both `import` and `import public` — Go likely accepts
+- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope — Go likely doesn't validate
