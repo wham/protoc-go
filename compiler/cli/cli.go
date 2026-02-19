@@ -315,6 +315,9 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 
 	fd, err := parser.ParseFile(filename, content)
 	if err != nil {
+		if me, ok := err.(*parser.MultiError); ok {
+			return me
+		}
 		return fmt.Errorf("%s:%w", filename, err)
 	}
 

@@ -12,17 +12,28 @@ import (
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 )
 
+// MultiError is an error containing multiple pre-formatted error messages.
+type MultiError struct {
+	Errors []string
+}
+
+func (e *MultiError) Error() string {
+	return strings.Join(e.Errors, "\n")
+}
+
 type parser struct {
 	tok       *tokenizer.Tokenizer
 	locations []*descriptorpb.SourceCodeInfo_Location
 	lastLine  int
 	lastCol   int
 	syntax    string // "proto2" or "proto3"
+	filename  string
+	errors    []string
 }
 
 // ParseFile parses a .proto file and returns a FileDescriptorProto.
 func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorProto, error) {
-	p := &parser{tok: tokenizer.New(content)}
+	p := &parser{tok: tokenizer.New(content), filename: filename}
 
 	fd := &descriptorpb.FileDescriptorProto{
 		Name: proto.String(filename),
@@ -98,6 +109,10 @@ func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorPro
 
 	fd.SourceCodeInfo = &descriptorpb.SourceCodeInfo{
 		Location: p.locations,
+	}
+
+	if len(p.errors) > 0 {
+		return nil, &MultiError{Errors: p.errors}
 	}
 
 	return fd, nil
@@ -744,6 +759,9 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 		labelTok = &lt
 		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum()
 	default:
+		if p.syntax == "proto2" {
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected \"required\", \"optional\", or \"repeated\".", p.filename, startTok.Line+1, startTok.Column+1))
+		}
 		field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
 	}
 
