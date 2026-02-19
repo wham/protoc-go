@@ -590,6 +590,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts the self-import and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:3:1: File recursively imports itself: test.proto -> test.proto` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parseRecursive()` in `compiler/cli/cli.go:326-355` checks if a file is already in the `parsed` map (line 327) and returns nil if so. For self-import, the file adds itself to `parsed` at line 344 before processing dependencies at line 347. When the self-import dependency is encountered, it's already in `parsed`, so it returns nil — no error. C++ protoc's `Importer` tracks "currently being imported" files separately from "already imported" files, detecting cycles in the import chain.
 
+### Run 64 — Circular import (two files) (FAILED: 5/5 profiles)
+- **Test:** `70_circular_import` — two proto3 files: `a.proto` imports `b.proto`, `b.proto` imports `a.proto` (mutual circular import)
+- **Bug:** Both C++ and Go detect the cycle and reject with exit code 1, but error messages differ significantly. C++ protoc produces 5 error lines (cycle detection + "not found or had errors" + unresolved types for both files). Go protoc-go produces only 1 error line (just the cycle detection for `b.proto`). C++ reports the cycle on `a.proto:5:1`, Go reports it on `b.proto:5:1`. C++ continues to report cascading errors (unresolved imports/types), Go stops after the first cycle error.
+- **Root cause:** `compiler/cli/cli.go:326-355` — `parseRecursive` detects the cycle correctly but returns a single error and stops. C++ protoc's import resolution continues processing after cycle detection, generating additional error messages for unresolved imports and undefined types. The Go implementation short-circuits on the first error rather than continuing to collect all errors.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -605,7 +610,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
 - **Self-referencing message** — type resolution may differ
 - **Package conflict** — two files with different packages imported together
-- **Circular import (two files)** — A imports B, B imports A — C++ detects cycle, Go likely doesn't
 - **Map key type `bytes`/`float`** — accepted by Go, rejected by C++
 - **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
 - **Hex default values** — `[default = 0x1F]` — same bug as octal defaults (raw text vs decimal)
@@ -615,3 +619,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
 - **Type name spaces in map value types** — `map<string, pkg . Msg>` — same span bug
 - **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
+- **Diamond import** — A imports B and C, both B and C import D — ordering/dedup may differ

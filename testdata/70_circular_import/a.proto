@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package circular;
+
+import "b.proto";
+
+message Request {
+  Response resp = 1;
+}
