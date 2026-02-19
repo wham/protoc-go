@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 673/673 tests passing.
+ALL DONE — 678/678 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -185,6 +185,7 @@ ALL DONE — 673/673 tests passing.
 123. ✅ Undefined RPC type validation — `ResolveTypes` now checks for undefined types in RPC input/output (not just enum-as-RPC), and `resolveMessageFieldsWithErrors` checks for undefined field types during resolution, reporting `"X" is not defined.` errors with SCI location
 136. ✅ Jstype non-int64 field validation — reject `[jstype = JS_STRING]` etc. on fields that are not int64, uint64, sint64, fixed64, or sfixed64 with `jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.` error at field type SCI location, checks message fields, file-level and message-level extensions, recurses into nested messages
 137. ✅ Undefined extension field type validation — reject extension fields referencing undefined types with `"X" is not defined.` error at type_name SCI location (path `[7, extIdx, 6]` for file-level, `[msgPath..., 6, extIdx, 6]` for message-level), added missing `else` branch in `ResolveTypes` and `resolveMessageFieldsWithErrorsPath`
+138. ✅ Hex escape digit limit — `\xHH` reads at most 2 hex digits (matching C++ protoc's `ParseStringAppend`), preventing greedy consumption of subsequent hex-valid characters (e.g., `\x4Eelson` → `Nelson` not `\x4Ee` + `lson`)
 
 ## Notes
 
