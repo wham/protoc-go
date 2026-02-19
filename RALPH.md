@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 228/228 tests passing.
+ALL DONE — 233/233 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -100,6 +100,7 @@ ALL DONE — 228/228 tests passing.
 50. ✅ Proto3 required field validation — reject `required` fields in proto3 with "Required fields are not allowed in proto3." error, location from TYPE SCI path
 51. ✅ Reserved field number validation — reject field numbers 19000-19999 with "Field numbers 19000 through 19999 are reserved for the protocol buffer library implementation." error (applies to all syntaxes, checks message fields, extensions, and nested messages)
 52. ✅ Duplicate field number validation — reject duplicate field numbers within a message with `Field number N has already been used in "pkg.Msg" by field "name".` error, location from SCI path for field number
+53. ✅ Non-positive field number validation — reject field numbers ≤ 0 with `Field numbers must be positive integers.` error and `Suggested field numbers for pkg.Msg: N` suggestion, location from SCI path for field number
 
 ## Notes
 
@@ -155,3 +156,4 @@ ALL DONE — 228/228 tests passing.
 - Proto3 required field validation: C++ protoc rejects `required` fields in proto3. Validated in `collectProto3RequiredErrors` (cli.go). Error location from SCI path `[msgPath..., 2, fieldIdx, 5]` (field 5=type in FieldDescriptorProto). In `collectProto3MessageErrors`, required errors are collected before default value errors to match C++ protoc ordering.
 - Reserved field number validation: C++ protoc rejects field numbers 19000-19999 (kFirstReservedNumber through kLastReservedNumber) in ALL syntaxes (proto2, proto3, editions). Error format is `filename: Field numbers 19000 through 19999 are reserved for the protocol buffer library implementation.` (no line:col). Validated in `validateReservedFieldNumbers` (cli.go). Checks message fields, file-level extensions, message-level extensions, and recurses into nested messages.
 - Duplicate field number validation: C++ protoc rejects duplicate field numbers within a message. Error format is `filename:line:col: Field number N has already been used in "pkg.Msg" by field "name".` Location from SCI path `[msgPath..., 2, fieldIdx, 3]` (field 3=number in FieldDescriptorProto). Validated in `validateDuplicateFieldNumbers` (cli.go). Recurses into nested messages, skips map entry types.
+- Non-positive field number validation: C++ protoc rejects field numbers ≤ 0 with two error lines: `Field numbers must be positive integers.` and `Suggested field numbers for pkg.Msg: N` where N is the smallest available positive integer. Location from SCI path `[msgPath..., 2, fieldIdx, 3]`. Validated in `validatePositiveFieldNumbers` (cli.go) before reserved number validation. `suggestFieldNumber` finds the smallest unused positive field number in the message.
