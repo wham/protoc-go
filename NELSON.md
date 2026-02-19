@@ -166,6 +166,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Message body parser (lines 214-277) has no `case ";"`. The `;` falls to the `default` case at line 261, which calls `parseField()`. `parseField` tries to interpret `;` as a type name and fails. C++ protoc allows empty statements inside all body types per the language spec (`emptyStatement = ";"`).
 - **Root cause:** `parser.go:214-277` — message body switch handles `message`, `enum`, `oneof`, `map`, `reserved`, `option`, `extensions` but not `";"`. Same issue in enum body and service body parsers. File-level fix (Run 17, line 80-82) was not applied to inner body parsers.
 
+### Run 19 — Message reserved "to max" (FAILED: 5/5 profiles)
+- **Test:** `25_reserved_max` — proto3 message with `reserved 100 to max;`
+- **Bug:** `parseMessageReserved()` at lines 340-353 handles `to` keyword but always calls `ExpectInt()` for the end value. Unlike `parseExtensionRange()` (line 408) which checks for `max`, the reserved range parser does not. When `max` (an identifier token) is encountered, `ExpectInt()` fails with "expected integer, got 'max'". C++ protoc accepts `reserved N to max;` and sets end to 536870912 (exclusive sentinel = 2^29).
+- **Root cause:** `parser.go:340-353` — `parseMessageReserved` is missing the `if p.tok.Peek().Value == "max"` check that exists in `parseExtensionRange` at lines 408-415. The `max` keyword is only handled for extension ranges, not for message reserved ranges.
+
 ### Known gaps still unexplored (updated):
 - **Empty statements inside oneof bodies** — likely also broken (same missing `;` case in parseOneof)
 - **Oneof options** — not tested (oneof-level options likely skipped at line 1256-1260)
@@ -177,3 +182,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Map field with enum value type** — `map<string, SomeEnum>` might resolve to TYPE_MESSAGE instead of TYPE_ENUM in the synthetic entry
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth
 - **Type shadowing** — same nested type name in different parent messages
+- **Message reserved `to max`** — TESTED in Run 19 (25_reserved_max), confirmed broken (no `max` handling in parseMessageReserved)
