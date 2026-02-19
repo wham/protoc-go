@@ -9,6 +9,7 @@ import (
 	"github.com/wham/protoc-go/compiler/importer"
 	"github.com/wham/protoc-go/compiler/parser"
 	"github.com/wham/protoc-go/compiler/plugin"
+	"github.com/wham/protoc-go/io/tokenizer"
 	"google.golang.org/protobuf/proto"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 )
@@ -174,11 +175,12 @@ func Run(args []string) error {
 
 	// Parse all proto files
 	parsed := make(map[string]*descriptorpb.FileDescriptorProto)
+	explicitJsonNames := make(map[*descriptorpb.FieldDescriptorProto]bool)
 	var orderedFiles []string
 	var collectErrors []string
 
 	for _, f := range relFiles {
-		ok, err := parseRecursive(f, srcTree, parsed, &orderedFiles, nil, &collectErrors)
+		ok, err := parseRecursive(f, srcTree, parsed, explicitJsonNames, &orderedFiles, nil, &collectErrors)
 		if err != nil {
 			return err
 		}
@@ -285,7 +287,7 @@ func Run(args []string) error {
 	}
 
 	// Validate JSON name conflicts
-	if errs := validateJsonNameConflicts(orderedFiles, parsed); len(errs) > 0 {
+	if errs := validateJsonNameConflicts(orderedFiles, parsed, explicitJsonNames); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
@@ -375,7 +377,7 @@ func Run(args []string) error {
 	return nil
 }
 
-func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles *[]string, importStack []string, collectErrors *[]string) (bool, error) {
+func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, orderedFiles *[]string, importStack []string, collectErrors *[]string) (bool, error) {
 	// Check for import cycles
 	for idx, f := range importStack {
 		if f == filename {
@@ -422,12 +424,17 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 		return false, err
 	}
 
-	fd, err := parser.ParseFile(filename, content)
+	result, err := parser.ParseFile(filename, content)
 	if err != nil {
 		if me, ok := err.(*parser.MultiError); ok {
 			return false, me
 		}
 		return false, fmt.Errorf("%s:%w", filename, err)
+	}
+
+	fd := result.FD
+	for f := range result.ExplicitJsonNames {
+		explicitJsonNames[f] = true
 	}
 
 	parsed[filename] = fd
@@ -436,7 +443,7 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 	newStack := append(importStack, filename)
 	failedDeps := map[string]bool{}
 	for _, dep := range fd.GetDependency() {
-		ok, err := parseRecursive(dep, srcTree, parsed, orderedFiles, newStack, collectErrors)
+		ok, err := parseRecursive(dep, srcTree, parsed, explicitJsonNames, orderedFiles, newStack, collectErrors)
 		if err != nil {
 			return false, err
 		}
@@ -1087,31 +1094,59 @@ func nextAvailableEnumValue(e *descriptorpb.EnumDescriptorProto) int32 {
 	}
 }
 
-// validateJsonNameConflicts checks that no two fields in a message have conflicting default JSON names.
-func validateJsonNameConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+// validateJsonNameConflicts checks that no two fields in a message have conflicting JSON names.
+// C++ protoc runs two passes: one for default-only names, one considering custom json_names.
+func validateJsonNameConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool) []string {
 	var errs []string
 	for _, name := range orderedFiles {
 		fd := parsed[name]
 		for i, msg := range fd.GetMessageType() {
-			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, false, &errs)
+			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, true, &errs)
 		}
 	}
 	return errs
 }
 
-func collectJsonNameConflictErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
-	// Map default JSON name -> first field name
-	seen := make(map[string]string)
+type jsonNameEntry struct {
+	fieldName string
+	jsonName  string
+	isCustom  bool
+}
+
+func collectJsonNameConflictErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, useCustom bool, errs *[]string) {
+	seen := make(map[string]jsonNameEntry)
 	for i, field := range msg.GetField() {
-		jsonName := field.GetJsonName()
-		if firstName, ok := seen[jsonName]; ok {
-			// Find location of the second field's name
+		defaultJsonName := tokenizer.ToJSONName(field.GetName())
+		isCustom := false
+		jsonName := defaultJsonName
+		if useCustom && explicitJsonNames[field] && field.GetJsonName() != defaultJsonName {
+			jsonName = field.GetJsonName()
+			isCustom = true
+		}
+		if match, ok := seen[jsonName]; ok {
+			if useCustom && !isCustom && !match.isCustom {
+				// Both are default names — already reported by the non-custom pass
+				continue
+			}
 			namePath := append(append([]int32{}, msgPath...), 2, int32(i), 1)
 			line, col := findLocationByPath(namePath, sci)
-			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: The default JSON name of field \"%s\" (\"%s\") conflicts with the default JSON name of field \"%s\".",
-				filename, line, col, field.GetName(), jsonName, firstName))
+			thisType := "default"
+			if isCustom {
+				thisType = "custom"
+			}
+			existingType := "default"
+			if match.isCustom {
+				existingType = "custom"
+			}
+			nameSuffix := ""
+			if jsonName != match.jsonName {
+				nameSuffix = fmt.Sprintf(" (\"%s\")", match.jsonName)
+			}
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: The %s JSON name of field \"%s\" (\"%s\") conflicts with the %s JSON name of field \"%s\"%s.",
+				filename, line, col, thisType, field.GetName(), jsonName, existingType, match.fieldName, nameSuffix))
 		} else {
-			seen[jsonName] = field.GetName()
+			seen[jsonName] = jsonNameEntry{fieldName: field.GetName(), jsonName: jsonName, isCustom: isCustom}
 		}
 	}
 	for i, nested := range msg.GetNestedType() {
@@ -1119,7 +1154,7 @@ func collectJsonNameConflictErrors(filename string, msg *descriptorpb.Descriptor
 			continue
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
-		collectJsonNameConflictErrors(filename, nested, nestedPath, sci, errs)
+		collectJsonNameConflictErrors(filename, nested, nestedPath, sci, explicitJsonNames, useCustom, errs)
 	}
 }
 

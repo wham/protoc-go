@@ -36,11 +36,18 @@ type parser struct {
 	filename     string
 	errors       []string
 	inOneof      bool
+	explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool
 }
 
-// ParseFile parses a .proto file and returns a FileDescriptorProto.
-func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorProto, error) {
-	p := &parser{tok: tokenizer.New(content), filename: filename, syntax: "proto2", seenFileOptions: map[string]bool{}, seenImports: map[string]bool{}}
+// ParseResult holds the result of parsing a .proto file.
+type ParseResult struct {
+	FD                *descriptorpb.FileDescriptorProto
+	ExplicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool
+}
+
+// ParseFile parses a .proto file and returns a ParseResult.
+func ParseFile(filename string, content string) (*ParseResult, error) {
+	p := &parser{tok: tokenizer.New(content), filename: filename, syntax: "proto2", seenFileOptions: map[string]bool{}, seenImports: map[string]bool{}, explicitJsonNames: map[*descriptorpb.FieldDescriptorProto]bool{}}
 
 	fd := &descriptorpb.FileDescriptorProto{
 		Name: proto.String(filename),
@@ -148,7 +155,7 @@ func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorPro
 		return nil, &MultiError{Errors: p.errors}
 	}
 
-	return fd, nil
+	return &ParseResult{FD: fd, ExplicitJsonNames: p.explicitJsonNames}, nil
 }
 
 func (p *parser) parseSyntax(fd *descriptorpb.FileDescriptorProto) error {
@@ -2245,6 +2252,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				return nil, fmt.Errorf("%d:%d: Expected string for JSON name.", valTok.Line+1, valTok.Column+1)
 			}
 			field.JsonName = proto.String(valTok.Value)
+			p.explicitJsonNames[field] = true
 		case "deprecated":
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
