@@ -337,6 +337,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];` — parser doesn't handle options after ranges
 - **Proto3 validation gaps** — proto3 with `required` label TESTED in Run 37, reserved field numbers TESTED in Run 38. Proto3 with groups — likely also accepted by Go but rejected by C++.
 - **Type name source code info with spaces** — `Outer . Inner` (spaces around dots) — Go computes span from concatenated string length, C++ uses actual token positions
-- **Duplicate field numbers** — Go likely accepts, C++ rejects
+- **Duplicate field numbers** — TESTED in Run 39 (45_duplicate_field_number), confirmed broken (Go accepts, C++ rejects)
 - **Field number 0** — Go likely accepts, C++ rejects (field numbers must be positive)
 - **Field number > 2^29-1** — Go likely accepts, C++ rejects (max field number is 536870911)
+
+### Run 39 — Duplicate field numbers (FAILED: 5/5 profiles)
+- **Test:** `45_duplicate_field_number` — proto3 message with two fields both using field number 1 (`string name = 1;` and `int32 id = 1;`)
+- **Bug:** Go protoc-go silently accepts duplicate field numbers and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:14: Field number 1 has already been used in "dupfield.User" by field "name".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that each field number is unique within a message. The Go `descriptor/pool.go` is an empty stub with no duplicate field number checking. The parser stores all fields regardless of number conflicts.
