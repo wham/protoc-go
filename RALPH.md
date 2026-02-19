@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 458/458 tests passing.
+ALL DONE — 463/463 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -144,6 +144,7 @@ ALL DONE — 458/458 tests passing.
 94. ✅ Proto2 oneof fields — skip "must have label" check for fields inside oneof blocks (set `inOneof` flag on parser)
 95. ✅ Duplicate import validation — reject importing the same file twice with `Import "X" was listed twice.` error at import keyword position, using `seenImports` map in parser
 96. ✅ Enum-valued file option validation — reject string values for `optimize_for` with `Value must be identifier for enum-valued option "google.protobuf.FileOptions.optimize_for".` error at value token position
+97. ✅ JSON name conflict validation — reject fields whose default JSON names (camelCase) conflict with `The default JSON name of field "X" ("jsonName") conflicts with the default JSON name of field "Y".` error at second field's name location, recurses into nested messages, skips map entry types
 
 ## Notes
 
