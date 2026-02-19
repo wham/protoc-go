@@ -2262,9 +2262,8 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 					return nil, err
 				}
 			} else {
-				if err := p.skipStatement(); err != nil {
-					return nil, err
-				}
+				tok := p.tok.Peek()
+				return nil, fmt.Errorf("%d:%d: Expected \"option\".", tok.Line+1, tok.Column+1)
 			}
 		}
 		endTok = p.tok.Next() // consume "}"
