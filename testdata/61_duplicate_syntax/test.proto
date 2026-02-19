@@ -1,0 +1,9 @@
+syntax = "proto3";
+syntax = "proto3";
+
+package dupsyntax;
+
+message Config {
+  string name = 1;
+  int32 value = 2;
+}

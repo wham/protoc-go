@@ -515,4 +515,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Duplicate field names across message and enum** — enum value `FOO` + field `FOO` in same scope may conflict differently
 - **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
 - **Empty oneof** — TESTED in Run 54 (60_empty_oneof), confirmed broken (Go accepts, C++ rejects)
-- **Duplicate syntax statements** — `syntax = "proto3"; syntax = "proto3";` — C++ rejects, Go likely accepts
+- **Duplicate syntax statements** — TESTED in Run 55 (61_duplicate_syntax), confirmed broken (Go accepts, C++ rejects)
+- **Duplicate package statements** — `package foo; package bar;` — C++ likely rejects, Go likely accepts
+- **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts
+
+### Run 55 — Duplicate syntax statements (FAILED: 5/5 profiles)
+- **Test:** `61_duplicate_syntax` — proto3 file with two `syntax = "proto3";` statements followed by a package and message
+- **Bug:** Go protoc-go silently accepts duplicate syntax statements and produces a valid descriptor (exit 0). C++ protoc rejects the second `syntax` with: `test.proto:2:1: Expected top-level statement (e.g. "message").` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:54-57` — the `case "syntax"` in the file-level parser switch calls `parseSyntax()` every time, which just overwrites `p.syntax` and `fd.Syntax`. No flag tracks whether syntax has already been set. C++ protoc only allows `syntax` as the very first statement in a file — after it's been parsed, the parser no longer accepts it as a valid top-level statement.
