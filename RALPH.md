@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 638/638 tests passing.
+ALL DONE — 643/643 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -169,6 +169,7 @@ ALL DONE — 638/638 tests passing.
 129. ✅ String default value rejection for float/double fields — reject string literals (e.g., `[default = "1.5"]`) as default values for TYPE_FLOAT/TYPE_DOUBLE fields with `Expected number.` error at value token position, using error recovery to continue parsing
 130. ✅ Enum default value validation — reject enum fields with `[default = NONEXISTENT]` where NONEXISTENT is not a valid enum value name, with `Enum type "pkg.EnumName" has no value named "X".` error at default value SCI location (path `[msgPath..., 2, fieldIdx, 7]`), builds enum FQN → value names map across all files, recurses into nested messages
 131. ✅ Adjacent string concatenation in syntax/edition declarations (`syntax = "proto" "3";`) — reuse same pattern as file options, consuming adjacent TokenString tokens and concatenating values
+132. ✅ Adjacent string concatenation in import statements (`import "base" ".proto";`) — consume adjacent TokenString tokens after import path and concatenate, same pattern as file options/syntax/edition
 114. ✅ Extension range options (`[verification = UNVERIFIED]`) — parse options on extension ranges, set `ExtensionRangeOptions` with verification field, SCI entries for options bracket and individual options, source retention stripping for `proto_file` and descriptor_set (keep full options only in `source_file_descriptors`)
 115. ✅ RPC enum type validation — reject enum types used as RPC input/output types with `"X" is not a message type.` error at type reference location, checked during `ResolveTypes` using original unresolved name
 116. ✅ Negative field number error message — peek for non-integer token after `=` in field number parsing, produce `Expected field number.` error matching C++ protoc (instead of generic `expected integer` from tokenizer)
