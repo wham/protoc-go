@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 718/718 tests passing.
+ALL DONE — 723/723 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -194,6 +194,7 @@ ALL DONE — 718/718 tests passing.
 144. ✅ Repeated field default value validation — reject `[default = ...]` on repeated fields with `Repeated fields can't have default values.` error at default value SCI location (path `[msgPath..., 2, fieldIdx, 7]`), recurses into nested messages, skips map entry types
 145. ✅ Negative enum reserved ranges — handle `-` sign before integers in enum `reserved` declarations (e.g., `reserved -20 to -15; reserved -5;`), correct SCI spans for negative start/end values, single negative value end span uses minus token only (matching C++ protoc `start_token.EndAt` behavior)
 146. ✅ Message/group default value validation — reject `[default = ...]` on message/group-typed fields with `Messages can't have default values.` error at default value SCI location, parser accepts defaults on named (unresolved) types at parse time and defers validation to post-resolution phase
+147. ✅ Unsigned negative default value validation — reject negative default values on unsigned fields (uint32, uint64, fixed32, fixed64) with `Unsigned field can't have negative default value.` error at integer token position (not minus sign), matching C++ parser.cc `TryConsume("-")` + `RecordError` pattern
 
 ## Notes
 
@@ -302,3 +303,4 @@ ALL DONE — 718/718 tests passing.
 - Repeated field default value validation: C++ protoc rejects `[default = ...]` on repeated fields with `Repeated fields can't have default values.` error at default value position. Location from SCI path `[msgPath..., 2, fieldIdx, 7]` (field 7=default_value). Validated in `validateRepeatedDefault` (cli.go) with `collectRepeatedDefaultErrors` recursing into nested messages. Skips map entry types. Placed before enum default value validation in the validation chain.
 - Negative enum reserved ranges: `reserved -20 to -15; reserved -5;` — handle `-` sign before integer in `parseEnumReserved`. For single negative values (no `to`), the END field SCI span covers only the `-` token (matching C++ protoc's `end_location.StartAt(start_token); end_location.EndAt(start_token)` pattern where `start_token` is the `-` token captured before `ConsumeSignedInteger`). For ranges with `to`, both start and end spans include the full negative number (minus + digits). `startMinusTok`/`endMinusTok` track minus sign positions.
 - Message/group default value validation: C++ protoc rejects default values on message/group-typed fields with `Messages can't have default values.` at the default value SCI location (path `[msgPath..., 2, fieldIdx, 7]`). The C++ PARSER accepts any default value when `!field->has_type()` (named type reference, not yet resolved). The error comes from `descriptor.cc` during cross-linking when the resolved type is CPPTYPE_MESSAGE. Go implementation mirrors this: parser.go checks `field.Type == nil` and accepts default as-is; cli.go's `validateMessageDefault` checks after type resolution for TYPE_MESSAGE/TYPE_GROUP with DefaultValue set.
+- Unsigned negative default validation: C++ protoc rejects negative defaults on unsigned fields (uint32, uint64, fixed32, fixed64) in parser.cc via `TryConsume("-")` + `RecordError`. Error reported at the integer token position (after consuming `-`), not at the minus sign. Go implementation adds `isUnsignedType` check in `parseFieldOptions` (parser.go) using `p.errors` error recovery. Error format: `filename:line:col: Unsigned field can't have negative default value.`
