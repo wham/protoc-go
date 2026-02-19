@@ -984,8 +984,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseMapField()` at line 1840-1842 checks if the key type is in `builtinTypes`. Since `Priority` is not a builtin type, Go rejects with `"invalid map key type: Priority"` at parse time. C++ protoc also rejects (enum keys are not valid per the protobuf spec), but with a different error message: `"Key in map fields cannot be enum types."` at validation time. Both exit 1, but stderr differs.
 - **Root cause:** `parser.go:1840-1842` — Go rejects non-builtin key types at parse time with a generic error. C++ protoc accepts the type during parsing, resolves it during linking, then validates in `descriptor.cc` with a specific error mentioning "enum types". The error message format also differs: Go has no line:column prefix (`test.proto:invalid map key type: Priority`), C++ has line:column (`test.proto:14:3: Key in map fields cannot be enum types.`). Additionally, Go's approach of rejecting non-builtins at parse time is overly restrictive — if protobuf ever allowed enum keys, Go would need parser changes while C++ would only need a validation change.
 
+### Run 104 — Extension range options (FAILED: 5/5 profiles)
+- **Test:** `110_extension_range_options` — proto2 message with `extensions 100 to 199 [verification = UNVERIFIED];` (extension range with options)
+- **Bug:** Go protoc-go rejects the `[` token after the range with: `expected ";", got "["` (exit 1). C++ protoc accepts it and produces a valid descriptor with `ExtensionRangeOptions` containing `verification = UNVERIFIED` (exit 0). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:623-630` — after parsing extension range numbers, the parser checks for `,` (another range) or breaks to expect `;`. There is no handling for `[` to parse `ExtensionRangeOptions`. C++ protoc's parser checks for `[` after ranges and calls `ParseExtensionRangeOptions` to read key-value options into the `ExtensionRange.options` field. The Go parser needs to add `[...]` option parsing between the range loop exit (line 628) and the `;` expectation (line 630).
+
 ### Known gaps still unexplored (updated):
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];` — Go parser doesn't handle options after ranges
 - **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
 - **Self-referencing message** — type resolution may differ
 - **Package conflict** — two files with different packages imported together
@@ -1003,3 +1007,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Duplicate `import public`** — same file imported via `import` and `import public`
 - **Map field with message key type** — `map<MyMsg, string>` — Go rejects at parse time, C++ at validation with different error
 - **message_set_wire_format + extensions to max** — Go uses INT32_MAX (2147483647), C++ uses 536870912 for `max` sentinel
+- **Extension range options** — TESTED in Run 104 (110_extension_range_options), confirmed broken (Go rejects `[...]` after ranges)
