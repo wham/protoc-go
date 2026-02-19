@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 563/563 tests passing.
+ALL DONE — 568/568 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -164,6 +164,7 @@ ALL DONE — 563/563 tests passing.
 114. ✅ Extension range options (`[verification = UNVERIFIED]`) — parse options on extension ranges, set `ExtensionRangeOptions` with verification field, SCI entries for options bracket and individual options, source retention stripping for `proto_file` and descriptor_set (keep full options only in `source_file_descriptors`)
 115. ✅ RPC enum type validation — reject enum types used as RPC input/output types with `"X" is not a message type.` error at type reference location, checked during `ResolveTypes` using original unresolved name
 116. ✅ Negative field number error message — peek for non-integer token after `=` in field number parsing, produce `Expected field number.` error matching C++ protoc (instead of generic `expected integer` from tokenizer)
+117. ✅ Map keyword as type name — when `map` is used as a message type name (not `map<K,V>`), check `PeekAt(1)` for `<` to distinguish map fields from regular fields typed `map`
 
 ## Notes
 
@@ -258,3 +259,4 @@ ALL DONE — 563/563 tests passing.
 - Map enum key type validation: C++ protoc allows non-builtin key types through parsing (resolves them during linking), then validates at descriptor level. Go parser now does the same — stores non-builtin key types as TYPE_MESSAGE with TypeName, type resolution updates to TYPE_ENUM. `collectMapKeyTypeErrors` checks TYPE_ENUM separately with distinct error message "Key in map fields cannot be enum types." (vs "float/double, bytes or message types" for others).
 - Extension range options: `extensions 100 to 199 [verification = UNVERIFIED];` — parse `[key = value]` options after extension ranges in `parseExtensionRange`. Sets `ExtensionRangeOptions` on each range. `verification` is field 3 of `ExtensionRangeOptions` (DECLARATION=0, UNVERIFIED=1, default=UNVERIFIED). SCI entries: `[msgPath..., 5, rangeIdx, 3]` for options bracket span (includes `[` through `]`), `[msgPath..., 5, rangeIdx, 3, 3]` for verification key=value span. Source retention: `verification` and `declaration` fields have `retention = RETENTION_SOURCE`, so they're stripped from `proto_file` and descriptor_set output but kept in `source_file_descriptors`. `stripSourceRetention` in cli.go clones and strips; `isExtRangeOptsPath` matches SCI paths with pattern `4, N, [3, N]*, 5, N, 3[, ...]`. Also handles message-literal values (`declaration = { ... }`) by depth-counting `{}`.
 - RPC enum type validation: C++ protoc rejects enum types used as RPC input/output types with `"X" is not a message type.` error. The check is in `ResolveTypes` (parser.go) which now returns `[]string` errors. Uses the original unresolved name (before resolution) in the error message to match C++ protoc. Location from SCI path `[6, svcIdx, 2, methodIdx, 2]` for input type, `[6, svcIdx, 2, methodIdx, 3]` for output type. Also checked in `CheckUnresolvedTypes` for the circular import path.
+- Map keyword as type name: `map` can be used as a message type name (e.g., `message map { ... }` then `map data = 1;`). In the message body parser's `case "map":`, check `p.tok.PeekAt(1).Value == "<"` — if `<` follows, parse as map field; otherwise fall through to regular field parsing via `parseField`. Same pattern already used in `parseOneof` (line 1866).
