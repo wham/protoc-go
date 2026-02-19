@@ -679,8 +679,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts duplicate enum options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:10: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:1238` — `parseEnumOption` has no duplicate option tracking. Unlike `parseFileOption` (which has `seenFileOptions`) and `parseMessageOption` (which receives a `seenOptions` map), `parseEnumOption` unconditionally sets the option value without checking if it was already set. Same pattern applies to `parseServiceOption` and `parseMethodOption` — neither has duplicate tracking.
 
+### Run 76 — Duplicate service options (FAILED: 5/5 profiles)
+- **Test:** `82_duplicate_service_option` — proto3 service with `option deprecated = true;` followed by `option deprecated = false;`
+- **Bug:** Go protoc-go silently accepts duplicate service options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:10:10: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1475-1481` — `parseServiceOption` unconditionally sets `svc.Options.Deprecated` without checking if it was already set. No duplicate option tracking exists (no `seenOptions` map passed in). Same pattern as duplicate file-level options (Run 71), duplicate message options (Run 73), duplicate field options (Run 74), and duplicate enum options (Run 75).
+
 ### Known gaps still unexplored (updated):
-- **Duplicate service options** — `option deprecated = true; option deprecated = true;` — same pattern as enum options, no tracking
 - **Duplicate method options** — `option deprecated = true; option deprecated = true;` — same pattern, no tracking
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -700,3 +704,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts
 - **Extension number out of range** — extension using number outside declared range
 - **Proto3 optional inside nested messages** — synthetic oneof ordering bug would apply recursively
+- **Duplicate service options** — TESTED in Run 76 (82_duplicate_service_option), confirmed broken
