@@ -316,6 +316,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 	var reservedRangeIdx, reservedNameIdx int32
 	var extensionRangeIdx int32
 	var nestedExtIdx int32
+	seenMsgOptions := map[string]bool{}
 	// Track fields needing synthetic oneofs (deferred until after declared oneofs)
 	type syntheticOneof struct {
 		field *descriptorpb.FieldDescriptorProto
@@ -363,7 +364,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 				return nil, err
 			}
 		case "option":
-			if err := p.parseMessageOption(msg, path); err != nil {
+			if err := p.parseMessageOption(msg, path, seenMsgOptions); err != nil {
 				return nil, err
 			}
 		case "extend":
@@ -743,13 +744,18 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 	return nil
 }
 
-func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath []int32) error {
+func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath []int32, seenOptions map[string]bool) error {
 	startTok := p.tok.Next() // consume "option"
 	p.trackEnd(startTok)
 
 	nameTok := p.tok.Next()
 	p.trackEnd(nameTok)
 	optName := nameTok.Value
+
+	if seenOptions[optName] {
+		return fmt.Errorf("%d:%d: Option \"%s\" was already set.", nameTok.Line+1, nameTok.Column+1, optName)
+	}
+	seenOptions[optName] = true
 
 	if _, err := p.tok.Expect("="); err != nil {
 		return err
