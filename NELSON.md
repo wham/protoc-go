@@ -1384,6 +1384,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go tries to look up the integer as an enum value name, producing: `Enum type "intenumd.Priority" has no value named "0".` C++ protoc catches it earlier: `Default value for an enum field must be an identifier.` Both reject (exit 1), but error messages differ. C++ validates the token type (must be identifier), Go validates the value name (tries to find "0" in enum members).
 - **Root cause:** `parser.go:2763-2770` — when `field.Type == nil` (unresolved named type), the code accepts any token value and stores it. After type resolution, the enum validation in `cli.go` checks if the value name exists in the enum type. But it doesn't check if the token was an integer vs identifier. C++ protoc's `ParseDefaultAssignment` dispatches based on field type at parse time and calls `ConsumeIdentifier` for enum fields, rejecting integer tokens immediately. The fix: after type resolution reveals the field is an enum type, check that the default value token was an identifier, not an integer literal.
 
+### Run 143 — Labeled map fields (FAILED: 5/5 profiles)
+- **Test:** `149_labeled_map` — proto3 message with `repeated map<string, string> tags = 1;` (label on a map field)
+- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:6:15: Field labels (required/optional/repeated) are not allowed on map fields.` Go protoc-go: `test.proto:6:15: Expected identifier.` C++ recognizes `map<` after the label, parses the map field, then rejects the label with a domain-specific error. Go's message body switch sees `repeated` as the first token (not `map`), falls to the default case, calls `parseField`, which reads `map` as a type name (message reference), then expects a field name identifier but gets `<`.
+- **Root cause:** `parser.go:372` — `case "map":` only fires when `map` is the first token in the message body. When a label like `repeated` precedes it, the `default` case calls `parseField`. `parseField` reads `map` as a type name, then `ExpectIdent()` fails on `<`. C++ protoc's `ParseMessageField` reads the label first, then checks for `map<` as a type, handling both labeled and unlabeled map fields. The Go parser needs to check for `map<` inside `parseField` after consuming a label.
+
 ### Known gaps still unexplored (updated):
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
 - **Type shadowing** — same nested type name in different parent messages
@@ -1395,6 +1400,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
 - **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
 - **Negative extension range start** — `extensions -1 to 10;` — C++ rejects, Go may also reject differently
-- **Labeled map fields** — `repeated map<string, string> x = 1;` — both reject but different error messages
-- **Float default on bool** — TESTED in Run 141 (147_float_default_bool), confirmed broken (TokenFloat not checked)
-- **Integer default on enum field** — TESTED in Run 142 (148_int_default_enum), confirmed broken (Go looks up "0" as name, C++ rejects integer token)
+- **Labeled map fields** — TESTED in Run 143 (149_labeled_map), confirmed broken (Go gives "Expected identifier", C++ gives domain-specific label error)
+- **`optional map<...>` in proto3** — same issue, `optional` label + map<... gets wrong error
+- **`required map<...>` in proto2** — same issue
+- **Group name validation** — C++ requires group names start with uppercase, Go likely doesn't validate

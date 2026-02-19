@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package labeledmap;
+
+message Config {
+  repeated map<string, string> tags = 1;
+}
