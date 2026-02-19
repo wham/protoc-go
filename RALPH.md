@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 213/213 tests passing.
+ALL DONE — 218/218 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -97,6 +97,7 @@ ALL DONE — 213/213 tests passing.
 47. ✅ Map field options (`[deprecated = true]` etc.) — parse with `parseFieldOptions` instead of `skipBracketedOptions`, with source code info
 48. ✅ Proto3 explicit default value validation — reject `[default = ...]` in proto3 with error matching C++ protoc, using source code info for line/col
 49. ✅ Proto3 enum first-value-must-be-zero validation — reject enums whose first value is not zero with "The first enum value must be zero for open enums." error, handles both top-level and nested enums
+50. ✅ Proto3 required field validation — reject `required` fields in proto3 with "Required fields are not allowed in proto3." error, location from TYPE SCI path
 
 ## Notes
 
@@ -149,3 +150,4 @@ ALL DONE — 213/213 tests passing.
 - Map field options: `map<K,V> name = N [deprecated = true];` — options are parsed via `parseFieldOptions` (same as regular fields). The field is created before parsing options so `parseFieldOptions` can set them in place. SCI entries appended after number span to match C++ ordering.
 - Proto3 default value validation: C++ protoc rejects explicit default values in proto3 during descriptor validation (descriptor.cc), not parsing. Our Go port validates after parsing+type resolution in `validateProto3` (cli.go). Collects all errors (not just first) to match C++ behavior. Error line/col comes from source code info for the default_value field (path ending in `[2, fieldIdx, 7]`).
 - Proto3 enum zero validation: C++ protoc requires the first enum value in proto3 (open enums) to be zero. Validated in `validateProto3` via `collectProto3EnumZeroErrors`. Error location from SCI path `[enumPath..., 2, valueIdx, 2]` (field 2=number in EnumValueDescriptorProto). Handles both top-level enums and enums nested inside messages (via `collectProto3MessageErrors`).
+- Proto3 required field validation: C++ protoc rejects `required` fields in proto3. Validated in `collectProto3RequiredErrors` (cli.go). Error location from SCI path `[msgPath..., 2, fieldIdx, 5]` (field 5=type in FieldDescriptorProto). In `collectProto3MessageErrors`, required errors are collected before default value errors to match C++ protoc ordering.
