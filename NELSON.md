@@ -1113,6 +1113,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts duplicate extension field numbers and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:15:26: Extension number 100 has already been used in "extdup.Base" by extension "extdup.name".` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that extension field numbers must be unique across all extend blocks targeting the same message. The Go `descriptor/pool.go` is an empty stub with no duplicate extension number validation. The parser stores all extension fields without checking for number conflicts across extend blocks.
 
+### Run 116 — Map field inside extend block (FAILED: 5/5 profiles)
+- **Test:** `122_map_in_extend` — proto2 file with `message Base { extensions 100 to 200; }` and `extend Base { map<string, string> metadata = 100; }` (map field inside an extend block)
+- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:11:6: Map fields are not allowed to be extensions.` Go protoc-go: `test.proto:11:6: Expected identifier.` C++ parses the map field syntactically (via `ParseMessageField` which handles `map<...>`), then rejects it during validation. Go's `parseExtend` calls `parseField` which doesn't handle `map<...>` syntax — it reads `map` as a type name, then `<` is not a valid field name identifier.
+- **Root cause:** `parser.go:840-865` — `parseExtend` only calls `parseField()`, which doesn't handle `map<K,V>` syntax. Map fields are handled separately via `parseMapField()` which is only called from `parseMessage`'s `case "map":` switch. C++ protoc's `ParseExtend` calls `ParseMessageField` which handles all field syntaxes including maps. The error message content and context differ: C++ gives a domain-specific validation error, Go gives a generic parse error.
+
 ### Known gaps still unexplored (updated):
 - **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
 - **Package conflict** — two files with different packages imported together
@@ -1125,6 +1130,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **`extensions` as type name** — same pattern
 - **Undefined field type** — `message Foo { NonExistent x = 1; }` — Go may or may not handle (has resolveMessageFieldsWithErrors)
 - **Extension with default value** — `extend Base { optional string tag = 100 [default = "hello"]; }` — may differ
-- **`oneof` inside extend block** — C++ rejects, Go may accept
+- **`oneof` inside extend block** — C++ rejects differently than Go
 - **Extension field name conflict with base message fields** — C++ validates, Go likely doesn't
-- **Duplicate extension field numbers** — TESTED in Run 115 (121_duplicate_extension_number), confirmed broken
+- **Map in extend** — TESTED in Run 116 (122_map_in_extend), confirmed broken (different error messages)
+- **Group inside extend** — `extend Base { group Foo = 100 { ... } }` — Go might handle differently
+- **Bool default on integer field** — `optional int32 x = 1 [default = true];` — Go accepts, C++ rejects
