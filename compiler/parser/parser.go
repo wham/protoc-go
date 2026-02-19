@@ -1949,6 +1949,14 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		fd.Options = &descriptorpb.FileOptions{}
 	}
 
+	// Helper to validate boolean option values
+	validateBool := func(name string) error {
+		if valTok.Value != "true" && valTok.Value != "false" {
+			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FileOptions.%s\".", valTok.Line+1, valTok.Column+1, name)
+		}
+		return nil
+	}
+
 	// Map option name to FileOptions field number
 	var fieldNum int32
 	switch optName {
@@ -1959,6 +1967,9 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		fd.Options.JavaOuterClassname = proto.String(valTok.Value)
 		fieldNum = 8
 	case "java_multiple_files":
+		if err := validateBool("java_multiple_files"); err != nil {
+			return err
+		}
 		fd.Options.JavaMultipleFiles = proto.Bool(valTok.Value == "true")
 		fieldNum = 10
 	case "go_package":
@@ -1977,21 +1988,39 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		}
 		fieldNum = 9
 	case "cc_generic_services":
+		if err := validateBool("cc_generic_services"); err != nil {
+			return err
+		}
 		fd.Options.CcGenericServices = proto.Bool(valTok.Value == "true")
 		fieldNum = 16
 	case "java_generic_services":
+		if err := validateBool("java_generic_services"); err != nil {
+			return err
+		}
 		fd.Options.JavaGenericServices = proto.Bool(valTok.Value == "true")
 		fieldNum = 17
 	case "py_generic_services":
+		if err := validateBool("py_generic_services"); err != nil {
+			return err
+		}
 		fd.Options.PyGenericServices = proto.Bool(valTok.Value == "true")
 		fieldNum = 18
 	case "deprecated":
+		if err := validateBool("deprecated"); err != nil {
+			return err
+		}
 		fd.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 23
 	case "java_string_check_utf8":
+		if err := validateBool("java_string_check_utf8"); err != nil {
+			return err
+		}
 		fd.Options.JavaStringCheckUtf8 = proto.Bool(valTok.Value == "true")
 		fieldNum = 27
 	case "cc_enable_arenas":
+		if err := validateBool("cc_enable_arenas"); err != nil {
+			return err
+		}
 		fd.Options.CcEnableArenas = proto.Bool(valTok.Value == "true")
 		fieldNum = 31
 	case "php_namespace":
