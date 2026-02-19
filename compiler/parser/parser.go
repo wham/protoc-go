@@ -580,7 +580,13 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 
 	var valueIdx int32
 	for p.tok.Peek().Value != "}" {
-		if p.tok.Peek().Value == "option" || p.tok.Peek().Value == "reserved" {
+		if p.tok.Peek().Value == "option" {
+			if err := p.parseEnumOption(e, path); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if p.tok.Peek().Value == "reserved" {
 			if err := p.skipStatement(); err != nil {
 				return nil, err
 			}
@@ -647,6 +653,58 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 	p.locations[enumLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 
 	return e, nil
+}
+
+func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath []int32) error {
+	startTok := p.tok.Next() // consume "option"
+	p.trackEnd(startTok)
+
+	nameTok := p.tok.Next()
+	p.trackEnd(nameTok)
+	optName := nameTok.Value
+
+	if _, err := p.tok.Expect("="); err != nil {
+		return err
+	}
+
+	valTok := p.tok.Next()
+	p.trackEnd(valTok)
+
+	endTok, err := p.tok.Expect(";")
+	if err != nil {
+		return err
+	}
+	p.trackEnd(endTok)
+
+	if e.Options == nil {
+		e.Options = &descriptorpb.EnumOptions{}
+	}
+
+	var fieldNum int32
+	switch optName {
+	case "allow_alias":
+		e.Options.AllowAlias = proto.Bool(valTok.Value == "true")
+		fieldNum = 2
+	case "deprecated":
+		e.Options.Deprecated = proto.Bool(valTok.Value == "true")
+		fieldNum = 3
+	default:
+		return nil
+	}
+
+	// Source code info: [enumPath..., 3] for options, [enumPath..., 3, fieldNum] for specific option
+	optPath := append(copyPath(enumPath), 3)
+	span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+		Path: optPath,
+		Span: span,
+	})
+	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+		Path: append(copyPath(optPath), fieldNum),
+		Span: span,
+	})
+
+	return nil
 }
 
 func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProto, error) {
