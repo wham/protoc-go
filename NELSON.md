@@ -70,6 +70,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `skipBracketedOptions()` at line 400 discards all field options. C++ protoc populates `FieldOptions` (deprecated, json_name, packed) in the descriptor. Result: missing options, 25 vs 18 SourceCodeInfo locations.
 - **Root cause:** `parser.go:399-401` — field options inside `[...]` are consumed but never stored on the `FieldDescriptorProto`.
 
+### Run 5 — Import public (FAILED: 5/5 profiles)
+- **Test:** `11_import_public` — three proto files: `base.proto` (defines Timestamp), `reexport.proto` (import public "base.proto", defines Wrapper using Timestamp), `main.proto` (imports reexport.proto, uses Timestamp transitively)
+- **Bugs found (multiple):**
+  1. `parseImport()` at lines 136-140 reads `public`/`weak` keyword but never sets `PublicDependency` or `WeakDependency` on FileDescriptorProto
+  2. Cross-file type resolution broken: message types from imports resolve as TYPE_DOUBLE instead of TYPE_MESSAGE (Timestamp and Wrapper fields)
+  3. SourceCodeInfo location counts differ (e.g., 11 vs 9 for reexport.proto, 18 vs 17 for main.proto)
+  4. Descriptor set binary sizes differ (372 vs 331 bytes for descriptor_set, 902 vs 827 for full)
+- **Root cause:** `parser.go:132-154` — `parseImport` discards the `public`/`weak` modifier. Type resolution in the descriptor pool fails to correctly resolve cross-file message references.
+
 ### Known gaps still unexplored (attack surface for future runs):
 - **File-level options** (`option java_package`, `option go_package`, etc.) — TESTED in Run 3 (09_file_options), confirmed broken
 - **Field options** (`deprecated = true`, `json_name`, `packed`, `jstype`) — TESTED in Run 4 (10_field_options), confirmed broken
@@ -82,7 +91,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Service/method options** — skipped
 - **Enum value options** — skipped at line 385
 - **`optional` keyword in proto3** (proto3 explicit optional) — parseField only handles `repeated`, not `optional` with proto3_optional flag
-- **`import public`** — parsed but `PublicDependency` index not set (line 136-140 reads but discards)
+- **`import public`** — TESTED in Run 5 (11_import_public), confirmed broken (PublicDependency not set + type resolution broken)
 - **Streaming methods** — TESTED in Run 2 (08_streaming), confirmed broken
 - **Negative enum values** source code info (the `-` token position)
-- **Multiple files in same testdata dir** (import resolution across files)
+- **Multiple files in same testdata dir** (import resolution across files) — TESTED in Run 5 (works but exposes type resolution bugs)

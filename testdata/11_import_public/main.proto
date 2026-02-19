@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package importtest;
+
+import "reexport.proto";
+
+message Event {
+  string name = 1;
+  Timestamp created_at = 2;
+  Wrapper wrap = 3;
+}

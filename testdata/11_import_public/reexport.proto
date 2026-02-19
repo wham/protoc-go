@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package importtest;
+
+import public "base.proto";
+
+message Wrapper {
+  Timestamp ts = 1;
+}
