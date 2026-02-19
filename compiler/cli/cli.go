@@ -1027,7 +1027,17 @@ func findFieldTypeLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.Sour
 	return 0, 0
 }
 
+func collectProto3GroupErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, field := range msg.GetField() {
+		if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+			line, col := findFieldTypeLocation(msgPath, i, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Groups are not supported in proto3 syntax.", filename, line, col))
+		}
+	}
+}
+
 func collectProto3MessageErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	collectProto3GroupErrors(filename, msg, msgPath, sci, errs)
 	collectProto3RequiredErrors(filename, msg, msgPath, sci, errs)
 	collectProto3DefaultErrors(filename, msg, msgPath, sci, errs)
 	for i, e := range msg.GetEnumType() {
