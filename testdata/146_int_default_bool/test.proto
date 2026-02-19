@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package intbool;
+
+message Settings {
+  optional bool verbose = 1 [default = 1];
+  optional bool debug = 2 [default = 0];
+}

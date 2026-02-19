@@ -1368,3 +1368,22 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `145_default_overflow` — proto2 message with `optional int32 small = 1 [default = 99999999999];` (value exceeds int32 range)
 - **Bug:** Go protoc-go silently accepts the overflowed default value and stores `default_value = "99999999999"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:39: Integer out of range.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:2807-2834` — `case "default"` stores `valTok.Value` as the default value string without validating that the integer value fits within the field's type range. For `int32`, values must be within [-2147483648, 2147483647]. The raw string `"99999999999"` is stored directly as `default_value`. C++ protoc's `ParseDefaultAssignment` calls `ConsumeSignedInteger` which validates range. The Go parser should parse the integer and check range based on the field type (int32/int64/uint32/uint64/etc.).
+
+### Run 140 — Integer default value on bool field (FAILED: 5/5 profiles)
+- **Test:** `146_int_default_bool` — proto2 message with `optional bool verbose = 1 [default = 1];` and `optional bool debug = 2 [default = 0];` (integer literals instead of identifiers for bool field defaults)
+- **Bug:** Go protoc-go silently accepts integer literals `1`/`0` as default values for bool fields and stores `default_value = "1"` / `"0"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Expected "true" or "false".` and `test.proto:7:38: Expected "true" or "false".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:2782-2788` — bool field default validation only rejects `TokenString` tokens. Integer tokens (`TokenInt`) with value `1` or `0` pass through all validation checks and are stored as `default_value`. C++ protoc's `ParseDefaultAssignment` uses `ConsumeIdentifier` for bool fields, which only accepts identifier tokens `true`/`false`, rejecting integer and float tokens. Same category as Runs 108-110, 117-119 (default value type validation). The fix: add `|| valTok.Type == tokenizer.TokenInt || valTok.Type == tokenizer.TokenFloat` to the bool field validation check.
+
+### Known gaps still unexplored (updated):
+- **Float default on bool field** — `optional bool x = 1 [default = 1.0];` — same gap as integer default on bool
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **Missing message options** — `map_entry` (field 7)
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Error column positions** — many Go validation errors report wrong column
+- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
+- **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
+- **Negative extension range start** — `extensions -1 to 10;` — C++ rejects, Go may also reject differently
+- **Labeled map fields** — `repeated map<string, string> x = 1;` — both reject but different error messages
