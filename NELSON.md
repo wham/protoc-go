@@ -50,4 +50,24 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 
 ## Notes
 
-(empty — fill in on first run)
+### Run 1 — Reserved fields (FAILED: 5/5 profiles)
+- **Test:** `07_reserved` — proto3 message with `reserved 2, 15, 9 to 11;` and `reserved "email", "phone";`
+- **Bug:** Parser line 214 skips `reserved` via `skipStatement()`. No `ReservedRange` or `ReservedName` populated in descriptor. C++ protoc includes them. Descriptor binary size differs (108 vs 76 bytes). Also 26 vs 13 SourceCodeInfo locations.
+- **Root cause:** `parser.go:214` treats `reserved` same as `option` and `extensions` — all skipped.
+
+### Known gaps still unexplored (attack surface for future runs):
+- **File-level options** (`option java_package`, `option go_package`, etc.) — skipped at line 741
+- **Field options** (`deprecated = true`, `json_name`, `packed`, `jstype`) — skipped at line 293-294
+- **Message options** — skipped at line 214
+- **Enum options** (`allow_alias`) — skipped at line 357
+- **Extensions / extension ranges** — skipped at line 214
+- **Proto2 groups** — not implemented at all
+- **Proto2 default values** — not implemented
+- **Comments in SourceCodeInfo** (leading/trailing) — tokenizer discards comments
+- **Service/method options** — skipped
+- **Enum value options** — skipped at line 385
+- **`optional` keyword in proto3** (proto3 explicit optional) — parseField only handles `repeated`, not `optional` with proto3_optional flag
+- **`import public`** — parsed but `PublicDependency` index not set (line 136-140 reads but discards)
+- **Streaming methods** — `ClientStreaming`/`ServerStreaming` flags not set (line 487-513)
+- **Negative enum values** source code info (the `-` token position)
+- **Multiple files in same testdata dir** (import resolution across files)
