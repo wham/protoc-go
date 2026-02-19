@@ -369,19 +369,25 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 	if err != nil {
 		return err
 	}
+	// Adjacent string literal concatenation (like C/C++)
+	importPath := pathTok.Value
+	for p.tok.Peek().Type == tokenizer.TokenString {
+		nextTok := p.tok.Next()
+		importPath += nextTok.Value
+	}
 	endTok, err := p.tok.Expect(";")
 	if err != nil {
 		return err
 	}
 	p.trackEnd(endTok)
 
-	if p.seenImports[pathTok.Value] {
-		return fmt.Errorf("%d:%d: Import \"%s\" was listed twice.", startTok.Line+1, startTok.Column+1, pathTok.Value)
+	if p.seenImports[importPath] {
+		return fmt.Errorf("%d:%d: Import \"%s\" was listed twice.", startTok.Line+1, startTok.Column+1, importPath)
 	}
-	p.seenImports[pathTok.Value] = true
+	p.seenImports[importPath] = true
 
 	depIdx := int32(len(fd.Dependency))
-	fd.Dependency = append(fd.Dependency, pathTok.Value)
+	fd.Dependency = append(fd.Dependency, importPath)
 
 	// Source code info for the import statement: path [3, depIdx]
 	p.addLocationSpan([]int32{3, depIdx}, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
