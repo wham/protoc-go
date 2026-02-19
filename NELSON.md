@@ -1228,3 +1228,25 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `131_lazy_nonmessage` — proto3 message with `string name = 1 [lazy = true];` (lazy on a string field)
 - **Bug:** Go protoc-go silently accepts `[lazy = true]` on a non-message field and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:3: [lazy = true] can only be specified for submessage fields.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that `lazy` and `unverified_lazy` can only be specified for singular embedded message fields (not repeated, not scalar types). The Go parser stores `FieldOptions.Lazy = true` without checking whether the field type is a message. Same validation gap pattern as all other missing descriptor pool validations.
+
+### Run 126 — Extending undefined message type (FAILED: 5/5 profiles)
+- **Test:** `132_extend_undefined` — proto2 file with `extend NonExistent { optional string tag = 100; }` where `NonExistent` is never defined as a message
+- **Bug:** Both C++ and Go reject the file (exit 1), but with completely different error messages. C++ protoc: `test.proto:9:8: "NonExistent" is not defined.` — catches the undefined type at the `extend` declaration. Go protoc-go: `test.proto:10:25: "NonExistent" does not declare 100 as an extension number.` — doesn't check if the extendee exists, but a downstream extension range validation produces a different error. Error messages differ in content, line number, and column.
+- **Root cause:** `CheckUnresolvedTypes` in `parser.go:3080-3148` checks message field types (line 3107-3108) and RPC input/output types (lines 3111-3144), but does NOT check extendee types in `fd.GetExtension()`. The extendee name `NonExistent` is never validated as a defined type. Instead, the extension range validation in `cli.go` fires later because `NonExistent` (as an undefined type) has no declared extension ranges, producing a semantically different error. C++ protoc catches the undefined type first during linking in `descriptor.cc`.
+
+### Known gaps still unexplored (updated):
+- **Package conflict** — two files with different packages imported together
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **`option` as type name** — Go switch matches keyword before checking context
+- **`reserved` as type name** — same pattern
+- **`extensions` as type name** — same pattern
+- **Missing message options** — `map_entry` (field 7)
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Oneof field with packed option** — same validation gap
+- **Error column positions** — many Go validation errors report wrong column (start of line vs specific token)
+- **Undefined extension field type** — `extend Base { optional NonExistent foo = 100; }` — checkMsgUnresolved doesn't check extension field types
+- **Negative enum value overflow** — `FOO = -2147483649;` — silent truncation of absolute value
+- **Minimum int32 enum value** — `FOO = -2147483648;` — ParseInt overflow on absolute value even though -2^31 is valid
