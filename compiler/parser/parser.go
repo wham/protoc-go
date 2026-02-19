@@ -26,9 +26,10 @@ type parser struct {
 	locations []*descriptorpb.SourceCodeInfo_Location
 	lastLine  int
 	lastCol   int
-	syntax    string // "proto2" or "proto3"
-	filename  string
-	errors    []string
+	syntax       string // "proto2" or "proto3"
+	syntaxParsed bool
+	filename     string
+	errors       []string
 }
 
 // ParseFile parses a .proto file and returns a FileDescriptorProto.
@@ -52,10 +53,16 @@ func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorPro
 
 		switch tok.Value {
 		case "syntax":
+			if p.syntaxParsed {
+				return nil, fmt.Errorf("%d:%d: Expected top-level statement (e.g. \"message\").", tok.Line+1, tok.Column+1)
+			}
 			if err := p.parseSyntax(fd); err != nil {
 				return nil, err
 			}
 		case "edition":
+			if p.syntaxParsed {
+				return nil, fmt.Errorf("%d:%d: Expected top-level statement (e.g. \"message\").", tok.Line+1, tok.Column+1)
+			}
 			if err := p.parseEdition(fd); err != nil {
 				return nil, err
 			}
@@ -138,6 +145,7 @@ func (p *parser) parseSyntax(fd *descriptorpb.FileDescriptorProto) error {
 		fd.Syntax = proto.String(valTok.Value)
 	}
 	p.syntax = valTok.Value
+	p.syntaxParsed = true
 	p.trackEnd(endTok)
 	// path [12] = syntax field in FileDescriptorProto
 	p.addLocationSpan([]int32{12}, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
@@ -174,6 +182,7 @@ func (p *parser) parseEdition(fd *descriptorpb.FileDescriptorProto) error {
 	fd.Syntax = proto.String("editions")
 	fd.Edition = edEnum.Enum()
 	p.syntax = "editions"
+	p.syntaxParsed = true
 	p.trackEnd(endTok)
 	// path [12] = syntax field in FileDescriptorProto (used for edition declaration too)
 	p.addLocationSpan([]int32{12}, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
