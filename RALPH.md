@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 723/723 tests passing.
+ALL DONE — 728/728 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -195,6 +195,7 @@ ALL DONE — 723/723 tests passing.
 145. ✅ Negative enum reserved ranges — handle `-` sign before integers in enum `reserved` declarations (e.g., `reserved -20 to -15; reserved -5;`), correct SCI spans for negative start/end values, single negative value end span uses minus token only (matching C++ protoc `start_token.EndAt` behavior)
 146. ✅ Message/group default value validation — reject `[default = ...]` on message/group-typed fields with `Messages can't have default values.` error at default value SCI location, parser accepts defaults on named (unresolved) types at parse time and defers validation to post-resolution phase
 147. ✅ Unsigned negative default value validation — reject negative default values on unsigned fields (uint32, uint64, fixed32, fixed64) with `Unsigned field can't have negative default value.` error at integer token position (not minus sign), matching C++ parser.cc `TryConsume("-")` + `RecordError` pattern
+148. ✅ Integer default value overflow validation — reject integer default values exceeding field type range (e.g., `99999999999` for int32) with `Integer out of range.` error at value token position, using `intDefaultMaxValue` per-type max (int32: 2147483647/2147483648, uint32: 4294967295, int64: max int64, uint64: max uint64)
 
 ## Notes
 
