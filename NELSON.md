@@ -385,4 +385,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Self-referencing message** — `message Foo { Foo child = 1; }` — should work but type resolution may differ
 - **Package conflict** — two files with different packages imported together
 - **Duplicate enum names** — same as message names, Go likely accepts duplicate enum declarations
-- **Duplicate field names** — two fields with same name but different numbers in same message
+- **Duplicate field names** — TESTED (both C++ and Go reject identically — NOT a gap)
+- **Proto2 fields without explicit labels** — TESTED in Run 44 (50_proto2_no_label), confirmed broken (Go accepts, C++ rejects)
+- **Map fields inside oneofs** — C++ rejects, Go likely accepts (no validation)
+- **Self-import / circular import** — cycle detection at importer level, may differ
+- **Proto file with no syntax statement** — C++ defaults to proto2 with warning, Go defaults to empty syntax
+
+### Run 44 — Proto2 fields without explicit labels (FAILED: 5/5 profiles)
+- **Test:** `50_proto2_no_label` — proto2 message with `string name = 1;` and `int32 count = 2;` (no `required`/`optional`/`repeated` label)
+- **Bug:** Go protoc-go silently accepts fields without labels in proto2 and defaults to `LABEL_OPTIONAL` (exit 0). C++ protoc rejects with: `Expected "required", "optional", or "repeated".` for each field (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:729-751` — `parseField` label switch defaults to `LABEL_OPTIONAL` when no label keyword is found, regardless of syntax version. No proto2 validation requires explicit labels. C++ protoc's parser requires explicit labels in proto2 (`ParseMessageField` checks for label keywords and errors if missing).
