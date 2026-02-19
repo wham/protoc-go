@@ -867,7 +867,7 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 	var methodIdx int32
 	for p.tok.Peek().Value != "}" {
 		if p.tok.Peek().Value == "option" {
-			if err := p.skipStatement(); err != nil {
+			if err := p.parseServiceOption(svc, path); err != nil {
 				return nil, err
 			}
 			continue
@@ -887,6 +887,102 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 	p.locations[svcLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 
 	return svc, nil
+}
+
+func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, svcPath []int32) error {
+	startTok := p.tok.Next() // consume "option"
+	p.trackEnd(startTok)
+
+	nameTok := p.tok.Next()
+	p.trackEnd(nameTok)
+	optName := nameTok.Value
+
+	if _, err := p.tok.Expect("="); err != nil {
+		return err
+	}
+
+	valTok := p.tok.Next()
+	p.trackEnd(valTok)
+
+	endTok, err := p.tok.Expect(";")
+	if err != nil {
+		return err
+	}
+	p.trackEnd(endTok)
+
+	if svc.Options == nil {
+		svc.Options = &descriptorpb.ServiceOptions{}
+	}
+
+	var fieldNum int32
+	switch optName {
+	case "deprecated":
+		svc.Options.Deprecated = proto.Bool(valTok.Value == "true")
+		fieldNum = 33
+	default:
+		return nil
+	}
+
+	optPath := append(copyPath(svcPath), 3)
+	span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+		Path: optPath,
+		Span: span,
+	})
+	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+		Path: append(copyPath(optPath), fieldNum),
+		Span: span,
+	})
+
+	return nil
+}
+
+func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, methodPath []int32) error {
+	startTok := p.tok.Next() // consume "option"
+	p.trackEnd(startTok)
+
+	nameTok := p.tok.Next()
+	p.trackEnd(nameTok)
+	optName := nameTok.Value
+
+	if _, err := p.tok.Expect("="); err != nil {
+		return err
+	}
+
+	valTok := p.tok.Next()
+	p.trackEnd(valTok)
+
+	endTok, err := p.tok.Expect(";")
+	if err != nil {
+		return err
+	}
+	p.trackEnd(endTok)
+
+	if method.Options == nil {
+		method.Options = &descriptorpb.MethodOptions{}
+	}
+
+	var fieldNum int32
+	switch optName {
+	case "deprecated":
+		method.Options.Deprecated = proto.Bool(valTok.Value == "true")
+		fieldNum = 33
+	default:
+		return nil
+	}
+
+	optPath := append(copyPath(methodPath), 4)
+	span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+		Path: optPath,
+		Span: span,
+	})
+	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+		Path: append(copyPath(optPath), fieldNum),
+		Span: span,
+	})
+
+	return nil
 }
 
 func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto, error) {
@@ -953,29 +1049,6 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 	}
 
 	// Method might end with ; or { ... }
-	var endTok tokenizer.Token
-	if p.tok.Peek().Value == "{" {
-		p.tok.Next()
-		depth := 1
-		for depth > 0 {
-			t := p.tok.Next()
-			if t.Value == "{" {
-				depth++
-			} else if t.Value == "}" {
-				depth--
-				if depth == 0 {
-					endTok = t
-				}
-			}
-		}
-	} else {
-		endTok, err = p.tok.Expect(";")
-		if err != nil {
-			return nil, err
-		}
-	}
-	p.trackEnd(endTok)
-
 	method := &descriptorpb.MethodDescriptorProto{
 		Name:       proto.String(nameTok.Value),
 		InputType:  proto.String(inputType),
@@ -988,8 +1061,8 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 		method.ServerStreaming = proto.Bool(true)
 	}
 
-	// Source code info — ordered by position in source
-	p.addLocationSpan(path, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	// Source code info — ordered by position in source (before options)
+	methodLocIdx := p.addLocationPlaceholder(path)
 	p.addLocationSpan(append(copyPath(path), 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 	if clientStreaming {
@@ -1004,6 +1077,32 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 	}
 	p.addLocationSpan(append(copyPath(path), 3),
 		outputTok.Line, outputTok.Column, outputTok.Line, outputEndCol)
+
+	var endTok tokenizer.Token
+	if p.tok.Peek().Value == "{" {
+		p.tok.Next()
+		for p.tok.Peek().Value != "}" {
+			if p.tok.Peek().Value == "option" {
+				if err := p.parseMethodOption(method, path); err != nil {
+					return nil, err
+				}
+			} else {
+				if err := p.skipStatement(); err != nil {
+					return nil, err
+				}
+			}
+		}
+		endTok = p.tok.Next() // consume "}"
+	} else {
+		endTok, err = p.tok.Expect(";")
+		if err != nil {
+			return nil, err
+		}
+	}
+	p.trackEnd(endTok)
+
+	// Update method declaration span
+	p.locations[methodLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 
 	return method, nil
 }
