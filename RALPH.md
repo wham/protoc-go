@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 168/168 tests passing.
+ALL DONE — 173/173 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -88,6 +88,7 @@ ALL DONE — 168/168 tests passing.
 38. ✅ Adjacent string literal concatenation in file options (`option java_package = "com.example" ".concat";`)
 39. ✅ `java_string_check_utf8` file option (field 27 of FileOptions)
 40. ✅ Nested extend blocks (`extend` inside message bodies) with `DescriptorProto.extension` (field 6), source code info, and type resolution
+41. ✅ String escape raw length tracking — Token.RawLen field for correct source code info spans on strings with escape sequences
 
 ## Notes
 
