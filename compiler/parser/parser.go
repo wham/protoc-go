@@ -1948,8 +1948,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		fd.Options.SwiftPrefix = proto.String(valTok.Value)
 		fieldNum = 39
 	default:
-		// Unknown option — store as uninterpreted option (skip for now)
-		return nil
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
 	// Source code info: [8] for the option statement, [8, fieldNum] for the specific option
