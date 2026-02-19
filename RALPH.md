@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 708/708 tests passing.
+ALL DONE — 713/713 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -192,6 +192,7 @@ ALL DONE — 708/708 tests passing.
 142. ✅ Group fields in extend blocks (`extend Msg { optional group MyGroup = 100 { ... } }`) — creates TYPE_GROUP extension field + top-level (or parent-nested) message type, SCI ordering: field placeholder, extendee, label, type ("group"), name, number, nested message, nested name, type_name, inner fields. `parseGroupFieldInExtend` shared by both `parseExtend` (file-level) and `parseNestedExtend` (message-level). TYPE_GROUP protection added to all extension type resolution paths.
 143. ✅ Group fields in oneof blocks (`oneof choice { group MyGroup = 1 { ... } }`) — creates TYPE_GROUP field with LABEL_OPTIONAL + nested message type, no label SCI entry. `parseGroupFieldInOneof` handles parsing, `parseOneof` returns nested types alongside fields. Field gets `oneofIndex` set by caller.
 144. ✅ Repeated field default value validation — reject `[default = ...]` on repeated fields with `Repeated fields can't have default values.` error at default value SCI location (path `[msgPath..., 2, fieldIdx, 7]`), recurses into nested messages, skips map entry types
+145. ✅ Negative enum reserved ranges — handle `-` sign before integers in enum `reserved` declarations (e.g., `reserved -20 to -15; reserved -5;`), correct SCI spans for negative start/end values, single negative value end span uses minus token only (matching C++ protoc `start_token.EndAt` behavior)
 
 ## Notes
 
@@ -298,3 +299,4 @@ ALL DONE — 708/708 tests passing.
 - Jstype non-int64 validation: C++ protoc rejects `jstype` option on non-int64-family fields with `jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.` error at field TYPE location (SCI path `[..., 5]`). Allowed types: TYPE_INT64, TYPE_UINT64, TYPE_SINT64, TYPE_FIXED64, TYPE_SFIXED64. Validated in `validateJstypeNonInt64` (cli.go) with `collectJstypeErrors` recursing into nested messages. Also checks file-level and message-level extensions. Same pattern as packed/lazy validation.
 - Group fields in oneof blocks: `group Name = N { ... }` inside `oneof` parsed by `parseGroupFieldInOneof` in parser.go. No label keyword — LABEL_OPTIONAL is set implicitly. No label SCI entry emitted. SCI order: field span placeholder, type ("group"), name, number, nested type placeholder, nested type name, type_name, inner fields. Field and nested type spans both cover `group...}`. `parseOneof` returns `[]*descriptorpb.DescriptorProto` (nested types) alongside fields, caller adds them to `msg.NestedType` and increments `nestedMsgIdx`.
 - Repeated field default value validation: C++ protoc rejects `[default = ...]` on repeated fields with `Repeated fields can't have default values.` error at default value position. Location from SCI path `[msgPath..., 2, fieldIdx, 7]` (field 7=default_value). Validated in `validateRepeatedDefault` (cli.go) with `collectRepeatedDefaultErrors` recursing into nested messages. Skips map entry types. Placed before enum default value validation in the validation chain.
+- Negative enum reserved ranges: `reserved -20 to -15; reserved -5;` — handle `-` sign before integer in `parseEnumReserved`. For single negative values (no `to`), the END field SCI span covers only the `-` token (matching C++ protoc's `end_location.StartAt(start_token); end_location.EndAt(start_token)` pattern where `start_token` is the `-` token captured before `ConsumeSignedInteger`). For ranges with `to`, both start and end spans include the full negative number (minus + digits). `startMinusTok`/`endMinusTok` track minus sign positions.
