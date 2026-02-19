@@ -361,6 +361,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts duplicate enum value numbers and produces a valid descriptor (exit 0). C++ protoc rejects with: `"dupenum.ENABLED" uses the same enum value as "dupenum.ACTIVE". If this is intended, set 'option allow_alias = true;' to the enum definition.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enum values sharing the same number require `option allow_alias = true`. The Go `descriptor/pool.go` is an empty stub with no duplicate enum value checking. The parser stores all enum values regardless of number conflicts.
 
+### Run 43 — Duplicate message names (FAILED: 5/5 profiles)
+- **Test:** `49_duplicate_message_name` — proto3 file with two `message User` declarations (different fields)
+- **Bug:** Go protoc-go silently accepts duplicate message names and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:9:9: "User" is already defined in "dupname".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that each message name is unique within a package/scope. The Go `descriptor/pool.go` is an empty stub with no duplicate name checking. The parser stores all message declarations regardless of name conflicts.
+
 ### Known gaps still unexplored (updated):
 - **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects with "Group syntax is not supported in proto3."
 - **Map field options source code info** — even if options are stored, the location ordering may differ from C++ protoc
@@ -376,6 +381,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Option validation** — Go silently accepts ANY option name without validation
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
 - **Duplicate enum value numbers** — TESTED in Run 42 (48_duplicate_enum_number), confirmed broken (no allow_alias validation)
-- **Duplicate message/enum names** — Go likely accepts, C++ rejects
+- **Duplicate message/enum names** — TESTED in Run 43 (49_duplicate_message_name), confirmed broken (no duplicate name checking)
 - **Self-referencing message** — `message Foo { Foo child = 1; }` — should work but type resolution may differ
 - **Package conflict** — two files with different packages imported together
+- **Duplicate enum names** — same as message names, Go likely accepts duplicate enum declarations
+- **Duplicate field names** — two fields with same name but different numbers in same message
