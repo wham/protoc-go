@@ -673,3 +673,30 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `80_duplicate_field_option` — proto3 message with `string phone = 3 [deprecated = true, deprecated = false];` (same option specified twice in bracket list)
 - **Bug:** Go protoc-go silently accepts duplicate field options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:40: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go` — `parseFieldOptions` processes each option in the `[...]` list without checking if it was already set. Same pattern as duplicate file-level options (Run 71) and duplicate message options (Run 73). No duplicate option tracking exists for any option level. Applies to all field options (`deprecated`, `packed`, `json_name`, `lazy`, `jstype`, `ctype`, `debug_redact`).
+
+### Run 75 — Duplicate enum-level options (FAILED: 5/5 profiles)
+- **Test:** `81_duplicate_enum_option` — proto3 enum with `option deprecated = true;` followed by `option deprecated = false;`
+- **Bug:** Go protoc-go silently accepts duplicate enum options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:10: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1238` — `parseEnumOption` has no duplicate option tracking. Unlike `parseFileOption` (which has `seenFileOptions`) and `parseMessageOption` (which receives a `seenOptions` map), `parseEnumOption` unconditionally sets the option value without checking if it was already set. Same pattern applies to `parseServiceOption` and `parseMethodOption` — neither has duplicate tracking.
+
+### Known gaps still unexplored (updated):
+- **Duplicate service options** — `option deprecated = true; option deprecated = true;` — same pattern as enum options, no tracking
+- **Duplicate method options** — `option deprecated = true; option deprecated = true;` — same pattern, no tracking
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
+- **Type shadowing** — same nested type name in different parent messages
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
+- **Missing message options** — `map_entry` (field 7) — only `deprecated`, `no_standard_descriptor_accessor`, `message_set_wire_format` handled
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
+- **Edition features** — `edition = "2023"` with feature overrides
+- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation (default returns nil)
+- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
+- **Self-referencing message** — type resolution may differ
+- **Package conflict** — two files with different packages imported together
+- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
+- **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
+- **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts
+- **Extension number out of range** — extension using number outside declared range
+- **Proto3 optional inside nested messages** — synthetic oneof ordering bug would apply recursively
