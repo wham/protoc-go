@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 583/583 tests passing.
+ALL DONE — 588/588 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -168,6 +168,7 @@ ALL DONE — 583/583 tests passing.
 118. ✅ String/bytes default value type validation — reject non-string default values (e.g., `[default = 42]`) for TYPE_STRING/TYPE_BYTES fields with `Expected string for field default value.` error at value token position
 119. ✅ Integer default value type validation — reject string literal default values (e.g., `[default = "42"]`) for integer fields with `Expected integer for field default value.` error at value token position
 120. ✅ Float default value type validation for integer fields — reject float literals (e.g., `[default = 1.5]`) for integer fields with `Expected integer for field default value.` error, using error recovery (`p.errors` + `skipToToken`) to collect all errors across multiple fields
+121. ✅ Nested oneof error message — when `oneof` is used inside another `oneof` block, produce `Missing field number.` error (matching C++ protoc) instead of generic `expected "=", got "{"` by checking for `=` before consuming it in `parseField`
 
 ## Notes
 
