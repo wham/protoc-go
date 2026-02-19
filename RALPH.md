@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 383/383 tests passing.
+ALL DONE — 388/388 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -130,6 +130,7 @@ ALL DONE — 383/383 tests passing.
 80. ✅ Unknown file option validation — reject unknown file options (e.g., `php_generic_services`) with `Option "X" unknown. Ensure that your proto definition file imports the proto which defines the option.` error at option name position
 81. ✅ `message_set_wire_format` message option (field 1 of MessageOptions) with source code info, and INT32_MAX (2147483647) extension range end when enabled (instead of 536870912)
 82. ✅ `debug_redact` field option (field 16 of FieldOptions) and `unverified_lazy` field option (field 15 of FieldOptions) with source code info
+83. ✅ Duplicate file option validation — reject duplicate file options (e.g., two `java_package` declarations) with `Option "X" was already set.` error at option name position
 
 ## Notes
 
@@ -204,3 +205,4 @@ ALL DONE — 383/383 tests passing.
 - Circular import multi-error: `parseRecursive` returns `(bool, error)` and accepts `collectErrors *[]string`. When a cycle is detected, the error is reported at the cycle-starting file's import of the NEXT file in the chain (e.g., a.proto:5:1 for `import "b.proto"` in a.proto). Self-imports (dep == filename) skip follow-on errors. For non-self circular imports: after cycle detection, the importing file adds "Import X was not found or had errors." errors for each failed dep, then calls `parser.CheckUnresolvedTypes` with restricted availableFiles (excluding failed deps) to find unresolved type references ("X is not defined." errors). The `CheckUnresolvedTypes` function in parser.go builds a types map from the file's own types + available deps, then checks all field TypeName, service method InputType/OutputType references against the map. Unresolved types are reported with position from SCI path (type_name field 6 for message fields, input_type field 2 / output_type field 3 for methods).
 - Float default precision: C++ protoc normalizes float defaults via `SimpleDtoa` (%.15g + round-trip, fallback to %.17g) and `SimpleFtoa` (%.6g as float32 + round-trip, fallback to %.9g). Go's `strconv.FormatFloat(v, 'g', -1, 64)` uses shortest representation which differs (e.g., `1e+10` vs `10000000000`). Implemented `simpleDtoa` and `simpleFtoa` in parser.go matching C++ behavior. TYPE_FLOAT values are cast to float32 before formatting.
 - Proto3 extend block validation: C++ protoc rejects `extend` blocks in proto3 files unless the extendee is an allowed option type (google.protobuf.*Options, FeatureSet, SourceCodeInfo, GeneratedCodeInfo, StreamOptions). Error format: `filename:line:col: Extensions in proto3 are only allowed for defining options.` Location from SCI path for extendee (field 2 of FieldDescriptorProto): `[7, extIdx, 2]` for file-level, `[msgPath..., 6, extIdx, 2]` for message-level. Validated in `collectProto3ExtendErrors` (cli.go), called from both `validateProto3` (file-level) and `collectProto3MessageErrors` (message-level). `allowedProto3Extendee` checks if FQN starts with `.google.protobuf.` and suffix matches known types.
+- Duplicate file option validation: parser tracks `seenFileOptions` map in parser struct. When a file option name is encountered a second time, returns `Option "X" was already set.` error at the option name token position (1-indexed line:col). Applies to all recognized file options (java_package, go_package, etc.).
