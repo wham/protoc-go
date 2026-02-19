@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 258/258 tests passing.
+ALL DONE — 263/263 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -106,6 +106,7 @@ ALL DONE — 258/258 tests passing.
 56. ✅ Duplicate symbol name validation — reject duplicate fully-qualified names (messages, enums, enum values, services, methods, fields, oneofs) with `"Name" is already defined in "scope".` error, location from SCI name path
 57. ✅ Proto2 missing label validation — reject fields without `required`/`optional`/`repeated` labels in proto2 syntax with `Expected "required", "optional", or "repeated".` error, collects all errors via `MultiError` type
 58. ✅ Map-in-oneof validation — reject `map<K,V>` fields inside `oneof` blocks with `Map fields are not allowed in oneofs.` error at the `<` token position
+59. ✅ Oneof label validation — reject `required`/`optional`/`repeated` labels on fields inside `oneof` blocks with `Fields in oneofs must not have labels (required / optional / repeated).` error
 
 ## Notes
 
