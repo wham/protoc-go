@@ -65,9 +65,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseFileOption()` at line 867-868 just calls `skipStatement()`, discarding all file-level options. C++ protoc populates `FileOptions` in the descriptor. Result: missing options object, 19 vs 9 SourceCodeInfo locations.
 - **Root cause:** `parser.go:867-868` — `parseFileOption` is a no-op stub that skips the entire statement.
 
+### Run 4 — Field options (FAILED: 5/5 profiles)
+- **Test:** `10_field_options` — proto3 message with `[deprecated = true]`, `[json_name = "userId"]`, `[packed = true]` on fields
+- **Bug:** `skipBracketedOptions()` at line 400 discards all field options. C++ protoc populates `FieldOptions` (deprecated, json_name, packed) in the descriptor. Result: missing options, 25 vs 18 SourceCodeInfo locations.
+- **Root cause:** `parser.go:399-401` — field options inside `[...]` are consumed but never stored on the `FieldDescriptorProto`.
+
 ### Known gaps still unexplored (attack surface for future runs):
 - **File-level options** (`option java_package`, `option go_package`, etc.) — TESTED in Run 3 (09_file_options), confirmed broken
-- **Field options** (`deprecated = true`, `json_name`, `packed`, `jstype`) — skipped at line 293-294
+- **Field options** (`deprecated = true`, `json_name`, `packed`, `jstype`) — TESTED in Run 4 (10_field_options), confirmed broken
 - **Message options** — skipped at line 214
 - **Enum options** (`allow_alias`) — skipped at line 357
 - **Extensions / extension ranges** — skipped at line 214

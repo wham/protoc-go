@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package fieldoptions;
+
+message User {
+  string name = 1 [deprecated = true];
+  int32 id = 2 [json_name = "userId"];
+  repeated int32 scores = 3 [packed = true];
+}
