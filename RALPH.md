@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 628/628 tests passing.
+ALL DONE — 633/633 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -167,6 +167,7 @@ ALL DONE — 628/628 tests passing.
 126. ✅ Map-in-extend validation — reject `map<K,V>` fields inside `extend` blocks with `Map fields are not allowed to be extensions.` error at `<` token position, handles both file-level (`parseExtend`) and message-level (`parseNestedExtend`) extend blocks
 128. ✅ String default value rejection for bool fields — reject string literals (e.g., `[default = "true"]`) as default values for TYPE_BOOL fields with `Expected "true" or "false".` error at value token position, using error recovery to continue parsing
 129. ✅ String default value rejection for float/double fields — reject string literals (e.g., `[default = "1.5"]`) as default values for TYPE_FLOAT/TYPE_DOUBLE fields with `Expected number.` error at value token position, using error recovery to continue parsing
+130. ✅ Enum default value validation — reject enum fields with `[default = NONEXISTENT]` where NONEXISTENT is not a valid enum value name, with `Enum type "pkg.EnumName" has no value named "X".` error at default value SCI location (path `[msgPath..., 2, fieldIdx, 7]`), builds enum FQN → value names map across all files, recurses into nested messages
 114. ✅ Extension range options (`[verification = UNVERIFIED]`) — parse options on extension ranges, set `ExtensionRangeOptions` with verification field, SCI entries for options bracket and individual options, source retention stripping for `proto_file` and descriptor_set (keep full options only in `source_file_descriptors`)
 115. ✅ RPC enum type validation — reject enum types used as RPC input/output types with `"X" is not a message type.` error at type reference location, checked during `ResolveTypes` using original unresolved name
 116. ✅ Negative field number error message — peek for non-integer token after `=` in field number parsing, produce `Expected field number.` error matching C++ protoc (instead of generic `expected integer` from tokenizer)
@@ -277,3 +278,4 @@ ALL DONE — 628/628 tests passing.
 - Multiline string rejection: tokenizer's `readString` detects `\n` inside string literals and records a `TokenError` with message `Multiline strings are not allowed. Did you miss a "?.`, then terminates the string at the newline (not including it). `ParseFile` merges tokenizer errors with parser errors, sorted by (line, col), and returns as `MultiError`. `Expect` format changed from `line N:M: expected "X", got "Y"` to `N:M: Expected "X".` to match C++ protoc. `posError` struct and `sortPosErrors` helper used for merge-sorting.
 - Required extension validation: C++ protoc rejects `required` on extension fields with `The extension <fqn> cannot be required.` at the type SCI location (path `[7, extIdx, 5]` for file-level, `[msgPath..., 6, extIdx, 5]` for message-level). FQN is `package.fieldname` for file-level, `package.MsgName.fieldname` for message-level. Validated in `validateRequiredExtensions` (cli.go) after extension range validation.
 - String default value rejection for float/double fields: C++ protoc rejects string literals (e.g., `[default = "1.5"]`) as default values for TYPE_FLOAT/TYPE_DOUBLE fields with `Expected number.` error at the string literal token position. Uses error recovery (`p.errors` + `skipToToken("]")`) to collect errors from multiple fields.
+- Enum default value validation: C++ protoc rejects enum fields with default values referencing nonexistent enum value names. Error format: `filename:line:col: Enum type "pkg.EnumName" has no value named "X".` Location from SCI path `[msgPath..., 2, fieldIdx, 7]` (field 7=default_value). Validated in `validateEnumDefaultValues` (cli.go) with `collectEnumDefaultErrors` recursing into nested messages. Builds `enumValues` map of enum FQN → value name set across all files. Placed before proto3 validation in the validation chain.
