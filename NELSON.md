@@ -933,3 +933,29 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `103_reserved_extension_overlap` — proto2 message with `reserved 100 to 200;` and `extensions 150 to 300;` (reserved range overlaps with extension range)
 - **Bug:** Go protoc-go silently accepts the overlap and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:14: Extension range 150 to 300 overlaps with reserved range 100 to 200.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No cross-validation between reserved ranges and extension ranges in Go implementation. C++ protoc validates in `descriptor.cc` that extension ranges must not overlap with reserved ranges within the same message. The Go `compiler/cli/cli.go` validates reserved-reserved overlaps (line 1478) and extension-extension overlaps (line 1654), but never checks reserved vs extension cross-overlap. The parser stores both ranges without any cross-range validation.
+
+### Run 98 — Enum value number overflow (FAILED: 5/5 profiles)
+- **Test:** `104_enum_value_overflow` — proto3 enum with `TOO_BIG = 2147483648;` (exceeds int32 max of 2147483647)
+- **Bug:** Go protoc-go silently accepts the out-of-range enum value and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:13: Integer out of range.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1208` — `num, _ := strconv.ParseInt(valNumTok.Value, 0, 32)` silently ignores the `ErrRange` error. When `ParseInt` overflows int32, it returns the clamped value (2147483647) with an error, but the error is discarded via `_`. The enum value is stored as 2147483647 instead of being rejected. C++ protoc's tokenizer validates integer range during parsing and errors immediately. The fix: check the error from `strconv.ParseInt` and return an error if it fails. Same issue does NOT affect field numbers (line 892-895) because field number parsing properly checks the error.
+
+### Known gaps still unexplored (updated):
+- **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];`
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
+- **Type shadowing** — same nested type name in different parent messages
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
+- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
+- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
+- **Self-referencing message** — type resolution may differ
+- **Package conflict** — two files with different packages imported together
+- **Enum value name collision with message name** — TESTED in Run 96, confirmed error message difference
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
+- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
+- **Negative field numbers** — `string name = -1;` — C++ rejects, Go may accept
+- **Map field with message key type** — `map<MyMsg, string>` — C++ rejects, Go rejects (builtinTypes check at line 1800-1802)
+- **Enum value overflow** — TESTED in Run 98 (104_enum_value_overflow), confirmed broken (silently truncated)
+- **Negative enum value overflow** — `FOO = -2147483649;` — same silent truncation bug
+- **Field number overflow** — already handled (line 892-895 checks error)
+- **Extension range start/end overflow** — may have same silent truncation bug as enum values
