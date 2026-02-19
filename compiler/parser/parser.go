@@ -2046,7 +2046,11 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 						defVal = "-inf"
 					}
 				} else if v, err := strconv.ParseFloat(defVal, 64); err == nil {
-					defVal = strconv.FormatFloat(v, 'g', -1, 64)
+					if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT {
+						defVal = simpleFtoa(float32(v))
+					} else {
+						defVal = simpleDtoa(v)
+					}
 				}
 			}
 			// Normalize octal/hex integer defaults to decimal to match C++ protoc
@@ -2181,6 +2185,24 @@ func isIntegerType(t descriptorpb.FieldDescriptorProto_Type) bool {
 		return true
 	}
 	return false
+}
+
+// simpleDtoa matches C++ protoc's SimpleDtoa: %.15g with round-trip check.
+func simpleDtoa(v float64) string {
+	s := strconv.FormatFloat(v, 'g', 15, 64)
+	if v2, err := strconv.ParseFloat(s, 64); err != nil || v2 != v {
+		s = strconv.FormatFloat(v, 'g', 17, 64)
+	}
+	return s
+}
+
+// simpleFtoa matches C++ protoc's SimpleFtoa: cast to float32, %.6g with round-trip check.
+func simpleFtoa(v float32) string {
+	s := strconv.FormatFloat(float64(v), 'g', 6, 64)
+	if v2, err := strconv.ParseFloat(s, 32); err != nil || float32(v2) != v {
+		s = strconv.FormatFloat(float64(v), 'g', 9, 64)
+	}
+	return s
 }
 
 func normalizeIntDefault(s string) string {
