@@ -885,7 +885,11 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	// Optional field options [deprecated = true, etc.]
 	var optionLocs []*descriptorpb.SourceCodeInfo_Location
 	if p.tok.Peek().Value == "[" {
-		optionLocs = p.parseFieldOptions(field, path)
+		var err error
+		optionLocs, err = p.parseFieldOptions(field, path)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	endTok, err := p.tok.Expect(";")
@@ -1820,7 +1824,11 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 	// Optional field options [deprecated = true, etc.]
 	var optionLocs []*descriptorpb.SourceCodeInfo_Location
 	if p.tok.Peek().Value == "[" {
-		optionLocs = p.parseFieldOptions(field, fieldPath)
+		var err error
+		optionLocs, err = p.parseFieldOptions(field, fieldPath)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	endTok, err := p.tok.Expect(";")
@@ -2021,9 +2029,10 @@ func (p *parser) skipStatement() error {
 
 // parseFieldOptions parses [option = value, ...] on a field declaration.
 // Returns deferred source code info locations to be appended after field spans.
-func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fieldPath []int32) []*descriptorpb.SourceCodeInfo_Location {
+func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fieldPath []int32) ([]*descriptorpb.SourceCodeInfo_Location, error) {
 	bracketTok := p.tok.Next() // consume "["
 	var optLocs []*descriptorpb.SourceCodeInfo_Location
+	seenFieldOpts := map[string]bool{}
 
 	addLoc := func(path []int32, startLine, startCol, endLine, endCol int) {
 		optLocs = append(optLocs, &descriptorpb.SourceCodeInfo_Location{
@@ -2035,6 +2044,11 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 	for {
 		optNameTok := p.tok.Next()
 		optName := optNameTok.Value
+
+		if seenFieldOpts[optName] {
+			return nil, fmt.Errorf("%d:%d: Option \"%s\" was already set.", optNameTok.Line+1, optNameTok.Column+1, optName)
+		}
+		seenFieldOpts[optName] = true
 
 		// Consume "="
 		p.tok.Next()
@@ -2207,7 +2221,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 	// Then individual option locations
 	result = append(result, optLocs...)
 
-	return result
+	return result, nil
 }
 
 func unquoteString(s string) string {
