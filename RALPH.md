@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 523/523 tests passing.
+ALL DONE — 528/528 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -156,6 +156,7 @@ ALL DONE — 523/523 tests passing.
 106. ✅ Explicit map_entry option validation — reject `option map_entry = true;` in messages with `map_entry should not be set explicitly. Use map<KeyType, ValueType> instead.` error at option name position
 107. ✅ Extension range vs reserved range overlap validation — reject extension ranges that overlap with reserved ranges in the same message with `Extension range X to Y overlaps with reserved range A to B.` error at extension range start SCI location (path `[msgPath..., 5, extIdx, 1]`), recurses into nested messages, skips map entry types
 108. ✅ Enum value integer overflow validation — reject enum values exceeding int32 range (> 2147483647 or < -2147483648) with `Integer out of range.` error at value token position, parse as int64 first then range-check
+109. ✅ Reserved/extension range integer overflow validation — reject reserved and extension range numbers exceeding int32 range with `Integer out of range.` error at number token position, parse as int64 first then range-check (message reserved, enum reserved, extension ranges)
 
 ## Notes
 

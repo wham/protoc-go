@@ -480,7 +480,10 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 			if err != nil {
 				return err
 			}
-			startNum, _ := strconv.ParseInt(numTok.Value, 0, 32)
+			startNum, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+			if parseErr != nil || startNum > math.MaxInt32 || startNum < math.MinInt32 {
+				return fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
+			}
 			endNum := startNum + 1 // exclusive, single number
 			endSpanLine, endSpanCol := numTok.Line, numTok.Column+len(numTok.Value)
 
@@ -500,7 +503,10 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 					if err != nil {
 						return err
 					}
-					e, _ := strconv.ParseInt(endNumTok.Value, 0, 32)
+					e, parseErr := strconv.ParseInt(endNumTok.Value, 0, 64)
+					if parseErr != nil || e > math.MaxInt32 || e < math.MinInt32 {
+						return fmt.Errorf("%d:%d: Integer out of range.", endNumTok.Line+1, endNumTok.Column+1)
+					}
 					endNum = e + 1 // exclusive
 					endSpanLine = endNumTok.Line
 					endSpanCol = endNumTok.Column + len(endNumTok.Value)
@@ -556,7 +562,10 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 		if err != nil {
 			return err
 		}
-		startNum, _ := strconv.ParseInt(numTok.Value, 0, 32)
+		startNum, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+		if parseErr != nil || startNum > math.MaxInt32 || startNum < math.MinInt32 {
+			return fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
+		}
 		endNum := startNum + 1
 		endSpanLine, endSpanCol := numTok.Line, numTok.Column+len(numTok.Value)
 		endNumLine, endNumCol, endNumLen := numTok.Line, numTok.Column, len(numTok.Value)
@@ -580,7 +589,10 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 				if err != nil {
 					return err
 				}
-				e, _ := strconv.ParseInt(endNumTok.Value, 0, 32)
+				e, parseErr := strconv.ParseInt(endNumTok.Value, 0, 64)
+				if parseErr != nil || e > math.MaxInt32 || e < math.MinInt32 {
+					return fmt.Errorf("%d:%d: Integer out of range.", endNumTok.Line+1, endNumTok.Column+1)
+				}
 				endNum = e + 1
 				endSpanLine = endNumTok.Line
 				endSpanCol = endNumTok.Column + len(endNumTok.Value)
@@ -1361,7 +1373,10 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 			if err != nil {
 				return err
 			}
-			startNum, _ := strconv.ParseInt(numTok.Value, 0, 32)
+			startNum, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+			if parseErr != nil || startNum > math.MaxInt32 || startNum < math.MinInt32 {
+				return fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
+			}
 			endNum := startNum // inclusive for enums
 			endSpanLine, endSpanCol := numTok.Line, numTok.Column+len(numTok.Value)
 			endNumLine, endNumCol, endNumLen := numTok.Line, numTok.Column, len(numTok.Value)
@@ -1381,7 +1396,10 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 					if err != nil {
 						return err
 					}
-					en, _ := strconv.ParseInt(endNumTok.Value, 0, 32)
+					en, parseErr := strconv.ParseInt(endNumTok.Value, 0, 64)
+					if parseErr != nil || en > math.MaxInt32 || en < math.MinInt32 {
+						return fmt.Errorf("%d:%d: Integer out of range.", endNumTok.Line+1, endNumTok.Column+1)
+					}
 					endNum = en
 					endSpanLine = endNumTok.Line
 					endSpanCol = endNumTok.Column + len(endNumTok.Value)
