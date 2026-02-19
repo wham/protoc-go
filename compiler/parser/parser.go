@@ -195,6 +195,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 
 	var fieldIdx, nestedMsgIdx, nestedEnumIdx, oneofIdx int32
 	var reservedRangeIdx, reservedNameIdx int32
+	var extensionRangeIdx int32
 
 	for p.tok.Peek().Value != "}" {
 		tok := p.tok.Peek()
@@ -235,8 +236,12 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 			if err := p.parseMessageReserved(msg, path, &reservedRangeIdx, &reservedNameIdx); err != nil {
 				return nil, err
 			}
-		case "option", "extensions":
+		case "option":
 			if err := p.skipStatement(); err != nil {
+				return nil, err
+			}
+		case "extensions":
+			if err := p.parseExtensionRange(msg, path, &extensionRangeIdx); err != nil {
 				return nil, err
 			}
 		default:
@@ -364,6 +369,78 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 		copy(p.locations[len(p.locations)-count*3:], p.locations[len(p.locations)-count*3-1:len(p.locations)-1])
 		p.locations[len(p.locations)-count*3-1] = stmtLoc
 	}
+	return nil
+}
+
+func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath []int32, rangeIdx *int32) error {
+	startTok := p.tok.Next() // consume "extensions"
+	stmtPath := append(copyPath(msgPath), 5) // field 5 = extension_range
+	startCount := *rangeIdx
+
+	for {
+		numTok, err := p.tok.ExpectInt()
+		if err != nil {
+			return err
+		}
+		startNum, _ := strconv.ParseInt(numTok.Value, 0, 32)
+		endNum := startNum + 1
+		endSpanLine, endSpanCol := numTok.Line, numTok.Column+len(numTok.Value)
+		endNumLine, endNumCol, endNumLen := numTok.Line, numTok.Column, len(numTok.Value)
+
+		if p.tok.Peek().Value == "to" {
+			p.tok.Next()
+			if p.tok.Peek().Value == "max" {
+				maxTok := p.tok.Next()
+				endNum = 536870912 // kMaxRangeSentinel (2^29)
+				endSpanLine = maxTok.Line
+				endSpanCol = maxTok.Column + len(maxTok.Value)
+				endNumLine = maxTok.Line
+				endNumCol = maxTok.Column
+				endNumLen = len(maxTok.Value)
+			} else {
+				endNumTok, err := p.tok.ExpectInt()
+				if err != nil {
+					return err
+				}
+				e, _ := strconv.ParseInt(endNumTok.Value, 0, 32)
+				endNum = e + 1
+				endSpanLine = endNumTok.Line
+				endSpanCol = endNumTok.Column + len(endNumTok.Value)
+				endNumLine = endNumTok.Line
+				endNumCol = endNumTok.Column
+				endNumLen = len(endNumTok.Value)
+			}
+		}
+
+		msg.ExtensionRange = append(msg.ExtensionRange, &descriptorpb.DescriptorProto_ExtensionRange{
+			Start: proto.Int32(int32(startNum)),
+			End:   proto.Int32(int32(endNum)),
+		})
+
+		rangePath := append(copyPath(stmtPath), *rangeIdx)
+		p.addLocationSpan(rangePath, numTok.Line, numTok.Column, endSpanLine, endSpanCol)
+		p.addLocationSpan(append(copyPath(rangePath), 1), numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+		p.addLocationSpan(append(copyPath(rangePath), 2), endNumLine, endNumCol, endNumLine, endNumCol+endNumLen)
+		*rangeIdx++
+
+		if p.tok.Peek().Value == "," {
+			p.tok.Next()
+		} else {
+			break
+		}
+	}
+
+	endTok, err := p.tok.Expect(";")
+	if err != nil {
+		return err
+	}
+	p.trackEnd(endTok)
+	p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	count := int(*rangeIdx - startCount)
+	stmtLoc := p.locations[len(p.locations)-1]
+	copy(p.locations[len(p.locations)-count*3:], p.locations[len(p.locations)-count*3-1:len(p.locations)-1])
+	p.locations[len(p.locations)-count*3-1] = stmtLoc
+
 	return nil
 }
 
