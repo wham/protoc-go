@@ -540,8 +540,12 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	if builtinType, ok := builtinTypes[typeTok.Value]; ok {
 		field.Type = builtinType.Enum()
 	} else {
-		// Message or enum reference
+		// Message or enum reference (may start with "." for FQN)
 		typeName := typeTok.Value
+		if typeName == "." {
+			part := p.tok.Next()
+			typeName += part.Value
+		}
 		for p.tok.Peek().Value == "." {
 			p.tok.Next()
 			part := p.tok.Next()
@@ -1120,6 +1124,10 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 	}
 	inputTok := p.tok.Next()
 	inputType := inputTok.Value
+	if inputType == "." {
+		part := p.tok.Next()
+		inputType += part.Value
+	}
 	for p.tok.Peek().Value == "." {
 		p.tok.Next()
 		part := p.tok.Next()
@@ -1148,6 +1156,10 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 	}
 	outputTok := p.tok.Next()
 	outputType := outputTok.Value
+	if outputType == "." {
+		part := p.tok.Next()
+		outputType += part.Value
+	}
 	for p.tok.Peek().Value == "." {
 		p.tok.Next()
 		part := p.tok.Next()
@@ -1294,6 +1306,10 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 		valType = bt
 	} else {
 		valTypeName = valTypeTok.Value
+		if valTypeName == "." {
+			part := p.tok.Next()
+			valTypeName += part.Value
+		}
 		for p.tok.Peek().Value == "." {
 			p.tok.Next()
 			part := p.tok.Next()
