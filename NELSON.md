@@ -1333,3 +1333,20 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `141_repeated_default` — proto2 message with `repeated int32 values = 1 [default = 42];` and `repeated string names = 2 [default = "hello"];` (default values on repeated fields)
 - **Bug:** Go protoc-go silently accepts `[default = ...]` on repeated fields and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Repeated fields can't have default values.` and `test.proto:7:40: Repeated fields can't have default values.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that repeated fields cannot have default values. The Go `descriptor/pool.go` is an empty stub with no default-on-repeated validation. The parser stores `default_value` on the field regardless of label. Same validation gap pattern as all other missing descriptor pool validations.
+
+### Run 136 — Negative enum reserved ranges (FAILED: 5/5 profiles)
+- **Test:** `142_negative_enum_reserved` — proto2 enum with `reserved -20 to -15;` and `reserved -5;` (negative numbers in enum reserved ranges)
+- **Bug:** Go protoc-go rejects the file with: `test.proto:10:12: Expected integer.` (exit 1). C++ protoc accepts it and produces a valid descriptor with negative `EnumReservedRange` entries (exit 0). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1843` — `parseEnumReserved` calls `p.tok.ExpectInt()` which strictly requires `TokenInt`. A `-` token is `TokenSymbol`, so `ExpectInt()` fails immediately. C++ protoc's enum reserved range parser checks for a leading `-` token before consuming the integer, allowing negative reserved ranges. The fix: check for `-` before calling `ExpectInt()`, negate the parsed value when `-` is present. Same pattern as enum value parsing (which already handles `-` at line 1688-1690). This affects both single negative numbers (`reserved -5;`) and negative ranges (`reserved -20 to -15;`).
+
+### Known gaps still unexplored (updated):
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **Missing message options** — `map_entry` (field 7)
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Error column positions** — many Go validation errors report wrong column
+- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
+- **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages (field numbers are positive), but may produce different error messages
+- **Negative extension range start** — `extensions -1 to 10;` — C++ rejects, Go may also reject but with different error
