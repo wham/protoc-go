@@ -1621,6 +1621,10 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32) ([
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	var fields []*descriptorpb.FieldDescriptorProto
+	if p.tok.Peek().Value == "}" {
+		tok := p.tok.Peek()
+		return nil, nil, fmt.Errorf("%d:%d: Expected type name.", tok.Line+1, tok.Column+1)
+	}
 	for p.tok.Peek().Value != "}" {
 		if p.tok.Peek().Value == "option" {
 			p.tok.Next() // consume "option"
