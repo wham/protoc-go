@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package enumvalopt;
+
+enum Priority {
+  PRIORITY_UNSPECIFIED = 0;
+  PRIORITY_LOW = 1 [deprecated = true];
+  PRIORITY_MEDIUM = 2;
+  PRIORITY_HIGH = 3;
+}
