@@ -4,6 +4,7 @@ package parser
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -1205,9 +1206,15 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		}
 		p.trackEnd(endValTok)
 
-		num, _ := strconv.ParseInt(valNumTok.Value, 0, 32)
+		num, parseErr := strconv.ParseInt(valNumTok.Value, 0, 64)
+		if parseErr != nil {
+			return nil, fmt.Errorf("%d:%d: Integer out of range.", valNumTok.Line+1, valNumTok.Column+1)
+		}
 		if negative {
 			num = -num
+		}
+		if num > math.MaxInt32 || num < math.MinInt32 {
+			return nil, fmt.Errorf("%d:%d: Integer out of range.", valNumTok.Line+1, valNumTok.Column+1)
 		}
 		evd := &descriptorpb.EnumValueDescriptorProto{
 			Name:   proto.String(valNameTok.Value),
