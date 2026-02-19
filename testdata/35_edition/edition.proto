@@ -1,0 +1,8 @@
+edition = "2023";
+
+package edtest;
+
+message Payload {
+  string name = 1;
+  int32 value = 2;
+}

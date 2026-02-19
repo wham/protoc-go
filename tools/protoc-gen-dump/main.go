@@ -16,6 +16,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 	pluginpb "google.golang.org/protobuf/types/pluginpb"
 )
 
@@ -63,9 +64,13 @@ func run() error {
 	}
 
 	// Write a minimal successful response back to protoc
-	supportedFeatures := uint64(pluginpb.CodeGeneratorResponse_FEATURE_PROTO3_OPTIONAL)
+	supportedFeatures := uint64(pluginpb.CodeGeneratorResponse_FEATURE_PROTO3_OPTIONAL | pluginpb.CodeGeneratorResponse_FEATURE_SUPPORTS_EDITIONS)
+	minEdition := int32(descriptorpb.Edition_EDITION_PROTO2)
+	maxEdition := int32(descriptorpb.Edition_EDITION_2023)
 	resp := &pluginpb.CodeGeneratorResponse{
 		SupportedFeatures: &supportedFeatures,
+		MinimumEdition:    &minEdition,
+		MaximumEdition:    &maxEdition,
 	}
 	respBytes, err := proto.Marshal(resp)
 	if err != nil {

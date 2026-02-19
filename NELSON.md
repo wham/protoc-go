@@ -246,3 +246,25 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **`extend` inside oneof** — proto2 allows group/extend inside oneof, same issues
 - **Hex/octal escape in strings** — `\x48\x65` or `\110\145` — span computation even more wrong (4 or 5 source chars → 1 decoded byte)
 - **String default with multiple escapes** — each escape adds 1 char discrepancy, accumulating error
+
+### Run 29 — Edition syntax (FAILED: 5/5 profiles)
+- **Test:** `35_edition` — file with `edition = "2023";` instead of `syntax = "proto3";`
+- **Bug:** File-level parser switch at lines 42-88 has no case for `"edition"`. The `edition` token falls to the `default` case at line 88, which returns `unexpected token "edition"`. C++ protoc v29.3 fully supports editions (`edition = "2023"`) and produces valid FileDescriptorProto with `edition` field (field 14) and `FeatureSet` entries.
+- **Root cause:** `parser.go:42-88` — file-level parser switch only handles `syntax`, `package`, `import`, `message`, `enum`, `service`, `option`, `extend`, `";"`. No handling for `edition` keyword. Editions require: parsing `edition = "2023";`, setting `fd.Edition` field, and resolving feature defaults for the edition. Go protoc-go has zero edition support.
+- **Also:** Updated `protoc-gen-dump` to advertise `FEATURE_SUPPORTS_EDITIONS` with `minimum_edition = EDITION_PROTO2` and `maximum_edition = EDITION_2023` so C++ protoc sends edition files to the dump plugin.
+
+### Known gaps still unexplored (updated):
+- **Empty statements inside oneof bodies** — C++ protoc also rejects these, so NOT a valid test (tested and discarded in Run 29)
+- **Oneof options** — not tested (oneof-level options likely skipped at line 1553-1557)
+- **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
+- **Map field with enum value type** — tested in Run 29 prep, passes (type resolution works correctly)
+- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
+- **Type shadowing** — same nested type name in different parent messages
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
+- **Other missing file options** — `java_generate_equals_and_hash` (20, deprecated), any other standard options not in the switch
+- **Missing message/enum/service/method options** — similar pattern: only a few built-in options are in each switch
+- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
+- **`extend` inside oneof** — proto2 allows group/extend inside oneof, same issues
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145` — span computation even more wrong
+- **String default with multiple escapes** — each escape adds 1 char discrepancy, accumulating error
+- **Edition features** — `edition = "2023"` with feature overrides on fields/messages/enums
