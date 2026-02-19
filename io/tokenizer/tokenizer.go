@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 type TokenType int
@@ -308,6 +309,30 @@ func (t *Tokenizer) readString() {
 					}
 					sb.WriteByte(val)
 					continue // already advanced past the digits
+				case 'u':
+					// Unicode escape: \uNNNN (exactly 4 hex digits)
+					t.advance()
+					cp := t.readUnicodeHex(4)
+					if isHeadSurrogate(cp) && t.pos+1 < len(t.input) && t.input[t.pos] == '\\' && t.input[t.pos+1] == 'u' {
+						t.advance() // skip '\'
+						t.advance() // skip 'u'
+						trail := t.readUnicodeHex(4)
+						if isTrailSurrogate(trail) {
+							cp = assembleUTF16(cp, trail)
+						} else {
+							appendUTF8(&sb, cp)
+							appendUTF8(&sb, trail)
+							continue
+						}
+					}
+					appendUTF8(&sb, cp)
+					continue
+				case 'U':
+					// Unicode escape: \UNNNNNNNN (exactly 8 hex digits)
+					t.advance()
+					cp := t.readUnicodeHex(8)
+					appendUTF8(&sb, cp)
+					continue
 				case '0', '1', '2', '3', '4', '5', '6', '7':
 					// Octal escape: \NNN (up to 3 digits)
 					val := ch - '0'
@@ -524,4 +549,30 @@ func ToJSONName(name string) string {
 		}
 	}
 	return result.String()
+}
+
+// readUnicodeHex reads exactly n hex digits and returns the code point value.
+func (t *Tokenizer) readUnicodeHex(n int) uint32 {
+	var val uint32
+	for i := 0; i < n && t.pos < len(t.input) && isHexDigit(t.input[t.pos]); i++ {
+		val = val*16 + uint32(hexVal(t.input[t.pos]))
+		t.advance()
+	}
+	return val
+}
+
+func isHeadSurrogate(cp uint32) bool { return cp >= 0xD800 && cp < 0xDC00 }
+func isTrailSurrogate(cp uint32) bool { return cp >= 0xDC00 && cp < 0xE000 }
+func assembleUTF16(head, trail uint32) uint32 {
+	return 0x10000 + (head-0xD800)*0x400 + (trail - 0xDC00)
+}
+
+func appendUTF8(sb *strings.Builder, cp uint32) {
+	if cp <= 0x10FFFF {
+		var buf [4]byte
+		n := utf8.EncodeRune(buf[:], rune(cp))
+		sb.Write(buf[:n])
+	} else {
+		fmt.Fprintf(sb, "\\U%08x", cp)
+	}
 }
