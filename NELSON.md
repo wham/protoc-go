@@ -694,6 +694,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts duplicate enum value options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:32: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:1136-1173` — enum value option parsing loop has no duplicate tracking. Unlike `parseFieldOptions` (which has `seenFieldOpts` map at line 2053), `parseMessageOption` (which receives `seenOptions`), and all other option parsers, the enum value option loop at line 1136 processes each option without checking if it was already set. The switch at line 1153-1157 unconditionally sets `enumValOpts.Deprecated` on each iteration. Same pattern as all other duplicate option bugs (Runs 71-77), but this one is at the enum value level (inside `[...]` brackets on enum value declarations).
 
+### Run 79 — Invalid syntax value (FAILED: 5/5 profiles)
+- **Test:** `85_invalid_syntax` — file with `syntax = "proto4";` (unrecognized syntax identifier)
+- **Bug:** Go protoc-go silently accepts `"proto4"` as a syntax value and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:1:10: Unrecognized syntax identifier "proto4".  This parser only recognizes "proto2" and "proto3".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:151-178` — `parseSyntax` stores whatever string is provided as the syntax value without validating it. Line 167: `if valTok.Value != "proto2"` sets `fd.Syntax`. Line 170: `p.syntax = valTok.Value` stores it for later. No check that the value is `"proto2"` or `"proto3"`. Since `p.syntax` is `"proto4"`, proto2 validation (`p.syntax == "proto2"`) doesn't fire and proto3 validation (`fd.GetSyntax() != "proto3"`) skips it. The parser treats `"proto4"` like proto3 (no label requirements) without any error.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -710,9 +715,10 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **String concatenation in enum/service/method option values** — same single-token bug as field defaults
 - **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
 - **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
-- **Oneof with optional label** — already handled (line 1741-1744) — NOT a gap
 - **Extension number out of range** — extension using number outside declared range
 - **Proto3 optional inside nested messages** — synthetic oneof ordering bug would apply recursively
-- **Duplicate enum value options** — TESTED in Run 78 (84_duplicate_enum_value_option), confirmed broken
 - **Duplicate idempotency_level** — `option idempotency_level = IDEMPOTENT; option idempotency_level = NO_SIDE_EFFECTS;` — same pattern
 - **Duplicate map field options** — `map<string,string> m = 1 [deprecated = true, deprecated = false];` — likely same bug
+- **Invalid syntax value** — TESTED in Run 79 (85_invalid_syntax), confirmed broken (no validation of syntax string)
+- **Invalid edition value** — `edition = "2025";` or `edition = "9999";` — Go has editionMap check but C++ might differ on unrecognized editions
+- **Boolean option with integer value** — `option java_multiple_files = 1;` — Go stores `false` (since `"1" != "true"`), C++ might accept or reject differently
