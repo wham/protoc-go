@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 683/683 tests passing.
+ALL DONE — 688/688 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -187,6 +187,7 @@ ALL DONE — 683/683 tests passing.
 137. ✅ Undefined extension field type validation — reject extension fields referencing undefined types with `"X" is not defined.` error at type_name SCI location (path `[7, extIdx, 6]` for file-level, `[msgPath..., 6, extIdx, 6]` for message-level), added missing `else` branch in `ResolveTypes` and `resolveMessageFieldsWithErrorsPath`
 138. ✅ Hex escape digit limit — `\xHH` reads at most 2 hex digits (matching C++ protoc's `ParseStringAppend`), preventing greedy consumption of subsequent hex-valid characters (e.g., `\x4Eelson` → `Nelson` not `\x4Ee` + `lson`)
 139. ✅ Unicode escape sequences (`\uNNNN`, `\UNNNNNNNN`) — tokenizer handles 4-digit and 8-digit Unicode escapes with UTF-16 surrogate pair support, matching C++ protoc's `FetchUnicodePoint` + `AppendUTF8`
+140. ✅ Numeric package name validation — reject non-identifier tokens in `package` declaration (e.g., `package 123;`) with `Expected identifier.` error at the token position, validates each dot-separated component
 
 ## Notes
 
