@@ -736,6 +736,10 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 			}
 		}
 
+		if endNum <= startNum {
+			return fmt.Errorf("%d:%d: Extension range end number must be greater than start number.", numTok.Line+1, numTok.Column+1)
+		}
+
 		msg.ExtensionRange = append(msg.ExtensionRange, &descriptorpb.DescriptorProto_ExtensionRange{
 			Start: proto.Int32(int32(startNum)),
 			End:   proto.Int32(int32(endNum)),
