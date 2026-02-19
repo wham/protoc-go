@@ -17,6 +17,7 @@ type parser struct {
 	locations []*descriptorpb.SourceCodeInfo_Location
 	lastLine  int
 	lastCol   int
+	syntax    string // "proto2" or "proto3"
 }
 
 // ParseFile parses a .proto file and returns a FileDescriptorProto.
@@ -100,7 +101,11 @@ func (p *parser) parseSyntax(fd *descriptorpb.FileDescriptorProto) error {
 		return err
 	}
 
-	fd.Syntax = proto.String(valTok.Value)
+	// proto2 files omit the syntax field; proto3 sets it explicitly
+	if valTok.Value != "proto2" {
+		fd.Syntax = proto.String(valTok.Value)
+	}
+	p.syntax = valTok.Value
 	p.trackEnd(endTok)
 	// path [12] = syntax field in FileDescriptorProto
 	p.addLocationSpan([]int32{12}, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
@@ -360,13 +365,22 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	startLine := startTok.Line
 	startCol := startTok.Column
 
-	// Check for label (repeated/optional in proto3 is rarely explicit, but handle it)
+	// Check for label (required/optional/repeated)
 	var labelTok *tokenizer.Token
-	if startTok.Value == "repeated" {
+	switch startTok.Value {
+	case "required":
+		lt := p.tok.Next()
+		labelTok = &lt
+		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REQUIRED.Enum()
+	case "optional":
+		lt := p.tok.Next()
+		labelTok = &lt
+		field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+	case "repeated":
 		lt := p.tok.Next()
 		labelTok = &lt
 		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum()
-	} else {
+	default:
 		field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
 	}
 
@@ -424,7 +438,7 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	// Source code info — field declaration span
 	p.addLocationSpan(path, startLine, startCol, endTok.Line, endTok.Column+1)
 
-	// Label span (only for 'repeated' in proto3)
+	// Label span (for any explicit label keyword)
 	if labelTok != nil {
 		p.addLocationSpan(append(copyPath(path), 4),
 			labelTok.Line, labelTok.Column, labelTok.Line, labelTok.Column+len(labelTok.Value))
@@ -1031,6 +1045,13 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		// Consume "="
 		p.tok.Next()
 
+		// Handle negative values for default
+		negative := false
+		if optName == "default" && p.tok.Peek().Value == "-" {
+			p.tok.Next()
+			negative = true
+		}
+
 		valTok := p.tok.Next()
 		valEnd := valTok.Column + len(valTok.Value)
 		if valTok.Type == tokenizer.TokenString {
@@ -1038,6 +1059,12 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		}
 
 		switch optName {
+		case "default":
+			defVal := valTok.Value
+			if negative {
+				defVal = "-" + defVal
+			}
+			field.DefaultValue = proto.String(defVal)
 		case "json_name":
 			field.JsonName = proto.String(valTok.Value)
 		case "deprecated":
@@ -1083,6 +1110,10 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 
 		// Build source code info for this option
 		switch optName {
+		case "default":
+			// default_value is field 7 of FieldDescriptorProto (not under options)
+			addLoc(append(copyPath(fieldPath), 7),
+				valTok.Line, valTok.Column, valTok.Line, valEnd)
 		case "json_name":
 			// json_name goes to path [10] (field 10 of FieldDescriptorProto)
 			addLoc(append(copyPath(fieldPath), 10),
