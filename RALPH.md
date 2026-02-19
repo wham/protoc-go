@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 468/468 tests passing.
+ALL DONE — 473/473 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -146,6 +146,7 @@ ALL DONE — 468/468 tests passing.
 96. ✅ Enum-valued file option validation — reject string values for `optimize_for` with `Value must be identifier for enum-valued option "google.protobuf.FileOptions.optimize_for".` error at value token position
 97. ✅ JSON name conflict validation — reject fields whose default JSON names (camelCase) conflict with `The default JSON name of field "X" ("jsonName") conflicts with the default JSON name of field "Y".` error at second field's name location, recurses into nested messages, skips map entry types
 98. ✅ String file option validation — reject non-string values for string-typed file options (java_package, java_outer_classname, go_package, php_namespace, etc.) with `Value must be quoted string for string option "google.protobuf.FileOptions.X".` error at value token position
+99. ✅ JSON name string validation — reject non-string values for `json_name` field option with `Expected string for JSON name.` error at value token position
 
 ## Notes
 
