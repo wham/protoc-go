@@ -599,16 +599,19 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 	extNameTok := p.tok.Next()
 	extendeeName := extNameTok.Value
 	extNameStartLine, extNameStartCol := extNameTok.Line, extNameTok.Column
+	extNameEndTok := extNameTok
 	if extendeeName == "." {
 		part := p.tok.Next()
 		extendeeName += part.Value
+		extNameEndTok = part
 	}
 	for p.tok.Peek().Value == "." {
 		p.tok.Next()
 		part := p.tok.Next()
 		extendeeName += "." + part.Value
+		extNameEndTok = part
 	}
-	extNameEndCol := extNameStartCol + len(extendeeName)
+	extNameEndCol := extNameEndTok.Column + len(extNameEndTok.Value)
 
 	if _, err := p.tok.Expect("{"); err != nil {
 		return err
@@ -664,16 +667,19 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 	extNameTok := p.tok.Next()
 	extendeeName := extNameTok.Value
 	extNameStartLine, extNameStartCol := extNameTok.Line, extNameTok.Column
+	extNameEndTok := extNameTok
 	if extendeeName == "." {
 		part := p.tok.Next()
 		extendeeName += part.Value
+		extNameEndTok = part
 	}
 	for p.tok.Peek().Value == "." {
 		p.tok.Next()
 		part := p.tok.Next()
 		extendeeName += "." + part.Value
+		extNameEndTok = part
 	}
-	extNameEndCol := extNameStartCol + len(extendeeName)
+	extNameEndCol := extNameEndTok.Column + len(extNameEndTok.Value)
 
 	if _, err := p.tok.Expect("{"); err != nil {
 		return err
@@ -807,6 +813,7 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	typeTok := p.tok.Next()
 	typeStartLine, typeStartCol := typeTok.Line, typeTok.Column
 
+	typeEndTok := typeTok
 	if builtinType, ok := builtinTypes[typeTok.Value]; ok {
 		field.Type = builtinType.Enum()
 	} else {
@@ -815,11 +822,13 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 		if typeName == "." {
 			part := p.tok.Next()
 			typeName += part.Value
+			typeEndTok = part
 		}
 		for p.tok.Peek().Value == "." {
 			p.tok.Next()
 			part := p.tok.Next()
 			typeName += "." + part.Value
+			typeEndTok = part
 		}
 		field.TypeName = proto.String(typeName)
 	}
@@ -872,9 +881,9 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	// Type span
 	if field.TypeName != nil {
 		// path [6] = type_name
-		typeNameEnd := typeStartCol + len(field.GetTypeName())
+		typeNameEnd := typeEndTok.Column + len(typeEndTok.Value)
 		p.addLocationSpan(append(copyPath(path), 6),
-			typeStartLine, typeStartCol, typeTok.Line, typeNameEnd)
+			typeStartLine, typeStartCol, typeEndTok.Line, typeNameEnd)
 	} else {
 		// path [5] = type
 		p.addLocationSpan(append(copyPath(path), 5),
@@ -1533,17 +1542,20 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 		clientStreaming = true
 	}
 	inputTok := p.tok.Next()
+	inputEndTok := inputTok
 	inputType := inputTok.Value
 	if inputType == "." {
 		part := p.tok.Next()
 		inputType += part.Value
+		inputEndTok = part
 	}
 	for p.tok.Peek().Value == "." {
 		p.tok.Next()
 		part := p.tok.Next()
 		inputType += "." + part.Value
+		inputEndTok = part
 	}
-	inputEndCol := inputTok.Column + len(inputType)
+	inputEndCol := inputEndTok.Column + len(inputEndTok.Value)
 
 	if _, err := p.tok.Expect(")"); err != nil {
 		return nil, err
@@ -1565,17 +1577,20 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 		serverStreaming = true
 	}
 	outputTok := p.tok.Next()
+	outputEndTok := outputTok
 	outputType := outputTok.Value
 	if outputType == "." {
 		part := p.tok.Next()
 		outputType += part.Value
+		outputEndTok = part
 	}
 	for p.tok.Peek().Value == "." {
 		p.tok.Next()
 		part := p.tok.Next()
 		outputType += "." + part.Value
+		outputEndTok = part
 	}
-	outputEndCol := outputTok.Column + len(outputType)
+	outputEndCol := outputEndTok.Column + len(outputEndTok.Value)
 
 	if _, err := p.tok.Expect(")"); err != nil {
 		return nil, err
