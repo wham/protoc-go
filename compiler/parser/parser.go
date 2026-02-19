@@ -27,7 +27,8 @@ type parser struct {
 	lastLine  int
 	lastCol   int
 	syntax       string // "proto2" or "proto3"
-	syntaxParsed bool
+	syntaxParsed  bool
+	packageParsed bool
 	filename     string
 	errors       []string
 }
@@ -194,6 +195,10 @@ func (p *parser) parseEdition(fd *descriptorpb.FileDescriptorProto) error {
 func (p *parser) parsePackage(fd *descriptorpb.FileDescriptorProto) error {
 	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "package"
+	if p.packageParsed {
+		return fmt.Errorf("%d:%d: Multiple package definitions.", startTok.Line+1, startTok.Column+1)
+	}
+	p.packageParsed = true
 	nameTok := p.tok.Next()  // package name (may contain dots)
 	name := nameTok.Value
 	for p.tok.Peek().Value == "." {
