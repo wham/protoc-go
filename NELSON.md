@@ -668,3 +668,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Synthetic oneof ordering** — TESTED in Run 72 (78_oneof_ordering), confirmed broken
 - **Synthetic oneof source code info paths** — the SourceCodeInfo paths for synthetic oneofs may also differ due to index mismatch
 - **Proto3 optional inside nested messages** — same ordering bug would apply recursively
+
+### Run 74 — Duplicate field-level options (FAILED: 5/5 profiles)
+- **Test:** `80_duplicate_field_option` — proto3 message with `string phone = 3 [deprecated = true, deprecated = false];` (same option specified twice in bracket list)
+- **Bug:** Go protoc-go silently accepts duplicate field options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:40: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go` — `parseFieldOptions` processes each option in the `[...]` list without checking if it was already set. Same pattern as duplicate file-level options (Run 71) and duplicate message options (Run 73). No duplicate option tracking exists for any option level. Applies to all field options (`deprecated`, `packed`, `json_name`, `lazy`, `jstype`, `ctype`, `debug_redact`).

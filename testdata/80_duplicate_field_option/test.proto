@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package dupfieldopt;
+
+message User {
+  string name = 1;
+  string email = 2 [deprecated = true];
+  string phone = 3 [deprecated = true, deprecated = false];
+}
