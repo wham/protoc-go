@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 513/513 tests passing.
+ALL DONE — 518/518 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -154,6 +154,7 @@ ALL DONE — 513/513 tests passing.
 104. ✅ Enum reserved value conflict validation — reject enum values whose number falls in a reserved range with `Enum value "NAME" uses reserved number N.` error at reserved range start SCI location (path `[enumPath..., 4, rangeIdx, 1]`), enum reserved ranges have inclusive end, handles both top-level and nested enums
 105. ✅ Enum reserved name conflict validation — reject enum values whose name appears in the enum's `reserved_name` list with `Enum value "NAME" is reserved.` error at enum value name SCI location (path `[enumPath..., 2, valIdx, 1]`), handles both top-level and nested enums
 106. ✅ Explicit map_entry option validation — reject `option map_entry = true;` in messages with `map_entry should not be set explicitly. Use map<KeyType, ValueType> instead.` error at option name position
+107. ✅ Extension range vs reserved range overlap validation — reject extension ranges that overlap with reserved ranges in the same message with `Extension range X to Y overlaps with reserved range A to B.` error at extension range start SCI location (path `[msgPath..., 5, extIdx, 1]`), recurses into nested messages, skips map entry types
 
 ## Notes
 
@@ -242,3 +243,4 @@ ALL DONE — 513/513 tests passing.
 - Enum reserved value conflict validation: C++ protoc rejects enum values whose number falls in a reserved range. Error format: `filename:line:col: Enum value "NAME" uses reserved number N.` Location from SCI path `[enumPath..., 4, rangeIdx, 1]` (reserved range start). Enum reserved ranges have inclusive end (start <= value <= end). Validated in `validateEnumReservedValueConflicts` (cli.go) with `collectEnumReservedValueConflictErrors` and `collectEnumReservedValueConflictInMsg` recursing into nested messages. Placed after enum reserved range overlap validation in the validation chain.
 - Enum reserved name conflict validation: C++ protoc rejects enum values whose name appears in the enum's `reserved_name` list. Error format: `filename:line:col: Enum value "NAME" is reserved.` Location from SCI path `[enumPath..., 2, valIdx, 1]` (enum value name). Validated in `validateEnumReservedNameConflicts` (cli.go) with `collectEnumReservedNameConflictErrors` and `collectEnumReservedNameConflictInMsg` recursing into nested messages. Placed after enum reserved value conflict validation in the validation chain.
 - Enum value C++ scoping note: emitted when ANY duplicate is an enum value (condition: `enumName != ""`), not just when both duplicates are enum values. This handles enum-value-vs-message conflicts, enum-value-vs-service conflicts, etc.
+- Extension range vs reserved range overlap validation: C++ protoc rejects extension ranges that overlap with reserved ranges in the same message. Error format: `filename:line:col: Extension range X to Y overlaps with reserved range A to B.` Location from extension range start SCI path `[msgPath..., 5, extIdx, 1]`. Both end values displayed as End-1 (inclusive). Validated in `validateExtensionReservedOverlaps` (cli.go) with `collectExtensionReservedOverlapErrors` recursing into nested messages. Placed after extension range overlap validation in the validation chain.
