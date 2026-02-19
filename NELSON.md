@@ -601,7 +601,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:2048-2049` — `strconv.FormatFloat(v, 'g', -1, 64)` uses Go's default '%g' formatting which differs from C++ `SimpleDtoa`. Go's `'g'` format uses scientific notation for large exponents (e.g., `1e+10`), while C++ `SimpleDtoa` uses `DoubleToBuffer` which expands to full decimal notation for values that fit within 15 significant digits. The fix would need to replicate C++ `SimpleDtoa` behavior, which avoids scientific notation when the expanded form has fewer than ~15 digits.
 - **Also tried:** Hex default values (`[default = 0x1F]`) — passes now (already fixed in commit f6c5378). Diamond imports (A→B,C→D) — passes (file ordering matches). Deeply nested messages (6 levels) — passes. Enum default values (`[default = HIGH]`) — passes. Map key type `bytes` — passes (already fixed in commit 8c68c03).
 
+### Run 66 — Proto3 extension ranges (FAILED: 5/5 profiles)
+- **Test:** `72_proto3_extensions` — proto3 message with `extensions 100 to 200;` (extension ranges not allowed in proto3)
+- **Bug:** Go protoc-go silently accepts extension ranges in proto3 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:14: Extension ranges are not allowed in proto3.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `collectProto3MessageErrors()` in `compiler/cli/cli.go:1152-1165` validates groups, required fields, default values, and enum zero values, but does NOT check for extension ranges. C++ protoc validates in `descriptor.cc` that extension ranges are prohibited in proto3. The Go parser at `parseExtensionRange` (line 522) accepts extension ranges regardless of syntax version, and no post-parse validation catches this.
+
 ### Known gaps still unexplored (updated):
+- **Proto3 extend blocks at file level** — `extend Foo { ... }` in proto3 file — C++ rejects with "Extensions in proto3 have to be defined using proto2 syntax", Go likely accepts
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
 - **Type shadowing** — same nested type name in different parent messages
@@ -621,6 +627,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
 - **Type name spaces in map value types** — `map<string, pkg . Msg>` — same span bug
 - **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
-- **Diamond import** — TESTED, passes (file ordering matches C++)
-- **Float default normalization** — TESTED in Run 65 (71_float_precision), confirmed broken (Go `1e+10` vs C++ `10000000000`)
-- **Other float format mismatches** — `1e3` → Go `"1000"` vs C++ `"1000"`? Need to test boundary cases; `1e16` vs `1e15` where Go switches to scientific notation but C++ may not
+- **Float default normalization** — TESTED in Run 65 (71_float_precision), confirmed broken
+- **Proto3 extension ranges** — TESTED in Run 66 (72_proto3_extensions), confirmed broken (Go accepts, C++ rejects)
