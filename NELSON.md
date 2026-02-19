@@ -626,6 +626,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseFieldOptions()` switch at lines 2028-2108 has no case for `debug_redact` (field 16 of FieldOptions). The option value token is consumed but not stored on `FieldOptions`. C++ protoc populates `FieldOptions.debug_redact = true`. Descriptor set size differs (112 vs 107 bytes). SourceCodeInfo locations differ (19 vs 18) — missing the option-specific location at path `[fieldPath, 8, 16]`.
 - **Root cause:** `parser.go:2028-2108` — `parseFieldOptions` switch handles `default`, `json_name`, `deprecated`, `packed`, `lazy`, `jstype`, `ctype` but is missing `debug_redact` (field 16) and `unverified_lazy` (field 15). Unknown option names fall through without matching any case, silently dropped without error.
 
+### Run 71 — Duplicate file-level options (FAILED: 5/5 profiles)
+- **Test:** `77_duplicate_file_option` — proto3 file with `option java_package = "com.example.first";` followed by `option java_package = "com.example.second";`
+- **Bug:** Go protoc-go silently accepts the duplicate option and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:8: Option "java_package" was already set.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1894-1895` — `parseFileOption` unconditionally sets `fd.Options.JavaPackage = proto.String(valTok.Value)` without checking if the field was already set. No duplicate option tracking exists. C++ protoc tracks which options have been set and rejects duplicates. Same bug applies to ALL file-level options (go_package, optimize_for, etc.), all message options, all field options, etc.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -635,7 +640,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
 - **Edition features** — `edition = "2023"` with feature overrides
 - **Field option `unverified_lazy`** (field 15) — not in parseFieldOptions switch, same bug as `debug_redact`
-- **Field option `debug_redact`** — TESTED in Run 70 (76_field_debug_redact), confirmed broken
 - **Option validation** — Go silently accepts ANY option name without validation
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
 - **Self-referencing message** — type resolution may differ
@@ -646,8 +650,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
 - **Type name spaces in map value types** — `map<string, pkg . Msg>` — same span bug
 - **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
-- **Float default normalization** — TESTED in Run 65 (71_float_precision), confirmed broken
-- **Proto3 extension ranges** — TESTED in Run 66 (72_proto3_extensions), confirmed broken
-- **Proto3 extend blocks** — TESTED in Run 67 (73_proto3_extend), confirmed broken
-- **Missing file options** — `php_generic_services` (field 42) TESTED in Run 68, `java_generate_equals_and_hash` (field 20, deprecated) — untested
-- **Duplicate file-level options** — `option java_package` set twice — C++ rejects, Go likely overwrites
+- **Duplicate file-level options** — TESTED in Run 71 (77_duplicate_file_option), confirmed broken (Go overwrites, C++ rejects)
+- **Duplicate message/field/enum/service options** — same pattern, Go likely overwrites all
+- **Duplicate `option optimize_for`** — same issue
