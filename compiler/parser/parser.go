@@ -855,6 +855,15 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 		return err
 	}
 
+	// Empty extend block — produce errors matching C++ protoc
+	if p.tok.Peek().Value == "}" {
+		closeTok := p.tok.Peek()
+		if p.syntax == "proto2" {
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected \"required\", \"optional\", or \"repeated\".", p.filename, closeTok.Line+1, closeTok.Column+1))
+		}
+		p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected type name.", p.filename, closeTok.Line+1, closeTok.Column+1))
+	}
+
 	// Placeholder for extend block span [7]
 	blockPath := []int32{7}
 	blockLocIdx := p.addLocationPlaceholder(blockPath)
@@ -929,6 +938,15 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 
 	if _, err := p.tok.Expect("{"); err != nil {
 		return err
+	}
+
+	// Empty extend block — produce errors matching C++ protoc
+	if p.tok.Peek().Value == "}" {
+		closeTok := p.tok.Peek()
+		if p.syntax == "proto2" {
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected \"required\", \"optional\", or \"repeated\".", p.filename, closeTok.Line+1, closeTok.Column+1))
+		}
+		p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected type name.", p.filename, closeTok.Line+1, closeTok.Column+1))
 	}
 
 	// Placeholder for extend block span — field 6 = extension in DescriptorProto
