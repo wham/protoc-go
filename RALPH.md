@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 118/118 tests passing.
+ALL DONE — 123/123 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -78,6 +78,7 @@ ALL DONE — 118/118 tests passing.
 28. ✅ Enum reserved ranges and reserved names parsing with source code info
 29. ✅ Fully-qualified type names (`.pkg.Type`) in field types, map values, and RPC input/output types
 30. ✅ Empty statements (standalone `;`) at top-level file scope
+31. ✅ Empty statements inside message, enum, and service bodies
 
 ## Notes
 
@@ -114,3 +115,4 @@ ALL DONE — 118/118 tests passing.
 - Negative enum values: when parsing `= -1`, the source code info span for the enum value number (path [..., 2]) must start at the minus sign column, not the digit column. Track the minus token and use its column as span start.
 - Enum reserved ranges: field 4 of EnumDescriptorProto (`reserved_range`), uses `EnumReservedRange` with inclusive end (unlike message reserved which is exclusive). Source code info paths: [5,enumIdx,4] (stmt), [5,enumIdx,4,rangeIdx] (range), [...,1] (start), [...,2] (end). Single values have start==end.
 - Enum reserved names: field 5 of EnumDescriptorProto (`reserved_name`). Source code info: [5,enumIdx,5] (stmt), [5,enumIdx,5,nameIdx] (individual name). Name spans include +2 for quotes.
+- Empty statements (`;`) must be handled not only at top-level file scope but also inside message, enum, and service body loops. Just consume the token and continue.

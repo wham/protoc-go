@@ -258,6 +258,8 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 			if err := p.parseExtensionRange(msg, path, &extensionRangeIdx); err != nil {
 				return nil, err
 			}
+		case ";":
+			p.tok.Next() // consume empty statement
 		default:
 			field, err := p.parseField(append(copyPath(path), 2, fieldIdx))
 			if err != nil {
@@ -651,6 +653,10 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 	var valueIdx int32
 	var reservedRangeIdx, reservedNameIdx int32
 	for p.tok.Peek().Value != "}" {
+		if p.tok.Peek().Value == ";" {
+			p.tok.Next() // consume empty statement
+			continue
+		}
 		if p.tok.Peek().Value == "option" {
 			if err := p.parseEnumOption(e, path); err != nil {
 				return nil, err
@@ -984,6 +990,10 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 
 	var methodIdx int32
 	for p.tok.Peek().Value != "}" {
+		if p.tok.Peek().Value == ";" {
+			p.tok.Next() // consume empty statement
+			continue
+		}
 		if p.tok.Peek().Value == "option" {
 			if err := p.parseServiceOption(svc, path); err != nil {
 				return nil, err
