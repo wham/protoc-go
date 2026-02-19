@@ -309,6 +309,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go accepts the file and produces a valid descriptor (exit 0). C++ protoc rejects it with error: `test.proto:6:10: The first enum value must be zero for open enums.` (exit 1). The test harness detects exit code mismatch (C++ exit=1, Go exit=0).
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates proto3 constraints in `descriptor.cc` — specifically that the first enum value must be 0 for open enums (proto3 enums are open by default). The Go `descriptor/pool.go` is an empty stub with no validation. The parser accepts any enum value numbers without checking proto3 rules.
 
+### Run 37 — Proto3 required fields (FAILED: 5/5 profiles)
+- **Test:** `43_proto3_required` — proto3 message with `required string name = 1;` and `required int32 id = 2;`
+- **Bug:** Go protoc-go silently accepts `required` in proto3 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Required fields are not allowed in proto3.` and `test.proto:7:12: Required fields are not allowed in proto3.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates proto3 constraints in `descriptor.cc` — `required` labels are prohibited in proto3 syntax. The Go `descriptor/pool.go` is an empty stub. The parser at `parseField` (line 730-734) accepts `required` regardless of syntax version.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — even if options are stored, the location ordering may differ from C++ protoc (map fields emit type/name/number in different positions)
 - **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
@@ -325,5 +330,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Exponent-only float** (`1e5`) — tokenizer handles `e`/`E` inside readNumber, should work but untested
 - **Oneof field options** — fields inside oneof parsed via `parseField`, so options should work, but untested
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];` — parser doesn't handle options after ranges
-- **Proto3 validation gaps** — proto3 with `required` label, proto3 with groups — likely accepted by Go but rejected by C++. Proto3 first enum value != 0 now TESTED in Run 36 (42_proto3_enum_zero), confirmed broken.
+- **Proto3 validation gaps** — proto3 with `required` label NOW TESTED in Run 37 (43_proto3_required), confirmed broken. Proto3 with groups — likely also accepted by Go but rejected by C++.
 - **Type name source code info with spaces** — `Outer . Inner` (spaces around dots) — Go computes span from concatenated string length, C++ uses actual token positions
