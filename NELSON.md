@@ -1019,8 +1019,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:6:17: Expected field number.` Go protoc-go: `test.proto:line 6:17: expected integer, got "-"`. C++ treats the `-` as an unexpected token and reports "Expected field number." Go's `ExpectInt()` at line 892 fails because `-` is not an integer token.
 - **Root cause:** `parser.go:892` — `ExpectInt()` encounters `-` (a symbol token) and produces a generic "expected integer" error. C++ protoc's parser produces a domain-specific "Expected field number" error. Both correctly reject negative field numbers, but the error message format and content differ. The test harness detects error message mismatch.
 
+### Run 107 — `map` as a message type name (FAILED: 5/5 profiles)
+- **Test:** `113_map_as_type` — proto3 file with `message map { ... }` and `message Container { map data = 1; }` where `map` is used as a type name (not the map field keyword)
+- **Bug:** Go parser's message body switch at line 372 has `case "map":` which unconditionally calls `parseMapField()`. `parseMapField` expects `<` after `map`, so `map data = 1;` fails with `expected "<", got "data"`. C++ protoc only treats `map` as the map keyword when followed by `<`; otherwise it treats `map` as a type name (message reference). C++ produces a valid descriptor (exit 0), Go rejects (exit 1).
+- **Root cause:** `parser.go:372` — `case "map":` doesn't check if the next token is `<` before committing to map field parsing. C++ protoc's parser peeks at the token after `map` and only enters map parsing if it's `<`. When `map` is followed by an identifier (field name), C++ treats it as a regular field with `map` as the type name. The Go parser should check `p.tok.PeekAt(1).Value == "<"` (similar to how `isGroupField` checks for `group` at line 401) and fall through to `parseField` if `<` doesn't follow.
+
 ### Known gaps still unexplored (updated):
-- **RPC output type as enum** — same bug, `rpc Foo(Msg) returns (SomeEnum);` — Go accepts, C++ rejects
+- **RPC output type as enum** — TESTED locally, Go now validates — NOT a gap
 - **RPC type referencing non-existent message** — C++ rejects, Go likely accepts (no type resolution validation)
 - **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
 - **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
@@ -1031,5 +1036,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **String concatenation in enum/service/method option values** — same single-token bug as field defaults
 - **Map field with message key type** — `map<MyMsg, string>` — Go rejects at parse time, C++ at validation with different error
-- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
-- **RPC output type as enum** — `rpc Foo(Msg) returns (SomeEnum);` — Go accepts, C++ rejects
+- **Duplicate service names** — TESTED, both reject identically — NOT a gap
+- **Duplicate enum names** — TESTED, both reject identically — NOT a gap
+- **`map` as type name** — TESTED in Run 107 (113_map_as_type), confirmed broken (Go always treats `map` as keyword)
+- **`option` as type name** — `message option { } message Foo { option x = 1; }` — Go treats `option` as keyword, same pattern
+- **`reserved` as type name** — same pattern, Go switch matches keyword before checking context
+- **`extensions` as type name** — same pattern

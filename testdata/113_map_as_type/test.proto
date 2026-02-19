@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package maptype;
+
+message map {
+  string key = 1;
+  string value = 2;
+}
+
+message Container {
+  map data = 1;
+}
