@@ -44,6 +44,10 @@ func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorPro
 			if err := p.parseSyntax(fd); err != nil {
 				return nil, err
 			}
+		case "edition":
+			if err := p.parseEdition(fd); err != nil {
+				return nil, err
+			}
 		case "package":
 			if err := p.parsePackage(fd); err != nil {
 				return nil, err
@@ -121,6 +125,42 @@ func (p *parser) parseSyntax(fd *descriptorpb.FileDescriptorProto) error {
 	p.syntax = valTok.Value
 	p.trackEnd(endTok)
 	// path [12] = syntax field in FileDescriptorProto
+	p.addLocationSpan([]int32{12}, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.attachComments(len(p.locations)-1, firstIdx)
+
+	return nil
+}
+
+var editionMap = map[string]descriptorpb.Edition{
+	"2023": descriptorpb.Edition_EDITION_2023,
+	"2024": descriptorpb.Edition_EDITION_2024,
+}
+
+func (p *parser) parseEdition(fd *descriptorpb.FileDescriptorProto) error {
+	firstIdx := p.tok.CurrentIndex()
+	startTok := p.tok.Next() // consume "edition"
+	if _, err := p.tok.Expect("="); err != nil {
+		return err
+	}
+	valTok, err := p.tok.ExpectString()
+	if err != nil {
+		return err
+	}
+	endTok, err := p.tok.Expect(";")
+	if err != nil {
+		return err
+	}
+
+	edEnum, ok := editionMap[valTok.Value]
+	if !ok {
+		return fmt.Errorf("%d:%d: unknown edition %q", valTok.Line+1, valTok.Column+1, valTok.Value)
+	}
+
+	fd.Syntax = proto.String("editions")
+	fd.Edition = edEnum.Enum()
+	p.syntax = "editions"
+	p.trackEnd(endTok)
+	// path [12] = syntax field in FileDescriptorProto (used for edition declaration too)
 	p.addLocationSpan([]int32{12}, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.attachComments(len(p.locations)-1, firstIdx)
 

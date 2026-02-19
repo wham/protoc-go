@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 173/173 tests passing.
+ALL DONE — 178/178 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -89,6 +89,7 @@ ALL DONE — 173/173 tests passing.
 39. ✅ `java_string_check_utf8` file option (field 27 of FileOptions)
 40. ✅ Nested extend blocks (`extend` inside message bodies) with `DescriptorProto.extension` (field 6), source code info, and type resolution
 41. ✅ String escape raw length tracking — Token.RawLen field for correct source code info spans on strings with escape sequences
+42. ✅ Edition support (`edition = "2023"`) — sets `syntax="editions"` and `edition=EDITION_2023`, fields default to LABEL_OPTIONAL without synthetic oneofs
 
 ## Notes
 
@@ -133,4 +134,5 @@ ALL DONE — 173/173 tests passing.
 - Negative default values: when parsing `[default = -40]`, the source code info span for the default value (path [..., 7]) must start at the minus sign column, not the digit column. Save the minus token and use its column as span start.
 - Weak imports: `import weak "file.proto"` sets `weak_dependency` (field 11 of FileDescriptorProto) with the dependency index. Source code info path `[11, weakIdx]` for the "weak" keyword, span covers the keyword text. Similar to public imports (field 10).
 - String concatenation: C++ protoc allows adjacent string literals to be concatenated (like C/C++). In `parseFileOption`, after reading the first string token, keep consuming adjacent string tokens and concatenate their values. This is used in options like `option java_package = "com.example" ".concat";`.
+- Edition support: `edition = "2023";` parsed by `parseEdition` in parser.go. Sets `fd.Syntax = "editions"` and `fd.Edition = EDITION_2023`. SCI at path [12] (same as syntax). Fields without explicit labels get LABEL_OPTIONAL (no Proto3Optional, no synthetic oneofs). The `editionMap` in parser.go maps edition strings to `descriptorpb.Edition` enum values.
 - Nested extend blocks: `extend TypeName { fields... }` inside a message body creates entries in `msg.Extension` (field 6 of DescriptorProto), NOT `fd.Extension`. Source code info paths use `[4,msgIdx,6]` for the block, `[4,msgIdx,6,extIdx]` for each field. Type/extendee resolution handled in `resolveMessageFields`. Parsed by `parseNestedExtend` in parser.go.
