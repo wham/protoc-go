@@ -1985,6 +1985,9 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		fd.Options.GoPackage = proto.String(valTok.Value)
 		fieldNum = 11
 	case "optimize_for":
+		if valTok.Type != tokenizer.TokenIdent {
+			return fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.FileOptions.optimize_for\".", valTok.Line+1, valTok.Column+1)
+		}
 		switch valTok.Value {
 		case "SPEED":
 			fd.Options.OptimizeFor = descriptorpb.FileOptions_SPEED.Enum()
