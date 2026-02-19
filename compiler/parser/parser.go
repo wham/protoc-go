@@ -31,6 +31,11 @@ func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorPro
 	// Record file-level span — will be updated at the end
 	fileLocIdx := p.addLocationPlaceholder(nil)
 
+	// Record first token position for file-level span (C++ starts at first non-comment token)
+	firstTok := p.tok.Peek()
+	fileStartLine := firstTok.Line
+	fileStartCol := firstTok.Column
+
 	for p.tok.Peek().Type != tokenizer.TokenEOF {
 		tok := p.tok.Peek()
 
@@ -77,8 +82,8 @@ func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorPro
 		}
 	}
 
-	// Update file-level span using last real token end position
-	p.locations[fileLocIdx].Span = []int32{0, 0, int32(p.lastLine), int32(p.lastCol)}
+	// Update file-level span using first token start and last real token end
+	p.locations[fileLocIdx].Span = multiSpan(fileStartLine, fileStartCol, p.lastLine, p.lastCol)
 
 	fd.SourceCodeInfo = &descriptorpb.SourceCodeInfo{
 		Location: p.locations,
@@ -88,6 +93,7 @@ func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorPro
 }
 
 func (p *parser) parseSyntax(fd *descriptorpb.FileDescriptorProto) error {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "syntax"
 	if _, err := p.tok.Expect("="); err != nil {
 		return err
@@ -109,11 +115,13 @@ func (p *parser) parseSyntax(fd *descriptorpb.FileDescriptorProto) error {
 	p.trackEnd(endTok)
 	// path [12] = syntax field in FileDescriptorProto
 	p.addLocationSpan([]int32{12}, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.attachComments(len(p.locations)-1, firstIdx)
 
 	return nil
 }
 
 func (p *parser) parsePackage(fd *descriptorpb.FileDescriptorProto) error {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "package"
 	nameTok := p.tok.Next()  // package name (may contain dots)
 	name := nameTok.Value
@@ -131,6 +139,7 @@ func (p *parser) parsePackage(fd *descriptorpb.FileDescriptorProto) error {
 	p.trackEnd(endTok)
 	// path [2] = package field
 	p.addLocationSpan([]int32{2}, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.attachComments(len(p.locations)-1, firstIdx)
 	return nil
 }
 
@@ -174,6 +183,7 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 }
 
 func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, error) {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "message"
 	nameTok, err := p.tok.ExpectIdent()
 	if err != nil {
@@ -190,6 +200,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 
 	// Add message declaration and name spans BEFORE child spans (matches C++ order)
 	msgLocIdx := p.addLocationPlaceholder(path)
+	p.attachComments(msgLocIdx, firstIdx)
 	p.addLocationSpan(append(copyPath(path), 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
@@ -446,6 +457,7 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 
 func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, error) {
 	field := &descriptorpb.FieldDescriptorProto{}
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Peek()
 	startLine := startTok.Line
 	startCol := startTok.Column
@@ -525,6 +537,8 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 
 	// Source code info — field declaration span
 	p.addLocationSpan(path, startLine, startCol, endTok.Line, endTok.Column+1)
+	fieldLocIdx := len(p.locations) - 1
+	p.attachComments(fieldLocIdx, firstIdx)
 
 	// Label span (for any explicit label keyword)
 	if labelTok != nil {
@@ -1349,6 +1363,33 @@ func (p *parser) addLocationSpan(path []int32, startLine, startCol, endLine, end
 		Path: pathCopy,
 		Span: multiSpan(startLine, startCol, endLine, endCol),
 	})
+}
+
+// attachComments attaches leading/trailing/detached comments to a location.
+// locIdx: the index of the location in p.locations
+// firstTokenIdx: the token index of the first token of the declaration (for leading/detached)
+// The trailing comment comes from the next token after the declaration's terminator.
+func (p *parser) attachComments(locIdx int, firstTokenIdx int) {
+	if locIdx < 0 || locIdx >= len(p.locations) {
+		return
+	}
+	loc := p.locations[locIdx]
+
+	// Leading and detached comments from the first token of the declaration
+	cd := p.tok.CommentsAt(firstTokenIdx)
+	if cd.Leading != "" {
+		loc.LeadingComments = proto.String(cd.Leading)
+	}
+	for _, d := range cd.Detached {
+		loc.LeadingDetachedComments = append(loc.LeadingDetachedComments, d)
+	}
+
+	// Trailing comment: PrevTrailing of the NEXT token (after the terminator)
+	nextIdx := p.tok.CurrentIndex()
+	nextCd := p.tok.CommentsAt(nextIdx)
+	if nextCd.PrevTrailing != "" {
+		loc.TrailingComments = proto.String(nextCd.PrevTrailing)
+	}
 }
 
 func (p *parser) trackEnd(tok tokenizer.Token) {

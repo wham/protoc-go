@@ -26,13 +26,22 @@ type Token struct {
 	Column int // 0-based
 }
 
+// TokenComments holds classified comment data between two adjacent tokens.
+// Mirrors C++ Tokenizer::NextWithComments output.
+type TokenComments struct {
+	PrevTrailing string   // trailing comment of the previous token
+	Detached     []string // detached comments (separated by blank lines)
+	Leading      string   // leading comment for this token
+}
+
 type Tokenizer struct {
-	input  string
-	pos    int
-	line   int // 0-based
-	col    int // 0-based
-	tokens []Token
-	idx    int
+	input    string
+	pos      int
+	line     int // 0-based
+	col      int // 0-based
+	tokens   []Token
+	comments []TokenComments // parallel to tokens
+	idx      int
 }
 
 func New(input string) *Tokenizer {
@@ -42,13 +51,16 @@ func New(input string) *Tokenizer {
 }
 
 func (t *Tokenizer) tokenize() {
+	prevTokenLine := -1 // no previous token
 	for t.pos < len(t.input) {
-		t.skipWhitespaceAndComments()
+		cd := t.collectComments(prevTokenLine)
 		if t.pos >= len(t.input) {
+			t.comments = append(t.comments, cd)
 			break
 		}
 
 		ch := t.input[t.pos]
+		t.comments = append(t.comments, cd)
 
 		if ch == '"' || ch == '\'' {
 			t.readString()
@@ -60,42 +72,181 @@ func (t *Tokenizer) tokenize() {
 			t.tokens = append(t.tokens, Token{Type: TokenSymbol, Value: string(ch), Line: t.line, Column: t.col})
 			t.advance()
 		}
+		prevTokenLine = t.tokens[len(t.tokens)-1].Line
+	}
+	// EOF token
+	if len(t.comments) < len(t.tokens)+1 {
+		t.comments = append(t.comments, t.collectComments(prevTokenLine))
 	}
 	t.tokens = append(t.tokens, Token{Type: TokenEOF, Value: "", Line: t.line, Column: t.col})
+	// Ensure comments slice matches tokens
+	for len(t.comments) < len(t.tokens) {
+		t.comments = append(t.comments, TokenComments{})
+	}
 }
 
-func (t *Tokenizer) skipWhitespaceAndComments() {
-	for t.pos < len(t.input) {
-		ch := t.input[t.pos]
-		if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' {
+// collectComments scans whitespace and comments between tokens, classifying
+// them as trailing (of prev token), detached, or leading (of next token).
+// Mirrors C++ CommentCollector logic from tokenizer.cc.
+func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
+	var result TokenComments
+	canAttachToPrev := prevTokenLine >= 0
+	var commentBuf strings.Builder
+	hasComment := false
+	isLineComment := false
+
+	// Phase 1: Check for trailing comment on same line as previous token
+	if canAttachToPrev {
+		// Skip non-newline whitespace
+		for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r') {
 			t.advance()
-			continue
 		}
-		if ch == '/' && t.pos+1 < len(t.input) {
-			if t.input[t.pos+1] == '/' {
-				// Line comment
-				for t.pos < len(t.input) && t.input[t.pos] != '\n' {
-					t.advance()
-				}
-				continue
-			}
-			if t.input[t.pos+1] == '*' {
-				// Block comment
-				t.advance()
-				t.advance()
-				for t.pos < len(t.input) {
-					if t.input[t.pos] == '*' && t.pos+1 < len(t.input) && t.input[t.pos+1] == '/' {
-						t.advance()
-						t.advance()
-						break
-					}
-					t.advance()
-				}
-				continue
-			}
+		if t.pos >= len(t.input) {
+			return result
 		}
-		break
+		if t.pos+1 < len(t.input) && t.input[t.pos] == '/' && t.input[t.pos+1] == '/' {
+			// Line comment on same line → trailing of prev
+			t.advance() // skip /
+			t.advance() // skip /
+			text := t.readLineCommentText()
+			result.PrevTrailing = text
+			canAttachToPrev = false
+		} else if t.pos+1 < len(t.input) && t.input[t.pos] == '/' && t.input[t.pos+1] == '*' {
+			// Block comment on same line → trailing of prev
+			t.advance() // skip /
+			t.advance() // skip *
+			text := t.readBlockCommentText()
+			result.PrevTrailing = text
+			canAttachToPrev = false
+			// Consume rest of line
+			for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r') {
+				t.advance()
+			}
+			if t.pos < len(t.input) && t.input[t.pos] == '\n' {
+				t.advance()
+			}
+		} else if t.input[t.pos] == '\n' {
+			t.advance()
+			canAttachToPrev = false
+		} else {
+			// Next token on same line, no comments
+			return result
+		}
 	}
+
+	// Phase 2: Collect remaining comments, detect blank lines for detachment
+	for t.pos < len(t.input) {
+		// Skip non-newline whitespace
+		for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r') {
+			t.advance()
+		}
+		if t.pos >= len(t.input) {
+			break
+		}
+
+		if t.pos+1 < len(t.input) && t.input[t.pos] == '/' && t.input[t.pos+1] == '/' {
+			// Line comment - append to buffer (consecutive line comments merge)
+			if hasComment && !isLineComment {
+				// Previous was block comment, flush it
+				t.flushComment(&result, &commentBuf, canAttachToPrev)
+				canAttachToPrev = false
+			}
+			t.advance() // skip /
+			t.advance() // skip /
+			text := t.readLineCommentText()
+			commentBuf.WriteString(text)
+			hasComment = true
+			isLineComment = true
+		} else if t.pos+1 < len(t.input) && t.input[t.pos] == '/' && t.input[t.pos+1] == '*' {
+			// Block comment - flush previous if any
+			if hasComment {
+				t.flushComment(&result, &commentBuf, canAttachToPrev)
+				canAttachToPrev = false
+			}
+			t.advance() // skip /
+			t.advance() // skip *
+			text := t.readBlockCommentText()
+			commentBuf.WriteString(text)
+			hasComment = true
+			isLineComment = false
+			// Consume trailing whitespace and newline
+			for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r') {
+				t.advance()
+			}
+			if t.pos < len(t.input) && t.input[t.pos] == '\n' {
+				t.advance()
+			}
+		} else if t.input[t.pos] == '\n' {
+			// Blank line → flush current comment as detached
+			if hasComment {
+				t.flushComment(&result, &commentBuf, canAttachToPrev)
+				canAttachToPrev = false
+			}
+			canAttachToPrev = false
+			t.advance()
+		} else {
+			// Non-comment, non-whitespace → next token found
+			break
+		}
+	}
+
+	// Whatever remains in the buffer is the leading comment
+	if hasComment {
+		result.Leading = commentBuf.String()
+	}
+
+	return result
+}
+
+func (t *Tokenizer) flushComment(result *TokenComments, buf *strings.Builder, canAttachToPrev bool) {
+	text := buf.String()
+	if canAttachToPrev {
+		result.PrevTrailing = text
+	} else {
+		result.Detached = append(result.Detached, text)
+	}
+	buf.Reset()
+}
+
+// readLineCommentText reads text after "//" until end of line, returns text with trailing \n.
+func (t *Tokenizer) readLineCommentText() string {
+	start := t.pos
+	for t.pos < len(t.input) && t.input[t.pos] != '\n' {
+		t.advance()
+	}
+	text := t.input[start:t.pos]
+	if t.pos < len(t.input) {
+		t.advance() // skip \n
+	}
+	return text + "\n"
+}
+
+// readBlockCommentText reads text between /* and */, returns content without delimiters.
+func (t *Tokenizer) readBlockCommentText() string {
+	var buf strings.Builder
+	for t.pos < len(t.input) {
+		if t.input[t.pos] == '*' && t.pos+1 < len(t.input) && t.input[t.pos+1] == '/' {
+			t.advance() // skip *
+			t.advance() // skip /
+			return buf.String()
+		}
+		buf.WriteByte(t.input[t.pos])
+		t.advance()
+	}
+	return buf.String()
+}
+
+// CommentsAt returns comment data for the token at index i.
+func (t *Tokenizer) CommentsAt(i int) TokenComments {
+	if i >= 0 && i < len(t.comments) {
+		return t.comments[i]
+	}
+	return TokenComments{}
+}
+
+// CurrentIndex returns the current token index (the one Peek would return).
+func (t *Tokenizer) CurrentIndex() int {
+	return t.idx
 }
 
 func (t *Tokenizer) readString() {
