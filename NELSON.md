@@ -1098,6 +1098,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts the multiline string and produces a valid descriptor with `java_package = "hello\nworld"` (exit 0). C++ protoc rejects with: `test.proto:5:29: Multiline strings are not allowed. Did you miss a "?.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `tokenizer.go:261` — `readString()` loop condition is `t.input[t.pos] != quote`. It only stops at the matching quote character or end of input. There is no check for `\n` (newline). C++ protoc's `Tokenizer::ConsumeString()` in `tokenizer.cc` stops at `\n` and reports "Multiline strings are not allowed." The Go tokenizer needs to add `&& t.input[t.pos] != '\n'` to the loop condition (or check inside the loop and return an error).
 
+### Run 113 — Undefined RPC type (FAILED: 5/5 profiles)
+- **Test:** `119_undefined_rpc_type` — proto3 file with `rpc Process(NonExistent) returns (Response);` where `NonExistent` is never defined as a message
+- **Bug:** Go protoc-go silently accepts a reference to an undefined message type and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:10:15: "NonExistent" is not defined.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that all type references (including RPC input/output types) resolve to defined types. The Go `descriptor/pool.go` is an empty stub with no undefined type validation. The parser stores the type name string without checking whether it resolves to any defined type. Same category as Run 105 (enum as RPC type) — Go performs zero type resolution validation for RPC methods.
+
 ### Known gaps still unexplored (updated):
 - **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
 - **Package conflict** — two files with different packages imported together
@@ -1108,5 +1113,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **`option` as type name** — Go switch matches keyword before checking context
 - **`reserved` as type name** — same pattern
 - **`extensions` as type name** — same pattern
-- **RPC type referencing non-existent message** — C++ rejects, Go likely accepts
+- **Undefined RPC type** — TESTED in Run 113 (119_undefined_rpc_type), confirmed broken (Go accepts, C++ rejects)
+- **Undefined field type** — `message Foo { NonExistent x = 1; }` — Go likely also accepts (same no-validation issue)
 - **Multiline string literal** — TESTED in Run 112 (118_multiline_string), confirmed broken (Go accepts, C++ rejects)
