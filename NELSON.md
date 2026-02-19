@@ -944,6 +944,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts the out-of-range reserved number and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Integer out of range.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:483` — `startNum, _ := strconv.ParseInt(numTok.Value, 0, 32)` silently ignores the `ErrRange` error. When `ParseInt` overflows int32, it returns the clamped value (2147483647) with an error, but the error is discarded via `_`. Same issue at line 503 for reserved range end values, lines 559/583 for extension range start/end values, and line 1855 for map field numbers. All use `_, _ := strconv.ParseInt(..., 0, 32)` pattern where the error is silently discarded.
 
+### Run 100 — Map field number overflow (FAILED: 5/5 profiles)
+- **Test:** `106_map_field_number_overflow` — proto3 message with `map<string, string> metadata = 2147483648;` (field number exceeds int32 max)
+- **Bug:** Go protoc-go parses the overflowed integer (silently truncated to 2147483647 at line 1873 via `num, _ := strconv.ParseInt(numTok.Value, 0, 32)`), then the downstream field number validation catches 2147483647 > 536870911 and reports: `Field numbers cannot be greater than 536870911.` plus a suggestion line. C++ protoc catches it earlier at parse time as `Integer out of range.` (exit 1 from both, but different error messages). The test harness detects error message mismatch.
+- **Root cause:** `parser.go:1873` — `num, _ := strconv.ParseInt(numTok.Value, 0, 32)` silently discards the overflow error. The value is truncated to max int32 (2147483647), then a different validation catches an unrelated constraint (field number > max allowed). C++ protoc's tokenizer validates integer range during parsing and errors immediately with "Integer out of range." The fix: check the error from `strconv.ParseInt` and return an integer overflow error before field number validation runs.
+
 ### Known gaps still unexplored (updated):
 - **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];`
 - **Map field options source code info** — location ordering may differ from C++ protoc
@@ -964,6 +969,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Negative enum value overflow** — `FOO = -2147483649;` — same silent truncation bug
 - **Field number overflow** — already handled (line 892-895 checks error)
 - **Extension range start/end overflow** — same silent `_` discard pattern at lines 559/583 — `extensions 2147483648 to max;` would silently truncate
-- **Map field number overflow** — same silent `_` discard at line 1855 — `map<string,string> m = 2147483648;` would silently truncate
+- **Map field number overflow** — TESTED in Run 100 (106_map_field_number_overflow), confirmed broken (error message mismatch)
 - **Reserved range number overflow** — TESTED in Run 99 (105_reserved_number_overflow), confirmed broken (silently truncated)
 - **Enum reserved range overflow** — same silent `_` discard at lines 1364/1384 — `reserved 2147483648;` inside enum would silently truncate
