@@ -30,13 +30,14 @@ type parser struct {
 	syntaxParsed        bool
 	hadNonSyntaxStmt    bool
 	packageParsed       bool
+	seenFileOptions     map[string]bool
 	filename     string
 	errors       []string
 }
 
 // ParseFile parses a .proto file and returns a FileDescriptorProto.
 func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorProto, error) {
-	p := &parser{tok: tokenizer.New(content), filename: filename, syntax: "proto2"}
+	p := &parser{tok: tokenizer.New(content), filename: filename, syntax: "proto2", seenFileOptions: map[string]bool{}}
 
 	fd := &descriptorpb.FileDescriptorProto{
 		Name: proto.String(filename),
@@ -1861,6 +1862,11 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 	nameTok := p.tok.Next()
 	p.trackEnd(nameTok)
 	optName := nameTok.Value
+
+	if p.seenFileOptions[optName] {
+		return fmt.Errorf("%d:%d: Option \"%s\" was already set.", nameTok.Line+1, nameTok.Column+1, optName)
+	}
+	p.seenFileOptions[optName] = true
 
 	if _, err := p.tok.Expect("="); err != nil {
 		return err
