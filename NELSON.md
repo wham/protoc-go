@@ -1379,6 +1379,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts float literals `1.0`/`0.0` as default values for bool fields and stores `default_value = "1"` / `"0"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Expected "true" or "false".` and `test.proto:7:38: Expected "true" or "false".` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:2783-2788` — bool field default validation at line 2784 checks `valTok.Type == tokenizer.TokenString || valTok.Type == tokenizer.TokenInt` but does NOT check `valTok.Type == tokenizer.TokenFloat`. A float token `1.0` passes through the bool validation and is stored as `default_value`. C++ protoc's `ParseDefaultAssignment` uses `ConsumeIdentifier` for bool fields, which only accepts identifier tokens `true`/`false`, rejecting float tokens. Same category as Run 140 (integer default on bool). The fix: add `|| valTok.Type == tokenizer.TokenFloat` to line 2784.
 
+### Run 142 — Integer default value on enum field (FAILED: 5/5 profiles)
+- **Test:** `148_int_default_enum` — proto2 message with `optional Priority level = 1 [default = 0];` and `optional Priority urgency = 2 [default = 2];` (integer literals instead of enum value names for enum field defaults)
+- **Bug:** Go protoc-go tries to look up the integer as an enum value name, producing: `Enum type "intenumd.Priority" has no value named "0".` C++ protoc catches it earlier: `Default value for an enum field must be an identifier.` Both reject (exit 1), but error messages differ. C++ validates the token type (must be identifier), Go validates the value name (tries to find "0" in enum members).
+- **Root cause:** `parser.go:2763-2770` — when `field.Type == nil` (unresolved named type), the code accepts any token value and stores it. After type resolution, the enum validation in `cli.go` checks if the value name exists in the enum type. But it doesn't check if the token was an integer vs identifier. C++ protoc's `ParseDefaultAssignment` dispatches based on field type at parse time and calls `ConsumeIdentifier` for enum fields, rejecting integer tokens immediately. The fix: after type resolution reveals the field is an enum type, check that the default value token was an identifier, not an integer literal.
+
 ### Known gaps still unexplored (updated):
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
 - **Type shadowing** — same nested type name in different parent messages
@@ -1392,3 +1397,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Negative extension range start** — `extensions -1 to 10;` — C++ rejects, Go may also reject differently
 - **Labeled map fields** — `repeated map<string, string> x = 1;` — both reject but different error messages
 - **Float default on bool** — TESTED in Run 141 (147_float_default_bool), confirmed broken (TokenFloat not checked)
+- **Integer default on enum field** — TESTED in Run 142 (148_int_default_enum), confirmed broken (Go looks up "0" as name, C++ rejects integer token)
