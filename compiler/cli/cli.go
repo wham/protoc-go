@@ -212,6 +212,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate reserved number conflicts (field numbers vs message reserved ranges)
+	if errs := validateReservedNumberConflicts(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate reserved name conflicts (field names vs reserved names)
 	if errs := validateReservedNameConflicts(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -633,6 +638,81 @@ func findFieldNumberLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.So
 	}
 	// Path: msgPath + [2, fieldIdx, 3] where 2=field list, 3=number field of FieldDescriptorProto
 	target := append(append([]int32{}, msgPath...), 2, int32(fieldIdx), 3)
+	for _, loc := range sci.GetLocation() {
+		path := loc.GetPath()
+		if len(path) == len(target) {
+			match := true
+			for i := range path {
+				if path[i] != target[i] {
+					match = false
+					break
+				}
+			}
+			if match {
+				span := loc.GetSpan()
+				if len(span) >= 2 {
+					return int(span[0]) + 1, int(span[1]) + 1
+				}
+			}
+		}
+	}
+	return 0, 0
+}
+
+// validateReservedNumberConflicts checks that no field uses a number in the message's reserved ranges.
+func validateReservedNumberConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			fqn := msg.GetName()
+			if pkg != "" {
+				fqn = pkg + "." + fqn
+			}
+			collectReservedNumberConflictErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectReservedNumberConflictErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	for _, field := range msg.GetField() {
+		num := field.GetNumber()
+		for j, rr := range msg.GetReservedRange() {
+			// ReservedRange uses exclusive end in DescriptorProto
+			if num >= rr.GetStart() && num < rr.GetEnd() {
+				// C++ protoc points at the reserved range start location
+				line, col := findReservedRangeStartLocation(msgPath, j, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Field \"%s\" uses reserved number %d.",
+					filename, line, col, field.GetName(), num))
+				next := suggestFieldNumber(msg)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Suggested field numbers for %s: %d",
+					filename, line, col, fqn, next))
+				break
+			}
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedFqn := fqn + "." + nested.GetName()
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectReservedNumberConflictErrors(filename, nested, nestedFqn, nestedPath, sci, errs)
+	}
+}
+
+func findReservedRangeStartLocation(msgPath []int32, rangeIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if sci == nil {
+		return 0, 0
+	}
+	// Path: msgPath + [9, rangeIdx, 1] where 9=reserved_range, 1=start field
+	target := append(append([]int32{}, msgPath...), 9, int32(rangeIdx), 1)
 	for _, loc := range sci.GetLocation() {
 		path := loc.GetPath()
 		if len(path) == len(target) {
