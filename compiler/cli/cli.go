@@ -177,7 +177,7 @@ func Run(args []string) error {
 	var orderedFiles []string
 
 	for _, f := range relFiles {
-		if err := parseRecursive(f, srcTree, parsed, &orderedFiles); err != nil {
+		if err := parseRecursive(f, srcTree, parsed, &orderedFiles, nil); err != nil {
 			return err
 		}
 	}
@@ -323,7 +323,42 @@ func Run(args []string) error {
 	return nil
 }
 
-func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles *[]string) error {
+func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles *[]string, importStack []string) error {
+	// Check for import cycles
+	for _, f := range importStack {
+		if f == filename {
+			// Build cycle chain: a -> b -> ... -> a
+			chain := filename
+			for _, s := range importStack {
+				chain += " -> " + s
+				if s == filename {
+					// Only need to show from the cycle start
+				}
+			}
+			// Build chain starting from the cycle point
+			chain = ""
+			started := false
+			for _, s := range importStack {
+				if s == filename {
+					started = true
+				}
+				if started {
+					if chain != "" {
+						chain += " -> "
+					}
+					chain += s
+				}
+			}
+			chain += " -> " + filename
+
+			// Find the import statement location in the importing file
+			importingFile := importStack[len(importStack)-1]
+			importingFd := parsed[importingFile]
+			line, col := findImportLocation(importingFd, filename)
+			return fmt.Errorf("%s:%d:%d: File recursively imports itself: %s", importingFile, line, col, chain)
+		}
+	}
+
 	if _, ok := parsed[filename]; ok {
 		return nil
 	}
@@ -344,14 +379,44 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 	parsed[filename] = fd
 
 	// Parse dependencies
+	newStack := append(importStack, filename)
 	for _, dep := range fd.GetDependency() {
-		if err := parseRecursive(dep, srcTree, parsed, orderedFiles); err != nil {
+		if err := parseRecursive(dep, srcTree, parsed, orderedFiles, newStack); err != nil {
 			return err
 		}
 	}
 
 	*orderedFiles = append(*orderedFiles, filename)
 	return nil
+}
+
+// findImportLocation finds the line:col of an import statement in a file descriptor's SCI.
+func findImportLocation(fd *descriptorpb.FileDescriptorProto, importedFile string) (int, int) {
+	if fd == nil {
+		return 0, 0
+	}
+	// Find the dependency index
+	depIdx := int32(-1)
+	for i, dep := range fd.GetDependency() {
+		if dep == importedFile {
+			depIdx = int32(i)
+			break
+		}
+	}
+	if depIdx < 0 {
+		return 0, 0
+	}
+	// Look for SCI path [3, depIdx]
+	for _, loc := range fd.GetSourceCodeInfo().GetLocation() {
+		path := loc.GetPath()
+		if len(path) == 2 && path[0] == 3 && path[1] == depIdx {
+			span := loc.GetSpan()
+			if len(span) >= 2 {
+				return int(span[0]) + 1, int(span[1]) + 1 // 1-indexed
+			}
+		}
+	}
+	return 0, 0
 }
 
 func parseArgs(args []string) (*config, error) {

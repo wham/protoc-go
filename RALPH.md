@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 338/338 tests passing.
+ALL DONE — 343/343 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -121,6 +121,7 @@ ALL DONE — 338/338 tests passing.
 71. ✅ Octal/hex integer default value normalization — convert octal (`0755`) and hex (`0xFF`) integer literals in `[default = ...]` to decimal strings to match C++ protoc behavior (`isIntegerType` + `normalizeIntDefault` helpers in parser.go)
 72. ✅ Adjacent string concatenation in field default values (`[default = "hello" " world"]`) — concatenate adjacent string tokens in `parseFieldOptions`, updating `valEnd` to last token's end position
 73. ✅ `no_standard_descriptor_accessor` message option (field 2 of MessageOptions) with source code info
+74. ✅ Multi-token type name spans — track actual last token end position (not string length) for type names with spaces between dots (e.g., `spacetype . Inner`), applies to field type_name, RPC input/output types, and extend extendee names
 
 ## Notes
 
@@ -190,3 +191,4 @@ ALL DONE — 338/338 tests passing.
 - Late syntax/edition rejection: `syntax` or `edition` must be the very first statement. If any other statement (e.g., `package`, `import`, `message`) appears before it, `syntax`/`edition` is rejected with `Expected top-level statement (e.g. "message").` error. Uses error recovery (skips to `;` and continues parsing) so subsequent errors (e.g., missing labels in proto2 default mode) are also collected. `hadNonSyntaxStmt` flag in parser tracks this.
 - Octal/hex integer default values: C++ protoc converts octal (0755) and hex (0xFF) integer literals in default values to decimal strings (493, 255). Handled by `isIntegerType` and `normalizeIntDefault` in parser.go. Applied after float normalization in `parseFieldOptions` for all integer field types (int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64).
 - Duplicate oneof name error format: C++ protoc omits line:col for duplicate oneof names, outputting `filename: "X" is already defined in "Y".` (with space after colon, no line:col). Other duplicate symbols (messages, fields, enums, etc.) include line:col. In `collectDupNamesInMsg`, oneofs pass 0,0 to the `check` function, and `check` formats without line:col when both are 0.
+- Multi-token type name spans: when a type reference has spaces between tokens (e.g., `spacetype . Inner`), the SCI span end must use the actual last token's end position (`lastTok.Column + len(lastTok.Value)`), not `startCol + len(concatenatedTypeName)`. Affects `parseField` (field type_name), `parseMethod` (input/output types), `parseTopLevelExtend` and `parseNestedExtend` (extendee names). Track a `typeEndTok`/`extNameEndTok`/etc. variable as tokens are consumed.
