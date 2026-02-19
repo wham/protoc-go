@@ -1198,3 +1198,23 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `128_import_concat` — proto3 file with `import "base" ".proto";` (adjacent string literals for import path)
 - **Bug:** `parseImport()` at line 368 uses `p.tok.ExpectString()` which reads a single string token `"base"`. Then line 372 expects `;` but gets the second string token `".proto"`. Error: Go rejects the file (exit 1). C++ protoc concatenates adjacent string literals per the protobuf language spec, producing `"base.proto"`, and successfully parses the file (exit 0). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:368` — `p.tok.ExpectString()` reads a single string token. No loop to check for and concatenate subsequent adjacent string tokens. C++ protoc's `ConsumeString()` loops over adjacent string literals and concatenates them. Same root cause as Run 25 (file option string concatenation), Run 59 (field default string concatenation), and Run 121 (syntax string concatenation) — the string concatenation pattern is missing throughout the parser. This instance affects import path resolution, breaking multi-part import declarations.
+
+### Run 123 — Packed option on non-repeated field (FAILED: 5/5 profiles)
+- **Test:** `129_packed_nonrepeated` — proto3 message with `int32 count = 1 [packed = true];` (packed on a non-repeated field)
+- **Bug:** Go protoc-go silently accepts `[packed = true]` on a non-repeated field and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:3: [packed = true] can only be specified for repeated primitive fields.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` via `is_packable()` which requires `is_repeated()` to be true and the field to be a numeric primitive type. The Go parser stores `FieldOptions.Packed = true` without checking whether the field is repeated or a packable type. Same validation gap pattern as all other missing descriptor pool validations.
+
+### Known gaps still unexplored (updated):
+- **`packed = true` on repeated string/bytes/message** — same issue, C++ rejects non-primitive packed fields
+- **Package conflict** — two files with different packages imported together
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **`option` as type name** — Go switch matches keyword before checking context
+- **`reserved` as type name** — same pattern
+- **`extensions` as type name** — same pattern
+- **Missing message options** — `map_entry` (field 7)
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Oneof field with packed option** — same validation gap
+- **`lazy` option on non-message field** — C++ may reject, Go likely accepts
