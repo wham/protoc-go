@@ -894,4 +894,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
 - **Enum reserved value conflict** — TESTED in Run 93 (99_enum_reserved_value_conflict), confirmed broken
 - **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
-- **Enum reserved name conflict** — enum value whose name is in a reserved name list
+- **Enum reserved name conflict** — TESTED in Run 94 (100_enum_reserved_name_conflict), confirmed broken
+
+### Run 94 — Enum reserved name conflict (FAILED: 5/5 profiles)
+- **Test:** `100_enum_reserved_name_conflict` — proto3 enum with `reserved "DELETED", "ARCHIVED";` and `DELETED = 3;` (enum value name matches reserved name)
+- **Bug:** Go protoc-go silently accepts an enum value whose name is in the reserved name list and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:9:3: Enum value "DELETED" is reserved.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enum value names must not match any reserved name declared in the same enum. The Go `descriptor/pool.go` is an empty stub with no enum reserved name vs enum value name validation. The parser stores both the reserved names and the conflicting enum value without any cross-validation. Same pattern as message reserved name conflicts (Run 48) and enum reserved value number conflicts (Run 93).
