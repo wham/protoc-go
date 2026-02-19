@@ -428,6 +428,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts labeled fields inside oneofs and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:5: Fields in oneofs must not have labels (required / optional / repeated).` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parseOneof()` at line 1636 calls `parseField()` which accepts all labels (required/optional/repeated) without checking if the field is inside a oneof. No validation exists in `compiler/cli/cli.go` for this constraint. C++ protoc validates in `descriptor.cc` that fields within oneofs cannot have explicit labels.
 
+### Run 47 — No syntax statement (FAILED: 5/5 profiles)
+- **Test:** `53_no_syntax` — file with no `syntax` statement, just `package nosyntax;` and a message with unlabeled fields (`string name = 1;`)
+- **Bug:** Go protoc-go silently accepts the file and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:4:3: Expected "required", "optional", or "repeated".` for each unlabeled field (exit 1). C++ treats files without a syntax statement as proto2, which requires explicit labels on all fields.
+- **Root cause:** `parser.go` — when no `syntax` statement is present, `p.syntax` is `""` (empty string). The proto2 label validation at line 762 (`if p.syntax == "proto2"`) doesn't fire because `"" != "proto2"`. Go treats no-syntax files as proto3-like (no labels required), while C++ correctly defaults to proto2 semantics. The parser should default `p.syntax = "proto2"` when no syntax statement is encountered.
+
 ### Known gaps still unexplored (updated):
 - **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects
 - **Map field options source code info** — location ordering may differ from C++ protoc
@@ -445,7 +450,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Self-referencing message** — type resolution may differ
 - **Package conflict** — two files with different packages imported together
 - **Self-import / circular import** — cycle detection may differ
-- **Proto file with no syntax statement** — C++ defaults to proto2 with warning, Go may differ
-- **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts (same as repeated but with optional)
+- **No syntax statement** — TESTED in Run 47 (53_no_syntax), confirmed broken (Go accepts, C++ rejects)
+- **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts
 - **Reserved field name conflicts** — using a reserved field name — C++ validates, Go likely doesn't
 - **Extension number out of range** — extension using number outside declared range — C++ validates, Go likely doesn't
