@@ -642,6 +642,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	var valueIdx int32
+	var reservedRangeIdx, reservedNameIdx int32
 	for p.tok.Peek().Value != "}" {
 		if p.tok.Peek().Value == "option" {
 			if err := p.parseEnumOption(e, path); err != nil {
@@ -650,7 +651,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 			continue
 		}
 		if p.tok.Peek().Value == "reserved" {
-			if err := p.skipStatement(); err != nil {
+			if err := p.parseEnumReserved(e, path, &reservedRangeIdx, &reservedNameIdx); err != nil {
 				return nil, err
 			}
 			continue
@@ -847,6 +848,110 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		Span: span,
 	})
 
+	return nil
+}
+
+func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath []int32, rangeIdx, nameIdx *int32) error {
+	startTok := p.tok.Next() // consume "reserved"
+
+	if p.tok.Peek().Type == tokenizer.TokenString {
+		// reserved "NAME1", "NAME2";
+		stmtPath := append(copyPath(enumPath), 5) // field 5 = reserved_name
+		for {
+			nameTok, err := p.tok.ExpectString()
+			if err != nil {
+				return err
+			}
+			e.ReservedName = append(e.ReservedName, nameTok.Value)
+
+			p.addLocationSpan(append(copyPath(stmtPath), *nameIdx),
+				nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value)+2) // +2 for quotes
+			*nameIdx++
+
+			if p.tok.Peek().Value == "," {
+				p.tok.Next()
+			} else {
+				break
+			}
+		}
+		endTok, err := p.tok.Expect(";")
+		if err != nil {
+			return err
+		}
+		p.trackEnd(endTok)
+		p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		// Move statement span before individual names
+		stmtLoc := p.locations[len(p.locations)-1]
+		copy(p.locations[len(p.locations)-int(*nameIdx):], p.locations[len(p.locations)-int(*nameIdx)-1:len(p.locations)-1])
+		p.locations[len(p.locations)-int(*nameIdx)-1] = stmtLoc
+	} else {
+		// reserved 2, 3, 10 to 20;
+		stmtPath := append(copyPath(enumPath), 4) // field 4 = reserved_range
+		startCount := *rangeIdx
+		for {
+			numTok, err := p.tok.ExpectInt()
+			if err != nil {
+				return err
+			}
+			startNum, _ := strconv.ParseInt(numTok.Value, 0, 32)
+			endNum := startNum // inclusive for enums
+			endSpanLine, endSpanCol := numTok.Line, numTok.Column+len(numTok.Value)
+			endNumLine, endNumCol, endNumLen := numTok.Line, numTok.Column, len(numTok.Value)
+
+			if p.tok.Peek().Value == "to" {
+				p.tok.Next()
+				if p.tok.Peek().Value == "max" {
+					maxTok := p.tok.Next()
+					endNum = 2147483647 // INT32_MAX for enum reserved
+					endSpanLine = maxTok.Line
+					endSpanCol = maxTok.Column + len(maxTok.Value)
+					endNumLine = maxTok.Line
+					endNumCol = maxTok.Column
+					endNumLen = len(maxTok.Value)
+				} else {
+					endNumTok, err := p.tok.ExpectInt()
+					if err != nil {
+						return err
+					}
+					en, _ := strconv.ParseInt(endNumTok.Value, 0, 32)
+					endNum = en
+					endSpanLine = endNumTok.Line
+					endSpanCol = endNumTok.Column + len(endNumTok.Value)
+					endNumLine = endNumTok.Line
+					endNumCol = endNumTok.Column
+					endNumLen = len(endNumTok.Value)
+				}
+			}
+
+			e.ReservedRange = append(e.ReservedRange, &descriptorpb.EnumDescriptorProto_EnumReservedRange{
+				Start: proto.Int32(int32(startNum)),
+				End:   proto.Int32(int32(endNum)),
+			})
+
+			rangePath := append(copyPath(stmtPath), *rangeIdx)
+			p.addLocationSpan(rangePath, numTok.Line, numTok.Column, endSpanLine, endSpanCol)
+			p.addLocationSpan(append(copyPath(rangePath), 1), numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+			p.addLocationSpan(append(copyPath(rangePath), 2), endNumLine, endNumCol, endNumLine, endNumCol+endNumLen)
+			*rangeIdx++
+
+			if p.tok.Peek().Value == "," {
+				p.tok.Next()
+			} else {
+				break
+			}
+		}
+		endTok, err := p.tok.Expect(";")
+		if err != nil {
+			return err
+		}
+		p.trackEnd(endTok)
+		p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		// Move statement span before individual ranges
+		count := int(*rangeIdx - startCount)
+		stmtLoc := p.locations[len(p.locations)-1]
+		copy(p.locations[len(p.locations)-count*3:], p.locations[len(p.locations)-count*3-1:len(p.locations)-1])
+		p.locations[len(p.locations)-count*3-1] = stmtLoc
+	}
 	return nil
 }
 
