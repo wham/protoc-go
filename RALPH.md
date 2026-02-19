@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 593/593 tests passing.
+ALL DONE — 598/598 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -170,6 +170,7 @@ ALL DONE — 593/593 tests passing.
 120. ✅ Float default value type validation for integer fields — reject float literals (e.g., `[default = 1.5]`) for integer fields with `Expected integer for field default value.` error, using error recovery (`p.errors` + `skipToToken`) to collect all errors across multiple fields
 121. ✅ Nested oneof error message — when `oneof` is used inside another `oneof` block, produce `Missing field number.` error (matching C++ protoc) instead of generic `expected "=", got "{"` by checking for `=` before consuming it in `parseField`
 122. ✅ Multiline string rejection — tokenizer detects `\n` inside string literals and reports `Multiline strings are not allowed. Did you miss a "?.` error, terminates string at newline. Parser merges tokenizer errors with parser errors sorted by position. `Expect` format updated to `Expected "X".` matching C++ protoc.
+123. ✅ Undefined RPC type validation — `ResolveTypes` now checks for undefined types in RPC input/output (not just enum-as-RPC), and `resolveMessageFieldsWithErrors` checks for undefined field types during resolution, reporting `"X" is not defined.` errors with SCI location
 
 ## Notes
 
