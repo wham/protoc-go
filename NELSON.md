@@ -786,6 +786,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts the conflicting JSON names and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:10: The default JSON name of field "fooBar" ("fooBar") conflicts with the default JSON name of field "foo_bar".` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that auto-generated JSON field names (`ToJsonName`) are unique within a message. The Go `descriptor/pool.go` is an empty stub with no JSON name conflict validation. The parser stores both fields with the same `json_name` without any cross-field uniqueness check.
 
+### Run 87 — Integer value for string option (FAILED: 5/5 profiles)
+- **Test:** `93_int_string_option` — proto3 file with `option java_package = 42;` (integer literal instead of quoted string)
+- **Bug:** Go protoc-go silently accepts integer `42` for string option `java_package` and stores `java_package = "42"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:23: Value must be quoted string for string option "google.protobuf.FileOptions.java_package".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1972-1973` — `fd.Options.JavaPackage = proto.String(valTok.Value)` accepts any token type and converts its Value to a string. No validation that `valTok.Type == tokenizer.TokenString`. C++ protoc's `ConsumeString()` requires a string literal token. Same bug applies to ALL string-typed file options (`java_outer_classname`, `go_package`, `php_namespace`, `php_class_prefix`, `php_metadata_namespace`, `ruby_package`, `objc_class_prefix`, `csharp_namespace`, `swift_prefix`) — none validate that the value token is a string literal.
+
 ### Known gaps still unexplored (updated):
 - **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];` — same issue
 - **Map field options source code info** — location ordering may differ from C++ protoc
@@ -800,5 +805,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Self-referencing message** — type resolution may differ
 - **Package conflict** — two files with different packages imported together
 - **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **Integer value for enum option** — `option optimize_for = 1;` — Go may accept, C++ rejects
+- **Integer value for enum option** — `option optimize_for = 1;` — Go rejects (type check added), NOT a gap
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Integer for string option** — TESTED in Run 87 (93_int_string_option), confirmed broken (no type validation on string option values)
+- **Identifier for string option** — `option java_package = foo;` — same bug, identifier instead of string
+- **Integer for string field option** — `string name = 1 [json_name = 42];` — same pattern in parseFieldOptions
