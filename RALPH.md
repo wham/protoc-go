@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 418/418 tests passing.
+ALL DONE — 423/423 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -137,6 +137,7 @@ ALL DONE — 418/418 tests passing.
 87. ✅ Duplicate enum option validation — reject duplicate enum options (e.g., two `deprecated` declarations) with `Option "X" was already set.` error at option name position, using per-enum `seenEnumOptions` map passed to `parseEnumOption`
 88. ✅ Duplicate service option validation — reject duplicate service options (e.g., two `deprecated` declarations) with `Option "X" was already set.` error at option name position (1-indexed line:col), using per-service `seenServiceOptions` map passed to `parseServiceOption`
 89. ✅ Duplicate method option validation — reject duplicate method options (e.g., two `deprecated` declarations) with `Option "X" was already set.` error at option name position (1-indexed line:col), using per-method `seenMethodOptions` map passed to `parseMethodOption`
+90. ✅ Duplicate enum value option validation — reject duplicate options within enum value option brackets (e.g., `HIGH = 1 [deprecated = true, deprecated = false]`) with `Option "X" was already set.` error at option name position, using per-value `seenEnumValOpts` map
 
 ## Notes
 
