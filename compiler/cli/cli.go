@@ -290,6 +290,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate duplicate extension numbers (same extendee, same field number)
+	if errs := validateDuplicateExtensionNumbers(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate required extensions (extensions cannot be required)
 	if errs := validateRequiredExtensions(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -1830,6 +1835,87 @@ func collectRequiredExtensionErrors(filename string, msg *descriptorpb.Descripto
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectRequiredExtensionErrors(filename, nested, nestedPath, sci, fqn, errs)
+	}
+}
+
+// extInfo records where an extension field was defined so we can report duplicates.
+type extInfo struct {
+	fqn      string // fully-qualified name of the extension field
+	filename string
+	number   int32
+	sciPath  []int32
+	sci      *descriptorpb.SourceCodeInfo
+}
+
+// validateDuplicateExtensionNumbers checks that no two extensions for the same
+// message use the same field number.
+func validateDuplicateExtensionNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	// Collect all extensions keyed by extendee FQN (without leading dot).
+	extsByMsg := map[string][]extInfo{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		sci := fd.GetSourceCodeInfo()
+		// File-level extensions
+		for i, ext := range fd.GetExtension() {
+			extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+			fqn := ext.GetName()
+			if pkg != "" {
+				fqn = pkg + "." + fqn
+			}
+			extsByMsg[extendee] = append(extsByMsg[extendee], extInfo{
+				fqn:      fqn,
+				filename: fd.GetName(),
+				number:   ext.GetNumber(),
+				sciPath:  []int32{7, int32(i), 3},
+				sci:      sci,
+			})
+		}
+		// Message-level extensions
+		for i, msg := range fd.GetMessageType() {
+			msgFQN := msg.GetName()
+			if pkg != "" {
+				msgFQN = pkg + "." + msgFQN
+			}
+			collectExtInfoInMsg(fd.GetName(), msg, msgFQN, []int32{4, int32(i)}, sci, extsByMsg)
+		}
+	}
+	var errs []string
+	for extendee, exts := range extsByMsg {
+		seen := map[int32]string{} // number -> first extension FQN
+		for _, ei := range exts {
+			if first, ok := seen[ei.number]; ok {
+				line, col := findLocationByPath(ei.sciPath, ei.sci)
+				errs = append(errs, fmt.Sprintf("%s:%d:%d: Extension number %d has already been used in \"%s\" by extension \"%s\".",
+					ei.filename, line, col, ei.number, extendee, first))
+			} else {
+				seen[ei.number] = ei.fqn
+			}
+		}
+	}
+	return errs
+}
+
+func collectExtInfoInMsg(filename string, msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, out map[string][]extInfo) {
+	for i, ext := range msg.GetExtension() {
+		extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+		fqn := msgFQN + "." + ext.GetName()
+		path := append(append([]int32{}, msgPath...), 6, int32(i), 3)
+		out[extendee] = append(out[extendee], extInfo{
+			fqn:      fqn,
+			filename: filename,
+			number:   ext.GetNumber(),
+			sciPath:  path,
+			sci:      sci,
+		})
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		nestedFQN := msgFQN + "." + nested.GetName()
+		collectExtInfoInMsg(filename, nested, nestedFQN, nestedPath, sci, out)
 	}
 }
 
