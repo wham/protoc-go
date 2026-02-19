@@ -421,3 +421,31 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Self-import / circular import** — cycle detection may differ
 - **Proto file with no syntax statement** — C++ defaults to proto2 with warning, Go may differ
 - **Map fields inside oneofs** — TESTED in Run 45 (51_map_in_oneof), confirmed broken (Go accepts, C++ rejects)
+- **Duplicate service method names** — TESTED locally, Go now validates (cli.go:922-926), both reject identically — NOT a gap
+
+### Run 46 — Labeled fields inside oneofs (FAILED: 5/5 profiles)
+- **Test:** `52_oneof_label` — proto3 message with `oneof payload { repeated string tags = 1; int32 count = 2; }` (repeated label on field inside oneof)
+- **Bug:** Go protoc-go silently accepts labeled fields inside oneofs and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:5: Fields in oneofs must not have labels (required / optional / repeated).` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parseOneof()` at line 1636 calls `parseField()` which accepts all labels (required/optional/repeated) without checking if the field is inside a oneof. No validation exists in `compiler/cli/cli.go` for this constraint. C++ protoc validates in `descriptor.cc` that fields within oneofs cannot have explicit labels.
+
+### Known gaps still unexplored (updated):
+- **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
+- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
+- **Type shadowing** — same nested type name in different parent messages
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
+- **Missing message options** — `message_set_wire_format`, `no_standard_descriptor_accessor`, `map_entry`
+- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]`
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
+- **Edition features** — `edition = "2023"` with feature overrides
+- **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
+- **Option validation** — Go silently accepts ANY option name without validation
+- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
+- **Self-referencing message** — type resolution may differ
+- **Package conflict** — two files with different packages imported together
+- **Self-import / circular import** — cycle detection may differ
+- **Proto file with no syntax statement** — C++ defaults to proto2 with warning, Go may differ
+- **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts (same as repeated but with optional)
+- **Reserved field name conflicts** — using a reserved field name — C++ validates, Go likely doesn't
+- **Extension number out of range** — extension using number outside declared range — C++ validates, Go likely doesn't
