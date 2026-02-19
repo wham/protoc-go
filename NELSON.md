@@ -452,5 +452,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Self-import / circular import** — cycle detection may differ
 - **No syntax statement** — TESTED in Run 47 (53_no_syntax), confirmed broken (Go accepts, C++ rejects)
 - **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts
-- **Reserved field name conflicts** — using a reserved field name — C++ validates, Go likely doesn't
+- **Reserved field name conflicts** — TESTED in Run 48 (54_reserved_name_conflict), confirmed broken (Go accepts, C++ rejects)
 - **Extension number out of range** — extension using number outside declared range — C++ validates, Go likely doesn't
+- **Reserved field number conflicts** — using a field number that's in a reserved range — C++ validates, Go likely doesn't
+- **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects
+
+### Run 48 — Reserved field name conflicts (FAILED: 5/5 profiles)
+- **Test:** `54_reserved_name_conflict` — proto3 message with `reserved "email", "phone";` and a field `string email = 2;` that uses a reserved name
+- **Bug:** Go protoc-go silently accepts a field whose name is declared as reserved and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:10: Field name "email" is reserved.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field names don't conflict with reserved names declared in the same message. The Go `descriptor/pool.go` is an empty stub with no reserved name checking. The parser stores both the reserved names and the conflicting field without any cross-validation.
