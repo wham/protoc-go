@@ -1075,13 +1075,14 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 
 	var valueIdx int32
 	var reservedRangeIdx, reservedNameIdx int32
+	seenEnumOptions := map[string]bool{}
 	for p.tok.Peek().Value != "}" {
 		if p.tok.Peek().Value == ";" {
 			p.tok.Next() // consume empty statement
 			continue
 		}
 		if p.tok.Peek().Value == "option" {
-			if err := p.parseEnumOption(e, path); err != nil {
+			if err := p.parseEnumOption(e, path, seenEnumOptions); err != nil {
 				return nil, err
 			}
 			continue
@@ -1235,13 +1236,18 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 	return e, nil
 }
 
-func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath []int32) error {
+func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath []int32, seenOptions map[string]bool) error {
 	startTok := p.tok.Next() // consume "option"
 	p.trackEnd(startTok)
 
 	nameTok := p.tok.Next()
 	p.trackEnd(nameTok)
 	optName := nameTok.Value
+
+	if seenOptions[optName] {
+		return fmt.Errorf("%d:%d: Option \"%s\" was already set.", nameTok.Line+1, nameTok.Column+1, optName)
+	}
+	seenOptions[optName] = true
 
 	if _, err := p.tok.Expect("="); err != nil {
 		return err
