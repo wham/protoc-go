@@ -425,25 +425,70 @@ func validateProto3(orderedFiles []string, parsed map[string]*descriptorpb.FileD
 		if fd.GetSyntax() != "proto3" {
 			continue
 		}
-		for _, msg := range fd.GetMessageType() {
-			collectProto3DefaultErrors(fd.GetName(), msg, fd.GetSourceCodeInfo(), &errs)
+		for i, e := range fd.GetEnumType() {
+			collectProto3EnumZeroErrors(fd.GetName(), e, []int32{5, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+		for i, msg := range fd.GetMessageType() {
+			collectProto3MessageErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
 		}
 	}
 	return errs
 }
 
-func collectProto3DefaultErrors(filename string, msg *descriptorpb.DescriptorProto, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+func collectProto3EnumZeroErrors(filename string, e *descriptorpb.EnumDescriptorProto, enumPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	vals := e.GetValue()
+	if len(vals) > 0 && vals[0].GetNumber() != 0 {
+		line, col := findEnumValueNumberLocation(enumPath, 0, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: The first enum value must be zero for open enums.", filename, line, col))
+	}
+}
+
+func findEnumValueNumberLocation(enumPath []int32, valueIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if sci == nil {
+		return 0, 0
+	}
+	// Path: enumPath + [2, valueIdx, 2] where 2=value field, 2=number field
+	target := append(append([]int32{}, enumPath...), 2, int32(valueIdx), 2)
+	for _, loc := range sci.GetLocation() {
+		path := loc.GetPath()
+		if len(path) == len(target) {
+			match := true
+			for i := range path {
+				if path[i] != target[i] {
+					match = false
+					break
+				}
+			}
+			if match {
+				span := loc.GetSpan()
+				if len(span) >= 2 {
+					return int(span[0]) + 1, int(span[1]) + 1
+				}
+			}
+		}
+	}
+	return 0, 0
+}
+
+func collectProto3DefaultErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
 	for _, field := range msg.GetField() {
 		if field.DefaultValue != nil {
 			line, col := findDefaultValueLocation(field, msg, sci)
 			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Explicit default values are not allowed in proto3.", filename, line, col))
 		}
 	}
-	for _, nested := range msg.GetNestedType() {
+}
+
+func collectProto3MessageErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	collectProto3DefaultErrors(filename, msg, msgPath, sci, errs)
+	for i, e := range msg.GetEnumType() {
+		collectProto3EnumZeroErrors(filename, e, append(append([]int32{}, msgPath...), 4, int32(i)), sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
 		if nested.GetOptions().GetMapEntry() {
 			continue
 		}
-		collectProto3DefaultErrors(filename, nested, sci, errs)
+		collectProto3MessageErrors(filename, nested, append(append([]int32{}, msgPath...), 3, int32(i)), sci, errs)
 	}
 }
 

@@ -1,0 +1,15 @@
+files_to_generate: [test.proto]
+parameter: ""
+compiler_version: major:5 minor:29 patch:3 suffix:""
+proto_file_count: 1
+source_file_descriptor_count: 1
+
+proto_file[0]: test.proto (package="proto3enumzero", syntax="proto3")
+  message: Task
+    field: name (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
+    field: priority (number=2, type=TYPE_ENUM, label=LABEL_OPTIONAL)
+  enum: Priority
+    value: HIGH = 1
+    value: MEDIUM = 2
+    value: LOW = 3
+  source_code_info_locations: 24
