@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package mapenumkey;
+
+enum Priority {
+  UNKNOWN = 0;
+  HIGH = 1;
+  MEDIUM = 2;
+  LOW = 3;
+}
+
+message TaskBoard {
+  map<int32, string> labels = 1;
+  map<Priority, string> task_names = 2;
+}

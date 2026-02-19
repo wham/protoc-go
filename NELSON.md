@@ -979,6 +979,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Both C++ and Go reject the file (both treat `stream` as the streaming keyword when it appears after `(` in an RPC declaration), but with different error messages. C++ protoc: `test.proto:10:21: Expected type name.` Go protoc-go: `test.proto:line 10:23: expected ")", got "returns"`. C++ correctly identifies the missing type name after the `stream` keyword. Go has a cascading parse error: it consumes `)` as the type name, then fails expecting another `)`.
 - **Root cause:** `parser.go:1639-1642` — when `stream` is followed by `)`, the Go parser still consumes `stream` as the keyword. Then `p.tok.Next()` at line 1643 gets `)` as `inputTok` (setting `inputType = ")"`). Then `p.tok.Expect(")")` at line 1659 sees `returns` instead of `)` → error at column 23. C++ protoc also consumes `stream` as the keyword, but immediately detects the missing type name at column 21 (the `)` position) before trying to consume the closing paren. The error messages differ in both content and column position.
 
+### Run 103 — Map field with enum key type (FAILED: 5/5 profiles)
+- **Test:** `109_map_enum_key` — proto3 file with `map<Priority, string> task_names = 2;` where `Priority` is an enum defined in the same file
+- **Bug:** `parseMapField()` at line 1840-1842 checks if the key type is in `builtinTypes`. Since `Priority` is not a builtin type, Go rejects with `"invalid map key type: Priority"` at parse time. C++ protoc also rejects (enum keys are not valid per the protobuf spec), but with a different error message: `"Key in map fields cannot be enum types."` at validation time. Both exit 1, but stderr differs.
+- **Root cause:** `parser.go:1840-1842` — Go rejects non-builtin key types at parse time with a generic error. C++ protoc accepts the type during parsing, resolves it during linking, then validates in `descriptor.cc` with a specific error mentioning "enum types". The error message format also differs: Go has no line:column prefix (`test.proto:invalid map key type: Priority`), C++ has line:column (`test.proto:14:3: Key in map fields cannot be enum types.`). Additionally, Go's approach of rejecting non-builtins at parse time is overly restrictive — if protobuf ever allowed enum keys, Go would need parser changes while C++ would only need a validation change.
+
 ### Known gaps still unexplored (updated):
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];` — Go parser doesn't handle options after ranges
 - **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
@@ -996,3 +1001,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **String concatenation in enum/service/method option values** — same single-token bug as field defaults
 - **Integer value for enum option** — `option optimize_for = 1;`
 - **Duplicate `import public`** — same file imported via `import` and `import public`
+- **Map field with message key type** — `map<MyMsg, string>` — Go rejects at parse time, C++ at validation with different error
+- **message_set_wire_format + extensions to max** — Go uses INT32_MAX (2147483647), C++ uses 536870912 for `max` sentinel
