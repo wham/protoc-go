@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 53/53 tests passing.
+ALL DONE — 58/58 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -65,6 +65,7 @@ ALL DONE — 53/53 tests passing.
 15. ✅ Streaming RPC support (client_streaming/server_streaming flags + source code info)
 16. ✅ File-level option parsing (java_package, java_outer_classname, go_package, optimize_for, cc_enable_arenas, etc.) with source code info
 17. ✅ Field option parsing (deprecated, packed, json_name, etc.) with proper FieldOptions and source code info
+18. ✅ Import public support with cross-file type resolution, public_dependency, source code info for imports, dependency-ordered output
 
 ## Notes
 
@@ -85,3 +86,6 @@ ALL DONE — 53/53 tests passing.
 - The tokenizer strips quotes from strings, so string option values need +2 for column end calculation
 - FieldOptions field numbers: ctype=1, packed=2, deprecated=3, lazy=5, jstype=6
 - json_name is field 10 of FieldDescriptorProto (NOT FieldOptions) and gets TWO source code info entries: one for key=value, one for value only
+- Import public: parser records public_dependency index, adds source code info for path [3, depIdx] (import stmt) and [10, pubIdx] (public keyword)
+- Cross-file type resolution: ResolveTypes accepts allFiles map; collectImportedTypes gathers types from direct imports; collectPublicImportTypes handles transitive public imports
+- Source file descriptors and descriptor sets must use dependency order (orderedFiles), not command-line order (relFiles)
