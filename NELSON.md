@@ -1108,6 +1108,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts `required` on extension fields and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:10:12: The extension reqext.nickname cannot be required.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that extension fields cannot have `required` label — only `optional` or `repeated` are allowed. The Go `descriptor/pool.go` is an empty stub with no extension label validation. The `parseExtend` function calls `parseField` which accepts all labels without checking the extension context.
 
+### Run 115 — Duplicate extension field numbers (FAILED: 5/5 profiles)
+- **Test:** `121_duplicate_extension_number` — proto2 file with two `extend Base` blocks both defining extensions with field number 100
+- **Bug:** Go protoc-go silently accepts duplicate extension field numbers and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:15:26: Extension number 100 has already been used in "extdup.Base" by extension "extdup.name".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that extension field numbers must be unique across all extend blocks targeting the same message. The Go `descriptor/pool.go` is an empty stub with no duplicate extension number validation. The parser stores all extension fields without checking for number conflicts across extend blocks.
+
 ### Known gaps still unexplored (updated):
 - **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
 - **Package conflict** — two files with different packages imported together
@@ -1119,7 +1124,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **`reserved` as type name** — same pattern
 - **`extensions` as type name** — same pattern
 - **Undefined field type** — `message Foo { NonExistent x = 1; }` — Go may or may not handle (has resolveMessageFieldsWithErrors)
-- **Repeated label on extension** — valid (C++ accepts), but what about `optional` + `repeated` on same extension field?
 - **Extension with default value** — `extend Base { optional string tag = 100 [default = "hello"]; }` — may differ
 - **`oneof` inside extend block** — C++ rejects, Go may accept
 - **Extension field name conflict with base message fields** — C++ validates, Go likely doesn't
+- **Duplicate extension field numbers** — TESTED in Run 115 (121_duplicate_extension_number), confirmed broken
