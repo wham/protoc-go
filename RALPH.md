@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 658/658 tests passing.
+ALL DONE — 663/663 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -172,6 +172,7 @@ ALL DONE — 658/658 tests passing.
 132. ✅ Adjacent string concatenation in import statements (`import "base" ".proto";`) — consume adjacent TokenString tokens after import path and concatenate, same pattern as file options/syntax/edition
 133. ✅ Packed option validation — reject `[packed = true]` on non-repeated or non-primitive fields with `[packed = true] can only be specified for repeated primitive fields.` error at field span location, checks message fields, file-level and message-level extensions
 134. ✅ Lazy option validation — reject `[lazy = true]` on non-submessage fields with `[lazy = true] can only be specified for submessage fields.` error at field type SCI location (path `[..., 5]`), checks message fields, file-level and message-level extensions, recurses into nested messages
+135. ✅ Undefined extendee validation — reject `extend NonExistent { ... }` where extendee type is not defined, with `"NonExistent" is not defined.` error at extendee SCI location (path `[7, extIdx, 2]` for file-level, `[msgPath..., 6, extIdx, 2]` for message-level), checked during `ResolveTypes` before extension range validation
 114. ✅ Extension range options (`[verification = UNVERIFIED]`) — parse options on extension ranges, set `ExtensionRangeOptions` with verification field, SCI entries for options bracket and individual options, source retention stripping for `proto_file` and descriptor_set (keep full options only in `source_file_descriptors`)
 115. ✅ RPC enum type validation — reject enum types used as RPC input/output types with `"X" is not a message type.` error at type reference location, checked during `ResolveTypes` using original unresolved name
 116. ✅ Negative field number error message — peek for non-integer token after `=` in field number parsing, produce `Expected field number.` error matching C++ protoc (instead of generic `expected integer` from tokenizer)
