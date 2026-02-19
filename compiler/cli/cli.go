@@ -250,6 +250,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate jstype option only on int64-family fields
+	if errs := validateJstypeNonInt64(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate empty enums (must contain at least one value)
 	if errs := validateEmptyEnums(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -838,6 +843,71 @@ func collectLazyErrors(filename string, msg *descriptorpb.DescriptorProto, msgPa
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectLazyErrors(filename, nested, nestedPath, sci, errs)
+	}
+}
+
+// isJstypeAllowedType returns true if the field type supports the jstype option.
+func isJstypeAllowedType(t descriptorpb.FieldDescriptorProto_Type) bool {
+	switch t {
+	case descriptorpb.FieldDescriptorProto_TYPE_INT64,
+		descriptorpb.FieldDescriptorProto_TYPE_UINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+		return true
+	}
+	return false
+}
+
+// validateJstypeNonInt64 checks that jstype is only used on int64-family fields.
+func validateJstypeNonInt64(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectJstypeErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		// Check file-level extensions
+		for i, ext := range fd.GetExtension() {
+			if ext.GetOptions().GetJstype() != descriptorpb.FieldOptions_JS_NORMAL && ext.Options != nil && ext.Options.Jstype != nil {
+				if !isJstypeAllowedType(ext.GetType()) {
+					path := []int32{7, int32(i), 5}
+					line, col := findLocationByPath(path, sci)
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.", fd.GetName(), line, col))
+				}
+			}
+		}
+	}
+	return errs
+}
+
+func collectJstypeErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, field := range msg.GetField() {
+		if field.Options != nil && field.Options.Jstype != nil {
+			if !isJstypeAllowedType(field.GetType()) {
+				fieldPath := append(append([]int32{}, msgPath...), 2, int32(i), 5)
+				line, col := findLocationByPath(fieldPath, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.", filename, line, col))
+			}
+		}
+	}
+	// Check message-level extensions
+	for i, ext := range msg.GetExtension() {
+		if ext.Options != nil && ext.Options.Jstype != nil {
+			if !isJstypeAllowedType(ext.GetType()) {
+				extPath := append(append([]int32{}, msgPath...), 6, int32(i), 5)
+				line, col := findLocationByPath(extPath, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.", filename, line, col))
+			}
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectJstypeErrors(filename, nested, nestedPath, sci, errs)
 	}
 }
 
