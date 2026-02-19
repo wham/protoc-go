@@ -259,7 +259,55 @@ func (t *Tokenizer) readString() {
 		if t.input[t.pos] == '\\' {
 			t.advance()
 			if t.pos < len(t.input) {
-				sb.WriteByte(t.input[t.pos])
+				ch := t.input[t.pos]
+				switch ch {
+				case 'n':
+					sb.WriteByte('\n')
+				case 't':
+					sb.WriteByte('\t')
+				case 'r':
+					sb.WriteByte('\r')
+				case 'a':
+					sb.WriteByte('\a')
+				case 'b':
+					sb.WriteByte('\b')
+				case 'f':
+					sb.WriteByte('\f')
+				case 'v':
+					sb.WriteByte('\v')
+				case '\\':
+					sb.WriteByte('\\')
+				case '\'':
+					sb.WriteByte('\'')
+				case '"':
+					sb.WriteByte('"')
+				case '?':
+					sb.WriteByte('?')
+				case 'x', 'X':
+					// Hex escape: \xHH
+					val := byte(0)
+					t.advance()
+					for t.pos < len(t.input) && isHexDigit(t.input[t.pos]) {
+						val = val*16 + hexVal(t.input[t.pos])
+						t.advance()
+					}
+					sb.WriteByte(val)
+					continue // already advanced past the digits
+				case '0', '1', '2', '3', '4', '5', '6', '7':
+					// Octal escape: \NNN (up to 3 digits)
+					val := ch - '0'
+					for i := 0; i < 2; i++ {
+						if t.pos+1 < len(t.input) && t.input[t.pos+1] >= '0' && t.input[t.pos+1] <= '7' {
+							t.advance()
+							val = val*8 + (t.input[t.pos] - '0')
+						} else {
+							break
+						}
+					}
+					sb.WriteByte(val)
+				default:
+					sb.WriteByte(ch)
+				}
 				t.advance()
 			}
 		} else {
@@ -400,6 +448,18 @@ func isIdentPart(ch byte) bool {
 
 func isHexDigit(ch byte) bool {
 	return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
+}
+
+func hexVal(ch byte) byte {
+	switch {
+	case ch >= '0' && ch <= '9':
+		return ch - '0'
+	case ch >= 'a' && ch <= 'f':
+		return ch - 'a' + 10
+	case ch >= 'A' && ch <= 'F':
+		return ch - 'A' + 10
+	}
+	return 0
 }
 
 // ToJSONName converts a proto field name to its JSON name using proto3 camelCase rules.
