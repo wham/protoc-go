@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 393/393 tests passing.
+ALL DONE — 398/398 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -132,6 +132,7 @@ ALL DONE — 393/393 tests passing.
 82. ✅ `debug_redact` field option (field 16 of FieldOptions) and `unverified_lazy` field option (field 15 of FieldOptions) with source code info
 83. ✅ Duplicate file option validation — reject duplicate file options (e.g., two `java_package` declarations) with `Option "X" was already set.` error at option name position
 84. ✅ Proto3 optional synthetic oneof ordering — declared oneofs come before synthetic oneofs in `OneofDecl` (deferred creation after message body parsing)
+85. ✅ Duplicate message option validation — reject duplicate message options (e.g., two `deprecated` declarations) with `Option "X" was already set.` error at option name position, using per-message `seenMsgOptions` map
 
 ## Notes
 
