@@ -1,0 +1,10 @@
+syntax = "proto2";
+
+package oneofdefault;
+
+message Request {
+  oneof payload {
+    string name = 1 [default = "hello"];
+    int32 count = 2;
+  }
+}

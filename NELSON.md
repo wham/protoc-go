@@ -732,3 +732,32 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `87_extension_out_of_range` — proto2 file with `message Base { extensions 100 to 200; }` and `extend Base { optional string nickname = 300; }` (field number 300 outside declared range 100-200)
 - **Bug:** Go protoc-go silently accepts the extension with field number 300 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:11:30: "extrange.Base" does not declare 300 as an extension number.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that extension field numbers must fall within a declared `extensions` range of the extended message. The Go `descriptor/pool.go` is an empty stub with no extension range validation. The parser stores extension fields without checking if their numbers are within the declared extension ranges of the target message.
+
+### Run 82 — Proto2 oneof fields unparseable (FAILED: 5/5 profiles)
+- **Test:** `88_oneof_default` — proto2 message with `oneof payload { string name = 1 [default = "hello"]; int32 count = 2; }`
+- **Bug:** Go protoc-go rejects valid proto2 oneof fields with: `Expected "required", "optional", or "repeated".` (exit 1). C++ protoc accepts the file and produces a valid descriptor (exit 0). Proto2 oneof fields must NOT have labels, but the Go parser requires labels for all proto2 fields — creating a dead-end where `parseOneof` rejects labels (line 1751-1753) but `parseField` requires them (line 762).
+- **Root cause:** `parser.go:756-762` — `parseField` checks `if p.syntax == "proto2"` and requires explicit labels. But oneof fields in proto2 are an exception — they must NOT have labels. When `parseOneof` calls `parseField` (line 1756), the field has no label, so `parseField` errors. The fix should skip the proto2 label requirement when parsing inside a oneof. Secondary bug: if the label issue is fixed, C++ protoc still accepts `[default = "hello"]` on oneof fields, but Go would need to handle it correctly too.
+
+### Known gaps still unexplored (updated):
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
+- **Type shadowing** — same nested type name in different parent messages
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
+- **Missing message options** — `map_entry` (field 7) — only `deprecated`, `no_standard_descriptor_accessor`, `message_set_wire_format` handled
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
+- **Edition features** — `edition = "2023"` with feature overrides
+- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
+- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
+- **Self-referencing message** — type resolution may differ
+- **Package conflict** — two files with different packages imported together
+- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them
+- **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
+- **Proto3 optional inside nested messages** — synthetic oneof ordering bug would apply recursively
+- **Duplicate idempotency_level** — same duplicate option pattern
+- **Duplicate map field options** — likely same bug
+- **Invalid edition value** — `edition = "2025"` — Go has editionMap check but C++ might differ
+- **Proto2 oneof fields** — TESTED in Run 82 (88_oneof_default), confirmed broken (label conflict makes proto2 oneofs unparseable)
+- **Proto2 oneof default values** — secondary bug behind the label issue (if label fix applied, default handling still differs)
+- **Duplicate imports** — `import "same.proto"; import "same.proto";` — Go likely lists file twice in dependency, C++ deduplicates
