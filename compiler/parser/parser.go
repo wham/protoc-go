@@ -1132,11 +1132,17 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 			hasOpts = true
 			optsBracketStartLine = bracketTok.Line
 			optsBracketStartCol = bracketTok.Column
+			seenEnumValOpts := map[string]bool{}
 
 			for {
 				optNameTok := p.tok.Next()
 				p.trackEnd(optNameTok)
 				optName := optNameTok.Value
+
+				if seenEnumValOpts[optName] {
+					return nil, fmt.Errorf("%d:%d: Option \"%s\" was already set.", optNameTok.Line+1, optNameTok.Column+1, optName)
+				}
+				seenEnumValOpts[optName] = true
 
 				if _, err := p.tok.Expect("="); err != nil {
 					return nil, err
