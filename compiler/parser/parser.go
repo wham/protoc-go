@@ -972,6 +972,10 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	if _, err := p.tok.Expect("="); err != nil {
 		return nil, err
 	}
+	if p.tok.Peek().Type != tokenizer.TokenInt {
+		bad := p.tok.Next()
+		return nil, fmt.Errorf("%d:%d: Expected field number.", bad.Line+1, bad.Column+1)
+	}
 	numTok, err := p.tok.ExpectInt()
 	if err != nil {
 		return nil, err
