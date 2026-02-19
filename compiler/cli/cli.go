@@ -175,11 +175,18 @@ func Run(args []string) error {
 	// Parse all proto files
 	parsed := make(map[string]*descriptorpb.FileDescriptorProto)
 	var orderedFiles []string
+	var collectErrors []string
 
 	for _, f := range relFiles {
-		if err := parseRecursive(f, srcTree, parsed, &orderedFiles, nil); err != nil {
+		ok, err := parseRecursive(f, srcTree, parsed, &orderedFiles, nil, &collectErrors)
+		if err != nil {
 			return err
 		}
+		_ = ok
+	}
+
+	if len(collectErrors) > 0 {
+		return fmt.Errorf("%s", strings.Join(collectErrors, "\n"))
 	}
 
 	// Resolve type references across all files (must happen after all files parsed)
@@ -323,20 +330,12 @@ func Run(args []string) error {
 	return nil
 }
 
-func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles *[]string, importStack []string) error {
+func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles *[]string, importStack []string, collectErrors *[]string) (bool, error) {
 	// Check for import cycles
-	for _, f := range importStack {
+	for idx, f := range importStack {
 		if f == filename {
-			// Build cycle chain: a -> b -> ... -> a
-			chain := filename
-			for _, s := range importStack {
-				chain += " -> " + s
-				if s == filename {
-					// Only need to show from the cycle start
-				}
-			}
 			// Build chain starting from the cycle point
-			chain = ""
+			chain := ""
 			started := false
 			for _, s := range importStack {
 				if s == filename {
@@ -351,43 +350,92 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 			}
 			chain += " -> " + filename
 
-			// Find the import statement location in the importing file
-			importingFile := importStack[len(importStack)-1]
-			importingFd := parsed[importingFile]
-			line, col := findImportLocation(importingFd, filename)
-			return fmt.Errorf("%s:%d:%d: File recursively imports itself: %s", importingFile, line, col, chain)
+			// Report at cycle-starting file's import of the next file in chain
+			cycleStart := filename
+			cycleStartFd := parsed[cycleStart]
+			var nextFile string
+			if idx+1 < len(importStack) {
+				nextFile = importStack[idx+1]
+			} else {
+				nextFile = filename // self-import
+			}
+			line, col := findImportLocation(cycleStartFd, nextFile)
+			if collectErrors != nil {
+				*collectErrors = append(*collectErrors, fmt.Sprintf("%s:%d:%d: File recursively imports itself: %s", cycleStart, line, col, chain))
+				return false, nil
+			}
+			return false, fmt.Errorf("%s:%d:%d: File recursively imports itself: %s", cycleStart, line, col, chain)
 		}
 	}
 
 	if _, ok := parsed[filename]; ok {
-		return nil
+		return true, nil
 	}
 
 	content, err := srcTree.Open(filename)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	fd, err := parser.ParseFile(filename, content)
 	if err != nil {
 		if me, ok := err.(*parser.MultiError); ok {
-			return me
+			return false, me
 		}
-		return fmt.Errorf("%s:%w", filename, err)
+		return false, fmt.Errorf("%s:%w", filename, err)
 	}
 
 	parsed[filename] = fd
 
 	// Parse dependencies
 	newStack := append(importStack, filename)
+	failedDeps := map[string]bool{}
 	for _, dep := range fd.GetDependency() {
-		if err := parseRecursive(dep, srcTree, parsed, orderedFiles, newStack); err != nil {
-			return err
+		ok, err := parseRecursive(dep, srcTree, parsed, orderedFiles, newStack, collectErrors)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			failedDeps[dep] = true
 		}
 	}
 
+	if len(failedDeps) > 0 && collectErrors != nil {
+		// Self-import: if the only failed dep is this file itself, just return
+		if len(failedDeps) == 1 && failedDeps[filename] {
+			return false, nil
+		}
+
+		// Add "Import X was not found or had errors." for each failed dep (that isn't self)
+		for _, dep := range fd.GetDependency() {
+			if failedDeps[dep] && dep != filename {
+				line, col := findImportLocation(fd, dep)
+				*collectErrors = append(*collectErrors, fmt.Sprintf("%s:%d:%d: Import \"%s\" was not found or had errors.", filename, line, col, dep))
+			}
+		}
+
+		// Build available files (excluding failed deps)
+		availableFiles := map[string]*descriptorpb.FileDescriptorProto{}
+		for _, dep := range fd.GetDependency() {
+			if !failedDeps[dep] {
+				if depFd, ok := parsed[dep]; ok {
+					availableFiles[dep] = depFd
+				}
+			}
+		}
+
+		// Check for unresolved type errors
+		typeErrors := parser.CheckUnresolvedTypes(fd, availableFiles)
+		*collectErrors = append(*collectErrors, typeErrors...)
+
+		return false, nil
+	} else if len(failedDeps) > 0 {
+		// No error collector — return first failed dep as error
+		return false, fmt.Errorf("import failed")
+	}
+
 	*orderedFiles = append(*orderedFiles, filename)
-	return nil
+	return true, nil
 }
 
 // findImportLocation finds the line:col of an import statement in a file descriptor's SCI.

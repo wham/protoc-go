@@ -2492,3 +2492,115 @@ func resolveTypeName(name string, scope string, types map[string]descriptorpb.Fi
 
 	return "." + name
 }
+
+// CheckUnresolvedTypes checks for unresolved type references in fd,
+// using only the given availableFiles for imported types.
+// Returns error strings like: filename:line:col: "TypeName" is not defined.
+func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles map[string]*descriptorpb.FileDescriptorProto) []string {
+	pkg := fd.GetPackage()
+	prefix := ""
+	if pkg != "" {
+		prefix = "." + pkg
+	}
+
+	types := map[string]descriptorpb.FieldDescriptorProto_Type{}
+	collectTypes(fd.GetMessageType(), prefix, types)
+	for _, e := range fd.GetEnumType() {
+		types[prefix+"."+e.GetName()] = descriptorpb.FieldDescriptorProto_TYPE_ENUM
+	}
+	if availableFiles != nil {
+		for _, dep := range fd.GetDependency() {
+			if depFd, ok := availableFiles[dep]; ok {
+				collectImportedTypes(depFd, types)
+			}
+		}
+		visited := map[string]bool{fd.GetName(): true}
+		for _, dep := range fd.GetDependency() {
+			collectPublicImportTypes(dep, availableFiles, types, visited)
+		}
+	}
+
+	var errors []string
+	filename := fd.GetName()
+
+	for msgIdx, msg := range fd.GetMessageType() {
+		checkMsgUnresolved(msg, prefix, types, filename, fd, []int32{4, int32(msgIdx)}, &errors)
+	}
+
+	for svcIdx, svc := range fd.GetService() {
+		for methodIdx, m := range svc.GetMethod() {
+			methodPrefix := prefix
+			if m.InputType != nil {
+				origName := m.GetInputType()
+				resolved := resolveTypeName(origName, methodPrefix, types)
+				if _, ok := types[resolved]; !ok {
+					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 2}
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					}
+				}
+			}
+			if m.OutputType != nil {
+				origName := m.GetOutputType()
+				resolved := resolveTypeName(origName, methodPrefix, types)
+				if _, ok := types[resolved]; !ok {
+					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 3}
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					}
+				}
+			}
+		}
+	}
+
+	return errors
+}
+
+func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, filename string, fd *descriptorpb.FileDescriptorProto, msgPath []int32, errors *[]string) {
+	msgPrefix := parentPrefix + "." + msg.GetName()
+
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+
+	for fieldIdx, f := range msg.GetField() {
+		if f.TypeName != nil {
+			origName := f.GetTypeName()
+			resolved := resolveTypeName(origName, msgPrefix, types)
+			if _, ok := types[resolved]; !ok {
+				path := append(copyPath(msgPath), 2, int32(fieldIdx), 6)
+				if line, col, ok := findSCISpanStart(fd, path); ok {
+					*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+				}
+			}
+		}
+	}
+
+	for i, nested := range msg.GetNestedType() {
+		nestedPath := append(copyPath(msgPath), 3, int32(i))
+		checkMsgUnresolved(nested, msgPrefix, types, filename, fd, nestedPath, errors)
+	}
+}
+
+func findSCISpanStart(fd *descriptorpb.FileDescriptorProto, path []int32) (int, int, bool) {
+	for _, loc := range fd.GetSourceCodeInfo().GetLocation() {
+		locPath := loc.GetPath()
+		if len(locPath) != len(path) {
+			continue
+		}
+		match := true
+		for i := range path {
+			if locPath[i] != path[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			span := loc.GetSpan()
+			if len(span) >= 2 {
+				return int(span[0]) + 1, int(span[1]) + 1, true
+			}
+		}
+	}
+	return 0, 0, false
+}
