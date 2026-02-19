@@ -1184,5 +1184,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **`extensions` as type name** — same pattern
 - **Missing message options** — `map_entry` (field 7)
 - **String literal for float default** — TESTED in Run 119 (125_string_default_float), confirmed broken
-- **Syntax string concatenation** — `syntax = "proto" "3";` — C++ concatenates, Go reads single token
+- **Syntax string concatenation** — TESTED in Run 121 (127_syntax_concat), confirmed broken (Go rejects, C++ accepts)
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Import path string concatenation** — `import "base" ".proto";` — same single-token bug
+- **Package name string concatenation** — probably not valid since package uses identifier not string
+
+### Run 121 — Syntax string concatenation (FAILED: 5/5 profiles)
+- **Test:** `127_syntax_concat` — file with `syntax = "proto" "3";` (adjacent string literals for syntax value)
+- **Bug:** Go protoc-go reads only the first string token `"proto"` as the syntax value, then expects `;` but gets the second string token `"3"`. Error: `test.proto:1:18: Expected ";".` (exit 1). C++ protoc concatenates adjacent string literals per the protobuf language spec, producing `"proto3"`, and successfully parses the file (exit 0). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:249` — `p.tok.ExpectString()` reads a single string token. No loop to check for and concatenate subsequent adjacent string tokens. C++ protoc's `ConsumeString()` loops over adjacent string literals and concatenates them. Same root cause as Run 25 (file option string concatenation) and Run 59 (field default string concatenation) — the string concatenation pattern is missing throughout the parser. This specific instance affects the syntax declaration, which is critical for determining how the rest of the file is parsed.
