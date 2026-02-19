@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package jsonconflict;
+
+message User {
+  string foo_bar = 1;
+  string fooBar = 2;
+}
