@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 643/643 tests passing.
+ALL DONE — 648/648 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -170,6 +170,7 @@ ALL DONE — 643/643 tests passing.
 130. ✅ Enum default value validation — reject enum fields with `[default = NONEXISTENT]` where NONEXISTENT is not a valid enum value name, with `Enum type "pkg.EnumName" has no value named "X".` error at default value SCI location (path `[msgPath..., 2, fieldIdx, 7]`), builds enum FQN → value names map across all files, recurses into nested messages
 131. ✅ Adjacent string concatenation in syntax/edition declarations (`syntax = "proto" "3";`) — reuse same pattern as file options, consuming adjacent TokenString tokens and concatenating values
 132. ✅ Adjacent string concatenation in import statements (`import "base" ".proto";`) — consume adjacent TokenString tokens after import path and concatenate, same pattern as file options/syntax/edition
+133. ✅ Packed option validation — reject `[packed = true]` on non-repeated or non-primitive fields with `[packed = true] can only be specified for repeated primitive fields.` error at field span location, checks message fields, file-level and message-level extensions
 114. ✅ Extension range options (`[verification = UNVERIFIED]`) — parse options on extension ranges, set `ExtensionRangeOptions` with verification field, SCI entries for options bracket and individual options, source retention stripping for `proto_file` and descriptor_set (keep full options only in `source_file_descriptors`)
 115. ✅ RPC enum type validation — reject enum types used as RPC input/output types with `"X" is not a message type.` error at type reference location, checked during `ResolveTypes` using original unresolved name
 116. ✅ Negative field number error message — peek for non-integer token after `=` in field number parsing, produce `Expected field number.` error matching C++ protoc (instead of generic `expected integer` from tokenizer)
@@ -281,3 +282,4 @@ ALL DONE — 643/643 tests passing.
 - Required extension validation: C++ protoc rejects `required` on extension fields with `The extension <fqn> cannot be required.` at the type SCI location (path `[7, extIdx, 5]` for file-level, `[msgPath..., 6, extIdx, 5]` for message-level). FQN is `package.fieldname` for file-level, `package.MsgName.fieldname` for message-level. Validated in `validateRequiredExtensions` (cli.go) after extension range validation.
 - String default value rejection for float/double fields: C++ protoc rejects string literals (e.g., `[default = "1.5"]`) as default values for TYPE_FLOAT/TYPE_DOUBLE fields with `Expected number.` error at the string literal token position. Uses error recovery (`p.errors` + `skipToToken("]")`) to collect errors from multiple fields.
 - Enum default value validation: C++ protoc rejects enum fields with default values referencing nonexistent enum value names. Error format: `filename:line:col: Enum type "pkg.EnumName" has no value named "X".` Location from SCI path `[msgPath..., 2, fieldIdx, 7]` (field 7=default_value). Validated in `validateEnumDefaultValues` (cli.go) with `collectEnumDefaultErrors` recursing into nested messages. Builds `enumValues` map of enum FQN → value name set across all files. Placed before proto3 validation in the validation chain.
+- Packed option validation: C++ protoc rejects `[packed = true]` on non-repeated fields or non-primitive types (string, bytes, message, group) with `[packed = true] can only be specified for repeated primitive fields.` error at field span location. Packable types: int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64, float, double, bool, enum. Validated in `validatePackedNonRepeated` (cli.go) with `collectPackedErrors` recursing into nested messages. Also checks file-level and message-level extensions.
