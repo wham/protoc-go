@@ -187,6 +187,11 @@ func Run(args []string) error {
 		parser.ResolveTypes(parsed[name], parsed)
 	}
 
+	// Validate map key types (float/double/bytes/message not allowed)
+	if errs := validateMapKeyTypes(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate duplicate symbol names
 	if errs := validateDuplicateNames(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -458,6 +463,47 @@ func parseArgs(args []string) (*config, error) {
 	}
 
 	return cfg, nil
+}
+
+// validateMapKeyTypes checks that map fields don't use float/double/bytes/message as key types.
+func validateMapKeyTypes(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectMapKeyTypeErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectMapKeyTypeErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			keyField := nested.GetField()[0]
+			kt := keyField.GetType()
+			if kt == descriptorpb.FieldDescriptorProto_TYPE_FLOAT ||
+				kt == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE ||
+				kt == descriptorpb.FieldDescriptorProto_TYPE_BYTES ||
+				kt == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE ||
+				kt == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+				// Find the parent field that uses this map entry
+				for j := range msg.GetField() {
+					field := msg.GetField()[j]
+					if field.GetTypeName() == nested.GetName() || strings.HasSuffix(field.GetTypeName(), "."+nested.GetName()) {
+						fieldPath := append(append([]int32{}, msgPath...), 2, int32(j))
+						line, col := findLocationByPath(fieldPath, sci)
+						*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Key in map fields cannot be float/double, bytes or message types.", filename, line, col))
+						break
+					}
+				}
+			}
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectMapKeyTypeErrors(filename, nested, nestedPath, sci, errs)
+	}
 }
 
 // validatePositiveFieldNumbers checks that all field numbers are positive integers.
