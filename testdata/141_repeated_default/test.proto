@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package repdefault;
+
+message Config {
+  repeated int32 values = 1 [default = 42];
+  repeated string names = 2 [default = "hello"];
+}
