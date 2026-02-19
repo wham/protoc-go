@@ -1334,8 +1334,8 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 						fd.GetName(), shortName, scope)
 				}
 				errs = append(errs, errMsg)
-				// If the new symbol is an enum value and the existing one was also an enum value, add the scoping note
-				if enumName != "" && enumValParent[fqn] != "" {
+				// If the new symbol is an enum value, add the scoping note
+				if enumName != "" {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Note that enum values use C++ scoping rules, meaning that enum values are siblings of their type, not children of it.  Therefore, \"%s\" must be unique within \"%s\", not just within \"%s\".",
 						fd.GetName(), line, col, shortName, scope, enumName))
 				}
