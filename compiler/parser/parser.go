@@ -1710,6 +1710,9 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 	case "deprecated":
 		fd.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 23
+	case "java_string_check_utf8":
+		fd.Options.JavaStringCheckUtf8 = proto.Bool(valTok.Value == "true")
+		fieldNum = 27
 	case "cc_enable_arenas":
 		fd.Options.CcEnableArenas = proto.Bool(valTok.Value == "true")
 		fieldNum = 31
