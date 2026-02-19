@@ -645,6 +645,10 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 				}
 			}
 
+			if endNum <= startNum {
+				return fmt.Errorf("%d:%d: Reserved range end number must be greater than start number.", numTok.Line+1, numTok.Column+1)
+			}
+
 			msg.ReservedRange = append(msg.ReservedRange, &descriptorpb.DescriptorProto_ReservedRange{
 				Start: proto.Int32(int32(startNum)),
 				End:   proto.Int32(int32(endNum)),
