@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 443/443 tests passing.
+ALL DONE — 448/448 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -142,6 +142,7 @@ ALL DONE — 443/443 tests passing.
 92. ✅ Boolean file option validation — reject non-identifier values (e.g., `option java_multiple_files = 1;`) for boolean file options with `Value must be identifier for boolean option "google.protobuf.FileOptions.X".` error at value token position
 93. ✅ Extension range validation — reject extension field numbers outside declared extension ranges with `"pkg.Msg" does not declare N as an extension number.` error at field number SCI location, checks both file-level and message-level extensions
 94. ✅ Proto2 oneof fields — skip "must have label" check for fields inside oneof blocks (set `inOneof` flag on parser)
+95. ✅ Duplicate import validation — reject importing the same file twice with `Import "X" was listed twice.` error at import keyword position, using `seenImports` map in parser
 
 ## Notes
 
@@ -222,3 +223,4 @@ ALL DONE — 443/443 tests passing.
 - Boolean file option validation: boolean file options (java_multiple_files, cc_generic_services, java_generic_services, py_generic_services, deprecated, java_string_check_utf8, cc_enable_arenas) must use identifier values (`true`/`false`), not integers (`0`/`1`). Error: `Value must be identifier for boolean option "google.protobuf.FileOptions.X".` at value token position. Uses `validateBool` helper in `parseFileOption`.
 - Extension range validation: extension field numbers must fall within the extendee message's declared extension ranges. Error format: `filename:line:col: "pkg.Msg" does not declare N as an extension number.` Location from SCI path for field number: `[7, extIdx, 3]` for file-level, `[msgPath..., 6, extIdx, 3]` for message-level. `validateExtensionRanges` in cli.go builds a map of message FQN → extension ranges from all files, then checks each extension field. `isInExtensionRange` checks if a number falls within any range (Start inclusive, End exclusive).
 - Proto2 oneof fields: fields inside `oneof` blocks do NOT require `required`/`optional`/`repeated` labels even in proto2 syntax. Parser uses `p.inOneof` flag (set in `parseOneof` before calling `parseField`, cleared after) to skip the label check in `parseField`'s default case. No label SCI is emitted for oneof fields (labelTok stays nil).
+- Duplicate import validation: C++ protoc rejects importing the same file twice with `Import "X" was listed twice.` error at the `import` keyword position (1-indexed line:col). Parser tracks `seenImports` map (set in `parseImport`). Error returned before adding to `fd.Dependency`, so the duplicate never enters the dependency list.
