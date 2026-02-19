@@ -1,0 +1,12 @@
+syntax = "proto2";
+
+package msgset;
+
+message MyMessageSet {
+  option message_set_wire_format = true;
+  extensions 4 to max;
+}
+
+message Container {
+  optional MyMessageSet data = 1;
+}
