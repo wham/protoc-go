@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 283/283 tests passing.
+ALL DONE — 288/288 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -111,6 +111,7 @@ ALL DONE — 283/283 tests passing.
 61. ✅ Reserved field name conflict validation — reject fields whose name appears in the message's `reserved` list with `Field name "X" is reserved.` error at field name location, recurses into nested messages
 62. ✅ Reserved field number conflict validation — reject fields whose number falls in the message's `reserved` ranges with `Field "X" uses reserved number N.` error + suggestion, location from reserved range start SCI path
 63. ✅ Map key type validation — reject float/double/bytes/message/group as map key types with `Key in map fields cannot be float/double, bytes or message types.` error at field span location
+64. ✅ Enum value C++ scoping note — when duplicate enum value names are detected across different enums in the same scope, emit the "Note that enum values use C++ scoping rules..." explanatory message matching C++ protoc
 
 ## Notes
 
