@@ -2002,6 +2002,12 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		valEnd := valTok.Column + len(valTok.Value)
 		if valTok.Type == tokenizer.TokenString {
 			valEnd = valTok.Column + valTok.RawLen // use raw length (includes quotes + escapes)
+			// Concatenate adjacent string tokens (C++ protoc allows this)
+			for p.tok.Peek().Type == tokenizer.TokenString {
+				next := p.tok.Next()
+				valTok.Value += next.Value
+				valEnd = next.Column + next.RawLen
+			}
 		}
 
 		switch optName {
