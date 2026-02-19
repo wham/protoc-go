@@ -77,6 +77,10 @@ func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorPro
 			if err := p.parseFileOption(fd); err != nil {
 				return nil, err
 			}
+		case "extend":
+			if err := p.parseExtend(fd); err != nil {
+				return nil, err
+			}
 		case ";":
 			// Empty statement — consume and continue (C++ protoc allows these)
 			p.tok.Next()
@@ -466,6 +470,71 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 	stmtLoc := p.locations[len(p.locations)-1]
 	copy(p.locations[len(p.locations)-count*3:], p.locations[len(p.locations)-count*3-1:len(p.locations)-1])
 	p.locations[len(p.locations)-count*3-1] = stmtLoc
+
+	return nil
+}
+
+func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
+	firstIdx := p.tok.CurrentIndex()
+	startTok := p.tok.Next() // consume "extend"
+
+	// Parse extendee type name
+	extNameTok := p.tok.Next()
+	extendeeName := extNameTok.Value
+	extNameStartLine, extNameStartCol := extNameTok.Line, extNameTok.Column
+	if extendeeName == "." {
+		part := p.tok.Next()
+		extendeeName += part.Value
+	}
+	for p.tok.Peek().Value == "." {
+		p.tok.Next()
+		part := p.tok.Next()
+		extendeeName += "." + part.Value
+	}
+	extNameEndCol := extNameStartCol + len(extendeeName)
+
+	if _, err := p.tok.Expect("{"); err != nil {
+		return err
+	}
+
+	// Placeholder for extend block span [7]
+	blockPath := []int32{7}
+	blockLocIdx := p.addLocationPlaceholder(blockPath)
+	p.attachComments(blockLocIdx, firstIdx)
+
+	var endTok tokenizer.Token
+	for p.tok.Peek().Value != "}" {
+		extIdx := int32(len(fd.Extension))
+		fieldPath := []int32{7, extIdx}
+
+		// Track location count before parseField to insert extendee span right after field span
+		locCountBefore := len(p.locations)
+
+		field, err := p.parseField(fieldPath)
+		if err != nil {
+			return err
+		}
+		field.Extendee = proto.String(extendeeName)
+
+		// Insert extendee source code info right after field declaration span (index locCountBefore)
+		// to match C++ ordering: field, extendee, label, type, name, number
+		extendeeLoc := &descriptorpb.SourceCodeInfo_Location{
+			Path: append(copyPath(fieldPath), 2),
+			Span: multiSpan(extNameStartLine, extNameStartCol, extNameStartLine, extNameEndCol),
+		}
+		insertIdx := locCountBefore + 1
+		p.locations = append(p.locations, nil)
+		copy(p.locations[insertIdx+1:], p.locations[insertIdx:])
+		p.locations[insertIdx] = extendeeLoc
+
+		fd.Extension = append(fd.Extension, field)
+	}
+
+	endTok = p.tok.Next() // consume "}"
+	p.trackEnd(endTok)
+
+	// Update extend block span
+	p.locations[blockLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 
 	return nil
 }
@@ -1860,6 +1929,20 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 		for _, m := range svc.GetMethod() {
 			m.InputType = proto.String(resolveTypeName(m.GetInputType(), prefix, types))
 			m.OutputType = proto.String(resolveTypeName(m.GetOutputType(), prefix, types))
+		}
+	}
+
+	// Resolve extension field types and extendee names
+	for _, ext := range fd.GetExtension() {
+		if ext.Extendee != nil {
+			ext.Extendee = proto.String(resolveTypeName(ext.GetExtendee(), prefix, types))
+		}
+		if ext.TypeName != nil {
+			resolved := resolveTypeName(ext.GetTypeName(), prefix, types)
+			ext.TypeName = proto.String(resolved)
+			if tp, ok := types[resolved]; ok {
+				ext.Type = tp.Enum()
+			}
 		}
 	}
 }
