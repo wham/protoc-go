@@ -528,3 +528,31 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `62_duplicate_package` — proto3 file with `package dupkg;` followed by `package dupkg2;` then a message
 - **Bug:** Go protoc-go silently accepts duplicate package statements and produces a valid descriptor (exit 0). C++ protoc rejects the second `package` with: `test.proto:5:1: Expected top-level statement (e.g. "message").` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:69-72` — the `case "package"` in the file-level parser switch calls `parsePackage()` every time, which just overwrites `fd.Package` at line 209. No flag tracks whether package has already been set. C++ protoc only allows `package` before any definitions — after it and `syntax` are parsed, the parser no longer accepts them as valid top-level statements. Same pattern as the duplicate syntax bug (Run 55).
+
+### Run 57 — Late syntax statement (FAILED: 5/5 profiles)
+- **Test:** `63_late_syntax` — file with `package latesyntax;` BEFORE `syntax = "proto3";`, followed by a message with unlabeled fields
+- **Bug:** Go protoc-go silently accepts `syntax` after `package` and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:2:1: Expected top-level statement (e.g. "message").` plus `Expected "required", "optional", or "repeated".` for each unlabeled field (exit 1). C++ only allows `syntax` as the very first statement — it defaults to proto2 when syntax isn't first, then `syntax` is not a valid top-level keyword, then unlabeled fields are invalid in proto2.
+- **Root cause:** `parser.go:52-112` — the file-level switch handles `syntax` at any position (line 56-62). The only guard is `if p.syntaxParsed` (line 57), which prevents duplicate syntax but not late syntax. C++ protoc handles `syntax` separately before the main loop — `ParseSyntaxIdentifier` is called once at the start, then the main `ParseTopLevelStatement` loop doesn't include `syntax` as a valid keyword. The Go parser should only allow `syntax`/`edition` as the very first statement.
+
+### Known gaps still unexplored (updated):
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
+- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
+- **Type shadowing** — same nested type name in different parent messages
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
+- **Missing message options** — `message_set_wire_format`, `no_standard_descriptor_accessor`, `map_entry`
+- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]`
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
+- **Edition features** — `edition = "2023"` with feature overrides
+- **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
+- **Option validation** — Go silently accepts ANY option name without validation
+- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
+- **Self-referencing message** — type resolution may differ
+- **Package conflict** — two files with different packages imported together
+- **Self-import / circular import** — cycle detection may differ
+- **Late syntax/package** — TESTED in Run 57 (63_late_syntax), confirmed broken (Go allows syntax anywhere)
+- **Import after definitions** — C++ may reject imports after message/enum/service definitions, Go allows them anywhere
+- **Map key type `bytes`/`float`** — accepted by Go, rejected by C++
+- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
+- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
