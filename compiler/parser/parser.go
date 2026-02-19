@@ -1837,9 +1837,22 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 	}
 
 	keyTypeTok := p.tok.Next()
-	keyType, ok := builtinTypes[keyTypeTok.Value]
-	if !ok {
-		return nil, nil, fmt.Errorf("invalid map key type: %s", keyTypeTok.Value)
+	keyType, keyIsBuiltin := builtinTypes[keyTypeTok.Value]
+	var keyTypeName string
+	if !keyIsBuiltin {
+		// Non-builtin key type (e.g., enum) — store as TYPE_MESSAGE initially,
+		// type resolution will update to TYPE_ENUM if appropriate.
+		keyType = descriptorpb.FieldDescriptorProto_TYPE_MESSAGE
+		keyTypeName = keyTypeTok.Value
+		if keyTypeName == "." {
+			part := p.tok.Next()
+			keyTypeName += part.Value
+		}
+		for p.tok.Peek().Value == "." {
+			p.tok.Next()
+			part := p.tok.Next()
+			keyTypeName += "." + part.Value
+		}
 	}
 
 	if _, err := p.tok.Expect(","); err != nil {
@@ -1940,6 +1953,10 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 		Options: &descriptorpb.MessageOptions{
 			MapEntry: proto.Bool(true),
 		},
+	}
+
+	if keyTypeName != "" {
+		entry.Field[0].TypeName = proto.String(keyTypeName)
 	}
 
 	if valTypeName != "" {

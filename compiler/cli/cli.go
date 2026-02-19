@@ -635,7 +635,7 @@ func parseArgs(args []string) (*config, error) {
 	return cfg, nil
 }
 
-// validateMapKeyTypes checks that map fields don't use float/double/bytes/message as key types.
+// validateMapKeyTypes checks that map fields don't use float/double/bytes/enum/message as key types.
 func validateMapKeyTypes(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
 	for _, name := range orderedFiles {
@@ -657,14 +657,21 @@ func collectMapKeyTypeErrors(filename string, msg *descriptorpb.DescriptorProto,
 				kt == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE ||
 				kt == descriptorpb.FieldDescriptorProto_TYPE_BYTES ||
 				kt == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE ||
-				kt == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+				kt == descriptorpb.FieldDescriptorProto_TYPE_GROUP ||
+				kt == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
 				// Find the parent field that uses this map entry
+				var errMsg string
+				if kt == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+					errMsg = "Key in map fields cannot be enum types."
+				} else {
+					errMsg = "Key in map fields cannot be float/double, bytes or message types."
+				}
 				for j := range msg.GetField() {
 					field := msg.GetField()[j]
 					if field.GetTypeName() == nested.GetName() || strings.HasSuffix(field.GetTypeName(), "."+nested.GetName()) {
 						fieldPath := append(append([]int32{}, msgPath...), 2, int32(j))
 						line, col := findLocationByPath(fieldPath, sci)
-						*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Key in map fields cannot be float/double, bytes or message types.", filename, line, col))
+						*errs = append(*errs, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, errMsg))
 						break
 					}
 				}
