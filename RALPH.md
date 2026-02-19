@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 698/698 tests passing.
+ALL DONE — 703/703 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -190,6 +190,7 @@ ALL DONE — 698/698 tests passing.
 140. ✅ Numeric package name validation — reject non-identifier tokens in `package` declaration (e.g., `package 123;`) with `Expected identifier.` error at the token position, validates each dot-separated component
 141. ✅ Empty extend block validation — reject `extend Msg { }` (no fields) with `Expected "required", "optional", or "repeated".` + `Expected type name.` errors at `}` position (proto2), or just `Expected type name.` (proto3/editions), in both `parseExtend` and `parseNestedExtend`
 142. ✅ Group fields in extend blocks (`extend Msg { optional group MyGroup = 100 { ... } }`) — creates TYPE_GROUP extension field + top-level (or parent-nested) message type, SCI ordering: field placeholder, extendee, label, type ("group"), name, number, nested message, nested name, type_name, inner fields. `parseGroupFieldInExtend` shared by both `parseExtend` (file-level) and `parseNestedExtend` (message-level). TYPE_GROUP protection added to all extension type resolution paths.
+143. ✅ Group fields in oneof blocks (`oneof choice { group MyGroup = 1 { ... } }`) — creates TYPE_GROUP field with LABEL_OPTIONAL + nested message type, no label SCI entry. `parseGroupFieldInOneof` handles parsing, `parseOneof` returns nested types alongside fields. Field gets `oneofIndex` set by caller.
 
 ## Notes
 
@@ -294,3 +295,4 @@ ALL DONE — 698/698 tests passing.
 - Packed option validation: C++ protoc rejects `[packed = true]` on non-repeated fields or non-primitive types (string, bytes, message, group) with `[packed = true] can only be specified for repeated primitive fields.` error at field TYPE location (SCI path `[..., 5]` for field type, not field span). Packable types: int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64, float, double, bool, enum. Validated in `validatePackedNonRepeated` (cli.go) with `collectPackedErrors` recursing into nested messages. Also checks file-level and message-level extensions.
 - Lazy option validation: C++ protoc rejects `[lazy = true]` on non-submessage fields with `[lazy = true] can only be specified for submessage fields.` error at field TYPE location (SCI path `[..., 5]`). Only TYPE_MESSAGE and TYPE_GROUP are allowed. Validated in `validateLazyNonMessage` (cli.go) with `collectLazyErrors` recursing into nested messages. Also checks file-level and message-level extensions. Same pattern as packed validation.
 - Jstype non-int64 validation: C++ protoc rejects `jstype` option on non-int64-family fields with `jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.` error at field TYPE location (SCI path `[..., 5]`). Allowed types: TYPE_INT64, TYPE_UINT64, TYPE_SINT64, TYPE_FIXED64, TYPE_SFIXED64. Validated in `validateJstypeNonInt64` (cli.go) with `collectJstypeErrors` recursing into nested messages. Also checks file-level and message-level extensions. Same pattern as packed/lazy validation.
+- Group fields in oneof blocks: `group Name = N { ... }` inside `oneof` parsed by `parseGroupFieldInOneof` in parser.go. No label keyword — LABEL_OPTIONAL is set implicitly. No label SCI entry emitted. SCI order: field span placeholder, type ("group"), name, number, nested type placeholder, nested type name, type_name, inner fields. Field and nested type spans both cover `group...}`. `parseOneof` returns `[]*descriptorpb.DescriptorProto` (nested types) alongside fields, caller adds them to `msg.NestedType` and increments `nestedMsgIdx`.

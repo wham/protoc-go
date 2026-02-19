@@ -468,12 +468,13 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 			msg.EnumType = append(msg.EnumType, e)
 			nestedEnumIdx++
 		case "oneof":
-			fields, decl, err := p.parseOneof(path, oneofIdx, &fieldIdx)
+			fields, nestedTypes, decl, err := p.parseOneof(path, oneofIdx, &fieldIdx, &nestedMsgIdx)
 			if err != nil {
 				return nil, err
 			}
 			msg.OneofDecl = append(msg.OneofDecl, decl)
 			msg.Field = append(msg.Field, fields...)
+			msg.NestedType = append(msg.NestedType, nestedTypes...)
 			oneofIdx++
 		case "map":
 			if p.tok.PeekAt(1).Value == "<" {
@@ -1341,6 +1342,104 @@ func isGroupField(tok1, tok2 string) bool {
 	return false
 }
 
+// parseGroupFieldInOneof parses a group field inside a oneof block (no label).
+// "group" Name "=" Number "{" fields... "}"
+func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
+	fieldPath := append(copyPath(msgPath), 2, fieldIdx)
+	nestedPath := append(copyPath(msgPath), 3, nestedMsgIdx)
+
+	firstIdx := p.tok.CurrentIndex()
+	field := &descriptorpb.FieldDescriptorProto{}
+	field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+
+	// "group" keyword
+	groupTok := p.tok.Next()
+
+	// Group name
+	nameTok, err := p.tok.ExpectIdent()
+	if err != nil {
+		return nil, nil, err
+	}
+	groupName := nameTok.Value
+	fieldName := strings.ToLower(groupName)
+
+	field.Name = proto.String(fieldName)
+	field.JsonName = proto.String(tokenizer.ToJSONName(fieldName))
+	field.Type = descriptorpb.FieldDescriptorProto_TYPE_GROUP.Enum()
+	field.TypeName = proto.String(groupName)
+
+	// = number
+	if _, err := p.tok.Expect("="); err != nil {
+		return nil, nil, err
+	}
+	numTok, err := p.tok.ExpectInt()
+	if err != nil {
+		return nil, nil, err
+	}
+	num, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
+		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
+	}
+	field.Number = proto.Int32(int32(num))
+
+	if _, err := p.tok.Expect("{"); err != nil {
+		return nil, nil, err
+	}
+
+	// Source code info for the field
+	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
+	p.attachComments(fieldLocIdx, firstIdx)
+
+	// No label span for oneof group fields
+
+	// Type span (the "group" keyword) — path [5] = type
+	p.addLocationSpan(append(copyPath(fieldPath), 5),
+		groupTok.Line, groupTok.Column, groupTok.Line, groupTok.Column+len(groupTok.Value))
+
+	// Name span — path [1] = name
+	p.addLocationSpan(append(copyPath(fieldPath), 1),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// Number span — path [3] = number
+	p.addLocationSpan(append(copyPath(fieldPath), 3),
+		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+
+	// Nested message type placeholder
+	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
+
+	// Nested type name span
+	p.addLocationSpan(append(copyPath(nestedPath), 1),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// Type name span — path [6] = type_name (same span as group name)
+	p.addLocationSpan(append(copyPath(fieldPath), 6),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// Parse nested fields inside group body
+	nested := &descriptorpb.DescriptorProto{
+		Name: proto.String(groupName),
+	}
+	var innerFieldIdx int32
+	for p.tok.Peek().Value != "}" {
+		innerField, err := p.parseField(append(copyPath(nestedPath), 2, innerFieldIdx))
+		if err != nil {
+			return nil, nil, err
+		}
+		nested.Field = append(nested.Field, innerField)
+		innerFieldIdx++
+	}
+
+	endTok := p.tok.Next() // consume "}"
+	p.trackEnd(endTok)
+
+	// Update field and nested type spans
+	groupSpan := multiSpan(groupTok.Line, groupTok.Column, endTok.Line, endTok.Column+1)
+	p.locations[fieldLocIdx].Span = groupSpan
+	p.locations[nestedLocIdx].Span = groupSpan
+
+	return field, nested, nil
+}
+
 // parseGroupField parses a group field declaration: label "group" Name "=" Number "{" fields... "}"
 // Returns the group field and the nested message type.
 func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
@@ -2128,17 +2227,17 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 	return method, nil
 }
 
-func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32) ([]*descriptorpb.FieldDescriptorProto, *descriptorpb.OneofDescriptorProto, error) {
+func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32, nestedMsgIdx *int32) ([]*descriptorpb.FieldDescriptorProto, []*descriptorpb.DescriptorProto, *descriptorpb.OneofDescriptorProto, error) {
 	startTok := p.tok.Next() // consume "oneof"
 	nameTok, err := p.tok.ExpectIdent()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	oneofPath := append(copyPath(msgPath), 8, oneofIdx)
 
 	if _, err := p.tok.Expect("{"); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	// Add oneof declaration and name spans BEFORE fields (C++ order)
@@ -2147,35 +2246,48 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32) ([
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	var fields []*descriptorpb.FieldDescriptorProto
+	var nestedTypes []*descriptorpb.DescriptorProto
 	if p.tok.Peek().Value == "}" {
 		tok := p.tok.Peek()
-		return nil, nil, fmt.Errorf("%d:%d: Expected type name.", tok.Line+1, tok.Column+1)
+		return nil, nil, nil, fmt.Errorf("%d:%d: Expected type name.", tok.Line+1, tok.Column+1)
 	}
 	for p.tok.Peek().Value != "}" {
 		if p.tok.Peek().Value == "option" {
 			p.tok.Next() // consume "option"
 			nameTk := p.tok.Peek()
-			return nil, nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTk.Line+1, nameTk.Column+1, nameTk.Value)
+			return nil, nil, nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTk.Line+1, nameTk.Column+1, nameTk.Value)
 		}
 		if p.tok.Peek().Value == "map" && p.tok.PeekAt(1).Value == "<" {
 			p.tok.Next() // consume "map"
 			ltTok := p.tok.Peek()
-			return nil, nil, fmt.Errorf("%d:%d: Map fields are not allowed in oneofs.", ltTok.Line+1, ltTok.Column+1)
+			return nil, nil, nil, fmt.Errorf("%d:%d: Map fields are not allowed in oneofs.", ltTok.Line+1, ltTok.Column+1)
 		}
 		if v := p.tok.Peek().Value; v == "required" || v == "optional" || v == "repeated" {
 			tok := p.tok.Peek()
-			return nil, nil, fmt.Errorf("%d:%d: Fields in oneofs must not have labels (required / optional / repeated).", tok.Line+1, tok.Column+1)
+			return nil, nil, nil, fmt.Errorf("%d:%d: Fields in oneofs must not have labels (required / optional / repeated).", tok.Line+1, tok.Column+1)
 		}
-		fieldPath := append(copyPath(msgPath), 2, *fieldIdx)
-		p.inOneof = true
-		field, err := p.parseField(fieldPath)
-		p.inOneof = false
-		if err != nil {
-			return nil, nil, err
+		if p.tok.Peek().Value == "group" {
+			field, nested, err := p.parseGroupFieldInOneof(msgPath, *fieldIdx, *nestedMsgIdx)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			field.OneofIndex = proto.Int32(oneofIdx)
+			fields = append(fields, field)
+			nestedTypes = append(nestedTypes, nested)
+			*fieldIdx++
+			*nestedMsgIdx++
+		} else {
+			fieldPath := append(copyPath(msgPath), 2, *fieldIdx)
+			p.inOneof = true
+			field, err := p.parseField(fieldPath)
+			p.inOneof = false
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			field.OneofIndex = proto.Int32(oneofIdx)
+			fields = append(fields, field)
+			*fieldIdx++
 		}
-		field.OneofIndex = proto.Int32(oneofIdx)
-		fields = append(fields, field)
-		*fieldIdx++
 	}
 
 	endTok := p.tok.Next() // consume "}"
@@ -2188,7 +2300,7 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32) ([
 		Name: proto.String(nameTok.Value),
 	}
 
-	return fields, decl, nil
+	return fields, nestedTypes, decl, nil
 }
 
 func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
