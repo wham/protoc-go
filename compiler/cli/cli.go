@@ -305,6 +305,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate enum default values
+	if errs := validateEnumDefaultValues(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate proto3 constraints
 	if errs := validateProto3(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -2089,5 +2094,87 @@ func isExtRangeOptsPath(path []int32) bool {
 		}
 	}
 	return false
+}
+
+// validateEnumDefaultValues checks that enum fields with default values reference valid enum value names.
+func validateEnumDefaultValues(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	enumValues := map[string]map[string]bool{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		prefix := ""
+		if pkg != "" {
+			prefix = "." + pkg
+		}
+		collectEnumValueNames(fd.GetEnumType(), prefix, enumValues)
+		collectEnumValueNamesInMsgs(fd.GetMessageType(), prefix, enumValues)
+	}
+
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		prefix := ""
+		if pkg != "" {
+			prefix = "." + pkg
+		}
+		sci := fd.GetSourceCodeInfo()
+		collectEnumDefaultErrors(fd.GetMessageType(), prefix, []int32{4}, sci, name, enumValues, &errs)
+	}
+	return errs
+}
+
+func collectEnumValueNames(enums []*descriptorpb.EnumDescriptorProto, prefix string, out map[string]map[string]bool) {
+	for _, e := range enums {
+		fqn := prefix + "." + e.GetName()
+		vals := map[string]bool{}
+		for _, v := range e.GetValue() {
+			vals[v.GetName()] = true
+		}
+		out[fqn] = vals
+	}
+}
+
+func collectEnumValueNamesInMsgs(msgs []*descriptorpb.DescriptorProto, prefix string, out map[string]map[string]bool) {
+	for _, msg := range msgs {
+		msgFQN := prefix + "." + msg.GetName()
+		collectEnumValueNames(msg.GetEnumType(), msgFQN, out)
+		collectEnumValueNamesInMsgs(msg.GetNestedType(), msgFQN, out)
+	}
+}
+
+func collectEnumDefaultErrors(msgs []*descriptorpb.DescriptorProto, prefix string, basePath []int32, sci *descriptorpb.SourceCodeInfo, filename string, enumValues map[string]map[string]bool, errs *[]string) {
+	for msgIdx, msg := range msgs {
+		if msg.GetOptions().GetMapEntry() {
+			continue
+		}
+		msgFQN := prefix + "." + msg.GetName()
+		msgPath := append(append([]int32{}, basePath...), int32(msgIdx))
+		for fieldIdx, field := range msg.GetField() {
+			if field.GetType() != descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+				continue
+			}
+			if field.DefaultValue == nil {
+				continue
+			}
+			enumFQN := field.GetTypeName()
+			vals, ok := enumValues[enumFQN]
+			if !ok {
+				continue
+			}
+			defVal := field.GetDefaultValue()
+			if !vals[defVal] {
+				enumName := enumFQN
+				if len(enumName) > 0 && enumName[0] == '.' {
+					enumName = enumName[1:]
+				}
+				path := append(append([]int32{}, msgPath...), 2, int32(fieldIdx), 7)
+				line, col := findLocationByPath(path, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Enum type \"%s\" has no value named \"%s\".", filename, line, col, enumName, defVal))
+			}
+		}
+		nestedBase := append(append([]int32{}, msgPath...), 3)
+		collectEnumDefaultErrors(msg.GetNestedType(), msgFQN, nestedBase, sci, filename, enumValues, errs)
+	}
 }
 
