@@ -175,6 +175,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	var fieldIdx, nestedMsgIdx, nestedEnumIdx, oneofIdx int32
+	var reservedRangeIdx, reservedNameIdx int32
 
 	for p.tok.Peek().Value != "}" {
 		tok := p.tok.Peek()
@@ -211,7 +212,11 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 			msg.NestedType = append(msg.NestedType, entry)
 			fieldIdx++
 			nestedMsgIdx++
-		case "reserved", "option", "extensions":
+		case "reserved":
+			if err := p.parseMessageReserved(msg, path, &reservedRangeIdx, &reservedNameIdx); err != nil {
+				return nil, err
+			}
+		case "option", "extensions":
 			if err := p.skipStatement(); err != nil {
 				return nil, err
 			}
@@ -232,6 +237,107 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 	p.locations[msgLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 
 	return msg, nil
+}
+
+func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath []int32, rangeIdx, nameIdx *int32) error {
+	startTok := p.tok.Next() // consume "reserved"
+
+	// Determine if this is a name reservation (first token is a string) or range reservation
+	if p.tok.Peek().Type == tokenizer.TokenString {
+		// reserved "name1", "name2";
+		stmtPath := append(copyPath(msgPath), 10) // field 10 = reserved_name
+		for {
+			nameTok, err := p.tok.ExpectString()
+			if err != nil {
+				return err
+			}
+			msg.ReservedName = append(msg.ReservedName, nameTok.Value)
+
+			// Source code info for individual reserved name
+			p.addLocationSpan(append(copyPath(stmtPath), *nameIdx),
+				nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value)+2) // +2 for quotes
+			*nameIdx++
+
+			if p.tok.Peek().Value == "," {
+				p.tok.Next()
+			} else {
+				break
+			}
+		}
+		endTok, err := p.tok.Expect(";")
+		if err != nil {
+			return err
+		}
+		p.trackEnd(endTok)
+		// Statement-level span
+		p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		// Move statement span before individual names
+		stmtLoc := p.locations[len(p.locations)-1]
+		copy(p.locations[len(p.locations)-int(*nameIdx):], p.locations[len(p.locations)-int(*nameIdx)-1:len(p.locations)-1])
+		p.locations[len(p.locations)-int(*nameIdx)-1] = stmtLoc
+	} else {
+		// reserved 2, 15, 9 to 11;
+		stmtPath := append(copyPath(msgPath), 9) // field 9 = reserved_range
+		startCount := *rangeIdx
+		for {
+			numTok, err := p.tok.ExpectInt()
+			if err != nil {
+				return err
+			}
+			startNum, _ := strconv.ParseInt(numTok.Value, 0, 32)
+			endNum := startNum + 1 // exclusive, single number
+			endSpanLine, endSpanCol := numTok.Line, numTok.Column+len(numTok.Value)
+
+			endNumLine, endNumCol, endNumLen := numTok.Line, numTok.Column, len(numTok.Value)
+			if p.tok.Peek().Value == "to" {
+				p.tok.Next()
+				endNumTok, err := p.tok.ExpectInt()
+				if err != nil {
+					return err
+				}
+				e, _ := strconv.ParseInt(endNumTok.Value, 0, 32)
+				endNum = e + 1 // exclusive
+				endSpanLine = endNumTok.Line
+				endSpanCol = endNumTok.Column + len(endNumTok.Value)
+				endNumLine = endNumTok.Line
+				endNumCol = endNumTok.Column
+				endNumLen = len(endNumTok.Value)
+			}
+
+			msg.ReservedRange = append(msg.ReservedRange, &descriptorpb.DescriptorProto_ReservedRange{
+				Start: proto.Int32(int32(startNum)),
+				End:   proto.Int32(int32(endNum)),
+			})
+
+			rangePath := append(copyPath(stmtPath), *rangeIdx)
+			// Range span covers from start number to end number
+			p.addLocationSpan(rangePath, numTok.Line, numTok.Column, endSpanLine, endSpanCol)
+			// Start field (1) — spans just the start number token
+			p.addLocationSpan(append(copyPath(rangePath), 1), numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+			// End field (2) — spans just the end number token
+			p.addLocationSpan(append(copyPath(rangePath), 2), endNumLine, endNumCol, endNumLine, endNumCol+endNumLen)
+			*rangeIdx++
+
+			if p.tok.Peek().Value == "," {
+				p.tok.Next()
+			} else {
+				break
+			}
+		}
+		endTok, err := p.tok.Expect(";")
+		if err != nil {
+			return err
+		}
+		p.trackEnd(endTok)
+		// Statement-level span
+		p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		// Move statement span before individual ranges
+		count := int(*rangeIdx - startCount)
+		stmtLoc := p.locations[len(p.locations)-1]
+		copy(p.locations[len(p.locations)-count*3:], p.locations[len(p.locations)-count*3-1:len(p.locations)-1])
+		p.locations[len(p.locations)-count*3-1] = stmtLoc
+	}
+	return nil
 }
 
 func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, error) {
