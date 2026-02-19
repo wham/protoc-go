@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 148/148 tests passing.
+ALL DONE — 153/153 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -84,6 +84,7 @@ ALL DONE — 148/148 tests passing.
 34. ✅ Extend blocks (`extend Message { ... }`) with extension fields, extendee resolution, and source code info
 35. ✅ Proto2 group fields (`repeated group Result = 1 { ... }`) with TYPE_GROUP, nested type generation, and source code info
 36. ✅ Negative default value spans (`[default = -40]`) — span includes minus sign
+37. ✅ Weak import support (`import weak "file.proto"`) with weak_dependency field and source code info
 
 ## Notes
 
@@ -126,3 +127,4 @@ ALL DONE — 148/148 tests passing.
 - Extend blocks: `extend TypeName { fields... }` creates entries in `fd.Extension` (field 7 of FileDescriptorProto). Each field gets `Extendee` set to the fully-qualified extendee name. Source code info ordering: [7] (block), [7,N] (field), [7,N,2] (extendee — inserted right after field span), [7,N,4] (label), [7,N,5] (type), [7,N,1] (name), [7,N,3] (number). Extendee resolution handled in `ResolveTypes` alongside service methods.
 - Proto2 groups: `label group Name = N { ... }` creates a field with TYPE_GROUP (lowercase name) and a nested message type (original name). The field has both `Type = TYPE_GROUP` and `TypeName` set. Source code info order: field span (placeholder), label, type ("group" keyword at path 5), name, number, nested type span (placeholder, same span as field), nested type name, type_name (path 6, same span as name). `resolveMessageFields` must not override TYPE_GROUP when resolving type names. `isGroupField` detects groups by checking if a label keyword is followed by "group". `PeekAt(offset)` added to tokenizer for lookahead.
 - Negative default values: when parsing `[default = -40]`, the source code info span for the default value (path [..., 7]) must start at the minus sign column, not the digit column. Save the minus token and use its column as span start.
+- Weak imports: `import weak "file.proto"` sets `weak_dependency` (field 11 of FileDescriptorProto) with the dependency index. Source code info path `[11, weakIdx]` for the "weak" keyword, span covers the keyword text. Similar to public imports (field 10).
