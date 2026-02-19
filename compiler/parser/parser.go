@@ -2211,6 +2211,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			}
 			field.DefaultValue = proto.String(defVal)
 		case "json_name":
+			if valTok.Type != tokenizer.TokenString {
+				return nil, fmt.Errorf("%d:%d: Expected string for JSON name.", valTok.Line+1, valTok.Column+1)
+			}
 			field.JsonName = proto.String(valTok.Value)
 		case "deprecated":
 			if field.Options == nil {
