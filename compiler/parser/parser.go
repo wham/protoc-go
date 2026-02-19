@@ -2761,6 +2761,15 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 
 		switch optName {
 		case "default":
+			// Named type (message or enum reference) — type not yet resolved.
+			// Accept whatever value is provided; validation happens after type resolution.
+			if field.Type == nil {
+				defVal := valTok.Value
+				if negative {
+					defVal = "-" + defVal
+				}
+				field.DefaultValue = proto.String(defVal)
+			} else {
 			// String/bytes fields require a string literal default value
 			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING ||
 				field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
@@ -2819,6 +2828,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				defVal = normalizeIntDefault(defVal)
 			}
 			field.DefaultValue = proto.String(defVal)
+			} // end else (field.Type != nil)
 		case "json_name":
 			if valTok.Type != tokenizer.TokenString {
 				return nil, fmt.Errorf("%d:%d: Expected string for JSON name.", valTok.Line+1, valTok.Column+1)

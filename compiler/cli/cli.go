@@ -325,6 +325,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate message/group fields don't have default values
+	if errs := validateMessageDefault(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate enum default values
 	if errs := validateEnumDefaultValues(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -2334,6 +2339,37 @@ func collectRepeatedDefaultErrors(filename string, msg *descriptorpb.DescriptorP
 	for i, nested := range msg.GetNestedType() {
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectRepeatedDefaultErrors(filename, nested, nestedPath, sci, errs)
+	}
+}
+
+// validateMessageDefault checks that message/group-typed fields don't have default values.
+func validateMessageDefault(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectMessageDefaultErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectMessageDefaultErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	for i, field := range msg.GetField() {
+		if (field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE ||
+			field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP) && field.DefaultValue != nil {
+			path := append(append([]int32{}, msgPath...), 2, int32(i), 7)
+			line, col := findLocationByPath(path, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Messages can't have default values.", filename, line, col))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectMessageDefaultErrors(filename, nested, nestedPath, sci, errs)
 	}
 }
 
