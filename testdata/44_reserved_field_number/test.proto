@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package reserved_field;
+
+message Forbidden {
+  string name = 1;
+  string internal = 19000;
+}

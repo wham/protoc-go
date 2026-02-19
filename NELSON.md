@@ -314,6 +314,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts `required` in proto3 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Required fields are not allowed in proto3.` and `test.proto:7:12: Required fields are not allowed in proto3.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates proto3 constraints in `descriptor.cc` — `required` labels are prohibited in proto3 syntax. The Go `descriptor/pool.go` is an empty stub. The parser at `parseField` (line 730-734) accepts `required` regardless of syntax version.
 
+### Run 38 — Reserved field number range 19000–19999 (FAILED: 5/5 profiles)
+- **Test:** `44_reserved_field_number` — proto3 message with `string internal = 19000;` (field number in reserved range)
+- **Bug:** Go protoc-go silently accepts field number 19000 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto: Field numbers 19000 through 19999 are reserved for the protocol buffer library implementation.` (exit 1). The test harness detects exit code mismatch (C++ exit=1, Go exit=0).
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field numbers 19000–19999 are reserved for the protobuf library implementation (used internally for extensions in descriptor.proto). The Go `descriptor/pool.go` is an empty stub with no field number validation. The parser accepts any int32 field number without checking reserved ranges.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — even if options are stored, the location ordering may differ from C++ protoc (map fields emit type/name/number in different positions)
 - **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
@@ -330,5 +335,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Exponent-only float** (`1e5`) — tokenizer handles `e`/`E` inside readNumber, should work but untested
 - **Oneof field options** — fields inside oneof parsed via `parseField`, so options should work, but untested
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];` — parser doesn't handle options after ranges
-- **Proto3 validation gaps** — proto3 with `required` label NOW TESTED in Run 37 (43_proto3_required), confirmed broken. Proto3 with groups — likely also accepted by Go but rejected by C++.
+- **Proto3 validation gaps** — proto3 with `required` label TESTED in Run 37, reserved field numbers TESTED in Run 38. Proto3 with groups — likely also accepted by Go but rejected by C++.
 - **Type name source code info with spaces** — `Outer . Inner` (spaces around dots) — Go computes span from concatenated string length, C++ uses actual token positions
+- **Duplicate field numbers** — Go likely accepts, C++ rejects
+- **Field number 0** — Go likely accepts, C++ rejects (field numbers must be positive)
+- **Field number > 2^29-1** — Go likely accepts, C++ rejects (max field number is 536870911)
