@@ -949,12 +949,17 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go parses the overflowed integer (silently truncated to 2147483647 at line 1873 via `num, _ := strconv.ParseInt(numTok.Value, 0, 32)`), then the downstream field number validation catches 2147483647 > 536870911 and reports: `Field numbers cannot be greater than 536870911.` plus a suggestion line. C++ protoc catches it earlier at parse time as `Integer out of range.` (exit 1 from both, but different error messages). The test harness detects error message mismatch.
 - **Root cause:** `parser.go:1873` — `num, _ := strconv.ParseInt(numTok.Value, 0, 32)` silently discards the overflow error. The value is truncated to max int32 (2147483647), then a different validation catches an unrelated constraint (field number > max allowed). C++ protoc's tokenizer validates integer range during parsing and errors immediately with "Integer out of range." The fix: check the error from `strconv.ParseInt` and return an integer overflow error before field number validation runs.
 
+### Run 101 — Explicit json_name conflict says "default" instead of "custom" (FAILED: 5/5 profiles)
+- **Test:** `107_json_name_explicit` — proto3 message with `string first_name = 1 [json_name = "name"];` and `string last_name = 2 [json_name = "name"];` (both fields explicitly set the same json_name)
+- **Bug:** Both C++ and Go detect the JSON name conflict and reject with exit code 1, but the error message wording differs. C++ protoc: `The custom JSON name of field "last_name" ("name") conflicts with the custom JSON name of field "first_name".` Go protoc-go: `The default JSON name of field "last_name" ("name") conflicts with the default JSON name of field "first_name".` Go uses "default" instead of "custom" because it doesn't distinguish between auto-generated and explicitly set json_names.
+- **Root cause:** Go's JSON name conflict validation (likely in `compiler/cli/cli.go`) always uses "default JSON name" in the error message. C++ protoc's `descriptor.cc` checks whether the json_name was explicitly set by the user (`has_json_name()`) and uses "custom JSON name" when it was, "default JSON name" when it's auto-generated. The Go implementation lacks `has_json_name()` tracking — it doesn't know if json_name was set by the user or auto-generated.
+
 ### Known gaps still unexplored (updated):
-- **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];`
+- **JSON name conflict with explicit json_name** — TESTED in Run 101 (107_json_name_explicit), confirmed broken (error message says "default" instead of "custom")
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
 - **Type shadowing** — same nested type name in different parent messages
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145` — tokenizer now handles these (fixed)
 - **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
 - **Self-referencing message** — type resolution may differ
@@ -964,11 +969,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
 - **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
 - **Negative field numbers** — `string name = -1;` — C++ rejects, Go may accept
-- **Map field with message key type** — `map<MyMsg, string>` — C++ rejects, Go rejects (builtinTypes check at line 1800-1802)
-- **Enum value overflow** — TESTED in Run 98 (104_enum_value_overflow), confirmed broken (silently truncated)
 - **Negative enum value overflow** — `FOO = -2147483649;` — same silent truncation bug
-- **Field number overflow** — already handled (line 892-895 checks error)
-- **Extension range start/end overflow** — same silent `_` discard pattern at lines 559/583 — `extensions 2147483648 to max;` would silently truncate
-- **Map field number overflow** — TESTED in Run 100 (106_map_field_number_overflow), confirmed broken (error message mismatch)
-- **Reserved range number overflow** — TESTED in Run 99 (105_reserved_number_overflow), confirmed broken (silently truncated)
-- **Enum reserved range overflow** — same silent `_` discard at lines 1364/1384 — `reserved 2147483648;` inside enum would silently truncate
+- **Extension range start/end overflow** — overflow checks now added (fixed)
+- **Enum reserved range overflow** — overflow checks now added (fixed)
