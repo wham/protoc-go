@@ -1161,3 +1161,21 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **RPC type referencing non-existent message** — TESTED in Run 113 (119_undefined_rpc_type), confirmed broken
 - **Missing message options** — `map_entry` (field 7)
 - **Extension range options** — TESTED in Run 104 (110_extension_range_options), confirmed broken
+
+### Run 119 — String literal for float default value (FAILED: 5/5 profiles)
+- **Test:** `125_string_default_float` — proto2 message with `optional float ratio = 1 [default = "1.5"];` and `optional double scale = 2 [default = "3.14"];` (string literals instead of float literals for float/double field defaults)
+- **Bug:** Go protoc-go silently accepts string literals `"1.5"`/`"3.14"` as default values for float/double fields and stores `default_value = "1.5"` / `"3.14"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Expected number for field default value.` and `test.proto:7:41: Expected number for field default value.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go` — `case "default"` stores `valTok.Value` as the default value without validating that the token type matches the field type. For float/double fields, the value must be a numeric literal (`TokenInt` or `TokenFloat`) or special identifiers (`inf`, `nan`), not a string literal (`TokenString`). C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeNumber` for float fields which rejects string literal tokens. Same category as Runs 108-110, 117-118 (default value type validation).
+
+### Known gaps still unexplored (updated):
+- **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
+- **Package conflict** — two files with different packages imported together
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **`option` as type name** — Go switch matches keyword before checking context
+- **`reserved` as type name** — same pattern
+- **`extensions` as type name** — same pattern
+- **Missing message options** — `map_entry` (field 7)
+- **String literal for float default** — TESTED in Run 119 (125_string_default_float), confirmed broken
