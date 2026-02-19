@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 343/343 tests passing.
+ALL DONE — 348/348 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -122,6 +122,7 @@ ALL DONE — 343/343 tests passing.
 72. ✅ Adjacent string concatenation in field default values (`[default = "hello" " world"]`) — concatenate adjacent string tokens in `parseFieldOptions`, updating `valEnd` to last token's end position
 73. ✅ `no_standard_descriptor_accessor` message option (field 2 of MessageOptions) with source code info
 74. ✅ Multi-token type name spans — track actual last token end position (not string length) for type names with spaces between dots (e.g., `spacetype . Inner`), applies to field type_name, RPC input/output types, and extend extendee names
+75. ✅ Recursive import cycle detection — detect self-imports and circular import chains with `File recursively imports itself: A -> B -> A` error, using import stack in `parseRecursive` and SCI location for the import statement
 
 ## Notes
 
@@ -192,3 +193,4 @@ ALL DONE — 343/343 tests passing.
 - Octal/hex integer default values: C++ protoc converts octal (0755) and hex (0xFF) integer literals in default values to decimal strings (493, 255). Handled by `isIntegerType` and `normalizeIntDefault` in parser.go. Applied after float normalization in `parseFieldOptions` for all integer field types (int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64).
 - Duplicate oneof name error format: C++ protoc omits line:col for duplicate oneof names, outputting `filename: "X" is already defined in "Y".` (with space after colon, no line:col). Other duplicate symbols (messages, fields, enums, etc.) include line:col. In `collectDupNamesInMsg`, oneofs pass 0,0 to the `check` function, and `check` formats without line:col when both are 0.
 - Multi-token type name spans: when a type reference has spaces between tokens (e.g., `spacetype . Inner`), the SCI span end must use the actual last token's end position (`lastTok.Column + len(lastTok.Value)`), not `startCol + len(concatenatedTypeName)`. Affects `parseField` (field type_name), `parseMethod` (input/output types), `parseTopLevelExtend` and `parseNestedExtend` (extendee names). Track a `typeEndTok`/`extNameEndTok`/etc. variable as tokens are consumed.
+- Recursive import cycle detection: `parseRecursive` takes an `importStack []string` parameter tracking the current import chain. Before processing a file, check if it's already in the stack — if so, build the chain string (e.g., `test.proto -> test.proto`) and return error with location from SCI path `[3, depIdx]` of the importing file's import statement. The `findImportLocation` helper looks up the SCI entry for the import. `newStack := append(importStack, filename)` is passed to recursive calls.
