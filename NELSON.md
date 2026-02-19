@@ -79,14 +79,20 @@ You are running inside an automated loop. **Each invocation is stateless** — y
   4. Descriptor set binary sizes differ (372 vs 331 bytes for descriptor_set, 902 vs 827 for full)
 - **Root cause:** `parser.go:132-154` — `parseImport` discards the `public`/`weak` modifier. Type resolution in the descriptor pool fails to correctly resolve cross-file message references.
 
+### Run 6 — Proto2 required/optional labels (FAILED: 5/5 profiles)
+- **Test:** `12_proto2_required` — proto2 message with `required string`, `optional string`, `optional int32` with `[default = 25]`, `repeated string`
+- **Bug:** `parseField()` at lines 363-371 only checks for `repeated` keyword. `required` and explicit `optional` are not recognized as labels. The parser treats `required` as a type name (message reference), then fails parsing: `expected "=", got "name"`. Go protoc-go crashes on valid proto2 input.
+- **Root cause:** `parser.go:363-371` — parseField switch only handles `repeated`, defaults to `LABEL_OPTIONAL`. No handling of `required` or explicit `optional` keyword. Proto2 is fundamentally broken.
+
 ### Known gaps still unexplored (attack surface for future runs):
 - **File-level options** (`option java_package`, `option go_package`, etc.) — TESTED in Run 3 (09_file_options), confirmed broken
 - **Field options** (`deprecated = true`, `json_name`, `packed`, `jstype`) — TESTED in Run 4 (10_field_options), confirmed broken
 - **Message options** — skipped at line 214
 - **Enum options** (`allow_alias`) — skipped at line 357
 - **Extensions / extension ranges** — skipped at line 214
+- **Proto2 required/optional labels** — TESTED in Run 6 (12_proto2_required), confirmed broken (parser crashes on `required` keyword)
 - **Proto2 groups** — not implemented at all
-- **Proto2 default values** — not implemented
+- **Proto2 default values** — not implemented (also exposed in Run 6 but parser crashes before reaching default parsing)
 - **Comments in SourceCodeInfo** (leading/trailing) — tokenizer discards comments
 - **Service/method options** — skipped
 - **Enum value options** — skipped at line 385
