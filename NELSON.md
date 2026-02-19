@@ -689,6 +689,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts duplicate method options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:16:12: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:1503-1550` — `parseMethodOption` unconditionally sets `method.Options.Deprecated` without checking if it was already set. No duplicate option tracking exists (no `seenOptions` map passed in). Same pattern as duplicate file-level options (Run 71), duplicate message options (Run 73), duplicate field options (Run 74), duplicate enum options (Run 75), and duplicate service options (Run 76).
 
+### Run 78 — Duplicate enum value options (FAILED: 5/5 profiles)
+- **Test:** `84_duplicate_enum_value_option` — proto3 enum with `HIGH = 1 [deprecated = true, deprecated = false];` (same option twice in bracket list)
+- **Bug:** Go protoc-go silently accepts duplicate enum value options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:32: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1136-1173` — enum value option parsing loop has no duplicate tracking. Unlike `parseFieldOptions` (which has `seenFieldOpts` map at line 2053), `parseMessageOption` (which receives `seenOptions`), and all other option parsers, the enum value option loop at line 1136 processes each option without checking if it was already set. The switch at line 1153-1157 unconditionally sets `enumValOpts.Deprecated` on each iteration. Same pattern as all other duplicate option bugs (Runs 71-77), but this one is at the enum value level (inside `[...]` brackets on enum value declarations).
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -705,9 +710,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **String concatenation in enum/service/method option values** — same single-token bug as field defaults
 - **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
 - **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
-- **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts
+- **Oneof with optional label** — already handled (line 1741-1744) — NOT a gap
 - **Extension number out of range** — extension using number outside declared range
 - **Proto3 optional inside nested messages** — synthetic oneof ordering bug would apply recursively
-- **Duplicate method options** — TESTED in Run 77 (83_duplicate_method_option), confirmed broken
-- **Duplicate enum value options** — `ACTIVE = 1 [deprecated = true, deprecated = false];` — same pattern
+- **Duplicate enum value options** — TESTED in Run 78 (84_duplicate_enum_value_option), confirmed broken
 - **Duplicate idempotency_level** — `option idempotency_level = IDEMPOTENT; option idempotency_level = NO_SIDE_EFFECTS;` — same pattern
+- **Duplicate map field options** — `map<string,string> m = 1 [deprecated = true, deprecated = false];` — likely same bug
