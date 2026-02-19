@@ -244,6 +244,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate extension range / field number conflicts
+	if errs := validateExtensionFieldConflicts(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate overlapping extension ranges within a message
 	if errs := validateExtensionRangeOverlaps(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -1397,6 +1402,56 @@ func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgP
 		oFQN := msgFQN + "." + oneof.GetName()
 		// C++ protoc omits line:col for duplicate oneof names
 		check(oFQN, oneof.GetName(), msgFQN, 0, 0, "")
+	}
+}
+
+// validateExtensionFieldConflicts checks that no field number in a message
+// falls within the message's declared extension ranges.
+func validateExtensionFieldConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			fqn := msg.GetName()
+			if pkg != "" {
+				fqn = pkg + "." + fqn
+			}
+			collectExtensionFieldConflictErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectExtensionFieldConflictErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	for _, field := range msg.GetField() {
+		num := field.GetNumber()
+		for j, er := range msg.GetExtensionRange() {
+			if num >= er.GetStart() && num < er.GetEnd() {
+				path := append(append([]int32{}, msgPath...), 5, int32(j), 1)
+				line, col := findLocationByPath(path, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extension range %d to %d includes field \"%s\" (%d).",
+					filename, line, col,
+					er.GetStart(), er.GetEnd()-1,
+					field.GetName(), num))
+				next := suggestFieldNumber(msg)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Suggested field numbers for %s: %d",
+					filename, line, col, fqn, next))
+				break
+			}
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedFqn := fqn + "." + nested.GetName()
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectExtensionFieldConflictErrors(filename, nested, nestedFqn, nestedPath, sci, errs)
 	}
 }
 
