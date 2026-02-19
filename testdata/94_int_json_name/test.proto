@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package intjson;
+
+message User {
+  string name = 1 [json_name = 42];
+  int32 age = 2;
+}
