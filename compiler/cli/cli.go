@@ -245,6 +245,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate lazy option only on submessage fields
+	if errs := validateLazyNonMessage(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate empty enums (must contain at least one value)
 	if errs := validateEmptyEnums(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -781,6 +786,58 @@ func collectPackedErrors(filename string, msg *descriptorpb.DescriptorProto, msg
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectPackedErrors(filename, nested, nestedPath, sci, errs)
+	}
+}
+
+// validateLazyNonMessage checks that [lazy = true] is only on submessage fields.
+func validateLazyNonMessage(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectLazyErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		// Check file-level extensions
+		for i, ext := range fd.GetExtension() {
+			if ext.GetOptions().GetLazy() {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					path := []int32{7, int32(i), 5}
+					line, col := findLocationByPath(path, sci)
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: [lazy = true] can only be specified for submessage fields.", fd.GetName(), line, col))
+				}
+			}
+		}
+	}
+	return errs
+}
+
+func collectLazyErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, field := range msg.GetField() {
+		if field.GetOptions().GetLazy() {
+			if field.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && field.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+				fieldPath := append(append([]int32{}, msgPath...), 2, int32(i), 5)
+				line, col := findLocationByPath(fieldPath, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: [lazy = true] can only be specified for submessage fields.", filename, line, col))
+			}
+		}
+	}
+	// Check message-level extensions
+	for i, ext := range msg.GetExtension() {
+		if ext.GetOptions().GetLazy() {
+			if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+				extPath := append(append([]int32{}, msgPath...), 6, int32(i), 5)
+				line, col := findLocationByPath(extPath, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: [lazy = true] can only be specified for submessage fields.", filename, line, col))
+			}
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectLazyErrors(filename, nested, nestedPath, sci, errs)
 	}
 }
 
