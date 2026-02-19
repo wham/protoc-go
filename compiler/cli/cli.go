@@ -1050,6 +1050,7 @@ func validateProto3(orderedFiles []string, parsed map[string]*descriptorpb.FileD
 		if fd.GetSyntax() != "proto3" {
 			continue
 		}
+		collectProto3ExtendErrors(fd.GetName(), fd.GetExtension(), []int32{7}, fd.GetSourceCodeInfo(), &errs)
 		for i, e := range fd.GetEnumType() {
 			collectProto3EnumZeroErrors(fd.GetName(), e, []int32{5, int32(i)}, fd.GetSourceCodeInfo(), &errs)
 		}
@@ -1058,6 +1059,35 @@ func validateProto3(orderedFiles []string, parsed map[string]*descriptorpb.FileD
 		}
 	}
 	return errs
+}
+
+func allowedProto3Extendee(name string) bool {
+	// Strip leading dot from fully-qualified name
+	if len(name) > 0 && name[0] == '.' {
+		name = name[1:]
+	}
+	if len(name) <= 16 || name[:16] != "google.protobuf." {
+		return false
+	}
+	switch name[16:] {
+	case "FileOptions", "MessageOptions", "FieldOptions", "OneofOptions",
+		"ExtensionRangeOptions", "EnumOptions", "EnumValueOptions",
+		"ServiceOptions", "MethodOptions", "StreamOptions",
+		"SourceCodeInfo", "GeneratedCodeInfo", "FeatureSet":
+		return true
+	}
+	return false
+}
+
+func collectProto3ExtendErrors(filename string, exts []*descriptorpb.FieldDescriptorProto, basePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, ext := range exts {
+		if !allowedProto3Extendee(ext.GetExtendee()) {
+			// Location from extendee SCI path: basePath + [extIdx, 2]
+			path := append(append([]int32{}, basePath...), int32(i), 2)
+			line, col := findLocationByPath(path, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extensions in proto3 are only allowed for defining options.", filename, line, col))
+		}
+	}
 }
 
 func collectProto3EnumZeroErrors(filename string, e *descriptorpb.EnumDescriptorProto, enumPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
@@ -1159,6 +1189,7 @@ func collectProto3GroupErrors(filename string, msg *descriptorpb.DescriptorProto
 
 func collectProto3MessageErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
 	collectProto3ExtensionRangeErrors(filename, msg, msgPath, sci, errs)
+	collectProto3ExtendErrors(filename, msg.GetExtension(), append(append([]int32{}, msgPath...), 6), sci, errs)
 	collectProto3GroupErrors(filename, msg, msgPath, sci, errs)
 	collectProto3RequiredErrors(filename, msg, msgPath, sci, errs)
 	collectProto3DefaultErrors(filename, msg, msgPath, sci, errs)

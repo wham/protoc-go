@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 363/363 tests passing.
+ALL DONE — 368/368 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -126,6 +126,7 @@ ALL DONE — 363/363 tests passing.
 76. ✅ Circular import multi-error reporting — for circular imports (a.proto → b.proto → a.proto), report cycle error at cycle-starting file's import location, then "Import X was not found or had errors." for failed deps, then unresolved type errors ("X is not defined.") matching C++ protoc's error output exactly
 77. ✅ Float default value precision — use `simpleDtoa` (%.15g + round-trip) / `simpleFtoa` (%.6g + round-trip as float32) to match C++ protoc's `SimpleDtoa`/`SimpleFtoa` (e.g., `1e10` → `10000000000`)
 78. ✅ Proto3 extension range validation — reject `extensions` declarations in proto3 messages with `Extension ranges are not allowed in proto3.` error at extension range start location
+79. ✅ Proto3 extend block validation — reject `extend` blocks in proto3 files (file-level and message-level) unless extending an allowed option type (`google.protobuf.*Options`, `FeatureSet`, etc.) with `Extensions in proto3 are only allowed for defining options.` error at extendee name location
 
 ## Notes
 
@@ -199,4 +200,4 @@ ALL DONE — 363/363 tests passing.
 - Recursive import cycle detection: `parseRecursive` takes an `importStack []string` parameter tracking the current import chain. Before processing a file, check if it's already in the stack — if so, build the chain string (e.g., `test.proto -> test.proto`) and return error with location from SCI path `[3, depIdx]` of the importing file's import statement. The `findImportLocation` helper looks up the SCI entry for the import. `newStack := append(importStack, filename)` is passed to recursive calls.
 - Circular import multi-error: `parseRecursive` returns `(bool, error)` and accepts `collectErrors *[]string`. When a cycle is detected, the error is reported at the cycle-starting file's import of the NEXT file in the chain (e.g., a.proto:5:1 for `import "b.proto"` in a.proto). Self-imports (dep == filename) skip follow-on errors. For non-self circular imports: after cycle detection, the importing file adds "Import X was not found or had errors." errors for each failed dep, then calls `parser.CheckUnresolvedTypes` with restricted availableFiles (excluding failed deps) to find unresolved type references ("X is not defined." errors). The `CheckUnresolvedTypes` function in parser.go builds a types map from the file's own types + available deps, then checks all field TypeName, service method InputType/OutputType references against the map. Unresolved types are reported with position from SCI path (type_name field 6 for message fields, input_type field 2 / output_type field 3 for methods).
 - Float default precision: C++ protoc normalizes float defaults via `SimpleDtoa` (%.15g + round-trip, fallback to %.17g) and `SimpleFtoa` (%.6g as float32 + round-trip, fallback to %.9g). Go's `strconv.FormatFloat(v, 'g', -1, 64)` uses shortest representation which differs (e.g., `1e+10` vs `10000000000`). Implemented `simpleDtoa` and `simpleFtoa` in parser.go matching C++ behavior. TYPE_FLOAT values are cast to float32 before formatting.
-- Proto3 extension range validation: C++ protoc rejects `extensions` in proto3 messages. Error format: `filename:line:col: Extension ranges are not allowed in proto3.` Location from SCI path `[msgPath..., 5, rangeIdx, 1]` (extension range start field). Validated in `collectProto3ExtensionRangeErrors` (cli.go), called first in `collectProto3MessageErrors` before group/required/default checks. Recurses into nested messages.
+- Proto3 extend block validation: C++ protoc rejects `extend` blocks in proto3 files unless the extendee is an allowed option type (google.protobuf.*Options, FeatureSet, SourceCodeInfo, GeneratedCodeInfo, StreamOptions). Error format: `filename:line:col: Extensions in proto3 are only allowed for defining options.` Location from SCI path for extendee (field 2 of FieldDescriptorProto): `[7, extIdx, 2]` for file-level, `[msgPath..., 6, extIdx, 2]` for message-level. Validated in `collectProto3ExtendErrors` (cli.go), called from both `validateProto3` (file-level) and `collectProto3MessageErrors` (message-level). `allowedProto3Extendee` checks if FQN starts with `.google.protobuf.` and suffix matches known types.
