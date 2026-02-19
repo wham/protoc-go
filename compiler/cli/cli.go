@@ -187,6 +187,11 @@ func Run(args []string) error {
 		parser.ResolveTypes(parsed[name], parsed)
 	}
 
+	// Validate reserved field numbers (applies to all syntaxes)
+	if errs := validateReservedFieldNumbers(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate proto3 constraints
 	if errs := validateProto3(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -415,6 +420,39 @@ func parseArgs(args []string) (*config, error) {
 	}
 
 	return cfg, nil
+}
+
+// validateReservedFieldNumbers checks that no field uses numbers 19000-19999.
+func validateReservedFieldNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	const kFirstReserved = 19000
+	const kLastReserved = 19999
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		collectReservedFieldNumberErrors(fd.GetName(), fd.GetMessageType(), &errs, kFirstReserved, kLastReserved)
+		for _, ext := range fd.GetExtension() {
+			if n := ext.GetNumber(); n >= kFirstReserved && n <= kLastReserved {
+				errs = append(errs, fmt.Sprintf("%s: Field numbers %d through %d are reserved for the protocol buffer library implementation.", fd.GetName(), kFirstReserved, kLastReserved))
+			}
+		}
+	}
+	return errs
+}
+
+func collectReservedFieldNumberErrors(filename string, msgs []*descriptorpb.DescriptorProto, errs *[]string, first, last int32) {
+	for _, msg := range msgs {
+		for _, field := range msg.GetField() {
+			if n := field.GetNumber(); n >= first && n <= last {
+				*errs = append(*errs, fmt.Sprintf("%s: Field numbers %d through %d are reserved for the protocol buffer library implementation.", filename, first, last))
+			}
+		}
+		for _, ext := range msg.GetExtension() {
+			if n := ext.GetNumber(); n >= first && n <= last {
+				*errs = append(*errs, fmt.Sprintf("%s: Field numbers %d through %d are reserved for the protocol buffer library implementation.", filename, first, last))
+			}
+		}
+		collectReservedFieldNumberErrors(filename, msg.GetNestedType(), errs, first, last)
+	}
 }
 
 // validateProto3 checks proto3-specific constraints and returns error strings.
