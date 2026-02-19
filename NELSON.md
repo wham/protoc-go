@@ -222,10 +222,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseFileOption()` switch at lines 1676-1740 doesn't have a case for `java_string_check_utf8` (FileOptions field 27). The `default` case at line 1737-1739 does `return nil`, silently discarding the option. C++ protoc populates `FileOptions.java_string_check_utf8 = true`. Descriptor set size differs (92 vs 89 bytes). SourceCodeInfo locations differ (11 vs 9) — the option statement locations at paths `[8]` and `[8, 27]` are missing because `return nil` exits before the source code info code at lines 1742-1753.
 - **Root cause:** `parser.go:1676-1740` — `parseFileOption` switch handles 16 standard options but is missing `java_string_check_utf8` (field 27). Any unrecognized option name hits the `default` case and is silently dropped. Other potentially missing standard options could also trigger this same pattern.
 
+### Run 27 — Extend inside message body (FAILED: 5/5 profiles)
+- **Test:** `33_nested_extend` — proto2 file with `message Container { extend Base { optional string tag = 100; } }`
+- **Bug:** Message body parser switch (lines 228-304) has no `case "extend":`. The `extend` keyword falls to the `default` case, is treated as a field type name by `parseField`. `Base` is treated as the field name, then `Expect("=")` gets `{` instead → parse error: `expected "=", got "{"`. C++ protoc handles nested extend blocks and populates `DescriptorProto.extension` and `FileDescriptorProto.extension` correctly.
+- **Root cause:** `parser.go:228-304` — message body switch handles `message`, `enum`, `oneof`, `map`, `reserved`, `option`, `extensions`, `";"` but not `extend`. Nested extend blocks require dedicated parsing: consume `extend ExtendedType { ... }`, parse fields inside, and store them on the containing message's `extension` field.
+
 ### Known gaps still unexplored (updated):
 - **Empty statements inside oneof bodies** — likely also broken (same missing `;` case in parseOneof)
 - **Oneof options** — not tested (oneof-level options likely skipped at line 1485-1489)
-- **`extend` inside message bodies** — not handled (message body switch has no `case "extend":`)
 - **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
 - **Map field with enum value type** — `map<string, SomeEnum>` might resolve to TYPE_MESSAGE instead of TYPE_ENUM in the synthetic entry (but resolveMessageFields may fix it)
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth
@@ -235,4 +239,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Other missing file options** — `java_generate_equals_and_hash` (20, deprecated), any other standard options not in the switch
 - **Missing message/enum/service/method options** — similar pattern: only a few built-in options are in each switch
 - **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
-- **`extend` inside message bodies** — message body switch at lines 228-303 has no `case "extend":`, would fall to parseField and error
+- **`extend` inside oneof** — proto2 allows group/extend inside oneof, same issues

@@ -1,0 +1,16 @@
+syntax = "proto2";
+
+package nestedext;
+
+message Base {
+  optional string name = 1;
+  extensions 100 to 200;
+}
+
+message Container {
+  optional string label = 1;
+
+  extend Base {
+    optional string tag = 100;
+  }
+}
