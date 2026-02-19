@@ -1,0 +1,12 @@
+syntax = "proto2";
+
+package extrange;
+
+message Base {
+  optional string name = 1;
+  extensions 100 to 200;
+}
+
+extend Base {
+  optional string nickname = 300;
+}
