@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 738/738 tests passing.
+ALL DONE — 743/743 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -198,6 +198,7 @@ ALL DONE — 738/738 tests passing.
 148. ✅ Integer default value overflow validation — reject integer default values exceeding field type range (e.g., `99999999999` for int32) with `Integer out of range.` error at value token position, using `intDefaultMaxValue` per-type max (int32: 2147483647/2147483648, uint32: 4294967295, int64: max int64, uint64: max uint64)
 149. ✅ Integer default value rejection for bool fields — reject integer literals (`0`, `1`) as default values for TYPE_BOOL fields with `Expected "true" or "false".` error at value token position, extending existing string literal rejection to also check `TokenInt`
 150. ✅ Float default value rejection for bool fields — reject float literals (`1.0`, `0.0`) as default values for TYPE_BOOL fields with `Expected "true" or "false".` error at value token position, extending existing string/integer rejection to also check `TokenFloat`
+151. ✅ Enum default identifier validation — reject non-identifier default values for enum fields (e.g., `[default = 0]`) with `Default value for an enum field must be an identifier.` error at default value SCI location, checked before enum value name lookup using `isProtoIdentifier` in cli.go
 
 ## Notes
 
@@ -307,3 +308,4 @@ ALL DONE — 738/738 tests passing.
 - Negative enum reserved ranges: `reserved -20 to -15; reserved -5;` — handle `-` sign before integer in `parseEnumReserved`. For single negative values (no `to`), the END field SCI span covers only the `-` token (matching C++ protoc's `end_location.StartAt(start_token); end_location.EndAt(start_token)` pattern where `start_token` is the `-` token captured before `ConsumeSignedInteger`). For ranges with `to`, both start and end spans include the full negative number (minus + digits). `startMinusTok`/`endMinusTok` track minus sign positions.
 - Message/group default value validation: C++ protoc rejects default values on message/group-typed fields with `Messages can't have default values.` at the default value SCI location (path `[msgPath..., 2, fieldIdx, 7]`). The C++ PARSER accepts any default value when `!field->has_type()` (named type reference, not yet resolved). The error comes from `descriptor.cc` during cross-linking when the resolved type is CPPTYPE_MESSAGE. Go implementation mirrors this: parser.go checks `field.Type == nil` and accepts default as-is; cli.go's `validateMessageDefault` checks after type resolution for TYPE_MESSAGE/TYPE_GROUP with DefaultValue set.
 - Unsigned negative default validation: C++ protoc rejects negative defaults on unsigned fields (uint32, uint64, fixed32, fixed64) in parser.cc via `TryConsume("-")` + `RecordError`. Error reported at the integer token position (after consuming `-`), not at the minus sign. Go implementation adds `isUnsignedType` check in `parseFieldOptions` (parser.go) using `p.errors` error recovery. Error format: `filename:line:col: Unsigned field can't have negative default value.`
+- Enum default identifier validation: C++ descriptor.cc checks `io::Tokenizer::IsIdentifier(proto.default_value())` before looking up the enum value name. If the default value is not a valid identifier (e.g., integer `0`, string `"HIGH"`), it reports `Default value for an enum field must be an identifier.` at the DEFAULT_VALUE location. Go implementation adds `isProtoIdentifier` check in `collectEnumDefaultErrors` (cli.go) before the value name lookup. `isProtoIdentifier` checks `[a-zA-Z_][a-zA-Z0-9_]*` pattern.
