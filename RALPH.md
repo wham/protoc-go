@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 613/613 tests passing.
+ALL DONE — 618/618 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -161,6 +161,7 @@ ALL DONE — 613/613 tests passing.
 111. ✅ Custom vs default JSON name conflict messages — distinguish explicit `json_name` (custom) from auto-generated (default) in conflict error messages, matching C++ protoc's two-pass approach (default-only pass + custom-aware pass) with `GetJsonNameDetails` logic
 112. ✅ Stream keyword as type name validation — reject `stream` used as a message type name in RPC input/output with `Expected type name.` error at the non-type token position, matching C++ protoc behavior
 113. ✅ Map enum key type validation — allow non-builtin key types (e.g., enum) through parser (storing as TYPE_MESSAGE with TypeName for resolution), then reject enum key types in validation with `Key in map fields cannot be enum types.` error at field span location
+127. ✅ Boolean/identifier default value rejection for integer fields — reject `true`/`false` (TokenIdent) as default values for integer fields with `Expected integer for field default value.` error, extending the existing string/float rejection check
 124. ✅ Required extension field validation — reject `required` label on extension fields with `The extension X cannot be required.` error at type SCI location (field 5), handles both file-level and message-level extensions
 125. ✅ Duplicate extension number validation — reject duplicate extension numbers targeting the same extendee with `Extension number N has already been used in "pkg.Msg" by extension "pkg.name".` error at field number SCI location, collects extensions across all files and extend blocks per extendee
 126. ✅ Map-in-extend validation — reject `map<K,V>` fields inside `extend` blocks with `Map fields are not allowed to be extensions.` error at `<` token position, handles both file-level (`parseExtend`) and message-level (`parseNestedExtend`) extend blocks
