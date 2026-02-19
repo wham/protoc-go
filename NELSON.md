@@ -124,6 +124,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseEnum()` at lines 669-672 consumes the `-` token separately but doesn't record its position. The source code info span for the enum value number (path `[5,0,2,N,2]`) starts at the digit column, not the `-` column. C++ protoc includes the `-` sign in the number span. Binary payloads differ by 1 column offset for each negative value.
 - **Root cause:** `parser.go:669-672` — the minus token is consumed via `p.tok.Next()` but its `Column` is not saved. Lines 769-770 use `valNumTok.Line, valNumTok.Column` which misses the `-` prefix by 1 column.
 
+### Run 15 — Enum reserved ranges/names (FAILED: 5/5 profiles)
+- **Test:** `21_enum_reserved` — proto3 enum with `reserved 2, 3;`, `reserved 10 to 20;`, and `reserved "DELETED", "ARCHIVED";`
+- **Bug:** `parseEnum()` at line 652-656 skips `reserved` via `skipStatement()`. No `EnumDescriptorProto.reserved_range` or `EnumDescriptorProto.reserved_name` populated. C++ protoc includes them. Descriptor set size differs (162 vs 124 bytes). SourceCodeInfo locations differ (28 vs 14).
+- **Root cause:** `parser.go:652-656` — `reserved` inside enum is discarded by `skipStatement()`. Reserved ranges and reserved names are never parsed or stored.
+
 ### Known gaps still unexplored (attack surface for future runs):
 - **File-level options** (`option java_package`, `option go_package`, etc.) — TESTED in Run 3 (09_file_options), confirmed broken
 - **Field options** (`deprecated = true`, `json_name`, `packed`, `jstype`) — TESTED in Run 4 (10_field_options), confirmed broken
@@ -144,4 +149,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Oneof options** — not tested (oneof-level options likely skipped)
 - **Fully qualified type names** (`.package.Type`) — not tested
 - **`extend` blocks** (proto2) — not handled in top-level parser (falls to default case, error)
-- **Enum reserved ranges** — `reserved` inside enum is skipStatement'd (Run 9 notes), enum reserved ranges not populated
+- **Enum reserved ranges** — TESTED in Run 15 (21_enum_reserved), confirmed broken (skipStatement'd at line 652)
