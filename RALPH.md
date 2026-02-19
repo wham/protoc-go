@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 308/308 tests passing.
+ALL DONE — 313/313 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -116,7 +116,7 @@ ALL DONE — 308/308 tests passing.
 66. ✅ Proto3 group validation — reject `group` fields in proto3 syntax with `Groups are not supported in proto3 syntax.` error at group keyword location
 68. ✅ Duplicate syntax/edition declaration validation — reject second `syntax` or `edition` statement with `Expected top-level statement (e.g. "message").` error at duplicate keyword position
 
-68. ✅ Duplicate syntax/edition declaration validation — reject second `syntax` or `edition` statement with `Expected top-level statement (e.g. "message").` error at duplicate keyword position
+69. ✅ Duplicate package declaration validation — reject second `package` statement with `Multiple package definitions.` error at duplicate `package` keyword position (1-indexed line:col, no filename prefix since CLI adds it)
 
 ## Notes
 
