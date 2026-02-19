@@ -48,9 +48,11 @@ scripts/test --summary
 
 The test harness:
 1. Builds `cmd/protoc-go/` and `tools/protoc-gen-dump/`
-2. For each `testdata/*/` directory, runs both C++ protoc and Go protoc-go with the fake plugin
-3. Compares the captured CodeGeneratorRequest output (summary, JSON, binary)
-4. Reports pass/fail with diffs
+2. For each `testdata/*/` directory × 5 profiles, runs both C++ protoc and Go protoc-go
+3. Profiles: `plugin`, `plugin_param`, `descriptor_set`, `descriptor_set_src`, `descriptor_set_full`
+4. Also runs CLI error tests (no args, missing files, bad flags)
+5. Test names: `<case>@<profile>` (e.g., `01_basic_message@plugin`, `cli@no_args`)
+6. Reports pass/fail with diffs
 
 ## Key Design Decisions
 

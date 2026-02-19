@@ -29,77 +29,53 @@ echo "Building protoc-go..."
 echo "Building protoc-gen-dump..."
 (cd "$PROJECT_DIR" && go build -o "$PROTOC_GEN_DUMP" ./tools/protoc-gen-dump/)
 
-echo "Using C++ protoc: $PROTOC ($(protoc --version))"
+echo "Using C++ protoc: $PROTOC ($($PROTOC --version))"
 echo ""
 
-# -- test loop ------------------------------------------------------------
+# -- profiles -------------------------------------------------------------
+# Each profile defines a different way to invoke protoc on a .proto test case.
+# Format: profile_name|mode|extra_flags
+# mode=plugin: uses protoc-gen-dump, compares CodeGeneratorRequest
+# mode=descriptor: uses --descriptor_set_out, compares binary output
+# mode=cli: special CLI-level tests (no .proto files)
+
+PROFILES=(
+  "plugin|plugin|"
+  "plugin_param|plugin|--dump_opt=test_option=value"
+  "descriptor_set|descriptor|"
+  "descriptor_set_src|descriptor|--include_source_info"
+  "descriptor_set_full|descriptor|--include_imports --include_source_info"
+)
+
+# -- helpers --------------------------------------------------------------
 
 rm -rf "$RESULTS_DIR"
 mkdir -p "$RESULTS_DIR"
 
-# Millisecond timer helper
 now_ms() {
   perl -MTime::HiRes=time -e 'printf "%d\n", time()*1000'
 }
 
-run_test() {
-  local test_name="$1"
-  local test_dir="$2"
-  local expected_dir="$RESULTS_DIR/$test_name/expected"
-  local actual_dir="$RESULTS_DIR/$test_name/actual"
-  local result_file="$RESULTS_DIR/$test_name/result.txt"
-  local failure_file="$RESULTS_DIR/$test_name/failure.txt"
+# compare_results result_dir result_file failure_file cpp_elapsed go_elapsed
+#   Checks cpp_ok/go_ok files and compares outputs.
+compare_results() {
+  local result_dir="$1"
+  local result_file="$2"
+  local failure_file="$3"
+  local cpp_elapsed="$4"
+  local go_elapsed="$5"
+  local cpp_ok go_ok
 
-  mkdir -p "$expected_dir" "$actual_dir"
-
-  # Collect proto files
-  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
-  if [ -z "$proto_files" ]; then
-    echo "PASS 0 0" > "$result_file"
-    return
-  fi
-
-  # Convert to relative paths
-  proto_basenames=""
-  for f in $proto_files; do
-    proto_basenames="$proto_basenames $(basename "$f")"
-  done
-
-  # Run C++ protoc with protoc-gen-dump (expected output)
-  cpp_error_file="$RESULTS_DIR/$test_name/cpp_error.txt"
-  cpp_ok=true
-  local cpp_start=$(now_ms)
-  (cd "$test_dir" && "$PROTOC" \
-    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
-    --dump_out="$expected_dir" \
-    --dump_opt="$expected_dir" \
-    -I"$PROTOC_INCLUDE" \
-    -I. \
-    $proto_basenames) 2>"$cpp_error_file" || cpp_ok=false
-  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
-
-  # Run Go protoc-go with protoc-gen-dump (actual output)
-  go_error_file="$RESULTS_DIR/$test_name/go_error.txt"
-  go_ok=true
-  local go_start=$(now_ms)
-  (cd "$test_dir" && "$PROTOC_GO" \
-    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
-    --dump_out="$actual_dir" \
-    --dump_opt="$actual_dir" \
-    -I"$PROTOC_INCLUDE" \
-    -I. \
-    $proto_basenames) 2>"$go_error_file" || go_ok=false
-  local go_elapsed=$(( $(now_ms) - go_start ))
+  cpp_ok=$(cat "$result_dir/cpp_ok.txt")
+  go_ok=$(cat "$result_dir/go_ok.txt")
 
   # If both failed, compare error messages
   if [ "$cpp_ok" = false ] && [ "$go_ok" = false ]; then
-    cpp_err=$(cat "$cpp_error_file" 2>/dev/null || echo "")
-    go_err=$(cat "$go_error_file" 2>/dev/null || echo "")
+    local cpp_err go_err
+    cpp_err=$(cat "$result_dir/cpp_error.txt" 2>/dev/null | sed 's/[[:space:]]*$//' | sed '/^$/d')
+    go_err=$(cat "$result_dir/go_error.txt" 2>/dev/null | sed 's/[[:space:]]*$//' | sed '/^$/d')
 
-    cpp_err_normalized=$(echo "$cpp_err" | sed 's/[[:space:]]*$//' | sed '/^$/d')
-    go_err_normalized=$(echo "$go_err" | sed 's/[[:space:]]*$//' | sed '/^$/d')
-
-    if [ "$cpp_err_normalized" = "$go_err_normalized" ]; then
+    if [ "$cpp_err" = "$go_err" ]; then
       echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
     else
       echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
@@ -108,8 +84,8 @@ run_test() {
         echo "--- C++ protoc error"
         echo "+++ Go protoc-go error"
         diff -u \
-          <(echo "$cpp_err" | sed 's/[[:space:]]*$//') \
-          <(echo "$go_err" | sed 's/[[:space:]]*$//') \
+          <(cat "$result_dir/cpp_error.txt" | sed 's/[[:space:]]*$//') \
+          <(cat "$result_dir/go_error.txt" | sed 's/[[:space:]]*$//') \
           2>&1 || true
       } > "$failure_file"
     fi
@@ -124,53 +100,301 @@ run_test() {
         echo "Go protoc-go failed but C++ protoc succeeded"
         echo ""
         echo "Go error:"
-        cat "$go_error_file" 2>/dev/null || echo "(no error output)"
+        cat "$result_dir/go_error.txt" 2>/dev/null || echo "(no error output)"
       } > "$failure_file"
     else
       {
         echo "C++ protoc failed but Go protoc-go succeeded"
         echo ""
         echo "C++ error:"
-        cat "$cpp_error_file" 2>/dev/null || echo "(no error output)"
+        cat "$result_dir/cpp_error.txt" 2>/dev/null || echo "(no error output)"
       } > "$failure_file"
     fi
     return
   fi
 
-  # Compare outputs — use summary.txt for human-readable diffs
-  diff_output=""
+  echo "BOTH_OK" > "$result_dir/both_ok.txt"
+}
 
-  # Compare summary files
-  if [ -f "$expected_dir/summary.txt" ] && [ -f "$actual_dir/summary.txt" ]; then
-    diff_output=$(diff -u "$expected_dir/summary.txt" "$actual_dir/summary.txt" 2>&1) || true
+# -- plugin profile test ---------------------------------------------------
+
+run_plugin_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local profile_name="$3"
+  local extra_flags="$4"
+  local full_name="${test_name}@${profile_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local expected_dir="$result_dir/expected"
+  local actual_dir="$result_dir/actual"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$expected_dir" "$actual_dir"
+
+  # Collect proto files
+  local proto_files proto_basenames
+  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
+  if [ -z "$proto_files" ]; then
+    echo "PASS 0 0" > "$result_file"
+    return
   fi
+  proto_basenames=""
+  for f in $proto_files; do
+    proto_basenames="$proto_basenames $(basename "$f")"
+  done
 
-  # If summaries match, also verify binary output matches
-  if [ -z "$diff_output" ] && [ -f "$expected_dir/request.pb" ] && [ -f "$actual_dir/request.pb" ]; then
-    if ! cmp -s "$expected_dir/request.pb" "$actual_dir/request.pb"; then
-      diff_output="Binary CodeGeneratorRequest differs (summary matched but binary did not)"
+  # The --dump_opt is used to pass the output directory AND any extra params.
+  # protoc-gen-dump uses the parameter as the output directory.
+  # For plugin_param profile, we append extra options but still need the dir as parameter.
+  local dump_opt_cpp="$expected_dir"
+  local dump_opt_go="$actual_dir"
+
+  # Run C++ protoc
+  local cpp_ok=true
+  local cpp_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$expected_dir" \
+    --dump_opt="$dump_opt_cpp" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/cpp_error.txt" || cpp_ok=false
+  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
+  echo "$cpp_ok" > "$result_dir/cpp_ok.txt"
+
+  # Run Go protoc-go
+  local go_ok=true
+  local go_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC_GO" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$actual_dir" \
+    --dump_opt="$dump_opt_go" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/go_error.txt" || go_ok=false
+  local go_elapsed=$(( $(now_ms) - go_start ))
+  echo "$go_ok" > "$result_dir/go_ok.txt"
+
+  compare_results "$result_dir" "$result_file" "$failure_file" "$cpp_elapsed" "$go_elapsed"
+
+  # If both succeeded, compare plugin outputs
+  if [ -f "$result_dir/both_ok.txt" ]; then
+    local diff_output=""
+
+    # Compare summary files (human-readable)
+    if [ -f "$expected_dir/summary.txt" ] && [ -f "$actual_dir/summary.txt" ]; then
+      diff_output=$(diff -u "$expected_dir/summary.txt" "$actual_dir/summary.txt" 2>&1) || true
     fi
-  fi
 
-  if [ -z "$diff_output" ]; then
-    echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
-  else
-    echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
-    echo "$diff_output" > "$failure_file"
+    # Also verify binary output matches exactly
+    if [ -z "$diff_output" ] && [ -f "$expected_dir/request.pb" ] && [ -f "$actual_dir/request.pb" ]; then
+      if ! cmp -s "$expected_dir/request.pb" "$actual_dir/request.pb"; then
+        diff_output="Binary CodeGeneratorRequest differs (summary matched but binary did not)"
+      fi
+    fi
+
+    if [ -z "$diff_output" ]; then
+      echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
+    else
+      echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
+      echo "$diff_output" > "$failure_file"
+    fi
   fi
 }
 
-# Launch all tests in parallel
+# -- descriptor profile test -----------------------------------------------
+
+run_descriptor_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local profile_name="$3"
+  local extra_flags="$4"
+  local full_name="${test_name}@${profile_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$result_dir"
+
+  # Collect proto files
+  local proto_files proto_basenames
+  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
+  if [ -z "$proto_files" ]; then
+    echo "PASS 0 0" > "$result_file"
+    return
+  fi
+  proto_basenames=""
+  for f in $proto_files; do
+    proto_basenames="$proto_basenames $(basename "$f")"
+  done
+
+  local expected_pb="$result_dir/expected.pb"
+  local actual_pb="$result_dir/actual.pb"
+
+  # Run C++ protoc with --descriptor_set_out
+  local cpp_ok=true
+  local cpp_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC" \
+    --descriptor_set_out="$expected_pb" \
+    $extra_flags \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/cpp_error.txt" || cpp_ok=false
+  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
+  echo "$cpp_ok" > "$result_dir/cpp_ok.txt"
+
+  # Run Go protoc-go with --descriptor_set_out
+  local go_ok=true
+  local go_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC_GO" \
+    --descriptor_set_out="$actual_pb" \
+    $extra_flags \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/go_error.txt" || go_ok=false
+  local go_elapsed=$(( $(now_ms) - go_start ))
+  echo "$go_ok" > "$result_dir/go_ok.txt"
+
+  compare_results "$result_dir" "$result_file" "$failure_file" "$cpp_elapsed" "$go_elapsed"
+
+  # If both succeeded, compare descriptor set binaries
+  if [ -f "$result_dir/both_ok.txt" ]; then
+    if cmp -s "$expected_pb" "$actual_pb"; then
+      echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
+    else
+      echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
+      {
+        echo "Descriptor set binary differs"
+        echo "expected size: $(wc -c < "$expected_pb") bytes"
+        echo "actual size:   $(wc -c < "$actual_pb") bytes"
+      } > "$failure_file"
+    fi
+  fi
+}
+
+# -- CLI error tests -------------------------------------------------------
+
+run_cli_test() {
+  local test_name="$1"
+  local args="$2"
+  local stdin_data="$3"
+  local full_name="cli@${test_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$result_dir"
+
+  # Run C++ protoc
+  local cpp_exit=0
+  if [ -n "$stdin_data" ]; then
+    echo "$stdin_data" | eval "$PROTOC" $args >"$result_dir/cpp_stdout.txt" 2>"$result_dir/cpp_stderr.txt" || cpp_exit=$?
+  else
+    eval "$PROTOC" $args >"$result_dir/cpp_stdout.txt" 2>"$result_dir/cpp_stderr.txt" || cpp_exit=$?
+  fi
+
+  # Run Go protoc-go
+  local go_exit=0
+  if [ -n "$stdin_data" ]; then
+    echo "$stdin_data" | eval "$PROTOC_GO" $args >"$result_dir/go_stdout.txt" 2>"$result_dir/go_stderr.txt" || go_exit=$?
+  else
+    eval "$PROTOC_GO" $args >"$result_dir/go_stdout.txt" 2>"$result_dir/go_stderr.txt" || go_exit=$?
+  fi
+
+  # Compare exit codes
+  if [ "$cpp_exit" != "$go_exit" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "exit code mismatch: C++ protoc=$cpp_exit, Go protoc-go=$go_exit"
+      echo ""
+      echo "--- C++ stderr ---"
+      cat "$result_dir/cpp_stderr.txt"
+      echo ""
+      echo "+++ Go stderr +++"
+      cat "$result_dir/go_stderr.txt"
+    } > "$failure_file"
+    return
+  fi
+
+  # Compare stderr (normalized)
+  local cpp_stderr go_stderr
+  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  go_stderr=$(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+
+  if [ "$cpp_stderr" != "$go_stderr" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "stderr mismatch (exit code=$cpp_exit)"
+      diff -u \
+        <(cat "$result_dir/cpp_stderr.txt" | sed 's/[[:space:]]*$//') \
+        <(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//') \
+        2>&1 || true
+    } > "$failure_file"
+    return
+  fi
+
+  # Compare stdout (normalized)
+  local cpp_stdout go_stdout
+  cpp_stdout=$(cat "$result_dir/cpp_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  go_stdout=$(cat "$result_dir/go_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+
+  if [ "$cpp_stdout" != "$go_stdout" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "stdout mismatch (exit code=$cpp_exit)"
+      diff -u \
+        <(cat "$result_dir/cpp_stdout.txt" | sed 's/[[:space:]]*$//') \
+        <(cat "$result_dir/go_stdout.txt" | sed 's/[[:space:]]*$//') \
+        2>&1 || true
+    } > "$failure_file"
+    return
+  fi
+
+  echo "PASS 0 0" > "$result_file"
+}
+
+# -- launch all tests ------------------------------------------------------
+
 PIDS=()
 TEST_NAMES=()
 
+# Proto file tests: each testdata dir × each profile
 for test_dir in "$TESTS_DIR"/*/; do
   if [ -d "$test_dir" ]; then
     test_name="$(basename "$test_dir")"
-    run_test "$test_name" "$test_dir" &
-    PIDS+=($!)
-    TEST_NAMES+=("$test_name")
+    for profile_spec in "${PROFILES[@]}"; do
+      IFS='|' read -r profile_name profile_mode extra_flags <<< "$profile_spec"
+      full_name="${test_name}@${profile_name}"
+
+      case "$profile_mode" in
+        plugin)
+          run_plugin_test "$test_name" "$test_dir" "$profile_name" "$extra_flags" &
+          ;;
+        descriptor)
+          run_descriptor_test "$test_name" "$test_dir" "$profile_name" "$extra_flags" &
+          ;;
+      esac
+
+      PIDS+=($!)
+      TEST_NAMES+=("$full_name")
+    done
   fi
+done
+
+# CLI error/behavior tests
+# Each test: name|args|stdin_data
+CLI_TESTS=(
+  "no_args|"
+  "missing_output|missing.proto"
+  "bad_proto_path|--proto_path=/nonexistent/path --dump_out=/tmp missing.proto"
+)
+
+for cli_spec in "${CLI_TESTS[@]}"; do
+  IFS='|' read -r cli_name cli_args cli_stdin <<< "$cli_spec"
+  run_cli_test "$cli_name" "$cli_args" "$cli_stdin" &
+  PIDS+=($!)
+  TEST_NAMES+=("cli@${cli_name}")
 done
 
 # Wait for all tests to finish

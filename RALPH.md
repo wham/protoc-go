@@ -53,4 +53,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 - Tests compare C++ protoc output vs Go protoc-go output using a fake plugin (`tools/protoc-gen-dump`)
 - The fake plugin captures the CodeGeneratorRequest as JSON, binary, and human-readable summary
 - Test cases are in `testdata/` — each subdirectory has one or more .proto files
+- Each test case is run under 5 profiles: plugin, plugin_param, descriptor_set, descriptor_set_src, descriptor_set_full
+- There are also CLI error tests (cli@no_args, cli@missing_output, cli@bad_proto_path)
+- Test names: `<case>@<profile>` (e.g., `01_basic_message@plugin`, `cli@no_args`)
 - System C++ protoc is at `/opt/homebrew/bin/protoc` (libprotoc 33.4), includes at `/opt/homebrew/include`

@@ -46,6 +46,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **One new test per run.** Focus on one specific bug. Don't shotgun multiple test cases.
 - **Don't repeat yourself.** If a trick is logged in Notes as already tried, find a new one.
 - **Keep Notes as an attack playbook.** Good: "Proto2 groups — Go returns wrong wire type. Tested in 20_groups." Bad: "Good progress finding bugs."
+- **You can also add CLI error tests** by editing the `CLI_TESTS` array in `scripts/test`. These test error messages and exit codes for invalid invocations.
 
 ## Notes
 
