@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 463/463 tests passing.
+ALL DONE — 468/468 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -145,6 +145,7 @@ ALL DONE — 463/463 tests passing.
 95. ✅ Duplicate import validation — reject importing the same file twice with `Import "X" was listed twice.` error at import keyword position, using `seenImports` map in parser
 96. ✅ Enum-valued file option validation — reject string values for `optimize_for` with `Value must be identifier for enum-valued option "google.protobuf.FileOptions.optimize_for".` error at value token position
 97. ✅ JSON name conflict validation — reject fields whose default JSON names (camelCase) conflict with `The default JSON name of field "X" ("jsonName") conflicts with the default JSON name of field "Y".` error at second field's name location, recurses into nested messages, skips map entry types
+98. ✅ String file option validation — reject non-string values for string-typed file options (java_package, java_outer_classname, go_package, php_namespace, etc.) with `Value must be quoted string for string option "google.protobuf.FileOptions.X".` error at value token position
 
 ## Notes
 
@@ -226,3 +227,4 @@ ALL DONE — 463/463 tests passing.
 - Extension range validation: extension field numbers must fall within the extendee message's declared extension ranges. Error format: `filename:line:col: "pkg.Msg" does not declare N as an extension number.` Location from SCI path for field number: `[7, extIdx, 3]` for file-level, `[msgPath..., 6, extIdx, 3]` for message-level. `validateExtensionRanges` in cli.go builds a map of message FQN → extension ranges from all files, then checks each extension field. `isInExtensionRange` checks if a number falls within any range (Start inclusive, End exclusive).
 - Proto2 oneof fields: fields inside `oneof` blocks do NOT require `required`/`optional`/`repeated` labels even in proto2 syntax. Parser uses `p.inOneof` flag (set in `parseOneof` before calling `parseField`, cleared after) to skip the label check in `parseField`'s default case. No label SCI is emitted for oneof fields (labelTok stays nil).
 - Duplicate import validation: C++ protoc rejects importing the same file twice with `Import "X" was listed twice.` error at the `import` keyword position (1-indexed line:col). Parser tracks `seenImports` map (set in `parseImport`). Error returned before adding to `fd.Dependency`, so the duplicate never enters the dependency list.
+- String file option validation: string-typed file options (java_package, java_outer_classname, go_package, php_namespace, php_class_prefix, php_metadata_namespace, ruby_package, objc_class_prefix, csharp_namespace, swift_prefix) must use quoted string values (TokenString). Reject integers/identifiers with `Value must be quoted string for string option "google.protobuf.FileOptions.X".` at value token position. Uses `validateString` helper in `parseFileOption` — checks `valTok.Type == TokenString`.

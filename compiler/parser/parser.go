@@ -1966,13 +1966,27 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		return nil
 	}
 
+	// Helper to validate string option values
+	validateString := func(name string) error {
+		if valTok.Type != tokenizer.TokenString {
+			return fmt.Errorf("%d:%d: Value must be quoted string for string option \"google.protobuf.FileOptions.%s\".", valTok.Line+1, valTok.Column+1, name)
+		}
+		return nil
+	}
+
 	// Map option name to FileOptions field number
 	var fieldNum int32
 	switch optName {
 	case "java_package":
+		if err := validateString("java_package"); err != nil {
+			return err
+		}
 		fd.Options.JavaPackage = proto.String(valTok.Value)
 		fieldNum = 1
 	case "java_outer_classname":
+		if err := validateString("java_outer_classname"); err != nil {
+			return err
+		}
 		fd.Options.JavaOuterClassname = proto.String(valTok.Value)
 		fieldNum = 8
 	case "java_multiple_files":
@@ -1982,6 +1996,9 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		fd.Options.JavaMultipleFiles = proto.Bool(valTok.Value == "true")
 		fieldNum = 10
 	case "go_package":
+		if err := validateString("go_package"); err != nil {
+			return err
+		}
 		fd.Options.GoPackage = proto.String(valTok.Value)
 		fieldNum = 11
 	case "optimize_for":
@@ -2036,24 +2053,45 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		fd.Options.CcEnableArenas = proto.Bool(valTok.Value == "true")
 		fieldNum = 31
 	case "php_namespace":
+		if err := validateString("php_namespace"); err != nil {
+			return err
+		}
 		fd.Options.PhpNamespace = proto.String(valTok.Value)
 		fieldNum = 41
 	case "php_class_prefix":
+		if err := validateString("php_class_prefix"); err != nil {
+			return err
+		}
 		fd.Options.PhpClassPrefix = proto.String(valTok.Value)
 		fieldNum = 40
 	case "php_metadata_namespace":
+		if err := validateString("php_metadata_namespace"); err != nil {
+			return err
+		}
 		fd.Options.PhpMetadataNamespace = proto.String(valTok.Value)
 		fieldNum = 44
 	case "ruby_package":
+		if err := validateString("ruby_package"); err != nil {
+			return err
+		}
 		fd.Options.RubyPackage = proto.String(valTok.Value)
 		fieldNum = 45
 	case "objc_class_prefix":
+		if err := validateString("objc_class_prefix"); err != nil {
+			return err
+		}
 		fd.Options.ObjcClassPrefix = proto.String(valTok.Value)
 		fieldNum = 36
 	case "csharp_namespace":
+		if err := validateString("csharp_namespace"); err != nil {
+			return err
+		}
 		fd.Options.CsharpNamespace = proto.String(valTok.Value)
 		fieldNum = 37
 	case "swift_prefix":
+		if err := validateString("swift_prefix"); err != nil {
+			return err
+		}
 		fd.Options.SwiftPrefix = proto.String(valTok.Value)
 		fieldNum = 39
 	default:
