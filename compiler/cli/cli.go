@@ -2197,6 +2197,24 @@ func isInExtensionRange(number int32, ranges []*descriptorpb.DescriptorProto_Ext
 	return false
 }
 
+func isProtoIdentifier(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i, c := range s {
+		if i == 0 {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
+				return false
+			}
+		} else {
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func collectExtensionRangeErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, msgRanges map[string][]*descriptorpb.DescriptorProto_ExtensionRange, errs *[]string) {
 	for i, ext := range msg.GetExtension() {
 		extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
@@ -2440,12 +2458,15 @@ func collectEnumDefaultErrors(msgs []*descriptorpb.DescriptorProto, prefix strin
 				continue
 			}
 			defVal := field.GetDefaultValue()
-			if !vals[defVal] {
-				enumName := enumFQN
-				if len(enumName) > 0 && enumName[0] == '.' {
-					enumName = enumName[1:]
-				}
-				path := append(append([]int32{}, msgPath...), 2, int32(fieldIdx), 7)
+			enumName := enumFQN
+			if len(enumName) > 0 && enumName[0] == '.' {
+				enumName = enumName[1:]
+			}
+			path := append(append([]int32{}, msgPath...), 2, int32(fieldIdx), 7)
+			if !isProtoIdentifier(defVal) {
+				line, col := findLocationByPath(path, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Default value for an enum field must be an identifier.", filename, line, col))
+			} else if !vals[defVal] {
 				line, col := findLocationByPath(path, sci)
 				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Enum type \"%s\" has no value named \"%s\".", filename, line, col, enumName, defVal))
 			}
