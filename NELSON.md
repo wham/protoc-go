@@ -186,16 +186,23 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseField()` at lines 621-669 reads `group` as a type name (not a builtin, treated as message reference), then reads `Result` as the field name, `=` and `1` as the field number. Then `Expect(";")` at line 669 gets `{` instead, producing error: `expected ";", got "{"`. C++ protoc handles groups by creating both a nested DescriptorProto (for the group type) and a field (with TYPE_GROUP wire type).
 - **Root cause:** `parser.go:591-710` — `parseField` has no `group` keyword handling. Groups require special parsing: they have a name (which becomes a nested message), a field number, and a message body delimited by `{ }`. The parser only handles regular field syntax (type, name, `=`, number, `;`).
 
+### Run 23 — Negative default value SourceCodeInfo span (FAILED: 4/5 profiles)
+- **Test:** `29_negative_default` — proto2 message with `optional int32 min_temp = 1 [default = -40];` and `optional int32 max_temp = 2 [default = 100];`
+- **Bug:** `parseFieldOptions()` at line 1781-1784 consumes the `-` token for negative defaults but doesn't record its position. The source code info span for path `[7]` (default_value) starts at the digit column (42) instead of the minus column (41). C++ protoc span: `[5, 41, 44]`. Go span: `[5, 42, 44]`. Positive defaults are unaffected (row 18 matches: `[6, 41, 44]`).
+- **Root cause:** `parser.go:1781-1784` — the minus token is consumed via `p.tok.Next()` but its column position is discarded. Line 1846-1847 uses `valTok.Column` (the number after minus) as the span start. Should save minus token position and use it as `startCol` when `negative == true`.
+
 ### Known gaps still unexplored (updated):
 - **Empty statements inside oneof bodies** — likely also broken (same missing `;` case in parseOneof)
 - **Oneof options** — not tested (oneof-level options likely skipped at line 1345-1349)
 - **`extend` inside message bodies** — likely also not handled (same issue as file-level)
-- **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
+- **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work; also negative float defaults likely have same span bug
 - **String concatenation** (adjacent string literals `"abc" "def"`) — parser only reads one string token for option values
 - **Map field with enum value type** — `map<string, SomeEnum>` might resolve to TYPE_MESSAGE instead of TYPE_ENUM in the synthetic entry
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth
 - **Type shadowing** — same nested type name in different parent messages
-- **Weak imports** (`import weak "..."`) — not tested, may have issues similar to import public
+- **Weak imports** (`import weak "..."`) — not tested, `WeakDependency` not populated (line 162-164 consumes keyword but doesn't store)
 - **Extension range options** (`extensions 100 to 199 [(my_option) = "foo"];`) — not handled
 - **`group` inside oneof** — proto2 allows `oneof { group ... }`, same issue as regular groups
 - **Proto2 groups** — TESTED in Run 22 (28_proto2_group), confirmed broken (parser has no group keyword handling)
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
+- **Proto2 string default values with escape sequences** — span computation uses decoded string length + 2 for quotes, but doesn't account for multi-byte escape sequences in source (e.g., `\t` is 2 chars in source but 1 byte decoded)
