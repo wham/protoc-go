@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 413/413 tests passing.
+ALL DONE — 418/418 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -136,6 +136,7 @@ ALL DONE — 413/413 tests passing.
 86. ✅ Duplicate field option validation — reject duplicate options within field option brackets (e.g., `[deprecated = true, deprecated = false]`) with `Option "X" was already set.` error at option name position, using per-field `seenFieldOpts` map in `parseFieldOptions`
 87. ✅ Duplicate enum option validation — reject duplicate enum options (e.g., two `deprecated` declarations) with `Option "X" was already set.` error at option name position, using per-enum `seenEnumOptions` map passed to `parseEnumOption`
 88. ✅ Duplicate service option validation — reject duplicate service options (e.g., two `deprecated` declarations) with `Option "X" was already set.` error at option name position (1-indexed line:col), using per-service `seenServiceOptions` map passed to `parseServiceOption`
+89. ✅ Duplicate method option validation — reject duplicate method options (e.g., two `deprecated` declarations) with `Option "X" was already set.` error at option name position (1-indexed line:col), using per-method `seenMethodOptions` map passed to `parseMethodOption`
 
 ## Notes
 
@@ -211,4 +212,5 @@ ALL DONE — 413/413 tests passing.
 - Float default precision: C++ protoc normalizes float defaults via `SimpleDtoa` (%.15g + round-trip, fallback to %.17g) and `SimpleFtoa` (%.6g as float32 + round-trip, fallback to %.9g). Go's `strconv.FormatFloat(v, 'g', -1, 64)` uses shortest representation which differs (e.g., `1e+10` vs `10000000000`). Implemented `simpleDtoa` and `simpleFtoa` in parser.go matching C++ behavior. TYPE_FLOAT values are cast to float32 before formatting.
 - Proto3 extend block validation: C++ protoc rejects `extend` blocks in proto3 files unless the extendee is an allowed option type (google.protobuf.*Options, FeatureSet, SourceCodeInfo, GeneratedCodeInfo, StreamOptions). Error format: `filename:line:col: Extensions in proto3 are only allowed for defining options.` Location from SCI path for extendee (field 2 of FieldDescriptorProto): `[7, extIdx, 2]` for file-level, `[msgPath..., 6, extIdx, 2]` for message-level. Validated in `collectProto3ExtendErrors` (cli.go), called from both `validateProto3` (file-level) and `collectProto3MessageErrors` (message-level). `allowedProto3Extendee` checks if FQN starts with `.google.protobuf.` and suffix matches known types.
 - Duplicate file option validation: parser tracks `seenFileOptions` map in parser struct. When a file option name is encountered a second time, returns `Option "X" was already set.` error at the option name token position (1-indexed line:col). Applies to all recognized file options (java_package, go_package, etc.).
+- Duplicate method option validation: parser tracks `seenMethodOptions` map per method (created in method body parsing loop). When a method option name is encountered a second time, returns `Option "X" was already set.` error at the option name token position (1-indexed line:col). Passed to `parseMethodOption` same pattern as service/enum/field/message options.
 - Proto3 optional synthetic oneof ordering: declared oneofs are placed before synthetic oneofs in OneofDecl by deferring synthetic oneof creation until after message body parsing completes. This matches C++ protoc behavior where declared oneof blocks get lower indices than synthetic oneofs from proto3 optional fields.
