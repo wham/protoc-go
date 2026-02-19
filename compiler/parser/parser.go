@@ -2337,6 +2337,10 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 					return nil, fmt.Errorf("%d:%d: Expected string for field default value.", valTok.Line+1, valTok.Column+1)
 				}
 			}
+			// Integer fields reject string literal default values
+			if isIntegerType(field.GetType()) && valTok.Type == tokenizer.TokenString {
+				return nil, fmt.Errorf("%d:%d: Expected integer for field default value.", valTok.Line+1, valTok.Column+1)
+			}
 			defVal := valTok.Value
 			if negative {
 				defVal = "-" + defVal
