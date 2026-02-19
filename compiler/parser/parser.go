@@ -33,7 +33,7 @@ type parser struct {
 
 // ParseFile parses a .proto file and returns a FileDescriptorProto.
 func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorProto, error) {
-	p := &parser{tok: tokenizer.New(content), filename: filename}
+	p := &parser{tok: tokenizer.New(content), filename: filename, syntax: "proto2"}
 
 	fd := &descriptorpb.FileDescriptorProto{
 		Name: proto.String(filename),
