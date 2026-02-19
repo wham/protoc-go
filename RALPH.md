@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 598/598 tests passing.
+ALL DONE — 603/603 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -161,6 +161,7 @@ ALL DONE — 598/598 tests passing.
 111. ✅ Custom vs default JSON name conflict messages — distinguish explicit `json_name` (custom) from auto-generated (default) in conflict error messages, matching C++ protoc's two-pass approach (default-only pass + custom-aware pass) with `GetJsonNameDetails` logic
 112. ✅ Stream keyword as type name validation — reject `stream` used as a message type name in RPC input/output with `Expected type name.` error at the non-type token position, matching C++ protoc behavior
 113. ✅ Map enum key type validation — allow non-builtin key types (e.g., enum) through parser (storing as TYPE_MESSAGE with TypeName for resolution), then reject enum key types in validation with `Key in map fields cannot be enum types.` error at field span location
+124. ✅ Required extension field validation — reject `required` label on extension fields with `The extension X cannot be required.` error at type SCI location (field 5), handles both file-level and message-level extensions
 114. ✅ Extension range options (`[verification = UNVERIFIED]`) — parse options on extension ranges, set `ExtensionRangeOptions` with verification field, SCI entries for options bracket and individual options, source retention stripping for `proto_file` and descriptor_set (keep full options only in `source_file_descriptors`)
 115. ✅ RPC enum type validation — reject enum types used as RPC input/output types with `"X" is not a message type.` error at type reference location, checked during `ResolveTypes` using original unresolved name
 116. ✅ Negative field number error message — peek for non-integer token after `=` in field number parsing, produce `Expected field number.` error matching C++ protoc (instead of generic `expected integer` from tokenizer)
@@ -269,3 +270,4 @@ ALL DONE — 598/598 tests passing.
 - Integer default value type validation: reject string literal defaults for integer fields with `Expected integer for field default value.` error. Uses `isIntegerType` helper + `valTok.Type == tokenizer.TokenString` check in `parseFieldOptions`'s `default` case, after string/bytes check and before float normalization.
 - Float default value type validation for integer fields: reject float literals (e.g., `1.5`) for integer fields with `Expected integer for field default value.` error. Uses `valTok.Type == tokenizer.TokenFloat` check combined with string check. Uses error recovery (`p.errors` + `skipToToken("]")`) to continue parsing and collect errors from subsequent fields, matching C++ protoc multi-error behavior. `skipToToken` consumes tokens up to and including the target.
 - Multiline string rejection: tokenizer's `readString` detects `\n` inside string literals and records a `TokenError` with message `Multiline strings are not allowed. Did you miss a "?.`, then terminates the string at the newline (not including it). `ParseFile` merges tokenizer errors with parser errors, sorted by (line, col), and returns as `MultiError`. `Expect` format changed from `line N:M: expected "X", got "Y"` to `N:M: Expected "X".` to match C++ protoc. `posError` struct and `sortPosErrors` helper used for merge-sorting.
+- Required extension validation: C++ protoc rejects `required` on extension fields with `The extension <fqn> cannot be required.` at the type SCI location (path `[7, extIdx, 5]` for file-level, `[msgPath..., 6, extIdx, 5]` for message-level). FQN is `package.fieldname` for file-level, `package.MsgName.fieldname` for message-level. Validated in `validateRequiredExtensions` (cli.go) after extension range validation.
