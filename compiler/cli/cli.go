@@ -227,6 +227,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate empty enums (must contain at least one value)
+	if errs := validateEmptyEnums(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate duplicate enum values (without allow_alias)
 	if errs := validateDuplicateEnumValues(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -812,6 +817,41 @@ func collectReservedNameErrors(filename string, msg *descriptorpb.DescriptorProt
 	for i, nested := range msg.GetNestedType() {
 		np := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectReservedNameErrors(filename, nested, np, sci, errs)
+	}
+}
+
+// validateEmptyEnums checks that all enums contain at least one value.
+func validateEmptyEnums(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for i, e := range fd.GetEnumType() {
+			if len(e.GetValue()) == 0 {
+				line, col := findLocationByPath([]int32{5, int32(i), 1}, fd.GetSourceCodeInfo())
+				errs = append(errs, fmt.Sprintf("%s:%d:%d: Enums must contain at least one value.", fd.GetName(), line, col))
+			}
+		}
+		for i, msg := range fd.GetMessageType() {
+			collectEmptyEnumErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+	}
+	return errs
+}
+
+func collectEmptyEnumErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, e := range msg.GetEnumType() {
+		if len(e.GetValue()) == 0 {
+			path := append(append([]int32{}, msgPath...), 4, int32(i), 1)
+			line, col := findLocationByPath(path, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Enums must contain at least one value.", filename, line, col))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectEmptyEnumErrors(filename, nested, nestedPath, sci, errs)
 	}
 }
 
