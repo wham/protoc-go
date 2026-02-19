@@ -33,6 +33,7 @@ type parser struct {
 	seenFileOptions     map[string]bool
 	filename     string
 	errors       []string
+	inOneof      bool
 }
 
 // ParseFile parses a .proto file and returns a FileDescriptorProto.
@@ -834,7 +835,7 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 		labelTok = &lt
 		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum()
 	default:
-		if p.syntax == "proto2" {
+		if p.syntax == "proto2" && !p.inOneof {
 			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected \"required\", \"optional\", or \"repeated\".", p.filename, startTok.Line+1, startTok.Column+1))
 		}
 		field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
@@ -1753,7 +1754,9 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32) ([
 			return nil, nil, fmt.Errorf("%d:%d: Fields in oneofs must not have labels (required / optional / repeated).", tok.Line+1, tok.Column+1)
 		}
 		fieldPath := append(copyPath(msgPath), 2, *fieldIdx)
+		p.inOneof = true
 		field, err := p.parseField(fieldPath)
+		p.inOneof = false
 		if err != nil {
 			return nil, nil, err
 		}
