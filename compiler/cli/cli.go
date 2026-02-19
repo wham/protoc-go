@@ -187,6 +187,11 @@ func Run(args []string) error {
 		parser.ResolveTypes(parsed[name], parsed)
 	}
 
+	// Validate duplicate symbol names
+	if errs := validateDuplicateNames(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate non-positive field numbers
 	if errs := validatePositiveFieldNumbers(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -850,6 +855,128 @@ func findDefaultValueLocation(field *descriptorpb.FieldDescriptorProto, msg *des
 			path[len(path)-1] == 7 &&
 			path[len(path)-2] == int32(fieldIdx) &&
 			path[len(path)-3] == 2 {
+			span := loc.GetSpan()
+			if len(span) >= 2 {
+				return int(span[0]) + 1, int(span[1]) + 1
+			}
+		}
+	}
+	return 0, 0
+}
+
+// validateDuplicateNames checks that no two symbols share the same fully-qualified name.
+func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		sci := fd.GetSourceCodeInfo()
+
+		seen := make(map[string]bool)
+		check := func(fqn, shortName, scope string, line, col int) {
+			if seen[fqn] {
+				errs = append(errs, fmt.Sprintf("%s:%d:%d: \"%s\" is already defined in \"%s\".",
+					fd.GetName(), line, col, shortName, scope))
+			} else {
+				seen[fqn] = true
+			}
+		}
+
+		for i, msg := range fd.GetMessageType() {
+			msgFQN := msg.GetName()
+			if pkg != "" {
+				msgFQN = pkg + "." + msgFQN
+			}
+			line, col := findLocationByPath([]int32{4, int32(i), 1}, sci)
+			check(msgFQN, msg.GetName(), pkg, line, col)
+			collectDupNamesInMsg(msg, msgFQN, []int32{4, int32(i)}, sci, check)
+		}
+
+		for i, enum := range fd.GetEnumType() {
+			enumFQN := enum.GetName()
+			if pkg != "" {
+				enumFQN = pkg + "." + enumFQN
+			}
+			line, col := findLocationByPath([]int32{5, int32(i), 1}, sci)
+			check(enumFQN, enum.GetName(), pkg, line, col)
+			for j, val := range enum.GetValue() {
+				valFQN := val.GetName()
+				if pkg != "" {
+					valFQN = pkg + "." + valFQN
+				}
+				vl, vc := findLocationByPath([]int32{5, int32(i), 2, int32(j), 1}, sci)
+				check(valFQN, val.GetName(), pkg, vl, vc)
+			}
+		}
+
+		for i, svc := range fd.GetService() {
+			svcFQN := svc.GetName()
+			if pkg != "" {
+				svcFQN = pkg + "." + svcFQN
+			}
+			line, col := findLocationByPath([]int32{6, int32(i), 1}, sci)
+			check(svcFQN, svc.GetName(), pkg, line, col)
+			for j, method := range svc.GetMethod() {
+				mFQN := svcFQN + "." + method.GetName()
+				ml, mc := findLocationByPath([]int32{6, int32(i), 2, int32(j), 1}, sci)
+				check(mFQN, method.GetName(), svcFQN, ml, mc)
+			}
+		}
+	}
+	return errs
+}
+
+func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, check func(fqn, shortName, scope string, line, col int)) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	for i, field := range msg.GetField() {
+		fqn := msgFQN + "." + field.GetName()
+		p := append(append([]int32{}, msgPath...), 2, int32(i), 1)
+		l, c := findLocationByPath(p, sci)
+		check(fqn, field.GetName(), msgFQN, l, c)
+	}
+	for i, nested := range msg.GetNestedType() {
+		nFQN := msgFQN + "." + nested.GetName()
+		np := append(append([]int32{}, msgPath...), 3, int32(i))
+		l, c := findLocationByPath(append(append([]int32{}, np...), 1), sci)
+		check(nFQN, nested.GetName(), msgFQN, l, c)
+		collectDupNamesInMsg(nested, nFQN, np, sci, check)
+	}
+	for i, enum := range msg.GetEnumType() {
+		eFQN := msgFQN + "." + enum.GetName()
+		l, c := findLocationByPath(append(append([]int32{}, msgPath...), 4, int32(i), 1), sci)
+		check(eFQN, enum.GetName(), msgFQN, l, c)
+		for j, val := range enum.GetValue() {
+			vFQN := msgFQN + "." + val.GetName()
+			vl, vc := findLocationByPath(append(append([]int32{}, msgPath...), 4, int32(i), 2, int32(j), 1), sci)
+			check(vFQN, val.GetName(), msgFQN, vl, vc)
+		}
+	}
+	for i, oneof := range msg.GetOneofDecl() {
+		oFQN := msgFQN + "." + oneof.GetName()
+		l, c := findLocationByPath(append(append([]int32{}, msgPath...), 8, int32(i), 1), sci)
+		check(oFQN, oneof.GetName(), msgFQN, l, c)
+	}
+}
+
+func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if sci == nil {
+		return 0, 0
+	}
+	for _, loc := range sci.GetLocation() {
+		path := loc.GetPath()
+		if len(path) != len(target) {
+			continue
+		}
+		match := true
+		for i := range path {
+			if path[i] != target[i] {
+				match = false
+				break
+			}
+		}
+		if match {
 			span := loc.GetSpan()
 			if len(span) >= 2 {
 				return int(span[0]) + 1, int(span[1]) + 1
