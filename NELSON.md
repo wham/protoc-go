@@ -1301,3 +1301,25 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Integer syntax value** — `syntax = 3;` — Go's parseSyntax uses ExpectString, probably rejects
 - **Empty extend block** — TESTED in Run 132 (138_empty_extend), confirmed broken (Go accepts, C++ rejects)
 - **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
+
+### Run 133 — Group inside extend block (FAILED: 5/5 profiles)
+- **Test:** `139_group_in_extend` — proto2 file with `message Base { extensions 100 to 200; }` and `extend Base { optional group MyGroup = 100 { optional string name = 1; } }`
+- **Bug:** Go protoc-go rejects the file with: `group_extend.proto:9:32: Expected ";".` (exit 1). C++ protoc accepts it and produces a valid descriptor with a TYPE_GROUP extension field and a nested DescriptorProto for `MyGroup` (exit 0). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:840-865` — `parseExtend` calls `parseField()` for each field inside the extend block. `parseField` reads `optional` as label, then `group` as the type name (treated as a message reference, not the group keyword), then `MyGroup` as the field name, then `=` and `100`, then expects `;` but gets `{`. The `isGroupField` check (which handles the `group` keyword) only exists in the message body's `default` case (line 522), not in `parseExtend`. C++ protoc's `ParseExtend` calls `ParseMessageField` which handles both regular fields and group fields. The fix: add group detection in `parseExtend` similar to the message body parser.
+
+### Known gaps still unexplored (updated):
+- **Package name with leading dot** — `package .foo;` — C++ may reject, Go may accept
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **`option` as type name** — Go switch matches keyword before checking context (but C++ also matches)
+- **Missing message options** — `map_entry` (field 7)
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Error column positions** — many Go validation errors report wrong column
+- **String literal as package name** — `package "foo";` — Go rejects (fixed: type check added at line 333)
+- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
+- **Group inside nested extend** — `message Foo { extend Base { optional group G = 100 { } } }` — same issue
+- **Labeled map field (optional/repeated)** — both reject but different error messages
+- **`service` as a message name** — valid in C++, should work in Go too (not a keyword in message body switch)
+- **Nested group in oneof** — proto2 `oneof { group G = 1 { } }` — C++ handles, Go likely doesn't
