@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 508/508 tests passing.
+ALL DONE — 513/513 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -111,7 +111,7 @@ ALL DONE — 508/508 tests passing.
 61. ✅ Reserved field name conflict validation — reject fields whose name appears in the message's `reserved` list with `Field name "X" is reserved.` error at field name location, recurses into nested messages
 62. ✅ Reserved field number conflict validation — reject fields whose number falls in the message's `reserved` ranges with `Field "X" uses reserved number N.` error + suggestion, location from reserved range start SCI path
 63. ✅ Map key type validation — reject float/double/bytes/message/group as map key types with `Key in map fields cannot be float/double, bytes or message types.` error at field span location
-64. ✅ Enum value C++ scoping note — when duplicate enum value names are detected across different enums in the same scope, emit the "Note that enum values use C++ scoping rules..." explanatory message matching C++ protoc
+64. ✅ Enum value C++ scoping note — when duplicate enum value names are detected in the same scope (including conflicts with messages, services, etc.), emit the "Note that enum values use C++ scoping rules..." explanatory message matching C++ protoc
 65. ✅ Empty enum validation — reject enums with zero values with `Enums must contain at least one value.` error at enum name location, handles both top-level and nested enums
 66. ✅ Proto3 group validation — reject `group` fields in proto3 syntax with `Groups are not supported in proto3 syntax.` error at group keyword location
 68. ✅ Duplicate syntax/edition declaration validation — reject second `syntax` or `edition` statement with `Expected top-level statement (e.g. "message").` error at duplicate keyword position
@@ -241,4 +241,4 @@ ALL DONE — 508/508 tests passing.
 - Reserved range overlap validation: C++ protoc rejects overlapping reserved ranges within a message. Error format: `filename:line:col: Reserved range X to Y overlaps with already-defined range A to B.` Same pattern as extension range overlaps — iterate i=0..n-1, j=i+1..n-1; error text shows range j ("Reserved range") then range i ("already-defined"); location from SCI path `[4, msgIdx, 9, i, 1]` (already-defined range's start). End values displayed as End-1 (inclusive). Validated in `validateReservedRangeOverlaps` (cli.go), called before extension range overlap validation. Recurses into nested messages, skips map entry types.
 - Enum reserved value conflict validation: C++ protoc rejects enum values whose number falls in a reserved range. Error format: `filename:line:col: Enum value "NAME" uses reserved number N.` Location from SCI path `[enumPath..., 4, rangeIdx, 1]` (reserved range start). Enum reserved ranges have inclusive end (start <= value <= end). Validated in `validateEnumReservedValueConflicts` (cli.go) with `collectEnumReservedValueConflictErrors` and `collectEnumReservedValueConflictInMsg` recursing into nested messages. Placed after enum reserved range overlap validation in the validation chain.
 - Enum reserved name conflict validation: C++ protoc rejects enum values whose name appears in the enum's `reserved_name` list. Error format: `filename:line:col: Enum value "NAME" is reserved.` Location from SCI path `[enumPath..., 2, valIdx, 1]` (enum value name). Validated in `validateEnumReservedNameConflicts` (cli.go) with `collectEnumReservedNameConflictErrors` and `collectEnumReservedNameConflictInMsg` recursing into nested messages. Placed after enum reserved value conflict validation in the validation chain.
-- Explicit map_entry option validation: C++ protoc rejects `option map_entry = true;` when set explicitly in a message definition. Error format: `filename:line:col: map_entry should not be set explicitly. Use map<KeyType, ValueType> instead.` at option name position. Handled in `parseMessageOption` in parser.go — the `map_entry` case returns an error immediately.
+- Enum value C++ scoping note: emitted when ANY duplicate is an enum value (condition: `enumName != ""`), not just when both duplicates are enum values. This handles enum-value-vs-message conflicts, enum-value-vs-service conflicts, etc.
