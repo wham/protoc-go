@@ -356,6 +356,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts field number 536870912 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:17: Field numbers cannot be greater than 536870911.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field numbers must be <= 536870911 (2^29-1). The Go `descriptor/pool.go` is an empty stub with no field number upper bound validation. The parser accepts any integer as a field number without range checking.
 
+### Run 42 — Duplicate enum value numbers without allow_alias (FAILED: 5/5 profiles)
+- **Test:** `48_duplicate_enum_number` — proto3 enum with `ACTIVE = 1` and `ENABLED = 1` (same number, no `allow_alias`)
+- **Bug:** Go protoc-go silently accepts duplicate enum value numbers and produces a valid descriptor (exit 0). C++ protoc rejects with: `"dupenum.ENABLED" uses the same enum value as "dupenum.ACTIVE". If this is intended, set 'option allow_alias = true;' to the enum definition.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enum values sharing the same number require `option allow_alias = true`. The Go `descriptor/pool.go` is an empty stub with no duplicate enum value checking. The parser stores all enum values regardless of number conflicts.
+
 ### Known gaps still unexplored (updated):
 - **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects with "Group syntax is not supported in proto3."
 - **Map field options source code info** — even if options are stored, the location ordering may differ from C++ protoc
@@ -370,7 +375,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
 - **Option validation** — Go silently accepts ANY option name without validation
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Duplicate enum value names** — Go likely accepts, C++ rejects
+- **Duplicate enum value numbers** — TESTED in Run 42 (48_duplicate_enum_number), confirmed broken (no allow_alias validation)
 - **Duplicate message/enum names** — Go likely accepts, C++ rejects
 - **Self-referencing message** — `message Foo { Foo child = 1; }` — should work but type resolution may differ
 - **Package conflict** — two files with different packages imported together
