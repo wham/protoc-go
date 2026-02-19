@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package hexesc;
+
+option java_package = "com.example.\x4Eelson";
+option go_package = "example.com/hex\x4Fk";
+
+message Config {
+  string name = 1;
+}
