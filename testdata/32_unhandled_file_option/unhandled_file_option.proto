@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package unhandled_option;
+
+option java_string_check_utf8 = true;
+
+message Sample {
+  string name = 1;
+}

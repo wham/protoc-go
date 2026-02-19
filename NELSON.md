@@ -216,3 +216,23 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `31_string_concat` — proto3 file with `option java_package = "com.example" ".concat";` and `option go_package = "example.com/" "concat/test";` (adjacent string literals)
 - **Bug:** `parseFileOption()` at line 1651 reads ONE value token via `p.tok.Next()`, then line 1654 expects `;`. When the value is split across adjacent string literals (`"abc" "def"`), the parser reads `"abc"` and then fails with `expected ";", got ".concat"`. C++ protoc concatenates adjacent string literals into a single value per the protobuf language spec.
 - **Root cause:** `parser.go:1651` — value reading uses a single `p.tok.Next()` call. No loop to check if the next token is also a string and concatenate. The tokenizer's `ExpectString()` also reads only one token. C++ protoc's parser uses `ConsumeString()` which loops over adjacent string tokens. This affects all contexts where string values are read: option values, import paths (though imports use single strings), default values, etc.
+
+### Run 26 — Unhandled file option java_string_check_utf8 (FAILED: 5/5 profiles)
+- **Test:** `32_unhandled_file_option` — proto3 file with `option java_string_check_utf8 = true;`
+- **Bug:** `parseFileOption()` switch at lines 1676-1740 doesn't have a case for `java_string_check_utf8` (FileOptions field 27). The `default` case at line 1737-1739 does `return nil`, silently discarding the option. C++ protoc populates `FileOptions.java_string_check_utf8 = true`. Descriptor set size differs (92 vs 89 bytes). SourceCodeInfo locations differ (11 vs 9) — the option statement locations at paths `[8]` and `[8, 27]` are missing because `return nil` exits before the source code info code at lines 1742-1753.
+- **Root cause:** `parser.go:1676-1740` — `parseFileOption` switch handles 16 standard options but is missing `java_string_check_utf8` (field 27). Any unrecognized option name hits the `default` case and is silently dropped. Other potentially missing standard options could also trigger this same pattern.
+
+### Known gaps still unexplored (updated):
+- **Empty statements inside oneof bodies** — likely also broken (same missing `;` case in parseOneof)
+- **Oneof options** — not tested (oneof-level options likely skipped at line 1485-1489)
+- **`extend` inside message bodies** — not handled (message body switch has no `case "extend":`)
+- **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
+- **Map field with enum value type** — `map<string, SomeEnum>` might resolve to TYPE_MESSAGE instead of TYPE_ENUM in the synthetic entry (but resolveMessageFields may fix it)
+- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
+- **Type shadowing** — same nested type name in different parent messages
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
+- **Proto2 string default values with escape sequences** — span computation may be wrong
+- **Other missing file options** — `java_generate_equals_and_hash` (20, deprecated), any other standard options not in the switch
+- **Missing message/enum/service/method options** — similar pattern: only a few built-in options are in each switch
+- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
+- **`extend` inside message bodies** — message body switch at lines 228-303 has no `case "extend":`, would fall to parseField and error
