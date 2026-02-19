@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package duponeof;
+
+message Request {
+  oneof payload {
+    string text = 1;
+  }
+  oneof payload {
+    int32 count = 2;
+  }
+}

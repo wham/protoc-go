@@ -575,6 +575,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseMessageOption()` switch at lines 748-753 only handles `deprecated` (field 3). The `default` case at line 752-753 does `return nil`, silently discarding `no_standard_descriptor_accessor` (field 2 of MessageOptions). But at line 743-745, `msg.Options` is set to `&descriptorpb.MessageOptions{}` BEFORE the switch — so the message gets an empty non-nil MessageOptions. C++ protoc stores `MessageOptions{no_standard_descriptor_accessor: true}`. Binary descriptor set: 86 bytes (C++) vs 84 bytes (Go). SourceCodeInfo locations: 15 (C++) vs 13 (Go) — missing the option statement locations.
 - **Root cause:** `parser.go:748-753` — `parseMessageOption` switch only handles `deprecated`. Standard options `message_set_wire_format` (field 1), `no_standard_descriptor_accessor` (field 2), and `map_entry` (field 7) all hit the `default` case and are silently dropped. Additionally, `msg.Options` is unconditionally initialized to an empty MessageOptions before the switch, leaving a spurious empty options object even when the option value is discarded.
 
+### Run 61 — Duplicate oneof names (FAILED: 5/5 profiles)
+- **Test:** `67_duplicate_oneof` — proto3 message with two `oneof payload { ... }` blocks (same name, different fields)
+- **Bug:** Both C++ and Go reject the duplicate oneof, but the error message format differs. C++ protoc: `test.proto: "payload" is already defined in "duponeof.Request".` (no line/column). Go protoc-go: `test.proto:9:9: "payload" is already defined in "duponeof.Request".` (with line:column). The test harness detects error message mismatch.
+- **Root cause:** Go's duplicate name detection (likely in `compiler/cli/cli.go`) includes line and column numbers in the error, while C++ protoc's `descriptor.cc` omits position info for duplicate symbol errors. The error text itself matches, but the position prefix format differs.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -597,7 +602,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
 - **Hex default values** — `[default = 0x1F]` — same bug as octal defaults (raw text vs decimal)
 - **String concatenation in service/method/enum option values** — same single-token bug as field defaults
-- **Map entry name with digits** — TESTED, both produce same result — NOT a gap
 - **Missing service options** — only `deprecated` handled, other standard ServiceOptions fields may be missing
 - **Missing enum options** — only `allow_alias` and `deprecated` handled, other EnumOptions fields may be missing
 - **Enum option `deprecated`** — is it handled? Check parseEnumOption switch
+- **Duplicate oneof names** — TESTED in Run 61 (67_duplicate_oneof), confirmed error message format mismatch (Go adds line:col, C++ doesn't)
+- **Duplicate field names across oneof/message** — field in oneof + field in message with same name
+- **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
