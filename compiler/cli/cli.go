@@ -1042,12 +1042,22 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 		sci := fd.GetSourceCodeInfo()
 
 		seen := make(map[string]bool)
-		check := func(fqn, shortName, scope string, line, col int) {
+		// Track which FQNs are enum values and their parent enum name
+		enumValParent := make(map[string]string) // fqn -> enum short name
+		check := func(fqn, shortName, scope string, line, col int, enumName string) {
 			if seen[fqn] {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: \"%s\" is already defined in \"%s\".",
 					fd.GetName(), line, col, shortName, scope))
+				// If the new symbol is an enum value and the existing one was also an enum value, add the scoping note
+				if enumName != "" && enumValParent[fqn] != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Note that enum values use C++ scoping rules, meaning that enum values are siblings of their type, not children of it.  Therefore, \"%s\" must be unique within \"%s\", not just within \"%s\".",
+						fd.GetName(), line, col, shortName, scope, enumName))
+				}
 			} else {
 				seen[fqn] = true
+				if enumName != "" {
+					enumValParent[fqn] = enumName
+				}
 			}
 		}
 
@@ -1057,7 +1067,7 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 				msgFQN = pkg + "." + msgFQN
 			}
 			line, col := findLocationByPath([]int32{4, int32(i), 1}, sci)
-			check(msgFQN, msg.GetName(), pkg, line, col)
+			check(msgFQN, msg.GetName(), pkg, line, col, "")
 			collectDupNamesInMsg(msg, msgFQN, []int32{4, int32(i)}, sci, check)
 		}
 
@@ -1067,14 +1077,14 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 				enumFQN = pkg + "." + enumFQN
 			}
 			line, col := findLocationByPath([]int32{5, int32(i), 1}, sci)
-			check(enumFQN, enum.GetName(), pkg, line, col)
+			check(enumFQN, enum.GetName(), pkg, line, col, "")
 			for j, val := range enum.GetValue() {
 				valFQN := val.GetName()
 				if pkg != "" {
 					valFQN = pkg + "." + valFQN
 				}
 				vl, vc := findLocationByPath([]int32{5, int32(i), 2, int32(j), 1}, sci)
-				check(valFQN, val.GetName(), pkg, vl, vc)
+				check(valFQN, val.GetName(), pkg, vl, vc, enum.GetName())
 			}
 		}
 
@@ -1084,18 +1094,18 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 				svcFQN = pkg + "." + svcFQN
 			}
 			line, col := findLocationByPath([]int32{6, int32(i), 1}, sci)
-			check(svcFQN, svc.GetName(), pkg, line, col)
+			check(svcFQN, svc.GetName(), pkg, line, col, "")
 			for j, method := range svc.GetMethod() {
 				mFQN := svcFQN + "." + method.GetName()
 				ml, mc := findLocationByPath([]int32{6, int32(i), 2, int32(j), 1}, sci)
-				check(mFQN, method.GetName(), svcFQN, ml, mc)
+				check(mFQN, method.GetName(), svcFQN, ml, mc, "")
 			}
 		}
 	}
 	return errs
 }
 
-func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, check func(fqn, shortName, scope string, line, col int)) {
+func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, check func(fqn, shortName, scope string, line, col int, enumName string)) {
 	if msg.GetOptions().GetMapEntry() {
 		return
 	}
@@ -1103,29 +1113,29 @@ func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgP
 		fqn := msgFQN + "." + field.GetName()
 		p := append(append([]int32{}, msgPath...), 2, int32(i), 1)
 		l, c := findLocationByPath(p, sci)
-		check(fqn, field.GetName(), msgFQN, l, c)
+		check(fqn, field.GetName(), msgFQN, l, c, "")
 	}
 	for i, nested := range msg.GetNestedType() {
 		nFQN := msgFQN + "." + nested.GetName()
 		np := append(append([]int32{}, msgPath...), 3, int32(i))
 		l, c := findLocationByPath(append(append([]int32{}, np...), 1), sci)
-		check(nFQN, nested.GetName(), msgFQN, l, c)
+		check(nFQN, nested.GetName(), msgFQN, l, c, "")
 		collectDupNamesInMsg(nested, nFQN, np, sci, check)
 	}
 	for i, enum := range msg.GetEnumType() {
 		eFQN := msgFQN + "." + enum.GetName()
 		l, c := findLocationByPath(append(append([]int32{}, msgPath...), 4, int32(i), 1), sci)
-		check(eFQN, enum.GetName(), msgFQN, l, c)
+		check(eFQN, enum.GetName(), msgFQN, l, c, "")
 		for j, val := range enum.GetValue() {
 			vFQN := msgFQN + "." + val.GetName()
 			vl, vc := findLocationByPath(append(append([]int32{}, msgPath...), 4, int32(i), 2, int32(j), 1), sci)
-			check(vFQN, val.GetName(), msgFQN, vl, vc)
+			check(vFQN, val.GetName(), msgFQN, vl, vc, enum.GetName())
 		}
 	}
 	for i, oneof := range msg.GetOneofDecl() {
 		oFQN := msgFQN + "." + oneof.GetName()
 		l, c := findLocationByPath(append(append([]int32{}, msgPath...), 8, int32(i), 1), sci)
-		check(oFQN, oneof.GetName(), msgFQN, l, c)
+		check(oFQN, oneof.GetName(), msgFQN, l, c, "")
 	}
 }
 
