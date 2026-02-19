@@ -227,6 +227,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Message body parser switch (lines 228-304) has no `case "extend":`. The `extend` keyword falls to the `default` case, is treated as a field type name by `parseField`. `Base` is treated as the field name, then `Expect("=")` gets `{` instead → parse error: `expected "=", got "{"`. C++ protoc handles nested extend blocks and populates `DescriptorProto.extension` and `FileDescriptorProto.extension` correctly.
 - **Root cause:** `parser.go:228-304` — message body switch handles `message`, `enum`, `oneof`, `map`, `reserved`, `option`, `extensions`, `";"` but not `extend`. Nested extend blocks require dedicated parsing: consume `extend ExtendedType { ... }`, parse fields inside, and store them on the containing message's `extension` field.
 
+### Run 28 — String default value with escape sequences (FAILED: 4/5 profiles)
+- **Test:** `34_string_default_escape` — proto2 message with `optional string greeting = 1 [default = "hello\tworld"];` and `optional string farewell = 2 [default = "good\nbye"];`
+- **Bug:** `parseFieldOptions()` at line 1878-1881 computes the default value's SourceCodeInfo span end as `valTok.Column + len(valTok.Value) + 2`. For strings with escape sequences, `len(valTok.Value)` counts the *decoded* bytes (e.g., `\t` → 1 byte), but the source text is longer (e.g., `\t` is 2 characters in source). So the span end column is off by 1 for each escape sequence in the string. C++ protoc computes the span from actual source positions, so it correctly covers the full source string including escape sequences.
+- **Root cause:** `parser.go:1878-1881` — `valEnd = valTok.Column + len(valTok.Value) + 2` doesn't account for the difference between decoded string length and source string length. Source `"hello\tworld"` is 14 chars, but decoded is 11 chars + 2 quotes = 13, off by 1.
+
 ### Known gaps still unexplored (updated):
 - **Empty statements inside oneof bodies** — likely also broken (same missing `;` case in parseOneof)
 - **Oneof options** — not tested (oneof-level options likely skipped at line 1485-1489)
@@ -235,8 +240,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth
 - **Type shadowing** — same nested type name in different parent messages
 - **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
-- **Proto2 string default values with escape sequences** — span computation may be wrong
 - **Other missing file options** — `java_generate_equals_and_hash` (20, deprecated), any other standard options not in the switch
 - **Missing message/enum/service/method options** — similar pattern: only a few built-in options are in each switch
 - **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
 - **`extend` inside oneof** — proto2 allows group/extend inside oneof, same issues
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145` — span computation even more wrong (4 or 5 source chars → 1 decoded byte)
+- **String default with multiple escapes** — each escape adds 1 char discrepancy, accumulating error

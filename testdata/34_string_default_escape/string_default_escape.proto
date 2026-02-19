@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package test;
+
+message Config {
+  optional string greeting = 1 [default = "hello\tworld"];
+  optional string farewell = 2 [default = "good\nbye"];
+}
