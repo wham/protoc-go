@@ -1279,6 +1279,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts a numeric package name and produces a valid descriptor with `package = "123"` (exit 0). C++ protoc rejects with: `test.proto:3:9: Expected identifier.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:332` — `nameTok := p.tok.Next()` reads the next token without any type check. An integer token `TokenInt("123")` is accepted as the package name. C++ protoc's `ParsePackage` calls `ConsumeIdentifier` which requires `TYPE_IDENTIFIER`, rejecting integer tokens. The Go parser should use `p.tok.ExpectIdent()` instead of `p.tok.Next()` to validate the package name is an identifier.
 
+### Run 132 — Empty extend block (FAILED: 5/5 profiles)
+- **Test:** `138_empty_extend` — proto2 file with `message Base { extensions 100 to 200; }` and `extend Base { }` (empty extend block, no fields inside)
+- **Bug:** Go protoc-go silently accepts an empty extend block and produces a valid descriptor (exit 0). C++ protoc rejects with an error expecting at least one field inside the extend block (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:864` — `parseExtend` uses a `for p.tok.Peek().Value != "}"` loop which exits immediately when the extend block is empty. C++ protoc's `ParseExtend` in `parser.cc` uses a `do { ... } while (...)` loop that requires at least one field to be parsed. The Go parser should either check that at least one field was parsed inside the extend block, or use a do-while pattern.
+
 ### Known gaps still unexplored (updated):
 - **Package name with leading dot** — `package .foo;` — C++ may reject, Go may accept
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
@@ -1294,3 +1299,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **String literal as package name** — `package "foo";` — Go likely accepts, C++ rejects (same missing type check)
 - **Numeric message/enum/service name** — `message 123 {}` — Go uses ExpectIdent, probably rejects
 - **Integer syntax value** — `syntax = 3;` — Go's parseSyntax uses ExpectString, probably rejects
+- **Empty extend block** — TESTED in Run 132 (138_empty_extend), confirmed broken (Go accepts, C++ rejects)
+- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
