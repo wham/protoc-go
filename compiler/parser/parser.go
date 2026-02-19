@@ -155,12 +155,15 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 
 	// Check for "public" or "weak"
 	isPublic := false
+	isWeak := false
 	var publicTok tokenizer.Token
+	var weakTok tokenizer.Token
 	if p.tok.Peek().Value == "public" {
 		publicTok = p.tok.Next()
 		isPublic = true
 	} else if p.tok.Peek().Value == "weak" {
-		p.tok.Next()
+		weakTok = p.tok.Next()
+		isWeak = true
 	}
 
 	pathTok, err := p.tok.ExpectString()
@@ -184,6 +187,13 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 		fd.PublicDependency = append(fd.PublicDependency, depIdx)
 		// Source code info for public keyword: path [10, pubIdx]
 		p.addLocationSpan([]int32{10, pubIdx}, publicTok.Line, publicTok.Column, publicTok.Line, publicTok.Column+len(publicTok.Value))
+	}
+
+	if isWeak {
+		weakIdx := int32(len(fd.WeakDependency))
+		fd.WeakDependency = append(fd.WeakDependency, depIdx)
+		// Source code info for weak keyword: path [11, weakIdx]
+		p.addLocationSpan([]int32{11, weakIdx}, weakTok.Line, weakTok.Column, weakTok.Line, weakTok.Column+len(weakTok.Value))
 	}
 
 	return nil
