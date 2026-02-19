@@ -181,18 +181,21 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** File-level parser switch at lines 42-85 has no case for `"extend"`. The `extend` token falls to the `default` case at line 83, which returns `unexpected token "extend"`. C++ protoc handles extend blocks and populates `FileDescriptorProto.extension`.
 - **Root cause:** `parser.go:42-85` — file-level parser switch only handles `syntax`, `package`, `import`, `message`, `enum`, `service`, `option`, `";"`. No handling for `extend` blocks. The `extend` keyword is valid at file level (for defining extensions to messages) and inside message bodies (for nested extensions).
 
+### Run 22 — Proto2 groups (FAILED: 5/5 profiles)
+- **Test:** `28_proto2_group` — proto2 message with `repeated group Result = 1 { ... }` containing required/optional fields
+- **Bug:** `parseField()` at lines 621-669 reads `group` as a type name (not a builtin, treated as message reference), then reads `Result` as the field name, `=` and `1` as the field number. Then `Expect(";")` at line 669 gets `{` instead, producing error: `expected ";", got "{"`. C++ protoc handles groups by creating both a nested DescriptorProto (for the group type) and a field (with TYPE_GROUP wire type).
+- **Root cause:** `parser.go:591-710` — `parseField` has no `group` keyword handling. Groups require special parsing: they have a name (which becomes a nested message), a field number, and a message body delimited by `{ }`. The parser only handles regular field syntax (type, name, `=`, number, `;`).
+
 ### Known gaps still unexplored (updated):
 - **Empty statements inside oneof bodies** — likely also broken (same missing `;` case in parseOneof)
-- **Oneof options** — not tested (oneof-level options likely skipped at line 1276-1280)
+- **Oneof options** — not tested (oneof-level options likely skipped at line 1345-1349)
 - **`extend` inside message bodies** — likely also not handled (same issue as file-level)
-- **Proto2 groups** — not implemented at all
-- **Proto2 default values** — parser crashes before reaching defaults
-- **String escape sequences** — TESTED in Run 20 (26_string_escape), confirmed broken
+- **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
 - **String concatenation** (adjacent string literals `"abc" "def"`) — parser only reads one string token for option values
 - **Map field with enum value type** — `map<string, SomeEnum>` might resolve to TYPE_MESSAGE instead of TYPE_ENUM in the synthetic entry
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth
 - **Type shadowing** — same nested type name in different parent messages
-- **Hex/octal escape sequences** (`\x41`, `\101`) — not handled by tokenizer (related to string escape bug)
-- **Single-quoted strings** — tokenizer handles `'` quotes but escape handling same issue
-- **Message reserved `to max`** — TESTED in Run 19 (25_reserved_max), confirmed broken
 - **Weak imports** (`import weak "..."`) — not tested, may have issues similar to import public
+- **Extension range options** (`extensions 100 to 199 [(my_option) = "foo"];`) — not handled
+- **`group` inside oneof** — proto2 allows `oneof { group ... }`, same issue as regular groups
+- **Proto2 groups** — TESTED in Run 22 (28_proto2_group), confirmed broken (parser has no group keyword handling)
