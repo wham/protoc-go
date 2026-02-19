@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 558/558 tests passing.
+ALL DONE — 563/563 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -163,6 +163,7 @@ ALL DONE — 558/558 tests passing.
 113. ✅ Map enum key type validation — allow non-builtin key types (e.g., enum) through parser (storing as TYPE_MESSAGE with TypeName for resolution), then reject enum key types in validation with `Key in map fields cannot be enum types.` error at field span location
 114. ✅ Extension range options (`[verification = UNVERIFIED]`) — parse options on extension ranges, set `ExtensionRangeOptions` with verification field, SCI entries for options bracket and individual options, source retention stripping for `proto_file` and descriptor_set (keep full options only in `source_file_descriptors`)
 115. ✅ RPC enum type validation — reject enum types used as RPC input/output types with `"X" is not a message type.` error at type reference location, checked during `ResolveTypes` using original unresolved name
+116. ✅ Negative field number error message — peek for non-integer token after `=` in field number parsing, produce `Expected field number.` error matching C++ protoc (instead of generic `expected integer` from tokenizer)
 
 ## Notes
 
