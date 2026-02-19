@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package booldefint;
+
+message Config {
+  optional int32 enabled = 1 [default = true];
+  optional int64 flags = 2 [default = false];
+}

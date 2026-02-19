@@ -1134,4 +1134,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Extension field name conflict with base message fields** — C++ validates, Go likely doesn't
 - **Map in extend** — TESTED in Run 116 (122_map_in_extend), confirmed broken (different error messages)
 - **Group inside extend** — `extend Base { group Foo = 100 { ... } }` — Go might handle differently
-- **Bool default on integer field** — `optional int32 x = 1 [default = true];` — Go accepts, C++ rejects
+- **Bool default on integer field** — TESTED in Run 117 (123_bool_default_int), confirmed broken (Go accepts, C++ rejects)
+
+### Run 117 — Boolean default value on integer field (FAILED: 5/5 profiles)
+- **Test:** `123_bool_default_int` — proto2 message with `optional int32 enabled = 1 [default = true];` and `optional int64 flags = 2 [default = false];` (boolean identifiers instead of integer literals for integer field defaults)
+- **Bug:** Go protoc-go silently accepts boolean identifiers `true`/`false` as default values for integer fields and stores `default_value = "true"` / `"false"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:41: Expected integer for field default value.` and `test.proto:7:39: Expected integer for field default value.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go` — `case "default"` stores `valTok.Value` as the default value without validating that the token type matches the field type. For integer fields (int32/int64/uint32/uint64/etc.), the value must be an integer literal (`TokenInt`), not a boolean identifier. C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeSignedInteger` for integer fields which rejects non-integer tokens. Same category as Runs 108-110 (default value type validation).
