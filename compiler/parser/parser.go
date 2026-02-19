@@ -2025,6 +2025,10 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 					defVal = strconv.FormatFloat(v, 'g', -1, 64)
 				}
 			}
+			// Normalize octal/hex integer defaults to decimal to match C++ protoc
+			if isIntegerType(field.GetType()) {
+				defVal = normalizeIntDefault(defVal)
+			}
 			field.DefaultValue = proto.String(defVal)
 		case "json_name":
 			field.JsonName = proto.String(valTok.Value)
@@ -2136,6 +2140,50 @@ func unquoteString(s string) string {
 		return s[1 : len(s)-1]
 	}
 	return s
+}
+
+func isIntegerType(t descriptorpb.FieldDescriptorProto_Type) bool {
+	switch t {
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32,
+		descriptorpb.FieldDescriptorProto_TYPE_INT64,
+		descriptorpb.FieldDescriptorProto_TYPE_UINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_UINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+		return true
+	}
+	return false
+}
+
+func normalizeIntDefault(s string) string {
+	neg := false
+	v := s
+	if len(v) > 0 && v[0] == '-' {
+		neg = true
+		v = v[1:]
+	}
+	if len(v) < 2 || v[0] != '0' {
+		return s
+	}
+	var n uint64
+	var err error
+	if v[1] == 'x' || v[1] == 'X' {
+		n, err = strconv.ParseUint(v[2:], 16, 64)
+	} else {
+		n, err = strconv.ParseUint(v, 8, 64)
+	}
+	if err != nil {
+		return s
+	}
+	dec := strconv.FormatUint(n, 10)
+	if neg {
+		return "-" + dec
+	}
+	return dec
 }
 
 func (p *parser) skipBracketedOptions() {
