@@ -130,11 +130,14 @@ func (p *parser) parsePackage(fd *descriptorpb.FileDescriptorProto) error {
 }
 
 func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
-	p.tok.Next() // consume "import"
+	startTok := p.tok.Next() // consume "import"
 
 	// Check for "public" or "weak"
+	isPublic := false
+	var publicTok tokenizer.Token
 	if p.tok.Peek().Value == "public" {
-		p.tok.Next()
+		publicTok = p.tok.Next()
+		isPublic = true
 	} else if p.tok.Peek().Value == "weak" {
 		p.tok.Next()
 	}
@@ -148,9 +151,20 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 		return err
 	}
 	p.trackEnd(endTok)
-	_ = pathTok
 
+	depIdx := int32(len(fd.Dependency))
 	fd.Dependency = append(fd.Dependency, pathTok.Value)
+
+	// Source code info for the import statement: path [3, depIdx]
+	p.addLocationSpan([]int32{3, depIdx}, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+
+	if isPublic {
+		pubIdx := int32(len(fd.PublicDependency))
+		fd.PublicDependency = append(fd.PublicDependency, depIdx)
+		// Source code info for public keyword: path [10, pubIdx]
+		p.addLocationSpan([]int32{10, pubIdx}, publicTok.Line, publicTok.Column, publicTok.Line, publicTok.Column+len(publicTok.Value))
+	}
+
 	return nil
 }
 
@@ -1220,7 +1234,8 @@ var builtinTypes = map[string]descriptorpb.FieldDescriptorProto_Type{
 }
 
 // ResolveTypes resolves type references in the file descriptor.
-func ResolveTypes(fd *descriptorpb.FileDescriptorProto) {
+// allFiles maps filename to parsed FileDescriptorProto for cross-file resolution.
+func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*descriptorpb.FileDescriptorProto) {
 	pkg := fd.GetPackage()
 	prefix := ""
 	if pkg != "" {
@@ -1228,9 +1243,25 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto) {
 	}
 
 	types := map[string]descriptorpb.FieldDescriptorProto_Type{}
+
+	// Collect types from this file
 	collectTypes(fd.GetMessageType(), prefix, types)
 	for _, e := range fd.GetEnumType() {
 		types[prefix+"."+e.GetName()] = descriptorpb.FieldDescriptorProto_TYPE_ENUM
+	}
+
+	// Collect types from imported files (direct dependencies)
+	if allFiles != nil {
+		for _, dep := range fd.GetDependency() {
+			if depFd, ok := allFiles[dep]; ok {
+				collectImportedTypes(depFd, types)
+			}
+		}
+		// Collect types from transitively public-imported files
+		visited := map[string]bool{fd.GetName(): true}
+		for _, dep := range fd.GetDependency() {
+			collectPublicImportTypes(dep, allFiles, types, visited)
+		}
 	}
 
 	resolveMessageFields(fd.GetMessageType(), prefix, types)
@@ -1239,6 +1270,44 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto) {
 		for _, m := range svc.GetMethod() {
 			m.InputType = proto.String(resolveTypeName(m.GetInputType(), prefix, types))
 			m.OutputType = proto.String(resolveTypeName(m.GetOutputType(), prefix, types))
+		}
+	}
+}
+
+// collectImportedTypes collects all types defined in a file for import resolution.
+func collectImportedTypes(fd *descriptorpb.FileDescriptorProto, types map[string]descriptorpb.FieldDescriptorProto_Type) {
+	pkg := fd.GetPackage()
+	prefix := ""
+	if pkg != "" {
+		prefix = "." + pkg
+	}
+	collectTypes(fd.GetMessageType(), prefix, types)
+	for _, e := range fd.GetEnumType() {
+		types[prefix+"."+e.GetName()] = descriptorpb.FieldDescriptorProto_TYPE_ENUM
+	}
+}
+
+// collectPublicImportTypes transitively collects types from public imports.
+func collectPublicImportTypes(filename string, allFiles map[string]*descriptorpb.FileDescriptorProto, types map[string]descriptorpb.FieldDescriptorProto_Type, visited map[string]bool) {
+	if visited[filename] {
+		return
+	}
+	visited[filename] = true
+
+	fd, ok := allFiles[filename]
+	if !ok {
+		return
+	}
+
+	// For each public dependency, collect its types and recurse
+	for _, pubIdx := range fd.GetPublicDependency() {
+		deps := fd.GetDependency()
+		if int(pubIdx) < len(deps) {
+			pubDep := deps[pubIdx]
+			if pubFd, ok := allFiles[pubDep]; ok {
+				collectImportedTypes(pubFd, types)
+			}
+			collectPublicImportTypes(pubDep, allFiles, types, visited)
 		}
 	}
 }

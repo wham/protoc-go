@@ -182,6 +182,11 @@ func Run(args []string) error {
 		}
 	}
 
+	// Resolve type references across all files (must happen after all files parsed)
+	for _, name := range orderedFiles {
+		parser.ResolveTypes(parsed[name], parsed)
+	}
+
 	// Build ordered list of FileDescriptorProtos
 	var protoFiles []*descriptorpb.FileDescriptorProto
 	for _, name := range orderedFiles {
@@ -200,12 +205,18 @@ func Run(args []string) error {
 				fds.File = append(fds.File, fdCopy)
 			}
 		} else {
+			relFileSet := make(map[string]bool)
 			for _, name := range relFiles {
-				fdCopy := proto.Clone(parsed[name]).(*descriptorpb.FileDescriptorProto)
-				if !cfg.includeSourceInfo {
-					fdCopy.SourceCodeInfo = nil
+				relFileSet[name] = true
+			}
+			for _, name := range orderedFiles {
+				if relFileSet[name] {
+					fdCopy := proto.Clone(parsed[name]).(*descriptorpb.FileDescriptorProto)
+					if !cfg.includeSourceInfo {
+						fdCopy.SourceCodeInfo = nil
+					}
+					fds.File = append(fds.File, fdCopy)
 				}
-				fds.File = append(fds.File, fdCopy)
 			}
 		}
 
@@ -226,10 +237,16 @@ func Run(args []string) error {
 
 	// Handle plugin outputs
 	for _, plug := range cfg.plugins {
-		// Build source file descriptors (same as files to generate, with source info)
-		var sourceFileDescriptors []*descriptorpb.FileDescriptorProto
+		// Build source file descriptors in dependency order (matching protoFile order)
+		relFileSet := make(map[string]bool)
 		for _, name := range relFiles {
-			sourceFileDescriptors = append(sourceFileDescriptors, parsed[name])
+			relFileSet[name] = true
+		}
+		var sourceFileDescriptors []*descriptorpb.FileDescriptorProto
+		for _, name := range orderedFiles {
+			if relFileSet[name] {
+				sourceFileDescriptors = append(sourceFileDescriptors, parsed[name])
+			}
 		}
 
 		req := plugin.BuildCodeGeneratorRequest(relFiles, plug.parameter, protoFiles, sourceFileDescriptors)
@@ -265,9 +282,6 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 	if err != nil {
 		return fmt.Errorf("%s: %w", filename, err)
 	}
-
-	// Resolve type references
-	parser.ResolveTypes(fd)
 
 	parsed[filename] = fd
 
