@@ -2330,6 +2330,13 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 
 		switch optName {
 		case "default":
+			// String/bytes fields require a string literal default value
+			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING ||
+				field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
+				if valTok.Type != tokenizer.TokenString {
+					return nil, fmt.Errorf("%d:%d: Expected string for field default value.", valTok.Line+1, valTok.Column+1)
+				}
+			}
 			defVal := valTok.Value
 			if negative {
 				defVal = "-" + defVal

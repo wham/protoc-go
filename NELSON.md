@@ -1024,21 +1024,25 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go parser's message body switch at line 372 has `case "map":` which unconditionally calls `parseMapField()`. `parseMapField` expects `<` after `map`, so `map data = 1;` fails with `expected "<", got "data"`. C++ protoc only treats `map` as the map keyword when followed by `<`; otherwise it treats `map` as a type name (message reference). C++ produces a valid descriptor (exit 0), Go rejects (exit 1).
 - **Root cause:** `parser.go:372` — `case "map":` doesn't check if the next token is `<` before committing to map field parsing. C++ protoc's parser peeks at the token after `map` and only enters map parsing if it's `<`. When `map` is followed by an identifier (field name), C++ treats it as a regular field with `map` as the type name. The Go parser should check `p.tok.PeekAt(1).Value == "<"` (similar to how `isGroupField` checks for `group` at line 401) and fall through to `parseField` if `<` doesn't follow.
 
+### Run 108 — Integer default value on string field (FAILED: 5/5 profiles)
+- **Test:** `114_int_default_string` — proto2 message with `optional string name = 1 [default = 42];` (integer literal instead of string literal for string field default)
+- **Bug:** Go protoc-go silently accepts integer `42` as a default value for a string field and stores `default_value = "42"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:39: Expected string for field default value.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:2332-2362` — `case "default"` stores `valTok.Value` as the default value without validating that the token type matches the field type. For string/bytes fields, the value must be a string literal (`TokenString`). For integer fields, it must be an integer literal. For float fields, a float literal. C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeString` for string fields, `ConsumeSignedInteger` for integer fields, etc. The Go parser has zero default value type validation — any token type is accepted for any field type.
+
 ### Known gaps still unexplored (updated):
-- **RPC output type as enum** — TESTED locally, Go now validates — NOT a gap
 - **RPC type referencing non-existent message** — C++ rejects, Go likely accepts (no type resolution validation)
 - **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
 - **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
-- **Negative field numbers** — TESTED in Run 106 (112_negative_field_number), confirmed broken (error message mismatch)
 - **Package conflict** — two files with different packages imported together
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **String concatenation in enum/service/method option values** — same single-token bug as field defaults
 - **Map field with message key type** — `map<MyMsg, string>` — Go rejects at parse time, C++ at validation with different error
-- **Duplicate service names** — TESTED, both reject identically — NOT a gap
-- **Duplicate enum names** — TESTED, both reject identically — NOT a gap
-- **`map` as type name** — TESTED in Run 107 (113_map_as_type), confirmed broken (Go always treats `map` as keyword)
 - **`option` as type name** — `message option { } message Foo { option x = 1; }` — Go treats `option` as keyword, same pattern
 - **`reserved` as type name** — same pattern, Go switch matches keyword before checking context
 - **`extensions` as type name** — same pattern
+- **String default for integer field** — `optional int32 x = 1 [default = "42"];` — Go likely accepts, C++ rejects
+- **Boolean default for string field** — `optional string x = 1 [default = true];` — Go likely accepts, C++ rejects
+- **Float default for integer field** — `optional int32 x = 1 [default = 1.5];` — Go likely accepts, C++ rejects
+- **Default value type validation** — all type mismatches between default value token type and field type
