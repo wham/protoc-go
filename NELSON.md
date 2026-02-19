@@ -631,6 +631,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts the duplicate option and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:8: Option "java_package" was already set.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:1894-1895` — `parseFileOption` unconditionally sets `fd.Options.JavaPackage = proto.String(valTok.Value)` without checking if the field was already set. No duplicate option tracking exists. C++ protoc tracks which options have been set and rejects duplicates. Same bug applies to ALL file-level options (go_package, optimize_for, etc.), all message options, all field options, etc.
 
+### Run 72 — Proto3 optional + real oneof ordering (FAILED: 5/5 profiles)
+- **Test:** `78_oneof_ordering` — proto3 message with `optional string name = 1;` (synthetic oneof) BEFORE `oneof payload { string text = 2; int32 number = 3; }` (real oneof), plus `optional int32 age = 4;` (another synthetic oneof)
+- **Bug:** Go places `OneofDecl` entries in declaration order: `[_name, payload, _age]`. C++ protoc places real oneofs first, then synthetic oneofs: `[payload, _name, _age]`. This causes `OneofIndex` values on all fields to differ: Go sets `name.OneofIndex=0, text/number.OneofIndex=1, age.OneofIndex=2`. C++ sets `text/number.OneofIndex=0, name.OneofIndex=1, age.OneofIndex=2`. Binary descriptors differ accordingly.
+- **Root cause:** `parser.go:389-396` — when a proto3 optional field is encountered, the synthetic oneof is immediately appended to `msg.OneofDecl` and `oneofIdx` is incremented. C++ protoc's `DescriptorBuilder` processes all real oneofs first, then creates synthetic oneofs for proto3_optional fields at the end. The Go parser should defer synthetic oneof creation until after all real oneofs are processed, or reorder `OneofDecl` entries before emitting the descriptor.
+- **Also tried:** `json_name` trailing underscore (`field_name_` → both produce `fieldName`) — NOT a gap.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -653,3 +659,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Duplicate file-level options** — TESTED in Run 71 (77_duplicate_file_option), confirmed broken (Go overwrites, C++ rejects)
 - **Duplicate message/field/enum/service options** — same pattern, Go likely overwrites all
 - **Duplicate `option optimize_for`** — same issue
+- **Synthetic oneof ordering** — TESTED in Run 72 (78_oneof_ordering), confirmed broken (Go: declaration order, C++: real first then synthetic)
+- **Synthetic oneof source code info paths** — the SourceCodeInfo paths for synthetic oneofs may also differ due to index mismatch
+- **Proto3 optional inside nested messages** — same ordering bug would apply recursively
