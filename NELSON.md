@@ -595,14 +595,18 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Both C++ and Go detect the cycle and reject with exit code 1, but error messages differ significantly. C++ protoc produces 5 error lines (cycle detection + "not found or had errors" + unresolved types for both files). Go protoc-go produces only 1 error line (just the cycle detection for `b.proto`). C++ reports the cycle on `a.proto:5:1`, Go reports it on `b.proto:5:1`. C++ continues to report cascading errors (unresolved imports/types), Go stops after the first cycle error.
 - **Root cause:** `compiler/cli/cli.go:326-355` — `parseRecursive` detects the cycle correctly but returns a single error and stops. C++ protoc's import resolution continues processing after cycle detection, generating additional error messages for unresolved imports and undefined types. The Go implementation short-circuits on the first error rather than continuing to collect all errors.
 
+### Run 65 — Float default value normalization (FAILED: 5/5 profiles)
+- **Test:** `71_float_precision` — proto2 message with `optional double ratio = 1 [default = 1e10];`, `[default = 1e-6]`, `[default = 0.333333333333333]`
+- **Bug:** Go's `strconv.FormatFloat(v, 'g', -1, 64)` formats `1e10` as `"1e+10"` (scientific notation with `+` sign, 5 chars). C++ protoc's `SimpleDtoa` formats it as `"10000000000"` (fully expanded decimal, 11 chars). Binary CodeGeneratorRequest payloads differ because the default_value strings have different representations.
+- **Root cause:** `parser.go:2048-2049` — `strconv.FormatFloat(v, 'g', -1, 64)` uses Go's default '%g' formatting which differs from C++ `SimpleDtoa`. Go's `'g'` format uses scientific notation for large exponents (e.g., `1e+10`), while C++ `SimpleDtoa` uses `DoubleToBuffer` which expands to full decimal notation for values that fit within 15 significant digits. The fix would need to replicate C++ `SimpleDtoa` behavior, which avoids scientific notation when the expanded form has fewer than ~15 digits.
+- **Also tried:** Hex default values (`[default = 0x1F]`) — passes now (already fixed in commit f6c5378). Diamond imports (A→B,C→D) — passes (file ordering matches). Deeply nested messages (6 levels) — passes. Enum default values (`[default = HIGH]`) — passes. Map key type `bytes` — passes (already fixed in commit 8c68c03).
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
 - **Type shadowing** — same nested type name in different parent messages
 - **Negative float default span** — `[default = -1.5]` likely has same column offset bug
 - **Missing message options** — `message_set_wire_format` (field 1), `map_entry` (field 7)
-- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]`
 - **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
 - **Edition features** — `edition = "2023"` with feature overrides
 - **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
@@ -610,13 +614,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
 - **Self-referencing message** — type resolution may differ
 - **Package conflict** — two files with different packages imported together
-- **Map key type `bytes`/`float`** — accepted by Go, rejected by C++
 - **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **Hex default values** — `[default = 0x1F]` — same bug as octal defaults (raw text vs decimal)
 - **String concatenation in service/method/enum option values** — same single-token bug as field defaults
 - **Missing service options** — only `deprecated` handled
 - **Duplicate field names across oneof/message** — field in oneof + field in message with same name
 - **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
 - **Type name spaces in map value types** — `map<string, pkg . Msg>` — same span bug
 - **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
-- **Diamond import** — A imports B and C, both B and C import D — ordering/dedup may differ
+- **Diamond import** — TESTED, passes (file ordering matches C++)
+- **Float default normalization** — TESTED in Run 65 (71_float_precision), confirmed broken (Go `1e+10` vs C++ `10000000000`)
+- **Other float format mismatches** — `1e3` → Go `"1000"` vs C++ `"1000"`? Need to test boundary cases; `1e16` vs `1e15` where Go switches to scientific notation but C++ may not
