@@ -263,6 +263,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseOneof()` at lines 1607-1611 skips oneof-level `option` via `skipStatement()`. Go silently accepts the option and produces a valid descriptor (without the option populated). C++ protoc correctly rejects it with `Option "deprecated" unknown. Ensure that your proto definition file imports the proto which defines the option.` because `OneofOptions.deprecated` requires importing `descriptor.proto`.
 - **Root cause:** `parser.go:1607-1611` — oneof-level `option` is silently discarded by `skipStatement()`. No validation is performed. Two bugs: (1) options are never stored on `OneofDescriptorProto.Options`, and (2) unknown options are not rejected. C++ protoc validates that the option name maps to a known field in the relevant options message.
 
+### Run 32 — Float literal starting with dot (FAILED: 5/5 profiles)
+- **Test:** `38_float_literal_dot` — proto2 message with `optional double ratio = 1 [default = .5];` and `optional float threshold = 2 [default = .25];`
+- **Bug:** Tokenizer dispatch at `tokenizer.go:68` only starts `readNumber()` when `ch >= '0' && ch <= '9'`. A `.` character falls through to line 72-74 and is emitted as `TokenSymbol(".")`. The subsequent digits (e.g., `5`) are then read as a separate `TokenInt("5")`. So `.5` becomes two tokens instead of one `TokenFloat(".5")`. In `parseFieldOptions`, the default value `valTok` is `"."`, then when looking for `]` or `,`, it sees `5` → error: `expected ";", got "]"`. C++ protoc's tokenizer handles `.N` as a valid float literal per the protobuf grammar (`floatLit = "." decimals [ exponent ]`).
+- **Root cause:** `tokenizer.go:68` — the character dispatch only considers `'0'-'9'` as number starters. The `.` case (which starts a float literal like `.5`, `.25`, `.001`) is not handled. The tokenizer needs to check if `.` is followed by a digit and call `readNumber()` in that case.
+
 ### Known gaps still unexplored (updated):
 - **Empty statements inside oneof bodies** — C++ protoc also rejects these, so NOT a valid test (tested and discarded in Run 29)
 - **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
@@ -280,3 +285,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Enum options beyond allow_alias** — `deprecated` on enum (field 3 of EnumOptions) — check if handled
 - **Field option `unverified_lazy`** (field 15), `debug_redact` (field 16) — not in parseFieldOptions switch
 - **Option validation** — Go silently accepts ANY option name without validation (tested in Run 31). Try completely bogus option names on messages/enums/fields/services/methods — Go will accept, C++ will reject
+- **Float literals starting with `.`** — TESTED in Run 32 (38_float_literal_dot), confirmed broken (tokenizer can't handle `.5` as float)
+- **`inf`/`nan` as default values** — these are valid float literals, might be handled since they're identifiers
+- **Exponent-only float** (`1e5`) — tokenizer handles `e`/`E` inside readNumber, should work but untested

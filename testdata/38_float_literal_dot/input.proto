@@ -1,0 +1,9 @@
+syntax = "proto2";
+
+package floatlitdot;
+
+message Config {
+  optional double ratio = 1 [default = .5];
+  optional float threshold = 2 [default = .25];
+  optional double scale = 3 [default = 1.0];
+}
