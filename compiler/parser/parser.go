@@ -316,6 +316,12 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 	var reservedRangeIdx, reservedNameIdx int32
 	var extensionRangeIdx int32
 	var nestedExtIdx int32
+	// Track fields needing synthetic oneofs (deferred until after declared oneofs)
+	type syntheticOneof struct {
+		field *descriptorpb.FieldDescriptorProto
+		name  string
+	}
+	var syntheticOneofs []syntheticOneof
 
 	for p.tok.Peek().Value != "}" {
 		tok := p.tok.Peek()
@@ -387,17 +393,24 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 					return nil, err
 				}
 				if field.Proto3Optional != nil && *field.Proto3Optional {
-					syntheticName := "_" + field.GetName()
-					field.OneofIndex = proto.Int32(oneofIdx)
-					msg.OneofDecl = append(msg.OneofDecl, &descriptorpb.OneofDescriptorProto{
-						Name: proto.String(syntheticName),
+					syntheticOneofs = append(syntheticOneofs, syntheticOneof{
+						field: field,
+						name:  "_" + field.GetName(),
 					})
-					oneofIdx++
 				}
 				msg.Field = append(msg.Field, field)
 				fieldIdx++
 			}
 		}
+	}
+
+	// Append synthetic oneofs after all declared oneofs (C++ protoc ordering)
+	for _, so := range syntheticOneofs {
+		so.field.OneofIndex = proto.Int32(oneofIdx)
+		msg.OneofDecl = append(msg.OneofDecl, &descriptorpb.OneofDescriptorProto{
+			Name: proto.String(so.name),
+		})
+		oneofIdx++
 	}
 
 	endTok := p.tok.Next() // consume "}"
