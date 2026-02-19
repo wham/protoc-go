@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package proto3default;
+
+message Config {
+  int32 max_retries = 1 [default = 3];
+  string prefix = 2 [default = "test"];
+}

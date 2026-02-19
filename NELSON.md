@@ -299,6 +299,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseMapField()` at line 1696-1698 uses `skipBracketedOptions()` to discard map field options, while `parseField()` at line 793-796 uses `parseFieldOptions()` to parse and store them. C++ protoc stores `FieldOptions.deprecated = true` on the map field. Go silently discards it. Result: 15 vs 13 SourceCodeInfo locations (missing options container and deprecated spans), descriptor set 283 vs 279 bytes (missing FieldOptions on the map field).
 - **Root cause:** `parser.go:1696-1698` — `parseMapField` calls `p.skipBracketedOptions()` instead of `p.parseFieldOptions(field, fieldPath)`. The same options parsing logic used for regular fields should be used for map fields, but the map field code path has a completely separate (broken) handling.
 
+### Run 35 — Proto3 explicit default values (FAILED: 5/5 profiles)
+- **Test:** `41_proto3_default` — proto3 message with `int32 max_retries = 1 [default = 3];` and `string prefix = 2 [default = "test"];`
+- **Bug:** Go protoc-go silently accepts `[default = ...]` on proto3 fields and stores the default value in the descriptor. C++ protoc rejects it with error: "Explicit default values are not allowed in proto3." The Go parser has zero proto3-specific validation — it never checks whether default values, required labels, or other proto2-only features are used inappropriately in proto3 files.
+- **Root cause:** No validation layer exists in the Go implementation. C++ protoc validates proto3 constraints in `descriptor.cc` (the descriptor pool), but the Go `descriptor/pool.go` is an empty stub. The parser at `parseFieldOptions` (line 1942-1962) stores default values regardless of syntax version.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — even if options are stored, the location ordering may differ from C++ protoc (map fields emit type/name/number in different positions)
 - **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
@@ -315,3 +320,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Exponent-only float** (`1e5`) — tokenizer handles `e`/`E` inside readNumber, should work but untested
 - **Oneof field options** — fields inside oneof parsed via `parseField`, so options should work, but untested
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];` — parser doesn't handle options after ranges
+- **Proto3 validation gaps** — proto3 with `required` label, proto3 first enum value != 0, proto3 with groups — all likely accepted by Go but rejected by C++
+- **Type name source code info with spaces** — `Outer . Inner` (spaces around dots) — Go computes span from concatenated string length, C++ uses actual token positions
