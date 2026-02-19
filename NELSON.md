@@ -487,6 +487,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts groups in proto3 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Groups are not supported in proto3 syntax.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that groups are not allowed in proto3. The Go parser has group parsing support (`isGroupField` + `parseGroupField`) but never checks the syntax version. The `parseGroupField` function works identically for proto2 and proto3. The Go `descriptor/pool.go` is an empty stub with no proto3 constraint validation.
 
+### Run 54 — Empty oneof (FAILED: 5/5 profiles)
+- **Test:** `60_empty_oneof` — proto3 message with `oneof payload {}` (empty oneof body, no fields)
+- **Bug:** Go protoc-go silently accepts an empty oneof and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:3: Expected type name.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parseOneof()` — the oneof body parsing loop terminates cleanly when `}` is immediately encountered. No validation checks that at least one field exists inside the oneof. C++ protoc's parser expects at least one type name token inside a oneof body. The Go `descriptor/pool.go` is an empty stub with no oneof validation.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -507,10 +512,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Extension number out of range** — extension using number outside declared range — C++ validates, Go likely doesn't
 - **Map key type `bytes`** — same issue as double, `map<bytes, string>` accepted by Go, rejected by C++
 - **Map key type `float`** — same issue
-- **Duplicate service names** — TESTED in Run 51 prep, both Go and C++ reject identically — NOT a gap
-- **Enum value scope conflict** — TESTED in Run 51 (57_enum_scope_conflict), confirmed broken (missing explanatory note)
 - **Duplicate field names across message and enum** — enum value `FOO` + field `FOO` in same scope may conflict differently
 - **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **Empty enum** — TESTED in Run 52 (58_empty_enum), confirmed broken (Go accepts, C++ rejects)
-- **Empty oneof** — `oneof payload {}` — C++ may reject, Go likely accepts
+- **Empty oneof** — TESTED in Run 54 (60_empty_oneof), confirmed broken (Go accepts, C++ rejects)
 - **Duplicate syntax statements** — `syntax = "proto3"; syntax = "proto3";` — C++ rejects, Go likely accepts
