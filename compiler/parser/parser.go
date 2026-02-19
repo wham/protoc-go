@@ -1605,10 +1605,9 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32) ([
 	var fields []*descriptorpb.FieldDescriptorProto
 	for p.tok.Peek().Value != "}" {
 		if p.tok.Peek().Value == "option" {
-			if err := p.skipStatement(); err != nil {
-				return nil, nil, err
-			}
-			continue
+			p.tok.Next() // consume "option"
+			nameTk := p.tok.Peek()
+			return nil, nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTk.Line+1, nameTk.Column+1, nameTk.Value)
 		}
 		fieldPath := append(copyPath(msgPath), 2, *fieldIdx)
 		field, err := p.parseField(fieldPath)
