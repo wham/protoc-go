@@ -743,6 +743,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts duplicate imports and stores `"base.proto"` twice in `fd.Dependency`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:1: Import "base.proto" was listed twice.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:275-276` — `parseImport` unconditionally appends `pathTok.Value` to `fd.Dependency` without checking if the import path already exists in the dependency list. No deduplication or duplicate detection. C++ protoc tracks imported files and rejects duplicates in `descriptor.cc`. Same issue applies to `import public` and `import weak` — importing the same file twice with different modifiers would also be silently accepted.
 
+### Run 84 — String literal for boolean option (FAILED: 5/5 profiles)
+- **Test:** `90_string_bool_option` — proto3 file with `option java_multiple_files = "true";` (string literal `"true"` instead of identifier `true`)
+- **Bug:** Go protoc-go silently accepts a string literal for a boolean option and correctly sets `java_multiple_files = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:30: Value must be identifier for boolean option "google.protobuf.FileOptions.java_multiple_files".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1962-1966` — `validateBool` checks `valTok.Value != "true" && valTok.Value != "false"` but does NOT check `valTok.Type`. A TokenString with Value `"true"` (decoded content without quotes) passes the check. C++ protoc's parser uses `ConsumeIdentifier` for boolean values, which rejects string literal tokens. Same bug applies to ALL boolean options at every level (file, message, field, enum, service, method) — any quoted `"true"` or `"false"` would be accepted by Go but rejected by C++.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -768,3 +773,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Duplicate imports** — TESTED in Run 83 (89_duplicate_import), confirmed broken (no dedup, Go accepts, C++ rejects)
 - **Duplicate `import public`** — same file imported as both `import` and `import public` — Go likely accepts
 - **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope — Go likely doesn't validate
+- **String literal for boolean option** — TESTED in Run 84 (90_string_bool_option), confirmed broken (no token type check)
+- **String literal `"false"` for boolean** — same bug, Go would set option to false
+- **String literal for enum option** — `option optimize_for = "SPEED";` — Go would accept, C++ likely rejects

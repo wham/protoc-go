@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package strbool;
+
+option java_multiple_files = "true";
+
+message Config {
+  string name = 1;
+}
