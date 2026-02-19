@@ -329,11 +329,17 @@ func (p *parser) parsePackage(fd *descriptorpb.FileDescriptorProto) error {
 		return fmt.Errorf("%d:%d: Multiple package definitions.", startTok.Line+1, startTok.Column+1)
 	}
 	p.packageParsed = true
-	nameTok := p.tok.Next()  // package name (may contain dots)
+	nameTok := p.tok.Next() // package name (may contain dots)
+	if nameTok.Type != tokenizer.TokenIdent {
+		return fmt.Errorf("%d:%d: Expected identifier.", nameTok.Line+1, nameTok.Column+1)
+	}
 	name := nameTok.Value
 	for p.tok.Peek().Value == "." {
 		p.tok.Next() // consume "."
 		part := p.tok.Next()
+		if part.Type != tokenizer.TokenIdent {
+			return fmt.Errorf("%d:%d: Expected identifier.", part.Line+1, part.Column+1)
+		}
 		name += "." + part.Value
 	}
 	endTok, err := p.tok.Expect(";")
