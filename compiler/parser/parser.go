@@ -984,9 +984,10 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	field.JsonName = proto.String(tokenizer.ToJSONName(nameTok.Value))
 
 	// = number
-	if _, err := p.tok.Expect("="); err != nil {
-		return nil, err
+	if eqTok := p.tok.Peek(); eqTok.Value != "=" {
+		return nil, fmt.Errorf("%d:%d: Missing field number.", eqTok.Line+1, eqTok.Column+1)
 	}
+	p.tok.Next() // consume "="
 	if p.tok.Peek().Type != tokenizer.TokenInt {
 		bad := p.tok.Next()
 		return nil, fmt.Errorf("%d:%d: Expected field number.", bad.Line+1, bad.Column+1)
