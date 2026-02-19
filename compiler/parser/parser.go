@@ -1500,13 +1500,18 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 	return nil
 }
 
-func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, methodPath []int32) error {
+func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, methodPath []int32, seenMethodOptions map[string]bool) error {
 	startTok := p.tok.Next() // consume "option"
 	p.trackEnd(startTok)
 
 	nameTok := p.tok.Next()
 	p.trackEnd(nameTok)
 	optName := nameTok.Value
+
+	if seenMethodOptions[optName] {
+		return fmt.Errorf("%d:%d: Option \"%s\" was already set.", nameTok.Line+1, nameTok.Column+1, optName)
+	}
+	seenMethodOptions[optName] = true
 
 	if _, err := p.tok.Expect("="); err != nil {
 		return err
@@ -1672,9 +1677,10 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 	var endTok tokenizer.Token
 	if p.tok.Peek().Value == "{" {
 		p.tok.Next()
+		seenMethodOptions := map[string]bool{}
 		for p.tok.Peek().Value != "}" {
 			if p.tok.Peek().Value == "option" {
-				if err := p.parseMethodOption(method, path); err != nil {
+				if err := p.parseMethodOption(method, path, seenMethodOptions); err != nil {
 					return nil, err
 				}
 			} else {
