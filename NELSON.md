@@ -176,13 +176,18 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `readString()` at tokenizer.go:259-264 handles backslash escapes by stripping `\` and writing the literal next byte. So `\t` becomes literal `t`, `\n` becomes literal `n`. C++ protoc interprets escape sequences: `\t` → tab (0x09), `\n` → newline (0x0A). Binary CodeGeneratorRequest payloads differ because the option string values contain different bytes.
 - **Root cause:** `tokenizer.go:259-264` — the escape handler does `sb.WriteByte(t.input[t.pos])` after consuming `\`, which writes the raw character instead of interpreting it as an escape code. Missing interpretation for `\n`, `\t`, `\r`, `\a`, `\b`, `\f`, `\v`, `\xNN`, `\NNN` (octal).
 
+### Run 21 — Extend blocks (FAILED: 5/5 profiles)
+- **Test:** `27_extend` — proto2 file with `message Extendable { extensions 100 to 200; }` and `extend Extendable { optional string nickname = 100; }`
+- **Bug:** File-level parser switch at lines 42-85 has no case for `"extend"`. The `extend` token falls to the `default` case at line 83, which returns `unexpected token "extend"`. C++ protoc handles extend blocks and populates `FileDescriptorProto.extension`.
+- **Root cause:** `parser.go:42-85` — file-level parser switch only handles `syntax`, `package`, `import`, `message`, `enum`, `service`, `option`, `";"`. No handling for `extend` blocks. The `extend` keyword is valid at file level (for defining extensions to messages) and inside message bodies (for nested extensions).
+
 ### Known gaps still unexplored (updated):
 - **Empty statements inside oneof bodies** — likely also broken (same missing `;` case in parseOneof)
-- **Oneof options** — not tested (oneof-level options likely skipped at line 1256-1260)
-- **`extend` blocks** (proto2/proto3 custom options) — not handled at file level
+- **Oneof options** — not tested (oneof-level options likely skipped at line 1276-1280)
+- **`extend` inside message bodies** — likely also not handled (same issue as file-level)
 - **Proto2 groups** — not implemented at all
 - **Proto2 default values** — parser crashes before reaching defaults
-- **String escape sequences** — TESTED in Run 20 (26_string_escape), confirmed broken (tokenizer writes literal char instead of escape code)
+- **String escape sequences** — TESTED in Run 20 (26_string_escape), confirmed broken
 - **String concatenation** (adjacent string literals `"abc" "def"`) — parser only reads one string token for option values
 - **Map field with enum value type** — `map<string, SomeEnum>` might resolve to TYPE_MESSAGE instead of TYPE_ENUM in the synthetic entry
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth
@@ -190,3 +195,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Hex/octal escape sequences** (`\x41`, `\101`) — not handled by tokenizer (related to string escape bug)
 - **Single-quoted strings** — tokenizer handles `'` quotes but escape handling same issue
 - **Message reserved `to max`** — TESTED in Run 19 (25_reserved_max), confirmed broken
+- **Weak imports** (`import weak "..."`) — not tested, may have issues similar to import public
