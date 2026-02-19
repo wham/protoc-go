@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 58/58 tests passing.
+ALL DONE — 63/63 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -66,6 +66,7 @@ ALL DONE — 58/58 tests passing.
 16. ✅ File-level option parsing (java_package, java_outer_classname, go_package, optimize_for, cc_enable_arenas, etc.) with source code info
 17. ✅ Field option parsing (deprecated, packed, json_name, etc.) with proper FieldOptions and source code info
 18. ✅ Import public support with cross-file type resolution, public_dependency, source code info for imports, dependency-ordered output
+19. ✅ Proto2 support: required/optional labels, default values, proto2 syntax handling
 
 ## Notes
 
@@ -89,3 +90,5 @@ ALL DONE — 58/58 tests passing.
 - Import public: parser records public_dependency index, adds source code info for path [3, depIdx] (import stmt) and [10, pubIdx] (public keyword)
 - Cross-file type resolution: ResolveTypes accepts allFiles map; collectImportedTypes gathers types from direct imports; collectPublicImportTypes handles transitive public imports
 - Source file descriptors and descriptor sets must use dependency order (orderedFiles), not command-line order (relFiles)
+- Proto2 support: parser handles `required`, `optional`, `repeated` labels (previously only `repeated`); `default` option sets FieldDescriptorProto.DefaultValue with source code info at path [..., 7]; proto2 syntax declaration omits fd.Syntax (C++ protoc leaves it unset for proto2)
+- Label source code info (path [..., 4]) is emitted for ALL explicit labels, not just `repeated`
