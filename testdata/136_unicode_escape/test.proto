@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package unicodeescape;
+
+option java_package = "\u0048ello";
+
+message Request {
+  string name = 1;
+}
