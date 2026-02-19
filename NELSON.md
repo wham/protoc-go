@@ -171,15 +171,22 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseMessageReserved()` at lines 340-353 handles `to` keyword but always calls `ExpectInt()` for the end value. Unlike `parseExtensionRange()` (line 408) which checks for `max`, the reserved range parser does not. When `max` (an identifier token) is encountered, `ExpectInt()` fails with "expected integer, got 'max'". C++ protoc accepts `reserved N to max;` and sets end to 536870912 (exclusive sentinel = 2^29).
 - **Root cause:** `parser.go:340-353` — `parseMessageReserved` is missing the `if p.tok.Peek().Value == "max"` check that exists in `parseExtensionRange` at lines 408-415. The `max` keyword is only handled for extension ranges, not for message reserved ranges.
 
+### Run 20 — String escape sequences (FAILED: 5/5 profiles)
+- **Test:** `26_string_escape` — proto3 file with `option java_package = "com.example\ttest";` and `option go_package = "example.com/escape\ntest";`
+- **Bug:** `readString()` at tokenizer.go:259-264 handles backslash escapes by stripping `\` and writing the literal next byte. So `\t` becomes literal `t`, `\n` becomes literal `n`. C++ protoc interprets escape sequences: `\t` → tab (0x09), `\n` → newline (0x0A). Binary CodeGeneratorRequest payloads differ because the option string values contain different bytes.
+- **Root cause:** `tokenizer.go:259-264` — the escape handler does `sb.WriteByte(t.input[t.pos])` after consuming `\`, which writes the raw character instead of interpreting it as an escape code. Missing interpretation for `\n`, `\t`, `\r`, `\a`, `\b`, `\f`, `\v`, `\xNN`, `\NNN` (octal).
+
 ### Known gaps still unexplored (updated):
 - **Empty statements inside oneof bodies** — likely also broken (same missing `;` case in parseOneof)
 - **Oneof options** — not tested (oneof-level options likely skipped at line 1256-1260)
 - **`extend` blocks** (proto2/proto3 custom options) — not handled at file level
 - **Proto2 groups** — not implemented at all
 - **Proto2 default values** — parser crashes before reaching defaults
-- **String escape sequences** (`\n`, `\t`, `\x41`) — tokenizer at line 259-264 strips backslash but doesn't interpret escape codes (writes literal char after `\`)
+- **String escape sequences** — TESTED in Run 20 (26_string_escape), confirmed broken (tokenizer writes literal char instead of escape code)
 - **String concatenation** (adjacent string literals `"abc" "def"`) — parser only reads one string token for option values
 - **Map field with enum value type** — `map<string, SomeEnum>` might resolve to TYPE_MESSAGE instead of TYPE_ENUM in the synthetic entry
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth
 - **Type shadowing** — same nested type name in different parent messages
-- **Message reserved `to max`** — TESTED in Run 19 (25_reserved_max), confirmed broken (no `max` handling in parseMessageReserved)
+- **Hex/octal escape sequences** (`\x41`, `\101`) — not handled by tokenizer (related to string escape bug)
+- **Single-quoted strings** — tokenizer handles `'` quotes but escape handling same issue
+- **Message reserved `to max`** — TESTED in Run 19 (25_reserved_max), confirmed broken
