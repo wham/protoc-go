@@ -2904,9 +2904,17 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 	}
 
 	// Resolve extension field types and extendee names
-	for _, ext := range fd.GetExtension() {
+	for extIdx, ext := range fd.GetExtension() {
 		if ext.Extendee != nil {
-			ext.Extendee = proto.String(resolveTypeName(ext.GetExtendee(), prefix, types))
+			origName := ext.GetExtendee()
+			resolved := resolveTypeName(origName, prefix, types)
+			ext.Extendee = proto.String(resolved)
+			if _, ok := types[resolved]; !ok {
+				path := []int32{7, int32(extIdx), 2}
+				if line, col, ok := findSCISpanStart(fd, path); ok {
+					errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+				}
+			}
 		}
 		if ext.TypeName != nil {
 			resolved := resolveTypeName(ext.GetTypeName(), prefix, types)
@@ -3033,9 +3041,17 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 		}
 		resolveMessageFieldsWithErrorsPath(msg.GetNestedType(), msgPrefix, types, filename, fd, msgPath, errors)
 		// Resolve nested extension field types and extendee names
-		for _, ext := range msg.GetExtension() {
+		for extIdx, ext := range msg.GetExtension() {
 			if ext.Extendee != nil {
-				ext.Extendee = proto.String(resolveTypeName(ext.GetExtendee(), msgPrefix, types))
+				origName := ext.GetExtendee()
+				resolved := resolveTypeName(origName, msgPrefix, types)
+				ext.Extendee = proto.String(resolved)
+				if _, ok := types[resolved]; !ok {
+					path := append(copyPath(msgPath), 6, int32(extIdx), 2)
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					}
+				}
 			}
 			if ext.TypeName != nil {
 				resolved := resolveTypeName(ext.GetTypeName(), msgPrefix, types)
