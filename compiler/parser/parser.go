@@ -1417,6 +1417,7 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 	p.addLocationSpan(append(copyPath(path), 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
+	seenServiceOptions := map[string]bool{}
 	var methodIdx int32
 	for p.tok.Peek().Value != "}" {
 		if p.tok.Peek().Value == ";" {
@@ -1424,7 +1425,7 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 			continue
 		}
 		if p.tok.Peek().Value == "option" {
-			if err := p.parseServiceOption(svc, path); err != nil {
+			if err := p.parseServiceOption(svc, path, seenServiceOptions); err != nil {
 				return nil, err
 			}
 			continue
@@ -1446,13 +1447,18 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 	return svc, nil
 }
 
-func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, svcPath []int32) error {
+func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, svcPath []int32, seenServiceOptions map[string]bool) error {
 	startTok := p.tok.Next() // consume "option"
 	p.trackEnd(startTok)
 
 	nameTok := p.tok.Next()
 	p.trackEnd(nameTok)
 	optName := nameTok.Value
+
+	if seenServiceOptions[optName] {
+		return fmt.Errorf("%d:%d: Option \"%s\" was already set.", nameTok.Line+1, nameTok.Column+1, optName)
+	}
+	seenServiceOptions[optName] = true
 
 	if _, err := p.tok.Expect("="); err != nil {
 		return err
