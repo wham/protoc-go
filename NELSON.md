@@ -1374,8 +1374,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts integer literals `1`/`0` as default values for bool fields and stores `default_value = "1"` / `"0"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Expected "true" or "false".` and `test.proto:7:38: Expected "true" or "false".` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:2782-2788` — bool field default validation only rejects `TokenString` tokens. Integer tokens (`TokenInt`) with value `1` or `0` pass through all validation checks and are stored as `default_value`. C++ protoc's `ParseDefaultAssignment` uses `ConsumeIdentifier` for bool fields, which only accepts identifier tokens `true`/`false`, rejecting integer and float tokens. Same category as Runs 108-110, 117-119 (default value type validation). The fix: add `|| valTok.Type == tokenizer.TokenInt || valTok.Type == tokenizer.TokenFloat` to the bool field validation check.
 
+### Run 141 — Float default value on bool field (FAILED: 5/5 profiles)
+- **Test:** `147_float_default_bool` — proto2 message with `optional bool verbose = 1 [default = 1.0];` and `optional bool debug = 2 [default = 0.0];` (float literals instead of identifiers for bool field defaults)
+- **Bug:** Go protoc-go silently accepts float literals `1.0`/`0.0` as default values for bool fields and stores `default_value = "1"` / `"0"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Expected "true" or "false".` and `test.proto:7:38: Expected "true" or "false".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:2783-2788` — bool field default validation at line 2784 checks `valTok.Type == tokenizer.TokenString || valTok.Type == tokenizer.TokenInt` but does NOT check `valTok.Type == tokenizer.TokenFloat`. A float token `1.0` passes through the bool validation and is stored as `default_value`. C++ protoc's `ParseDefaultAssignment` uses `ConsumeIdentifier` for bool fields, which only accepts identifier tokens `true`/`false`, rejecting float tokens. Same category as Run 140 (integer default on bool). The fix: add `|| valTok.Type == tokenizer.TokenFloat` to line 2784.
+
 ### Known gaps still unexplored (updated):
-- **Float default on bool field** — `optional bool x = 1 [default = 1.0];` — same gap as integer default on bool
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ from C++ protoc
@@ -1387,3 +1391,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
 - **Negative extension range start** — `extensions -1 to 10;` — C++ rejects, Go may also reject differently
 - **Labeled map fields** — `repeated map<string, string> x = 1;` — both reject but different error messages
+- **Float default on bool** — TESTED in Run 141 (147_float_default_bool), confirmed broken (TokenFloat not checked)
