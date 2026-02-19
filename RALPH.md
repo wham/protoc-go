@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 208/208 tests passing.
+ALL DONE — 213/213 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -96,6 +96,7 @@ ALL DONE — 208/208 tests passing.
 46. ✅ Inf/NaN default values (`inf`, `-inf`, `nan`) — use lowercase C++ style instead of Go's `+Inf`/`NaN` formatting
 47. ✅ Map field options (`[deprecated = true]` etc.) — parse with `parseFieldOptions` instead of `skipBracketedOptions`, with source code info
 48. ✅ Proto3 explicit default value validation — reject `[default = ...]` in proto3 with error matching C++ protoc, using source code info for line/col
+49. ✅ Proto3 enum first-value-must-be-zero validation — reject enums whose first value is not zero with "The first enum value must be zero for open enums." error, handles both top-level and nested enums
 
 ## Notes
 
@@ -147,3 +148,4 @@ ALL DONE — 208/208 tests passing.
 - Inf/NaN default values: C++ protoc uses lowercase `inf`, `-inf`, `nan`. Go's `strconv.FormatFloat` produces `+Inf`, `-Inf`, `NaN`. Special-case these before float normalization using `strings.ToLower` and matching `inf`/`-inf`/`nan`/`infinity`/`-infinity`.
 - Map field options: `map<K,V> name = N [deprecated = true];` — options are parsed via `parseFieldOptions` (same as regular fields). The field is created before parsing options so `parseFieldOptions` can set them in place. SCI entries appended after number span to match C++ ordering.
 - Proto3 default value validation: C++ protoc rejects explicit default values in proto3 during descriptor validation (descriptor.cc), not parsing. Our Go port validates after parsing+type resolution in `validateProto3` (cli.go). Collects all errors (not just first) to match C++ behavior. Error line/col comes from source code info for the default_value field (path ending in `[2, fieldIdx, 7]`).
+- Proto3 enum zero validation: C++ protoc requires the first enum value in proto3 (open enums) to be zero. Validated in `validateProto3` via `collectProto3EnumZeroErrors`. Error location from SCI path `[enumPath..., 2, valueIdx, 2]` (field 2=number in EnumValueDescriptorProto). Handles both top-level enums and enums nested inside messages (via `collectProto3MessageErrors`).
