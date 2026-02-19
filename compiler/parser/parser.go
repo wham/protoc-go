@@ -2656,7 +2656,7 @@ var builtinTypes = map[string]descriptorpb.FieldDescriptorProto_Type{
 
 // ResolveTypes resolves type references in the file descriptor.
 // allFiles maps filename to parsed FileDescriptorProto for cross-file resolution.
-func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*descriptorpb.FileDescriptorProto) {
+func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*descriptorpb.FileDescriptorProto) []string {
 	pkg := fd.GetPackage()
 	prefix := ""
 	if pkg != "" {
@@ -2687,10 +2687,33 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 
 	resolveMessageFields(fd.GetMessageType(), prefix, types)
 
-	for _, svc := range fd.GetService() {
-		for _, m := range svc.GetMethod() {
-			m.InputType = proto.String(resolveTypeName(m.GetInputType(), prefix, types))
-			m.OutputType = proto.String(resolveTypeName(m.GetOutputType(), prefix, types))
+	var errors []string
+	filename := fd.GetName()
+
+	for svcIdx, svc := range fd.GetService() {
+		for methodIdx, m := range svc.GetMethod() {
+			if m.InputType != nil {
+				origName := m.GetInputType()
+				resolved := resolveTypeName(origName, prefix, types)
+				m.InputType = proto.String(resolved)
+				if tp, ok := types[resolved]; ok && tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 2}
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not a message type.", filename, line, col, origName))
+					}
+				}
+			}
+			if m.OutputType != nil {
+				origName := m.GetOutputType()
+				resolved := resolveTypeName(origName, prefix, types)
+				m.OutputType = proto.String(resolved)
+				if tp, ok := types[resolved]; ok && tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 3}
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not a message type.", filename, line, col, origName))
+					}
+				}
+			}
 		}
 	}
 
@@ -2707,6 +2730,8 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 			}
 		}
 	}
+
+	return errors
 }
 
 // collectImportedTypes collects all types defined in a file for import resolution.
@@ -2856,20 +2881,30 @@ func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles m
 			if m.InputType != nil {
 				origName := m.GetInputType()
 				resolved := resolveTypeName(origName, methodPrefix, types)
-				if _, ok := types[resolved]; !ok {
+				if tp, ok := types[resolved]; !ok {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 2}
 					if line, col, ok := findSCISpanStart(fd, path); ok {
 						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					}
+				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 2}
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not a message type.", filename, line, col, origName))
 					}
 				}
 			}
 			if m.OutputType != nil {
 				origName := m.GetOutputType()
 				resolved := resolveTypeName(origName, methodPrefix, types)
-				if _, ok := types[resolved]; !ok {
+				if tp, ok := types[resolved]; !ok {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 3}
 					if line, col, ok := findSCISpanStart(fd, path); ok {
 						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					}
+				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 3}
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not a message type.", filename, line, col, origName))
 					}
 				}
 			}

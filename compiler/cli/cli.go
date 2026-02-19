@@ -192,8 +192,12 @@ func Run(args []string) error {
 	}
 
 	// Resolve type references across all files (must happen after all files parsed)
+	var resolveErrors []string
 	for _, name := range orderedFiles {
-		parser.ResolveTypes(parsed[name], parsed)
+		resolveErrors = append(resolveErrors, parser.ResolveTypes(parsed[name], parsed)...)
+	}
+	if len(resolveErrors) > 0 {
+		return fmt.Errorf("%s", strings.Join(resolveErrors, "\n"))
 	}
 
 	// Validate map key types (float/double/bytes/message not allowed)
