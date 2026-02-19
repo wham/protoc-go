@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 303/303 tests passing.
+ALL DONE — 308/308 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -114,7 +114,9 @@ ALL DONE — 303/303 tests passing.
 64. ✅ Enum value C++ scoping note — when duplicate enum value names are detected across different enums in the same scope, emit the "Note that enum values use C++ scoping rules..." explanatory message matching C++ protoc
 65. ✅ Empty enum validation — reject enums with zero values with `Enums must contain at least one value.` error at enum name location, handles both top-level and nested enums
 66. ✅ Proto3 group validation — reject `group` fields in proto3 syntax with `Groups are not supported in proto3 syntax.` error at group keyword location
-67. ✅ Empty oneof validation — reject empty `oneof` blocks with `Expected type name.` error at `}` token position
+68. ✅ Duplicate syntax/edition declaration validation — reject second `syntax` or `edition` statement with `Expected top-level statement (e.g. "message").` error at duplicate keyword position
+
+68. ✅ Duplicate syntax/edition declaration validation — reject second `syntax` or `edition` statement with `Expected top-level statement (e.g. "message").` error at duplicate keyword position
 
 ## Notes
 
