@@ -24,6 +24,7 @@ type Token struct {
 	Value  string
 	Line   int // 0-based
 	Column int // 0-based
+	RawLen int // raw source length (for strings: includes quotes and escape sequences)
 }
 
 // TokenComments holds classified comment data between two adjacent tokens.
@@ -318,7 +319,7 @@ func (t *Tokenizer) readString() {
 	if t.pos < len(t.input) {
 		t.advance() // skip closing quote
 	}
-	t.tokens = append(t.tokens, Token{Type: TokenString, Value: sb.String(), Line: startLine, Column: startCol})
+	t.tokens = append(t.tokens, Token{Type: TokenString, Value: sb.String(), Line: startLine, Column: startCol, RawLen: t.col - startCol})
 }
 
 func (t *Tokenizer) readNumber() {

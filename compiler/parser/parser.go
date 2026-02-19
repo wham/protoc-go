@@ -334,7 +334,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 
 			// Source code info for individual reserved name
 			p.addLocationSpan(append(copyPath(stmtPath), *nameIdx),
-				nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value)+2) // +2 for quotes
+				nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+nameTok.RawLen)
 			*nameIdx++
 
 			if p.tok.Peek().Value == "," {
@@ -1165,7 +1165,7 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 			e.ReservedName = append(e.ReservedName, nameTok.Value)
 
 			p.addLocationSpan(append(copyPath(stmtPath), *nameIdx),
-				nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value)+2) // +2 for quotes
+				nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+nameTok.RawLen)
 			*nameIdx++
 
 			if p.tok.Peek().Value == "," {
@@ -1877,7 +1877,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		valTok := p.tok.Next()
 		valEnd := valTok.Column + len(valTok.Value)
 		if valTok.Type == tokenizer.TokenString {
-			valEnd += 2 // account for quotes stripped by tokenizer
+			valEnd = valTok.Column + valTok.RawLen // use raw length (includes quotes + escapes)
 		}
 
 		switch optName {
@@ -2061,6 +2061,9 @@ func (p *parser) attachComments(locIdx int, firstTokenIdx int) {
 func (p *parser) trackEnd(tok tokenizer.Token) {
 	endLine := tok.Line
 	endCol := tok.Column + len(tok.Value)
+	if tok.RawLen > 0 {
+		endCol = tok.Column + tok.RawLen
+	}
 	if endLine > p.lastLine || (endLine == p.lastLine && endCol > p.lastCol) {
 		p.lastLine = endLine
 		p.lastCol = endCol
