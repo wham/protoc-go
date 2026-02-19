@@ -534,6 +534,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts `syntax` after `package` and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:2:1: Expected top-level statement (e.g. "message").` plus `Expected "required", "optional", or "repeated".` for each unlabeled field (exit 1). C++ only allows `syntax` as the very first statement — it defaults to proto2 when syntax isn't first, then `syntax` is not a valid top-level keyword, then unlabeled fields are invalid in proto2.
 - **Root cause:** `parser.go:52-112` — the file-level switch handles `syntax` at any position (line 56-62). The only guard is `if p.syntaxParsed` (line 57), which prevents duplicate syntax but not late syntax. C++ protoc handles `syntax` separately before the main loop — `ParseSyntaxIdentifier` is called once at the start, then the main `ParseTopLevelStatement` loop doesn't include `syntax` as a valid keyword. The Go parser should only allow `syntax`/`edition` as the very first statement.
 
+### Run 58 — Octal integer default values (FAILED: 5/5 profiles)
+- **Test:** `64_octal_default` — proto2 message with `optional int32 mode = 1 [default = 0755];`, `[default = 0644]`, `[default = 0777]`
+- **Bug:** Go protoc-go stores default values as the raw token text: `"0755"`, `"0644"`, `"0777"`. C++ protoc parses octal literals and stores the decimal representation: `"493"`, `"420"`, `"511"`. Binary CodeGeneratorRequest payloads differ (59 vs 40 bytes for the default value strings), and descriptor set sizes differ (122 vs 119 bytes).
+- **Root cause:** `parser.go:2008-2028` — `case "default"` stores `valTok.Value` (the raw token text) directly as `field.DefaultValue`. C++ protoc parses the integer literal (respecting `0x` hex and `0` octal prefixes) and formats it as a decimal string via `SimpleItoa`. The Go parser should use `strconv.ParseInt(valTok.Value, 0, 64)` to parse the integer and then `strconv.FormatInt` to produce the decimal string. Same bug would affect hex default values like `[default = 0x1F]` → Go stores `"0x1F"`, C++ stores `"31"`.
+- **Also tried:** late import (import after message definition) — both C++ and Go accept it, NOT a gap.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -550,9 +556,10 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Self-referencing message** — type resolution may differ
 - **Package conflict** — two files with different packages imported together
 - **Self-import / circular import** — cycle detection may differ
-- **Late syntax/package** — TESTED in Run 57 (63_late_syntax), confirmed broken (Go allows syntax anywhere)
-- **Import after definitions** — C++ may reject imports after message/enum/service definitions, Go allows them anywhere
+- **Import after definitions** — TESTED, both accept it — NOT a gap
 - **Map key type `bytes`/`float`** — accepted by Go, rejected by C++
 - **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
 - **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
 - **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
+- **Hex default values** — `[default = 0x1F]` — same bug as octal defaults (raw text vs decimal)
+- **Octal default values** — TESTED in Run 58 (64_octal_default), confirmed broken (raw text vs decimal)
