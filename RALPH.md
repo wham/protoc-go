@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 748/748 tests passing.
+ALL DONE — 753/753 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -200,6 +200,7 @@ ALL DONE — 748/748 tests passing.
 150. ✅ Float default value rejection for bool fields — reject float literals (`1.0`, `0.0`) as default values for TYPE_BOOL fields with `Expected "true" or "false".` error at value token position, extending existing string/integer rejection to also check `TokenFloat`
 151. ✅ Enum default identifier validation — reject non-identifier default values for enum fields (e.g., `[default = 0]`) with `Default value for an enum field must be an identifier.` error at default value SCI location, checked before enum value name lookup using `isProtoIdentifier` in cli.go
 152. ✅ Labeled map field validation — reject `required`/`optional`/`repeated` labels on `map<K,V>` fields with `Field labels (required/optional/repeated) are not allowed on map fields.` error at `<` token position, checked in `parseField` after consuming type token when `typeTok.Value == "map"` and next token is `<` and a label was present
+153. ✅ Lowercase group name validation — reject group names starting with a lowercase letter with `Group names must start with a capital letter.` error at name token position, checked in `parseGroupField`, `parseGroupFieldInOneof`, and `parseGroupFieldInExtend`
 
 ## Notes
 
