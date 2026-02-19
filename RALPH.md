@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 648/648 tests passing.
+ALL DONE — 653/653 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -282,4 +282,4 @@ ALL DONE — 648/648 tests passing.
 - Required extension validation: C++ protoc rejects `required` on extension fields with `The extension <fqn> cannot be required.` at the type SCI location (path `[7, extIdx, 5]` for file-level, `[msgPath..., 6, extIdx, 5]` for message-level). FQN is `package.fieldname` for file-level, `package.MsgName.fieldname` for message-level. Validated in `validateRequiredExtensions` (cli.go) after extension range validation.
 - String default value rejection for float/double fields: C++ protoc rejects string literals (e.g., `[default = "1.5"]`) as default values for TYPE_FLOAT/TYPE_DOUBLE fields with `Expected number.` error at the string literal token position. Uses error recovery (`p.errors` + `skipToToken("]")`) to collect errors from multiple fields.
 - Enum default value validation: C++ protoc rejects enum fields with default values referencing nonexistent enum value names. Error format: `filename:line:col: Enum type "pkg.EnumName" has no value named "X".` Location from SCI path `[msgPath..., 2, fieldIdx, 7]` (field 7=default_value). Validated in `validateEnumDefaultValues` (cli.go) with `collectEnumDefaultErrors` recursing into nested messages. Builds `enumValues` map of enum FQN → value name set across all files. Placed before proto3 validation in the validation chain.
-- Packed option validation: C++ protoc rejects `[packed = true]` on non-repeated fields or non-primitive types (string, bytes, message, group) with `[packed = true] can only be specified for repeated primitive fields.` error at field span location. Packable types: int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64, float, double, bool, enum. Validated in `validatePackedNonRepeated` (cli.go) with `collectPackedErrors` recursing into nested messages. Also checks file-level and message-level extensions.
+- Packed option validation: C++ protoc rejects `[packed = true]` on non-repeated fields or non-primitive types (string, bytes, message, group) with `[packed = true] can only be specified for repeated primitive fields.` error at field TYPE location (SCI path `[..., 5]` for field type, not field span). Packable types: int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64, float, double, bool, enum. Validated in `validatePackedNonRepeated` (cli.go) with `collectPackedErrors` recursing into nested messages. Also checks file-level and message-level extensions.
