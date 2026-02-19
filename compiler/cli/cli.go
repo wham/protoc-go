@@ -290,6 +290,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate required extensions (extensions cannot be required)
+	if errs := validateRequiredExtensions(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate JSON name conflicts
 	if errs := validateJsonNameConflicts(orderedFiles, parsed, explicitJsonNames); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -1775,6 +1780,56 @@ func collectExtensionReservedOverlapErrors(filename string, msg *descriptorpb.De
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectExtensionReservedOverlapErrors(filename, nested, nestedPath, sci, errs)
+	}
+}
+
+// validateRequiredExtensions checks that no extension field uses the required label.
+func validateRequiredExtensions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		pkg := fd.GetPackage()
+		// File-level extensions
+		for i, ext := range fd.GetExtension() {
+			if ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REQUIRED {
+				fqn := ext.GetName()
+				if pkg != "" {
+					fqn = pkg + "." + fqn
+				}
+				line, col := findLocationByPath([]int32{7, int32(i), 5}, sci)
+				errs = append(errs, fmt.Sprintf("%s:%d:%d: The extension %s cannot be required.",
+					fd.GetName(), line, col, fqn))
+			}
+		}
+		// Message-level extensions
+		for i, msg := range fd.GetMessageType() {
+			collectRequiredExtensionErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, pkg, &errs)
+		}
+	}
+	return errs
+}
+
+func collectRequiredExtensionErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, prefix string, errs *[]string) {
+	fqn := msg.GetName()
+	if prefix != "" {
+		fqn = prefix + "." + fqn
+	}
+	for i, ext := range msg.GetExtension() {
+		if ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REQUIRED {
+			extFQN := fqn + "." + ext.GetName()
+			path := append(append([]int32{}, msgPath...), 6, int32(i), 5)
+			line, col := findLocationByPath(path, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: The extension %s cannot be required.",
+				filename, line, col, extFQN))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectRequiredExtensionErrors(filename, nested, nestedPath, sci, fqn, errs)
 	}
 }
 
