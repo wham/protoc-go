@@ -299,10 +299,10 @@ func (t *Tokenizer) readString() {
 				case '?':
 					sb.WriteByte('?')
 				case 'x', 'X':
-					// Hex escape: \xHH
+					// Hex escape: \xHH (up to 2 hex digits)
 					val := byte(0)
 					t.advance()
-					for t.pos < len(t.input) && isHexDigit(t.input[t.pos]) {
+					for i := 0; i < 2 && t.pos < len(t.input) && isHexDigit(t.input[t.pos]); i++ {
 						val = val*16 + hexVal(t.input[t.pos])
 						t.advance()
 					}
