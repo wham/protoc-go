@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 368/368 tests passing.
+ALL DONE — 373/373 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -127,6 +127,7 @@ ALL DONE — 368/368 tests passing.
 77. ✅ Float default value precision — use `simpleDtoa` (%.15g + round-trip) / `simpleFtoa` (%.6g + round-trip as float32) to match C++ protoc's `SimpleDtoa`/`SimpleFtoa` (e.g., `1e10` → `10000000000`)
 78. ✅ Proto3 extension range validation — reject `extensions` declarations in proto3 messages with `Extension ranges are not allowed in proto3.` error at extension range start location
 79. ✅ Proto3 extend block validation — reject `extend` blocks in proto3 files (file-level and message-level) unless extending an allowed option type (`google.protobuf.*Options`, `FeatureSet`, etc.) with `Extensions in proto3 are only allowed for defining options.` error at extendee name location
+80. ✅ Unknown file option validation — reject unknown file options (e.g., `php_generic_services`) with `Option "X" unknown. Ensure that your proto definition file imports the proto which defines the option.` error at option name position
 
 ## Notes
 
