@@ -248,7 +248,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 				return nil, err
 			}
 		case "option":
-			if err := p.skipStatement(); err != nil {
+			if err := p.parseMessageOption(msg, path); err != nil {
 				return nil, err
 			}
 		case "extensions":
@@ -451,6 +451,55 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 	stmtLoc := p.locations[len(p.locations)-1]
 	copy(p.locations[len(p.locations)-count*3:], p.locations[len(p.locations)-count*3-1:len(p.locations)-1])
 	p.locations[len(p.locations)-count*3-1] = stmtLoc
+
+	return nil
+}
+
+func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath []int32) error {
+	startTok := p.tok.Next() // consume "option"
+	p.trackEnd(startTok)
+
+	nameTok := p.tok.Next()
+	p.trackEnd(nameTok)
+	optName := nameTok.Value
+
+	if _, err := p.tok.Expect("="); err != nil {
+		return err
+	}
+
+	valTok := p.tok.Next()
+	p.trackEnd(valTok)
+
+	endTok, err := p.tok.Expect(";")
+	if err != nil {
+		return err
+	}
+	p.trackEnd(endTok)
+
+	if msg.Options == nil {
+		msg.Options = &descriptorpb.MessageOptions{}
+	}
+
+	var fieldNum int32
+	switch optName {
+	case "deprecated":
+		msg.Options.Deprecated = proto.Bool(valTok.Value == "true")
+		fieldNum = 3
+	default:
+		return nil
+	}
+
+	// Source code info: [msgPath..., 7] for options, [msgPath..., 7, fieldNum] for specific option
+	optPath := append(copyPath(msgPath), 7)
+	span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+		Path: optPath,
+		Span: span,
+	})
+	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+		Path: append(copyPath(optPath), fieldNum),
+		Span: span,
+	})
 
 	return nil
 }
