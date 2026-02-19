@@ -1322,4 +1322,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Group inside nested extend** — `message Foo { extend Base { optional group G = 100 { } } }` — same issue
 - **Labeled map field (optional/repeated)** — both reject but different error messages
 - **`service` as a message name** — valid in C++, should work in Go too (not a keyword in message body switch)
-- **Nested group in oneof** — proto2 `oneof { group G = 1 { } }` — C++ handles, Go likely doesn't
+- **Nested group in oneof** — TESTED in Run 134 (140_group_in_oneof), confirmed broken (Go rejects, C++ accepts)
+
+### Run 134 — Group inside oneof (FAILED: 5/5 profiles)
+- **Test:** `140_group_in_oneof` — proto2 message with `oneof choice { group MyGroup = 1 { optional string name = 1; } string text = 2; }` (group field inside a oneof body)
+- **Bug:** Go protoc-go rejects the file with: `test.proto:7:23: Expected ";".` (exit 1). C++ protoc accepts it and produces a valid descriptor with a TYPE_GROUP field inside the oneof and a nested DescriptorProto for `MyGroup` (exit 0). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:2154-2179` — `parseOneof` body loop calls `parseField()` for each field. When `group` appears, `parseField` reads `group` as a type name (message reference), `MyGroup` as the field name, `=` and `1` as field number, then expects `;` but gets `{`. The `isGroupField` check (which handles the `group` keyword) only exists in the message body parser's `default` case, not in `parseOneof`. C++ protoc's `ParseMessageField` handles group fields in all contexts (message body, oneof, extend). The Go parser needs group detection in `parseOneof` similar to the message body parser.
