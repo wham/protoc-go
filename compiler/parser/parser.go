@@ -590,8 +590,11 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 	}
 
 	// Input type - may be "stream" qualified
+	var clientStreaming bool
+	var clientStreamTok tokenizer.Token
 	if p.tok.Peek().Value == "stream" {
-		p.tok.Next()
+		clientStreamTok = p.tok.Next()
+		clientStreaming = true
 	}
 	inputTok := p.tok.Next()
 	inputType := inputTok.Value
@@ -615,8 +618,11 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 	}
 
 	// Output type
+	var serverStreaming bool
+	var serverStreamTok tokenizer.Token
 	if p.tok.Peek().Value == "stream" {
-		p.tok.Next()
+		serverStreamTok = p.tok.Next()
+		serverStreaming = true
 	}
 	outputTok := p.tok.Next()
 	outputType := outputTok.Value
@@ -660,13 +666,27 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 		InputType:  proto.String(inputType),
 		OutputType: proto.String(outputType),
 	}
+	if clientStreaming {
+		method.ClientStreaming = proto.Bool(true)
+	}
+	if serverStreaming {
+		method.ServerStreaming = proto.Bool(true)
+	}
 
-	// Source code info
+	// Source code info — ordered by position in source
 	p.addLocationSpan(path, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.addLocationSpan(append(copyPath(path), 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+	if clientStreaming {
+		p.addLocationSpan(append(copyPath(path), 5),
+			clientStreamTok.Line, clientStreamTok.Column, clientStreamTok.Line, clientStreamTok.Column+len("stream"))
+	}
 	p.addLocationSpan(append(copyPath(path), 2),
 		inputTok.Line, inputTok.Column, inputTok.Line, inputEndCol)
+	if serverStreaming {
+		p.addLocationSpan(append(copyPath(path), 6),
+			serverStreamTok.Line, serverStreamTok.Column, serverStreamTok.Line, serverStreamTok.Column+len("stream"))
+	}
 	p.addLocationSpan(append(copyPath(path), 3),
 		outputTok.Line, outputTok.Column, outputTok.Line, outputEndCol)
 

@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 33/33 tests passing.
+ALL DONE — 43/43 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -61,6 +61,8 @@ ALL DONE — 33/33 tests passing.
 11. ✅ Type resolution for message/enum references
 12. ✅ All 5 profiles: plugin, plugin_param, descriptor_set, descriptor_set_src, descriptor_set_full
 13. ✅ All 3 CLI tests: no_args, missing_output, bad_proto_path
+14. ✅ Reserved field/name parsing in messages (reserved ranges + reserved names with source code info)
+15. ✅ Streaming RPC support (client_streaming/server_streaming flags + source code info)
 
 ## Notes
 
