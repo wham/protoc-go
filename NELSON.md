@@ -339,7 +339,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Type name source code info with spaces** — `Outer . Inner` (spaces around dots) — Go computes span from concatenated string length, C++ uses actual token positions
 - **Duplicate field numbers** — TESTED in Run 39 (45_duplicate_field_number), confirmed broken (Go accepts, C++ rejects)
 - **Field number 0** — Go likely accepts, C++ rejects (field numbers must be positive)
-- **Field number > 2^29-1** — Go likely accepts, C++ rejects (max field number is 536870911)
+- **Field number > 2^29-1** — TESTED in Run 41 (47_field_number_max), confirmed broken (Go accepts, C++ rejects)
 
 ### Run 39 — Duplicate field numbers (FAILED: 5/5 profiles)
 - **Test:** `45_duplicate_field_number` — proto3 message with two fields both using field number 1 (`string name = 1;` and `int32 id = 1;`)
@@ -350,3 +350,27 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `46_field_number_zero` — proto3 message with `string name = 0;` (field number 0)
 - **Bug:** Go protoc-go silently accepts field number 0 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:17: Field numbers must be positive integers.` and `Suggested field numbers for zerof.Config: 2` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field numbers must be positive (>= 1). The Go `descriptor/pool.go` is an empty stub with no field number range validation. The parser accepts any integer as a field number without checking validity.
+
+### Run 41 — Field number exceeds max (FAILED: 5/5 profiles)
+- **Test:** `47_field_number_max` — proto3 message with `string name = 536870912;` (field number 2^29, exceeds max of 536870911)
+- **Bug:** Go protoc-go silently accepts field number 536870912 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:17: Field numbers cannot be greater than 536870911.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field numbers must be <= 536870911 (2^29-1). The Go `descriptor/pool.go` is an empty stub with no field number upper bound validation. The parser accepts any integer as a field number without range checking.
+
+### Known gaps still unexplored (updated):
+- **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects with "Group syntax is not supported in proto3."
+- **Map field options source code info** — even if options are stored, the location ordering may differ from C++ protoc
+- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
+- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
+- **Type shadowing** — same nested type name in different parent messages
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
+- **Missing message options** — `message_set_wire_format` (field 1), `no_standard_descriptor_accessor` (field 2), `map_entry` (field 7)
+- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145` — span computation even more wrong
+- **Edition features** — `edition = "2023"` with feature overrides
+- **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
+- **Option validation** — Go silently accepts ANY option name without validation
+- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
+- **Duplicate enum value names** — Go likely accepts, C++ rejects
+- **Duplicate message/enum names** — Go likely accepts, C++ rejects
+- **Self-referencing message** — `message Foo { Foo child = 1; }` — should work but type resolution may differ
+- **Package conflict** — two files with different packages imported together

@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package maxfield;
+
+message Config {
+  string name = 536870912;
+}
