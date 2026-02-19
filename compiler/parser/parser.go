@@ -947,12 +947,15 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 	// "group" keyword
 	groupTok := p.tok.Next()
 
-	// Group name
+	// Group name (must start with uppercase)
 	nameTok, err := p.tok.ExpectIdent()
 	if err != nil {
 		return nil, nil, err
 	}
 	groupName := nameTok.Value
+	if len(groupName) == 0 || groupName[0] < 'A' || groupName[0] > 'Z' {
+		return nil, nil, fmt.Errorf("%d:%d: Group names must start with a capital letter.", nameTok.Line+1, nameTok.Column+1)
+	}
 	fieldName := strings.ToLower(groupName)
 
 	field.Name = proto.String(fieldName)
@@ -1361,12 +1364,15 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	// "group" keyword
 	groupTok := p.tok.Next()
 
-	// Group name
+	// Group name (must start with uppercase)
 	nameTok, err := p.tok.ExpectIdent()
 	if err != nil {
 		return nil, nil, err
 	}
 	groupName := nameTok.Value
+	if len(groupName) == 0 || groupName[0] < 'A' || groupName[0] > 'Z' {
+		return nil, nil, fmt.Errorf("%d:%d: Group names must start with a capital letter.", nameTok.Line+1, nameTok.Column+1)
+	}
 	fieldName := strings.ToLower(groupName)
 
 	field.Name = proto.String(fieldName)
@@ -1475,6 +1481,9 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 		return nil, nil, err
 	}
 	groupName := nameTok.Value
+	if len(groupName) == 0 || groupName[0] < 'A' || groupName[0] > 'Z' {
+		return nil, nil, fmt.Errorf("%d:%d: Group names must start with a capital letter.", nameTok.Line+1, nameTok.Column+1)
+	}
 	fieldName := strings.ToLower(groupName)
 
 	field.Name = proto.String(fieldName)
