@@ -621,6 +621,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseMessageOption()` switch at lines 754-762 only handles `deprecated` (field 3) and `no_standard_descriptor_accessor` (field 2). The `default` case at line 761-762 does `return nil`, silently discarding `message_set_wire_format` (field 1 of MessageOptions). C++ protoc stores `MessageOptions{message_set_wire_format: true}`. Go produces 16 SourceCodeInfo locations vs C++ protoc's 18 — missing the option statement locations.
 - **Root cause:** `parser.go:754-762` — `parseMessageOption` switch is missing `message_set_wire_format` (field 1) and `map_entry` (field 7). Same pattern as all other missing option bugs.
 
+### Run 70 — Field option debug_redact (FAILED: 5/5 profiles)
+- **Test:** `76_field_debug_redact` — proto3 message with `string email = 2 [debug_redact = true];`
+- **Bug:** `parseFieldOptions()` switch at lines 2028-2108 has no case for `debug_redact` (field 16 of FieldOptions). The option value token is consumed but not stored on `FieldOptions`. C++ protoc populates `FieldOptions.debug_redact = true`. Descriptor set size differs (112 vs 107 bytes). SourceCodeInfo locations differ (19 vs 18) — missing the option-specific location at path `[fieldPath, 8, 16]`.
+- **Root cause:** `parser.go:2028-2108` — `parseFieldOptions` switch handles `default`, `json_name`, `deprecated`, `packed`, `lazy`, `jstype`, `ctype` but is missing `debug_redact` (field 16) and `unverified_lazy` (field 15). Unknown option names fall through without matching any case, silently dropped without error.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -629,7 +634,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Missing message options** — `map_entry` (field 7) — `message_set_wire_format` TESTED in Run 69
 - **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
 - **Edition features** — `edition = "2023"` with feature overrides
-- **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
+- **Field option `unverified_lazy`** (field 15) — not in parseFieldOptions switch, same bug as `debug_redact`
+- **Field option `debug_redact`** — TESTED in Run 70 (76_field_debug_redact), confirmed broken
 - **Option validation** — Go silently accepts ANY option name without validation
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
 - **Self-referencing message** — type resolution may differ
@@ -644,3 +650,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Proto3 extension ranges** — TESTED in Run 66 (72_proto3_extensions), confirmed broken
 - **Proto3 extend blocks** — TESTED in Run 67 (73_proto3_extend), confirmed broken
 - **Missing file options** — `php_generic_services` (field 42) TESTED in Run 68, `java_generate_equals_and_hash` (field 20, deprecated) — untested
+- **Duplicate file-level options** — `option java_package` set twice — C++ rejects, Go likely overwrites

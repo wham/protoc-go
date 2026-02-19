@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package debugredact;
+
+message UserInfo {
+  string name = 1;
+  string email = 2 [debug_redact = true];
+  int32 age = 3;
+}
