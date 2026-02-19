@@ -538,7 +538,11 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 			p.tok.Next()
 			if p.tok.Peek().Value == "max" {
 				maxTok := p.tok.Next()
-				endNum = 536870912 // kMaxRangeSentinel (2^29)
+				if msg.GetOptions().GetMessageSetWireFormat() {
+					endNum = 2147483647 // INT32_MAX for message_set_wire_format
+				} else {
+					endNum = 536870912 // kMaxRangeSentinel (2^29)
+				}
 				endSpanLine = maxTok.Line
 				endSpanCol = maxTok.Column + len(maxTok.Value)
 				endNumLine = maxTok.Line
@@ -758,6 +762,9 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 	case "no_standard_descriptor_accessor":
 		msg.Options.NoStandardDescriptorAccessor = proto.Bool(valTok.Value == "true")
 		fieldNum = 2
+	case "message_set_wire_format":
+		msg.Options.MessageSetWireFormat = proto.Bool(valTok.Value == "true")
+		fieldNum = 1
 	default:
 		return nil
 	}
