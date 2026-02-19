@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package resoverlap;
+
+message Config {
+  reserved 1 to 10;
+  reserved 5 to 15;
+  string name = 20;
+}

@@ -846,8 +846,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts a field whose number falls within a declared extension range and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:14: Extension range 100 to 200 includes field "value" (100).` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that no field number may overlap with a declared extension range within the same message. The Go `descriptor/pool.go` is an empty stub with no extension range vs field number validation. The parser stores both the field and the extension range without any cross-validation.
 
+### Run 91 — Overlapping reserved ranges (FAILED: 5/5 profiles)
+- **Test:** `97_reserved_range_overlap` — proto3 message with `reserved 1 to 10;` and `reserved 5 to 15;` (overlapping reserved ranges)
+- **Bug:** Go protoc-go silently accepts overlapping reserved ranges and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Reserved range 5 to 15 overlaps with already-defined range 1 to 10.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that reserved ranges within a message must not overlap. The Go `descriptor/pool.go` is an empty stub with no reserved range overlap checking. The parser stores all reserved ranges without any cross-range validation. Same pattern as extension range overlap (Run 89).
+
 ### Known gaps still unexplored (updated):
-- **Overlapping reserved ranges** — `reserved 1 to 10; reserved 5 to 15;` — same overlap validation gap
 - **Reserved range overlap with field numbers** — field number within a reserved range (different from reserved name conflict, Run 48)
 - **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];`
 - **Map field options source code info** — location ordering may differ from C++ protoc
@@ -861,3 +865,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Package conflict** — two files with different packages imported together
 - **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Overlapping reserved ranges** — TESTED in Run 91 (97_reserved_range_overlap), confirmed broken
+- **Overlapping enum reserved ranges** — same bug likely exists for `EnumDescriptorProto.reserved_range`
