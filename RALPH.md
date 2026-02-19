@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 93/93 tests passing.
+ALL DONE — 98/98 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -73,6 +73,8 @@ ALL DONE — 93/93 tests passing.
 23. ✅ Comment tracking in SourceCodeInfo (leading, trailing, detached comments) with file-level span fix
 24. ✅ Enum value options (`deprecated = true`) with EnumValueOptions and source code info
 25. ✅ Message option parsing (`option deprecated = true/false;`) with MessageOptions and source code info
+26. ✅ Service option parsing (`option deprecated = true;`) with ServiceOptions and source code info
+27. ✅ Method option parsing (`option deprecated = true;`) with MethodOptions and source code info
 
 ## Notes
 
@@ -104,3 +106,5 @@ ALL DONE — 93/93 tests passing.
 - Comment tracking: tokenizer collects comments between tokens and classifies them as PrevTrailing (trailing comment of previous token), Detached (comments separated by blank lines), and Leading (last comment block before token). Parser's `attachComments(locIdx, firstTokenIdx)` attaches leading/detached from firstToken and trailing from the next-token-after-terminator. File-level span starts at first non-comment token, not line 0.
 - Enum value options: `[deprecated = true]` after `= N` in enum values. Parsed inline (not with skipBracketedOptions). EnumValueOptions field numbers: deprecated=1. Source code info path: [..., 3] for options bracket span, [..., 3, fieldNum] for specific option spanning name through value.
 - Message options: field 7 of DescriptorProto. `deprecated` is field 3 of MessageOptions. Source code info: [4,msgIdx,7] for statement, [4,msgIdx,7,3] for deprecated. Both share same span covering full `option ... ;` statement. Parsed by `parseMessageOption` in parser.go.
+- Service options: field 3 of ServiceDescriptorProto. `deprecated` is field 33 of ServiceOptions. Source code info: [6,svcIdx,3] for statement, [6,svcIdx,3,33] for deprecated. Both share same span. Parsed by `parseServiceOption` in parser.go.
+- Method options: field 4 of MethodDescriptorProto. `deprecated` is field 33 of MethodOptions. Source code info: [6,svcIdx,2,methodIdx,4] for options, [6,svcIdx,2,methodIdx,4,33] for deprecated. Both share same span. Parsed by `parseMethodOption` in parser.go. Method body `{ ... }` is now parsed properly instead of blindly skipping tokens.
