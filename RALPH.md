@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 553/553 tests passing.
+ALL DONE — 558/558 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -162,6 +162,7 @@ ALL DONE — 553/553 tests passing.
 112. ✅ Stream keyword as type name validation — reject `stream` used as a message type name in RPC input/output with `Expected type name.` error at the non-type token position, matching C++ protoc behavior
 113. ✅ Map enum key type validation — allow non-builtin key types (e.g., enum) through parser (storing as TYPE_MESSAGE with TypeName for resolution), then reject enum key types in validation with `Key in map fields cannot be enum types.` error at field span location
 114. ✅ Extension range options (`[verification = UNVERIFIED]`) — parse options on extension ranges, set `ExtensionRangeOptions` with verification field, SCI entries for options bracket and individual options, source retention stripping for `proto_file` and descriptor_set (keep full options only in `source_file_descriptors`)
+115. ✅ RPC enum type validation — reject enum types used as RPC input/output types with `"X" is not a message type.` error at type reference location, checked during `ResolveTypes` using original unresolved name
 
 ## Notes
 
@@ -255,3 +256,4 @@ ALL DONE — 553/553 tests passing.
 - Custom vs default JSON name conflicts: C++ protoc runs two passes for JSON name conflicts: (1) default-only (auto-generated camelCase), (2) custom-aware (considers explicit `json_name`). In the custom pass, if a field has `has_json_name()` AND the explicit name differs from the default, it's `is_custom=true`. Error message uses "custom" or "default" per-field. In the custom pass, if neither conflicting field is custom, skip (already caught in pass 1). Parser tracks `explicitJsonNames map[*FieldDescriptorProto]bool` via `ParseResult` struct. `validateJsonNameConflicts` in cli.go calls `collectJsonNameConflictErrors` twice per message (useCustom=false, useCustom=true).
 - Map enum key type validation: C++ protoc allows non-builtin key types through parsing (resolves them during linking), then validates at descriptor level. Go parser now does the same — stores non-builtin key types as TYPE_MESSAGE with TypeName, type resolution updates to TYPE_ENUM. `collectMapKeyTypeErrors` checks TYPE_ENUM separately with distinct error message "Key in map fields cannot be enum types." (vs "float/double, bytes or message types" for others).
 - Extension range options: `extensions 100 to 199 [verification = UNVERIFIED];` — parse `[key = value]` options after extension ranges in `parseExtensionRange`. Sets `ExtensionRangeOptions` on each range. `verification` is field 3 of `ExtensionRangeOptions` (DECLARATION=0, UNVERIFIED=1, default=UNVERIFIED). SCI entries: `[msgPath..., 5, rangeIdx, 3]` for options bracket span (includes `[` through `]`), `[msgPath..., 5, rangeIdx, 3, 3]` for verification key=value span. Source retention: `verification` and `declaration` fields have `retention = RETENTION_SOURCE`, so they're stripped from `proto_file` and descriptor_set output but kept in `source_file_descriptors`. `stripSourceRetention` in cli.go clones and strips; `isExtRangeOptsPath` matches SCI paths with pattern `4, N, [3, N]*, 5, N, 3[, ...]`. Also handles message-literal values (`declaration = { ... }`) by depth-counting `{}`.
+- RPC enum type validation: C++ protoc rejects enum types used as RPC input/output types with `"X" is not a message type.` error. The check is in `ResolveTypes` (parser.go) which now returns `[]string` errors. Uses the original unresolved name (before resolution) in the error message to match C++ protoc. Location from SCI path `[6, svcIdx, 2, methodIdx, 2]` for input type, `[6, svcIdx, 2, methodIdx, 3]` for output type. Also checked in `CheckUnresolvedTypes` for the circular import path.
