@@ -1639,6 +1639,10 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 	if p.tok.Peek().Value == "stream" {
 		clientStreamTok = p.tok.Next()
 		clientStreaming = true
+		// After consuming "stream" keyword, next must be a type name
+		if next := p.tok.Peek(); next.Type != tokenizer.TokenIdent && next.Value != "." {
+			return nil, fmt.Errorf("%d:%d: Expected type name.", next.Line+1, next.Column+1)
+		}
 	}
 	inputTok := p.tok.Next()
 	inputEndTok := inputTok
@@ -1674,6 +1678,10 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 	if p.tok.Peek().Value == "stream" {
 		serverStreamTok = p.tok.Next()
 		serverStreaming = true
+		// After consuming "stream" keyword, next must be a type name
+		if next := p.tok.Peek(); next.Type != tokenizer.TokenIdent && next.Value != "." {
+			return nil, fmt.Errorf("%d:%d: Expected type name.", next.Line+1, next.Column+1)
+		}
 	}
 	outputTok := p.tok.Next()
 	outputEndTok := outputTok
