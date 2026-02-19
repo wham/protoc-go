@@ -1410,6 +1410,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go accepts the lowercase group name and produces a downstream error: `"result" is already defined in "grouplower.SearchResponse".` (because lowercased field name matches group type name). C++ protoc immediately rejects with: `test.proto:6:18: Group names must start with a capital letter.` (exit 1). The error messages are completely different.
 - **Root cause:** `parser.go` — `parseGroupField` reads the group name via `ExpectIdent()` but never validates that the first character is uppercase. C++ protoc's `ParseMessageField` in `parser.cc` checks `LookingAtType(io::Tokenizer::TYPE_START)` which verifies the name starts with an uppercase letter. The Go parser should check `unicode.IsUpper(rune(groupName[0]))` after reading the group name and error if it's lowercase.
 
+### Run 145 — Invalid content in method body (FAILED: 5/5 profiles)
+- **Test:** `151_method_body_invalid` — proto3 service with `rpc Search(Request) returns (Response) { string invalid_field = 1; }` (field declaration inside method body)
+- **Bug:** Go protoc-go silently accepts a field declaration inside a method body via `skipStatement()` and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:15:5: Expected "option".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:2265-2269` — the method body parsing loop checks for `option` keyword, and for anything else calls `skipStatement()` which silently consumes tokens until `;` or `}`. This means any arbitrary content inside a method body (field declarations, nested messages, random tokens) is silently eaten. C++ protoc's `ParseMethodBlock` only accepts `option` statements and empty statements (`;`), rejecting anything else with "Expected \"option\".". The Go parser should validate that non-`option` tokens in method bodies are either `;` (empty statements) or report an error.
+
 ### Known gaps still unexplored (updated):
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
 - **Type shadowing** — same nested type name in different parent messages
@@ -1423,3 +1428,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Group name starting with digit** — `optional group 123foo = 1 {}` — same missing validation
 - **Group name all lowercase in extend** — same issue in `parseGroupFieldInExtend`
 - **Group name all lowercase in oneof** — same issue in `parseGroupFieldInOneof`
+- **Invalid content in service body** — `service Foo { string x = 1; }` — Go likely skipStatements, C++ rejects
+- **Invalid content in enum body** — `enum Foo { string x = 1; }` — Go likely skipStatements, C++ rejects
