@@ -466,3 +466,32 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `55_reserved_number_conflict` — proto3 message with `reserved 3, 5 to 10;` and a field `int32 count = 3;` that uses a reserved number
 - **Bug:** Go protoc-go silently accepts a field whose number is declared as reserved and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Field "count" uses reserved number 3.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field numbers don't conflict with reserved ranges declared in the same message. The Go `descriptor/pool.go` is an empty stub with no reserved number checking. The parser stores both the reserved ranges and the conflicting field without any cross-validation.
+
+### Run 50 — Map field with invalid key type (FAILED: 5/5 profiles)
+- **Test:** `56_map_invalid_key` — proto3 message with `map<double, string> scores = 1;` (double as map key type)
+- **Bug:** Go protoc-go silently accepts `double` as a map key type and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:3: Key in map fields cannot be float/double, bytes or message types.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1672-1676` — `parseMapField` checks if the key type is in `builtinTypes` (which includes all 15 scalar types including `double`, `float`, and `bytes`), but never validates that the key type is actually allowed for map fields. C++ protoc validates in `descriptor.cc` that map keys can only be integral types (int32/int64/uint32/uint64/sint32/sint64/fixed32/fixed64/sfixed32/sfixed64), bool, or string — NOT double, float, or bytes. The Go parser accepts any builtin type as a map key without checking the restriction.
+
+### Known gaps still unexplored (updated):
+- **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
+- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
+- **Type shadowing** — same nested type name in different parent messages
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
+- **Missing message options** — `message_set_wire_format`, `no_standard_descriptor_accessor`, `map_entry`
+- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]`
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
+- **Edition features** — `edition = "2023"` with feature overrides
+- **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
+- **Option validation** — Go silently accepts ANY option name without validation
+- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
+- **Self-referencing message** — type resolution may differ
+- **Package conflict** — two files with different packages imported together
+- **Self-import / circular import** — cycle detection may differ
+- **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts
+- **Extension number out of range** — extension using number outside declared range — C++ validates, Go likely doesn't
+- **Map key type `bytes`** — same issue as double, `map<bytes, string>` accepted by Go, rejected by C++
+- **Map key type `float`** — same issue
+- **Duplicate service names** — Go likely accepts, C++ rejects
+- **Duplicate enum value names** — Go likely accepts, C++ rejects

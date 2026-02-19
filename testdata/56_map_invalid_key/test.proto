@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package mapkey;
+
+message Config {
+  map<double, string> scores = 1;
+}
