@@ -721,4 +721,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Duplicate map field options** — `map<string,string> m = 1 [deprecated = true, deprecated = false];` — likely same bug
 - **Invalid syntax value** — TESTED in Run 79 (85_invalid_syntax), confirmed broken (no validation of syntax string)
 - **Invalid edition value** — `edition = "2025";` or `edition = "9999";` — Go has editionMap check but C++ might differ on unrecognized editions
-- **Boolean option with integer value** — `option java_multiple_files = 1;` — Go stores `false` (since `"1" != "true"`), C++ might accept or reject differently
+- **Boolean option with integer value** — TESTED in Run 80 (86_bool_option_int), confirmed broken (Go accepts, C++ rejects)
+
+### Run 80 — Boolean option with integer value (FAILED: 5/5 profiles)
+- **Test:** `86_bool_option_int` — proto3 file with `option java_multiple_files = 1;` (integer instead of boolean literal)
+- **Bug:** Go protoc-go silently accepts integer `1` for boolean option `java_multiple_files` and stores `false` (since `"1" != "true"`), producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:30: Value must be identifier for boolean option "google.protobuf.FileOptions.java_multiple_files".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1962` — `fd.Options.JavaMultipleFiles = proto.Bool(valTok.Value == "true")` accepts any token value and does a string comparison. No validation that the token is actually a boolean identifier (`true`/`false`). Integer tokens, string tokens, or any other token type are silently accepted and treated as `false`. C++ protoc's option parser validates that boolean options receive identifier tokens with value `true` or `false`. Same bug applies to ALL boolean file options (`cc_generic_services`, `java_generic_services`, `py_generic_services`, `deprecated`, `cc_enable_arenas`, `java_string_check_utf8`, etc.) and boolean message/field/enum/service/method options.
