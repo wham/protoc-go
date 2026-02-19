@@ -370,14 +370,29 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 			msg.Field = append(msg.Field, fields...)
 			oneofIdx++
 		case "map":
-			field, entry, err := p.parseMapField(path, fieldIdx, nestedMsgIdx)
-			if err != nil {
-				return nil, err
+			if p.tok.PeekAt(1).Value == "<" {
+				field, entry, err := p.parseMapField(path, fieldIdx, nestedMsgIdx)
+				if err != nil {
+					return nil, err
+				}
+				msg.Field = append(msg.Field, field)
+				msg.NestedType = append(msg.NestedType, entry)
+				fieldIdx++
+				nestedMsgIdx++
+			} else {
+				field, err := p.parseField(append(copyPath(path), 2, fieldIdx))
+				if err != nil {
+					return nil, err
+				}
+				if field.Proto3Optional != nil && *field.Proto3Optional {
+					syntheticOneofs = append(syntheticOneofs, syntheticOneof{
+						field: field,
+						name:  "_" + field.GetName(),
+					})
+				}
+				msg.Field = append(msg.Field, field)
+				fieldIdx++
 			}
-			msg.Field = append(msg.Field, field)
-			msg.NestedType = append(msg.NestedType, entry)
-			fieldIdx++
-			nestedMsgIdx++
 		case "reserved":
 			if err := p.parseMessageReserved(msg, path, &reservedRangeIdx, &reservedNameIdx); err != nil {
 				return nil, err

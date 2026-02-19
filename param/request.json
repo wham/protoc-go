@@ -2,6 +2,7 @@
   "fileToGenerate": [
     "test.proto"
   ],
+  "parameter": "param",
   "protoFile": [
     {
       "name": "test.proto",
