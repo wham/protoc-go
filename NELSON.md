@@ -477,6 +477,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go correctly detects the conflict and errors with `"UNKNOWN" is already defined in "enumscope".` (exit 1). However, C++ protoc emits TWO error lines: the same message PLUS a second line: `Note that enum values use C++ scoping rules, meaning that enum values are siblings of their type, not children of it. Therefore, "UNKNOWN" must be unique within "enumscope", not just within "Priority".` Go is missing this explanatory note. The test harness detects error message mismatch.
 - **Root cause:** `compiler/cli/cli.go` — the duplicate symbol validation emits only one error line. C++ protoc's `descriptor.cc` emits an additional explanatory note about C++ scoping rules for enum values. The Go implementation is missing this second diagnostic message.
 
+### Run 52 — Empty enum (FAILED: 5/5 profiles)
+- **Test:** `58_empty_enum` — proto3 file with `enum Status {}` (no enum values)
+- **Bug:** Go protoc-go silently accepts an empty enum and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:6: Enums must contain at least one value.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enums must have at least one value. The Go `descriptor/pool.go` is an empty stub with no enum value count validation. The parser accepts empty enum bodies without checking.
+
 ### Known gaps still unexplored (updated):
 - **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects
 - **Map field options source code info** — location ordering may differ from C++ protoc
@@ -502,3 +507,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Enum value scope conflict** — TESTED in Run 51 (57_enum_scope_conflict), confirmed broken (missing explanatory note)
 - **Duplicate field names across message and enum** — enum value `FOO` + field `FOO` in same scope may conflict differently
 - **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
+- **Empty enum** — TESTED in Run 52 (58_empty_enum), confirmed broken (Go accepts, C++ rejects)
+- **Empty oneof** — `oneof payload {}` — C++ may reject, Go likely accepts
+- **Duplicate syntax statements** — `syntax = "proto3"; syntax = "proto3";` — C++ rejects, Go likely accepts
