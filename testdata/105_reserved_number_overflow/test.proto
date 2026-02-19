@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package rsvdoverflow;
+
+message Config {
+  reserved 2147483648;
+  string name = 1;
+}

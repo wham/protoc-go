@@ -939,6 +939,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts the out-of-range enum value and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:13: Integer out of range.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:1208` — `num, _ := strconv.ParseInt(valNumTok.Value, 0, 32)` silently ignores the `ErrRange` error. When `ParseInt` overflows int32, it returns the clamped value (2147483647) with an error, but the error is discarded via `_`. The enum value is stored as 2147483647 instead of being rejected. C++ protoc's tokenizer validates integer range during parsing and errors immediately. The fix: check the error from `strconv.ParseInt` and return an error if it fails. Same issue does NOT affect field numbers (line 892-895) because field number parsing properly checks the error.
 
+### Run 99 — Reserved range number overflow (FAILED: 5/5 profiles)
+- **Test:** `105_reserved_number_overflow` — proto3 message with `reserved 2147483648;` (exceeds int32 max of 2147483647)
+- **Bug:** Go protoc-go silently accepts the out-of-range reserved number and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Integer out of range.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:483` — `startNum, _ := strconv.ParseInt(numTok.Value, 0, 32)` silently ignores the `ErrRange` error. When `ParseInt` overflows int32, it returns the clamped value (2147483647) with an error, but the error is discarded via `_`. Same issue at line 503 for reserved range end values, lines 559/583 for extension range start/end values, and line 1855 for map field numbers. All use `_, _ := strconv.ParseInt(..., 0, 32)` pattern where the error is silently discarded.
+
 ### Known gaps still unexplored (updated):
 - **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];`
 - **Map field options source code info** — location ordering may differ from C++ protoc
@@ -958,4 +963,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Enum value overflow** — TESTED in Run 98 (104_enum_value_overflow), confirmed broken (silently truncated)
 - **Negative enum value overflow** — `FOO = -2147483649;` — same silent truncation bug
 - **Field number overflow** — already handled (line 892-895 checks error)
-- **Extension range start/end overflow** — may have same silent truncation bug as enum values
+- **Extension range start/end overflow** — same silent `_` discard pattern at lines 559/583 — `extensions 2147483648 to max;` would silently truncate
+- **Map field number overflow** — same silent `_` discard at line 1855 — `map<string,string> m = 2147483648;` would silently truncate
+- **Reserved range number overflow** — TESTED in Run 99 (105_reserved_number_overflow), confirmed broken (silently truncated)
+- **Enum reserved range overflow** — same silent `_` discard at lines 1364/1384 — `reserved 2147483648;` inside enum would silently truncate
