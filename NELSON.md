@@ -472,6 +472,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts `double` as a map key type and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:3: Key in map fields cannot be float/double, bytes or message types.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:1672-1676` — `parseMapField` checks if the key type is in `builtinTypes` (which includes all 15 scalar types including `double`, `float`, and `bytes`), but never validates that the key type is actually allowed for map fields. C++ protoc validates in `descriptor.cc` that map keys can only be integral types (int32/int64/uint32/uint64/sint32/sint64/fixed32/fixed64/sfixed32/sfixed64), bool, or string — NOT double, float, or bytes. The Go parser accepts any builtin type as a map key without checking the restriction.
 
+### Run 51 — Enum value scope conflict missing note (FAILED: 5/5 profiles)
+- **Test:** `57_enum_scope_conflict` — proto3 file with two enums `Color` and `Priority` both defining `UNKNOWN = 0;` in the same package scope
+- **Bug:** Go protoc-go correctly detects the conflict and errors with `"UNKNOWN" is already defined in "enumscope".` (exit 1). However, C++ protoc emits TWO error lines: the same message PLUS a second line: `Note that enum values use C++ scoping rules, meaning that enum values are siblings of their type, not children of it. Therefore, "UNKNOWN" must be unique within "enumscope", not just within "Priority".` Go is missing this explanatory note. The test harness detects error message mismatch.
+- **Root cause:** `compiler/cli/cli.go` — the duplicate symbol validation emits only one error line. C++ protoc's `descriptor.cc` emits an additional explanatory note about C++ scoping rules for enum values. The Go implementation is missing this second diagnostic message.
+
 ### Known gaps still unexplored (updated):
 - **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects
 - **Map field options source code info** — location ordering may differ from C++ protoc
@@ -493,5 +498,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Extension number out of range** — extension using number outside declared range — C++ validates, Go likely doesn't
 - **Map key type `bytes`** — same issue as double, `map<bytes, string>` accepted by Go, rejected by C++
 - **Map key type `float`** — same issue
-- **Duplicate service names** — Go likely accepts, C++ rejects
-- **Duplicate enum value names** — Go likely accepts, C++ rejects
+- **Duplicate service names** — TESTED in Run 51 prep, both Go and C++ reject identically — NOT a gap
+- **Enum value scope conflict** — TESTED in Run 51 (57_enum_scope_conflict), confirmed broken (missing explanatory note)
+- **Duplicate field names across message and enum** — enum value `FOO` + field `FOO` in same scope may conflict differently
+- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
