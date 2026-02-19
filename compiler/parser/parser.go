@@ -749,6 +749,9 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 	case "deprecated":
 		msg.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 3
+	case "no_standard_descriptor_accessor":
+		msg.Options.NoStandardDescriptorAccessor = proto.Bool(valTok.Value == "true")
+		fieldNum = 2
 	default:
 		return nil
 	}
