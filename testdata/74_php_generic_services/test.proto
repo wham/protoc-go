@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package phpgen;
+
+option php_generic_services = true;
+
+message Request {
+  string name = 1;
+}
+
+service MyService {
+  rpc GetRequest(Request) returns (Request);
+}

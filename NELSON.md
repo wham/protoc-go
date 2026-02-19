@@ -611,6 +611,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts extend blocks in proto3 files and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:8: Extensions in proto3 are only allowed for defining options.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `validateProto3()` in `compiler/cli/cli.go:1046-1061` checks messages and enums for proto3 constraints but never checks `fd.GetExtension()` for file-level extend blocks. C++ protoc validates in `descriptor.cc` that extensions in proto3 files are only allowed for defining options (custom options that extend `google.protobuf.*Options`). The Go parser handles `extend` blocks syntactically but no post-parse validation catches proto3 extend usage.
 
+### Run 68 — Missing file option php_generic_services (FAILED: 5/5 profiles)
+- **Test:** `74_php_generic_services` — proto3 file with `option php_generic_services = true;` and a service with one RPC method
+- **Bug:** `parseFileOption()` switch at lines 1886-1949 doesn't have a case for `php_generic_services` (field 42 of FileOptions). The `default` case at line 1950-1952 does `return nil`, silently discarding the option. C++ protoc populates `FileOptions.php_generic_services = true`. Binary descriptor sizes differ (68 vs 40 bytes for plugin). SourceCodeInfo locations also differ — missing the option statement locations at paths `[8]` and `[8, 42]`.
+- **Root cause:** `parser.go:1886-1949` — `parseFileOption` switch handles 17 standard options but is missing `php_generic_services` (field 42). The default case silently drops any unrecognized option. Same pattern as Run 26 (`java_string_check_utf8`). Other potentially missing standard options: `java_generate_equals_and_hash` (field 20, deprecated).
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -627,10 +632,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
 - **String concatenation in service/method/enum option values** — same single-token bug as field defaults
 - **Missing service options** — only `deprecated` handled
-- **Duplicate field names across oneof/message** — field in oneof + field in message with same name
+- **Duplicate field names across oneof/message** — TESTED, both reject identically — NOT a gap
 - **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
 - **Type name spaces in map value types** — `map<string, pkg . Msg>` — same span bug
 - **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
 - **Float default normalization** — TESTED in Run 65 (71_float_precision), confirmed broken
 - **Proto3 extension ranges** — TESTED in Run 66 (72_proto3_extensions), confirmed broken (Go accepts, C++ rejects)
 - **Proto3 extend blocks** — TESTED in Run 67 (73_proto3_extend), confirmed broken (Go accepts, C++ rejects)
+- **Missing file options** — `php_generic_services` (field 42) TESTED in Run 68 (74_php_generic_services), confirmed broken. `java_generate_equals_and_hash` (field 20, deprecated) — untested
