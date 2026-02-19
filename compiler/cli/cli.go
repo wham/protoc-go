@@ -296,10 +296,13 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
-	// Build ordered list of FileDescriptorProtos
+	// Build ordered list of FileDescriptorProtos (stripped of source-retention options)
 	var protoFiles []*descriptorpb.FileDescriptorProto
+	strippedMap := make(map[string]*descriptorpb.FileDescriptorProto)
 	for _, name := range orderedFiles {
-		protoFiles = append(protoFiles, parsed[name])
+		stripped := stripSourceRetention(parsed[name])
+		protoFiles = append(protoFiles, stripped)
+		strippedMap[name] = stripped
 	}
 
 	// Handle descriptor set output
@@ -320,7 +323,7 @@ func Run(args []string) error {
 			}
 			for _, name := range orderedFiles {
 				if relFileSet[name] {
-					fdCopy := proto.Clone(parsed[name]).(*descriptorpb.FileDescriptorProto)
+					fdCopy := proto.Clone(strippedMap[name]).(*descriptorpb.FileDescriptorProto)
 					if !cfg.includeSourceInfo {
 						fdCopy.SourceCodeInfo = nil
 					}
@@ -1872,5 +1875,74 @@ func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, 
 		}
 	}
 	return 0, 0
+}
+
+// stripSourceRetention returns a copy of fd with source-retention-only options removed.
+// If the descriptor has no such options, returns the original to avoid cloning.
+func stripSourceRetention(fd *descriptorpb.FileDescriptorProto) *descriptorpb.FileDescriptorProto {
+	if !hasExtRangeOpts(fd.GetMessageType()) {
+		return fd
+	}
+	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
+	clearExtRangeOpts(fdCopy.GetMessageType())
+	if fdCopy.SourceCodeInfo != nil {
+		var filtered []*descriptorpb.SourceCodeInfo_Location
+		for _, loc := range fdCopy.SourceCodeInfo.Location {
+			if !isExtRangeOptsPath(loc.Path) {
+				filtered = append(filtered, loc)
+			}
+		}
+		fdCopy.SourceCodeInfo.Location = filtered
+	}
+	return fdCopy
+}
+
+func hasExtRangeOpts(msgs []*descriptorpb.DescriptorProto) bool {
+	for _, msg := range msgs {
+		for _, er := range msg.GetExtensionRange() {
+			if er.Options != nil {
+				return true
+			}
+		}
+		if hasExtRangeOpts(msg.GetNestedType()) {
+			return true
+		}
+	}
+	return false
+}
+
+func clearExtRangeOpts(msgs []*descriptorpb.DescriptorProto) {
+	for _, msg := range msgs {
+		for _, er := range msg.GetExtensionRange() {
+			if er.Options != nil {
+				er.Options.Verification = nil
+				er.Options.Declaration = nil
+				if proto.Size(er.Options) == 0 {
+					er.Options = nil
+				}
+			}
+		}
+		clearExtRangeOpts(msg.GetNestedType())
+	}
+}
+
+// isExtRangeOptsPath checks if a SCI path points to an extension range options field.
+// Pattern: 4, N, [3, N, ]*, 5, N, 3, [...]
+func isExtRangeOptsPath(path []int32) bool {
+	if len(path) < 5 || path[0] != 4 {
+		return false
+	}
+	i := 2
+	for i+2 < len(path) {
+		if path[i] == 5 && i+2 < len(path) && path[i+2] == 3 {
+			return true
+		}
+		if path[i] == 3 {
+			i += 2 // nested_type
+		} else {
+			return false
+		}
+	}
+	return false
 }
 

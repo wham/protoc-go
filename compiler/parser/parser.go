@@ -563,6 +563,7 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 	startTok := p.tok.Next() // consume "extensions"
 	stmtPath := append(copyPath(msgPath), 5) // field 5 = extension_range
 	startCount := *rangeIdx
+	locsBefore := len(p.locations)
 
 	for {
 		numTok, err := p.tok.ExpectInt()
@@ -627,16 +628,82 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 		}
 	}
 
+	// Parse extension range options [verification = UNVERIFIED, ...]
+	if p.tok.Peek().Value == "[" {
+		openTok := p.tok.Next() // consume "["
+		type extRangeOpt struct {
+			fieldNum int32
+			nameTok  tokenizer.Token
+			valTok   tokenizer.Token
+		}
+		var parsedOpts []extRangeOpt
+		for {
+			nameTok := p.tok.Next()
+			if _, err := p.tok.Expect("="); err != nil {
+				return err
+			}
+			if p.tok.Peek().Value == "{" {
+				// Skip message literal (e.g., declaration = { ... })
+				p.tok.Next()
+				depth := 1
+				for depth > 0 {
+					t := p.tok.Next()
+					if t.Value == "{" {
+						depth++
+					} else if t.Value == "}" {
+						depth--
+					}
+				}
+			} else {
+				valTok := p.tok.Next()
+				if nameTok.Value == "verification" {
+					var v descriptorpb.ExtensionRangeOptions_VerificationState
+					switch valTok.Value {
+					case "UNVERIFIED":
+						v = descriptorpb.ExtensionRangeOptions_UNVERIFIED
+					case "DECLARATION":
+						v = descriptorpb.ExtensionRangeOptions_DECLARATION
+					}
+					for i := startCount; i < *rangeIdx; i++ {
+						if msg.ExtensionRange[i].Options == nil {
+							msg.ExtensionRange[i].Options = &descriptorpb.ExtensionRangeOptions{}
+						}
+						msg.ExtensionRange[i].Options.Verification = &v
+					}
+					parsedOpts = append(parsedOpts, extRangeOpt{3, nameTok, valTok})
+				}
+			}
+			if p.tok.Peek().Value == "," {
+				p.tok.Next()
+			} else {
+				break
+			}
+		}
+		closeTok, err := p.tok.Expect("]")
+		if err != nil {
+			return err
+		}
+		// Add SCI for each range's options
+		for i := startCount; i < *rangeIdx; i++ {
+			rangePath := append(copyPath(stmtPath), i)
+			optsPath := append(copyPath(rangePath), 3) // field 3 = options
+			p.addLocationSpan(optsPath, openTok.Line, openTok.Column, closeTok.Line, closeTok.Column+1)
+			for _, opt := range parsedOpts {
+				optPath := append(copyPath(optsPath), opt.fieldNum)
+				p.addLocationSpan(optPath, opt.nameTok.Line, opt.nameTok.Column, opt.valTok.Line, opt.valTok.Column+len(opt.valTok.Value))
+			}
+		}
+	}
+
 	endTok, err := p.tok.Expect(";")
 	if err != nil {
 		return err
 	}
 	p.trackEnd(endTok)
 	p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
-	count := int(*rangeIdx - startCount)
 	stmtLoc := p.locations[len(p.locations)-1]
-	copy(p.locations[len(p.locations)-count*3:], p.locations[len(p.locations)-count*3-1:len(p.locations)-1])
-	p.locations[len(p.locations)-count*3-1] = stmtLoc
+	copy(p.locations[locsBefore+1:], p.locations[locsBefore:len(p.locations)-1])
+	p.locations[locsBefore] = stmtLoc
 
 	return nil
 }
