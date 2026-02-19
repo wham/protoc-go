@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package dupkg;
+
+package dupkg2;
+
+message Config {
+  string name = 1;
+  int32 value = 2;
+}

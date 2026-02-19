@@ -523,3 +523,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `61_duplicate_syntax` — proto3 file with two `syntax = "proto3";` statements followed by a package and message
 - **Bug:** Go protoc-go silently accepts duplicate syntax statements and produces a valid descriptor (exit 0). C++ protoc rejects the second `syntax` with: `test.proto:2:1: Expected top-level statement (e.g. "message").` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:54-57` — the `case "syntax"` in the file-level parser switch calls `parseSyntax()` every time, which just overwrites `p.syntax` and `fd.Syntax`. No flag tracks whether syntax has already been set. C++ protoc only allows `syntax` as the very first statement in a file — after it's been parsed, the parser no longer accepts it as a valid top-level statement.
+
+### Run 56 — Duplicate package statements (FAILED: 5/5 profiles)
+- **Test:** `62_duplicate_package` — proto3 file with `package dupkg;` followed by `package dupkg2;` then a message
+- **Bug:** Go protoc-go silently accepts duplicate package statements and produces a valid descriptor (exit 0). C++ protoc rejects the second `package` with: `test.proto:5:1: Expected top-level statement (e.g. "message").` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:69-72` — the `case "package"` in the file-level parser switch calls `parsePackage()` every time, which just overwrites `fd.Package` at line 209. No flag tracks whether package has already been set. C++ protoc only allows `package` before any definitions — after it and `syntax` are parsed, the parser no longer accepts them as valid top-level statements. Same pattern as the duplicate syntax bug (Run 55).
