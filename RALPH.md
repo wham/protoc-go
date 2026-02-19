@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 278/278 tests passing.
+ALL DONE — 283/283 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -110,6 +110,7 @@ ALL DONE — 278/278 tests passing.
 60. ✅ No-syntax files default to proto2 — initialize `p.syntax = "proto2"` so files without `syntax` declaration require labels on fields (matching C++ protoc default behavior)
 61. ✅ Reserved field name conflict validation — reject fields whose name appears in the message's `reserved` list with `Field name "X" is reserved.` error at field name location, recurses into nested messages
 62. ✅ Reserved field number conflict validation — reject fields whose number falls in the message's `reserved` ranges with `Field "X" uses reserved number N.` error + suggestion, location from reserved range start SCI path
+63. ✅ Map key type validation — reject float/double/bytes/message/group as map key types with `Key in map fields cannot be float/double, bytes or message types.` error at field span location
 
 ## Notes
 
@@ -173,3 +174,4 @@ ALL DONE — 278/278 tests passing.
 - Map-in-oneof validation: `map<K,V>` fields inside `oneof` blocks are rejected with `Map fields are not allowed in oneofs.` error. Detected in `parseOneof` using `PeekAt(1)` to check for `<` after `map`. Error position is at the `<` token (1-based line:col). Must consume `map` first to get the `<` token position.
 - Reserved field name conflict validation: C++ protoc rejects fields whose name appears in the message's `reserved_name` list. Error format: `filename:line:col: Field name "X" is reserved.` Location from SCI path `[msgPath..., 2, fieldIdx, 1]` (field 1=name). Validated in `validateReservedNameConflicts` (cli.go) with `collectReservedNameErrors` recursing into nested messages. Skips map entry types. Runs after duplicate field number validation.
 - Reserved field number conflict validation: C++ protoc rejects fields whose number falls in a message's `reserved_range`. Error format: `filename:line:col: Field "X" uses reserved number N.` followed by `Suggested field numbers for pkg.Msg: N`. IMPORTANT: location comes from the reserved range start SCI path `[msgPath..., 9, rangeIdx, 1]` (NOT the field number location). Uses `findReservedRangeStartLocation` in cli.go. Runs between duplicate field numbers and reserved name conflicts.
+- Map key type validation: C++ protoc rejects float/double/bytes/message/group as map key types. Error format: `filename:line:col: Key in map fields cannot be float/double, bytes or message types.` Location from the map field's SCI span start (path `[msgPath..., 2, fieldIdx]`). Validated in `validateMapKeyTypes` (cli.go) with `collectMapKeyTypeErrors` recursing into nested messages. Finds parent field by matching TypeName to map entry NestedType name.
