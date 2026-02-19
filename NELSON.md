@@ -155,3 +155,18 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fully qualified type names** (`.package.Type`) — TESTED in Run 16 (22_fqn_type), confirmed broken (parser can't handle leading `.` in type names)
 - **`extend` blocks** (proto2) — not handled in top-level parser (falls to default case, error)
 - **Enum reserved ranges** — TESTED in Run 15 (21_enum_reserved), confirmed broken (skipStatement'd at line 652)
+
+### Run 17 — Empty statements at file level (FAILED: 5/5 profiles)
+- **Test:** `23_empty_statement` — proto3 file with standalone `;` (empty statements) between declarations
+- **Bug:** Top-level parser switch at line 42-82 has no case for `";"`. The `;` token falls to the `default` case at line 80, which returns `unexpected token ";"`. C++ protoc treats standalone `;` as valid empty statements per the protobuf language spec (`emptyStatement = ";"`).
+- **Root cause:** `parser.go:42-82` — file-level parser switch only handles `syntax`, `package`, `import`, `message`, `enum`, `service`, `option`. No handling for empty statements. Same issue likely exists inside message bodies (line 211-273) and enum bodies.
+
+### Known gaps still unexplored (updated):
+- **Empty statements inside message/enum/service bodies** — likely also broken (same missing `;` case)
+- **Oneof options** — not tested (oneof-level options likely skipped at line 1253)
+- **`extend` blocks** (proto2/proto3 custom options) — not handled at file level
+- **Proto2 groups** — not implemented at all
+- **Proto2 default values** — parser crashes before reaching defaults
+- **String escape sequences** (`\n`, `\t`, `\x41`) — tokenizer at line 259-264 strips backslash but doesn't interpret escape codes (writes literal char after `\`)
+- **String concatenation** (adjacent string literals `"abc" "def"`) — parser only reads one string token for option values
+- **Trailing semicolons inside oneof bodies** — empty statements in oneof
