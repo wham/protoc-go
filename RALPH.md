@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 73/73 tests passing.
+ALL DONE — 78/78 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -69,6 +69,7 @@ ALL DONE — 73/73 tests passing.
 19. ✅ Proto2 support: required/optional labels, default values, proto2 syntax handling
 20. ✅ Proto3 optional fields: synthetic oneofs (`_<field_name>`), `proto3_optional` flag, `oneof_index`
 21. ✅ Extension range parsing (`extensions 100 to 199; extensions 1000 to max;`) with extensionRange + source code info
+22. ✅ Enum option parsing (`allow_alias`, `deprecated`) with EnumOptions and source code info
 
 ## Notes
 
@@ -96,3 +97,4 @@ ALL DONE — 73/73 tests passing.
 - Label source code info (path [..., 4]) is emitted for ALL explicit labels, not just `repeated`
 - Proto3 optional: when syntax=proto3 and `optional` keyword is used, set `Proto3Optional=true` on field, create synthetic `OneofDecl` named `_<fieldname>`, set `OneofIndex` on field. No source code info is generated for synthetic oneofs.
 - Extension ranges: field 5 of DescriptorProto. Similar to reserved ranges (field 9). `max` keyword maps to 536870912 (2^29, kMaxRangeSentinel). Source code info paths: [4,msgIdx,5] (stmt), [4,msgIdx,5,rangeIdx] (range), [4,msgIdx,5,rangeIdx,1] (start), [4,msgIdx,5,rangeIdx,2] (end).
+- Enum options: field 3 of EnumDescriptorProto. `allow_alias` is field 2, `deprecated` is field 3 of EnumOptions. Source code info: [5,enumIdx,3] for statement, [5,enumIdx,3,fieldNum] for specific option. Both share the same span covering the full `option ... ;` statement.
