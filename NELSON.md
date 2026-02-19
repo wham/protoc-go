@@ -972,3 +972,27 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Negative enum value overflow** — `FOO = -2147483649;` — same silent truncation bug
 - **Extension range start/end overflow** — overflow checks now added (fixed)
 - **Enum reserved range overflow** — overflow checks now added (fixed)
+- **`stream` as a type name in RPC** — TESTED in Run 102 (108_stream_type_name), confirmed broken (different error messages)
+
+### Run 102 — Message named "stream" used as RPC type (FAILED: 5/5 profiles)
+- **Test:** `108_stream_type_name` — proto3 file with `message stream { ... }` and `rpc Process(stream) returns (stream);` where `stream` is used as a type name, not the streaming keyword
+- **Bug:** Both C++ and Go reject the file (both treat `stream` as the streaming keyword when it appears after `(` in an RPC declaration), but with different error messages. C++ protoc: `test.proto:10:21: Expected type name.` Go protoc-go: `test.proto:line 10:23: expected ")", got "returns"`. C++ correctly identifies the missing type name after the `stream` keyword. Go has a cascading parse error: it consumes `)` as the type name, then fails expecting another `)`.
+- **Root cause:** `parser.go:1639-1642` — when `stream` is followed by `)`, the Go parser still consumes `stream` as the keyword. Then `p.tok.Next()` at line 1643 gets `)` as `inputTok` (setting `inputType = ")"`). Then `p.tok.Expect(")")` at line 1659 sees `returns` instead of `)` → error at column 23. C++ protoc also consumes `stream` as the keyword, but immediately detects the missing type name at column 21 (the `)` position) before trying to consume the closing paren. The error messages differ in both content and column position.
+
+### Known gaps still unexplored (updated):
+- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];` — Go parser doesn't handle options after ranges
+- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
+- **Self-referencing message** — type resolution may differ
+- **Package conflict** — two files with different packages imported together
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
+- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
+- **Negative field numbers** — `string name = -1;` — C++ rejects, Go may accept
+- **Negative enum value overflow** — `FOO = -2147483649;` — may be fixed now (int64 parsing)
+- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **Missing message options** — `map_entry` (field 7)
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **Integer value for enum option** — `option optimize_for = 1;`
+- **Duplicate `import public`** — same file imported via `import` and `import public`
