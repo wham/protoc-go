@@ -1693,8 +1693,23 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 	}
 	num, _ := strconv.ParseInt(numTok.Value, 0, 32)
 
+	// Build entry type name
+	entryName := toCamelCase(nameTok.Value) + "Entry"
+
+	// Create the field early so parseFieldOptions can set options on it
+	field := &descriptorpb.FieldDescriptorProto{
+		Name:     proto.String(nameTok.Value),
+		Number:   proto.Int32(int32(num)),
+		Label:    descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum(),
+		Type:     descriptorpb.FieldDescriptorProto_TYPE_MESSAGE.Enum(),
+		TypeName: proto.String(entryName),
+		JsonName: proto.String(tokenizer.ToJSONName(nameTok.Value)),
+	}
+
+	// Optional field options [deprecated = true, etc.]
+	var optionLocs []*descriptorpb.SourceCodeInfo_Location
 	if p.tok.Peek().Value == "[" {
-		p.skipBracketedOptions()
+		optionLocs = p.parseFieldOptions(field, fieldPath)
 	}
 
 	endTok, err := p.tok.Expect(";")
@@ -1702,9 +1717,6 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 		return nil, nil, err
 	}
 	p.trackEnd(endTok)
-
-	// Build entry type name
-	entryName := toCamelCase(nameTok.Value) + "Entry"
 
 	// Create synthetic entry message
 	entry := &descriptorpb.DescriptorProto{
@@ -1736,16 +1748,6 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 		entry.Field[1].Type = valType.Enum()
 	}
 
-	// The field itself references the entry type
-	field := &descriptorpb.FieldDescriptorProto{
-		Name:     proto.String(nameTok.Value),
-		Number:   proto.Int32(int32(num)),
-		Label:    descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum(),
-		Type:     descriptorpb.FieldDescriptorProto_TYPE_MESSAGE.Enum(),
-		TypeName: proto.String(entryName), // will be resolved later
-		JsonName: proto.String(tokenizer.ToJSONName(nameTok.Value)),
-	}
-
 	// Source code info
 	p.addLocationSpan(fieldPath, startLine, startCol, endTok.Line, endTok.Column+1)
 	p.addLocationSpan(append(copyPath(fieldPath), 6),
@@ -1754,6 +1756,9 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 	p.addLocationSpan(append(copyPath(fieldPath), 3),
 		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+
+	// Option source code info (after number, matching C++ order)
+	p.locations = append(p.locations, optionLocs...)
 
 	return field, entry, nil
 }
