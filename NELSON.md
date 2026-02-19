@@ -748,6 +748,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts a string literal for a boolean option and correctly sets `java_multiple_files = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:30: Value must be identifier for boolean option "google.protobuf.FileOptions.java_multiple_files".` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:1962-1966` — `validateBool` checks `valTok.Value != "true" && valTok.Value != "false"` but does NOT check `valTok.Type`. A TokenString with Value `"true"` (decoded content without quotes) passes the check. C++ protoc's parser uses `ConsumeIdentifier` for boolean values, which rejects string literal tokens. Same bug applies to ALL boolean options at every level (file, message, field, enum, service, method) — any quoted `"true"` or `"false"` would be accepted by Go but rejected by C++.
 
+### Run 85 — String literal for enum option (FAILED: 5/5 profiles)
+- **Test:** `91_string_enum_option` — proto3 file with `option optimize_for = "SPEED";` (string literal `"SPEED"` instead of identifier `SPEED`)
+- **Bug:** Go protoc-go silently accepts a string literal for the enum option `optimize_for` and correctly sets `OptimizeFor = SPEED`, producing a valid descriptor (exit 0). C++ protoc rejects with an error about expecting an identifier for enum-type options (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1987-1998` — the `optimize_for` case does `switch valTok.Value` which checks the decoded string content. A TokenString `"SPEED"` has `valTok.Value = "SPEED"` (decoded without quotes), so it matches the `case "SPEED"`. No check on `valTok.Type` to ensure it's an identifier token. C++ protoc uses `ConsumeIdentifier` for enum-typed options, rejecting string literal tokens. Same category as Run 84 (string for boolean), but here it affects enum-typed options.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -768,11 +773,10 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Duplicate idempotency_level** — same duplicate option pattern
 - **Duplicate map field options** — likely same bug
 - **Invalid edition value** — `edition = "2025"` — Go has editionMap check but C++ might differ
-- **Proto2 oneof fields** — TESTED in Run 82 (88_oneof_default), confirmed broken (label conflict makes proto2 oneofs unparseable)
-- **Proto2 oneof default values** — secondary bug behind the label issue (if label fix applied, default handling still differs)
-- **Duplicate imports** — TESTED in Run 83 (89_duplicate_import), confirmed broken (no dedup, Go accepts, C++ rejects)
-- **Duplicate `import public`** — same file imported as both `import` and `import public` — Go likely accepts
-- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope — Go likely doesn't validate
-- **String literal for boolean option** — TESTED in Run 84 (90_string_bool_option), confirmed broken (no token type check)
-- **String literal `"false"` for boolean** — same bug, Go would set option to false
-- **String literal for enum option** — `option optimize_for = "SPEED";` — Go would accept, C++ likely rejects
+- **Proto2 oneof fields** — TESTED in Run 82 (88_oneof_default), confirmed broken
+- **Duplicate imports** — TESTED in Run 83 (89_duplicate_import), confirmed broken
+- **String literal for boolean option** — TESTED in Run 84 (90_string_bool_option), confirmed broken
+- **String literal for enum option** — TESTED in Run 85 (91_string_enum_option), confirmed broken
+- **String literal for integer option** — `option optimize_for = "1";` or numeric options with string values
+- **Integer value for enum option** — `option optimize_for = 1;` — Go may accept, C++ rejects
+- **Duplicate `import public`** — same file imported as both `import` and `import public`

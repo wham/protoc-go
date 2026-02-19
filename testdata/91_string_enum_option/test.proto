@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package stropt;
+
+option optimize_for = "SPEED";
+
+message Request {
+  string query = 1;
+  int32 page_size = 2;
+}
