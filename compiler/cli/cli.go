@@ -264,6 +264,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate enum values don't use reserved names
+	if errs := validateEnumReservedNameConflicts(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate overlapping extension ranges within a message
 	if errs := validateExtensionRangeOverlaps(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -1597,6 +1602,52 @@ func collectEnumReservedValueConflictInMsg(filename string, msg *descriptorpb.De
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectEnumReservedValueConflictInMsg(filename, nested, nestedPath, sci, errs)
+	}
+}
+
+// validateEnumReservedNameConflicts checks that no enum value uses a reserved name.
+func validateEnumReservedNameConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		for i, enum := range fd.GetEnumType() {
+			collectEnumReservedNameConflictErrors(fd.GetName(), enum, []int32{5, int32(i)}, sci, &errs)
+		}
+		for i, msg := range fd.GetMessageType() {
+			collectEnumReservedNameConflictInMsg(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectEnumReservedNameConflictErrors(filename string, enum *descriptorpb.EnumDescriptorProto, enumPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	reserved := make(map[string]bool)
+	for _, rn := range enum.GetReservedName() {
+		reserved[rn] = true
+	}
+	for i, val := range enum.GetValue() {
+		if reserved[val.GetName()] {
+			// Location at the enum value name (field 1 of EnumValueDescriptorProto)
+			path := append(append([]int32{}, enumPath...), 2, int32(i), 1)
+			line, col := findLocationByPath(path, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Enum value \"%s\" is reserved.",
+				filename, line, col, val.GetName()))
+		}
+	}
+}
+
+func collectEnumReservedNameConflictInMsg(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, enum := range msg.GetEnumType() {
+		enumPath := append(append([]int32{}, msgPath...), 4, int32(i))
+		collectEnumReservedNameConflictErrors(filename, enum, enumPath, sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectEnumReservedNameConflictInMsg(filename, nested, nestedPath, sci, errs)
 	}
 }
 

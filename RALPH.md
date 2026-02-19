@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 493/493 tests passing.
+ALL DONE — 498/498 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -151,6 +151,7 @@ ALL DONE — 493/493 tests passing.
 101. ✅ Extension range / field number conflict validation — reject field numbers that fall within the message's declared extension ranges with `Extension range X to Y includes field "name" (N).` error at extension range start SCI location, plus suggested field number
 102. ✅ Reserved range overlap validation — reject overlapping reserved ranges within a message with `Reserved range X to Y overlaps with already-defined range A to B.` error at the already-defined range's start number SCI location (path `[4, msgIdx, 9, i, 1]`), same pattern as extension range overlap validation
 103. ✅ Enum reserved range overlap validation — reject overlapping reserved ranges within an enum with `Reserved range X to Y overlaps with already-defined range A to B.` error at already-defined range's start SCI location (path `[5, enumIdx, 4, i, 1]` for top-level, `[msgPath..., 4, enumIdx, 4, i, 1]` for nested), enum ranges have inclusive end (no -1 in display), recurses into nested messages
+104. ✅ Enum reserved value conflict validation — reject enum values whose number falls in a reserved range with `Enum value "NAME" uses reserved number N.` error at reserved range start SCI location (path `[enumPath..., 4, rangeIdx, 1]`), enum reserved ranges have inclusive end, handles both top-level and nested enums
 
 ## Notes
 
@@ -236,3 +237,4 @@ ALL DONE — 493/493 tests passing.
 - Extension range overlap validation: C++ protoc rejects overlapping extension ranges within a message. Error format: `filename:line:col: Extension range X to Y overlaps with already-defined range A to B.` Iterate i=0..n-1 (outer), j=i+1..n-1 (inner). Error text shows range j first ("Extension range") then range i ("already-defined range"). Location from SCI path `[4, msgIdx, 5, i, 1]` (the already-defined range's start, NOT the new range). End values displayed as `End-1` (user-visible inclusive). Validated in `validateExtensionRangeOverlaps` (cli.go) with `collectExtensionRangeOverlapErrors` recursing into nested messages.
 - Extension range / field number conflict validation: C++ protoc rejects fields whose numbers fall within the message's declared extension ranges. Error format: `filename:line:col: Extension range X to Y includes field "name" (N).` followed by `Suggested field numbers for pkg.Msg: N`. Location from SCI path `[4, msgIdx, 5, rangeIdx, 1]` (extension range start). End displayed as `End-1` (user-visible inclusive). Validated in `validateExtensionFieldConflicts` (cli.go) before extension range overlap checks. Recurses into nested messages, skips map entry types.
 - Reserved range overlap validation: C++ protoc rejects overlapping reserved ranges within a message. Error format: `filename:line:col: Reserved range X to Y overlaps with already-defined range A to B.` Same pattern as extension range overlaps — iterate i=0..n-1, j=i+1..n-1; error text shows range j ("Reserved range") then range i ("already-defined"); location from SCI path `[4, msgIdx, 9, i, 1]` (already-defined range's start). End values displayed as End-1 (inclusive). Validated in `validateReservedRangeOverlaps` (cli.go), called before extension range overlap validation. Recurses into nested messages, skips map entry types.
+- Enum reserved value conflict validation: C++ protoc rejects enum values whose number falls in a reserved range. Error format: `filename:line:col: Enum value "NAME" uses reserved number N.` Location from SCI path `[enumPath..., 4, rangeIdx, 1]` (reserved range start). Enum reserved ranges have inclusive end (start <= value <= end). Validated in `validateEnumReservedValueConflicts` (cli.go) with `collectEnumReservedValueConflictErrors` and `collectEnumReservedValueConflictInMsg` recursing into nested messages. Placed after enum reserved range overlap validation in the validation chain.
