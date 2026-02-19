@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package resnumconflict;
+
+message Config {
+  reserved 3, 5 to 10;
+  string name = 1;
+  int32 count = 3;
+}

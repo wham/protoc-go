@@ -454,10 +454,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts
 - **Reserved field name conflicts** — TESTED in Run 48 (54_reserved_name_conflict), confirmed broken (Go accepts, C++ rejects)
 - **Extension number out of range** — extension using number outside declared range — C++ validates, Go likely doesn't
-- **Reserved field number conflicts** — using a field number that's in a reserved range — C++ validates, Go likely doesn't
+- **Reserved field number conflicts** — TESTED in Run 49 (55_reserved_number_conflict), confirmed broken (Go accepts, C++ rejects)
 - **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects
 
 ### Run 48 — Reserved field name conflicts (FAILED: 5/5 profiles)
 - **Test:** `54_reserved_name_conflict` — proto3 message with `reserved "email", "phone";` and a field `string email = 2;` that uses a reserved name
 - **Bug:** Go protoc-go silently accepts a field whose name is declared as reserved and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:10: Field name "email" is reserved.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field names don't conflict with reserved names declared in the same message. The Go `descriptor/pool.go` is an empty stub with no reserved name checking. The parser stores both the reserved names and the conflicting field without any cross-validation.
+
+### Run 49 — Reserved field number conflicts (FAILED: 5/5 profiles)
+- **Test:** `55_reserved_number_conflict` — proto3 message with `reserved 3, 5 to 10;` and a field `int32 count = 3;` that uses a reserved number
+- **Bug:** Go protoc-go silently accepts a field whose number is declared as reserved and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Field "count" uses reserved number 3.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field numbers don't conflict with reserved ranges declared in the same message. The Go `descriptor/pool.go` is an empty stub with no reserved number checking. The parser stores both the reserved ranges and the conflicting field without any cross-validation.
