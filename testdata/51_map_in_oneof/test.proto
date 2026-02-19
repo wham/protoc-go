@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package maponeof;
+
+message Request {
+  oneof payload {
+    string text = 1;
+    map<string, string> metadata = 2;
+  }
+}
