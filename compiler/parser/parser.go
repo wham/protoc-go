@@ -1942,7 +1942,15 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			// Normalize float/double defaults to match C++ protoc (SimpleDtoa/SimpleFtoa)
 			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE ||
 				field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT {
-				if v, err := strconv.ParseFloat(defVal, 64); err == nil {
+				lower := strings.ToLower(defVal)
+				if lower == "inf" || lower == "-inf" || lower == "nan" || lower == "infinity" || lower == "-infinity" {
+					defVal = lower
+					if defVal == "infinity" {
+						defVal = "inf"
+					} else if defVal == "-infinity" {
+						defVal = "-inf"
+					}
+				} else if v, err := strconv.ParseFloat(defVal, 64); err == nil {
 					defVal = strconv.FormatFloat(v, 'g', -1, 64)
 				}
 			}

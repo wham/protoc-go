@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 193/193 tests passing.
+ALL DONE — 198/198 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -93,6 +93,7 @@ ALL DONE — 193/193 tests passing.
 43. ✅ Method `idempotency_level` option (`NO_SIDE_EFFECTS`, `IDEMPOTENT`, `IDEMPOTENCY_UNKNOWN`) with MethodOptions field 34 and source code info
 44. ✅ Oneof option validation — reject unknown options (e.g., `deprecated`) inside oneof blocks with matching C++ protoc error message
 45. ✅ Float literals starting with dot (`.5`, `.25`) — tokenizer `readFloatStartingWithDot`, plus default value normalization via `strconv.FormatFloat` to match C++ `SimpleDtoa`/`SimpleFtoa`
+46. ✅ Inf/NaN default values (`inf`, `-inf`, `nan`) — use lowercase C++ style instead of Go's `+Inf`/`NaN` formatting
 
 ## Notes
 
@@ -141,3 +142,4 @@ ALL DONE — 193/193 tests passing.
 - Nested extend blocks: `extend TypeName { fields... }` inside a message body creates entries in `msg.Extension` (field 6 of DescriptorProto), NOT `fd.Extension`. Source code info paths use `[4,msgIdx,6]` for the block, `[4,msgIdx,6,extIdx]` for each field. Type/extendee resolution handled in `resolveMessageFields`. Parsed by `parseNestedExtend` in parser.go.
 - Oneof options: `OneofOptions` in protoc v29.3 only has `features` (field 1) and `uninterpreted_option` (field 999). Standard options like `deprecated` are rejected with error: `Option "X" unknown. Ensure that your proto definition file imports the proto which defines the option.` Error is produced at parse time in `parseOneof`. CLI error wrapping uses `%s:%w` (no space) to match C++ format `filename:line:col: message`.
 - Float literals starting with `.` (e.g., `.5`, `.25`): tokenizer's `readFloatStartingWithDot` handles the `.digits[eE[+-]digits]` pattern. Default values for TYPE_DOUBLE/TYPE_FLOAT are normalized via `strconv.FormatFloat(v, 'g', -1, 64)` to match C++ `SimpleDtoa` behavior (`.5` → `0.5`, `1.0` → `1`).
+- Inf/NaN default values: C++ protoc uses lowercase `inf`, `-inf`, `nan`. Go's `strconv.FormatFloat` produces `+Inf`, `-Inf`, `NaN`. Special-case these before float normalization using `strings.ToLower` and matching `inf`/`-inf`/`nan`/`infinity`/`-infinity`.
