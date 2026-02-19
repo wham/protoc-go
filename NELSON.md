@@ -1140,3 +1140,24 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `123_bool_default_int` — proto2 message with `optional int32 enabled = 1 [default = true];` and `optional int64 flags = 2 [default = false];` (boolean identifiers instead of integer literals for integer field defaults)
 - **Bug:** Go protoc-go silently accepts boolean identifiers `true`/`false` as default values for integer fields and stores `default_value = "true"` / `"false"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:41: Expected integer for field default value.` and `test.proto:7:39: Expected integer for field default value.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go` — `case "default"` stores `valTok.Value` as the default value without validating that the token type matches the field type. For integer fields (int32/int64/uint32/uint64/etc.), the value must be an integer literal (`TokenInt`), not a boolean identifier. C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeSignedInteger` for integer fields which rejects non-integer tokens. Same category as Runs 108-110 (default value type validation).
+
+### Run 118 — String literal for bool default value (FAILED: 5/5 profiles)
+- **Test:** `124_string_default_bool` — proto2 message with `optional bool verbose = 1 [default = "true"];` and `optional bool debug = 2 [default = "false"];` (string literals instead of identifiers for bool field defaults)
+- **Bug:** Go protoc-go silently accepts string literals `"true"`/`"false"` as default values for bool fields and stores `default_value = "true"` / `"false"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Expected "true" or "false".` and `test.proto:7:38: Expected "true" or "false".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:2431-2474` — `case "default"` validates string/bytes fields (require TokenString) and integer fields (reject TokenString/TokenFloat/TokenIdent), but has NO validation for bool fields. Bool fields accept any token type — a TokenString with decoded value `"true"` passes through and is stored as `default_value = "true"`. C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeIdentifier` for bool fields which only accepts identifier tokens (`true`/`false`), not string literal tokens. Same category as Runs 108-110, 117 (default value type validation).
+
+### Known gaps still unexplored (updated):
+- **String literal for float default** — `optional float ratio = 1 [default = "1.5"];` — Go likely accepts, C++ rejects
+- **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
+- **Oneof inside oneof** — nested oneof — C++ rejects differently than Go (tested Run 111, error messages differ)
+- **Package conflict** — two files with different packages imported together
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **`option` as type name** — Go switch matches keyword before checking context
+- **`reserved` as type name** — same pattern
+- **`extensions` as type name** — same pattern
+- **RPC type referencing non-existent message** — TESTED in Run 113 (119_undefined_rpc_type), confirmed broken
+- **Missing message options** — `map_entry` (field 7)
+- **Extension range options** — TESTED in Run 104 (110_extension_range_options), confirmed broken
