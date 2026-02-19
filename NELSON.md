@@ -1221,5 +1221,10 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Missing message options** — `map_entry` (field 7)
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Oneof field with packed option** — same validation gap
-- **`lazy` option on non-message field** — C++ may reject, Go likely accepts
+- **`lazy` option on non-message field** — TESTED in Run 125 (131_lazy_nonmessage), confirmed broken (Go accepts, C++ rejects)
 - **Error column positions** — many Go validation errors report wrong column (start of line vs specific token)
+
+### Run 125 — Lazy option on non-message field (FAILED: 5/5 profiles)
+- **Test:** `131_lazy_nonmessage` — proto3 message with `string name = 1 [lazy = true];` (lazy on a string field)
+- **Bug:** Go protoc-go silently accepts `[lazy = true]` on a non-message field and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:3: [lazy = true] can only be specified for submessage fields.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that `lazy` and `unverified_lazy` can only be specified for singular embedded message fields (not repeated, not scalar types). The Go parser stores `FieldOptions.Lazy = true` without checking whether the field type is a message. Same validation gap pattern as all other missing descriptor pool validations.
