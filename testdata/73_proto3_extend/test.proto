@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package proto3ext;
+
+import "base.proto";
+
+extend Extendable {
+  string tag = 100;
+}
+
+message Wrapper {
+  string value = 1;
+}

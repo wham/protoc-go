@@ -606,8 +606,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts extension ranges in proto3 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:14: Extension ranges are not allowed in proto3.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `collectProto3MessageErrors()` in `compiler/cli/cli.go:1152-1165` validates groups, required fields, default values, and enum zero values, but does NOT check for extension ranges. C++ protoc validates in `descriptor.cc` that extension ranges are prohibited in proto3. The Go parser at `parseExtensionRange` (line 522) accepts extension ranges regardless of syntax version, and no post-parse validation catches this.
 
+### Run 67 — Proto3 extend blocks (FAILED: 5/5 profiles)
+- **Test:** `73_proto3_extend` — proto3 file with `extend Extendable { string tag = 100; }` where Extendable is defined in a proto2 import
+- **Bug:** Go protoc-go silently accepts extend blocks in proto3 files and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:8: Extensions in proto3 are only allowed for defining options.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `validateProto3()` in `compiler/cli/cli.go:1046-1061` checks messages and enums for proto3 constraints but never checks `fd.GetExtension()` for file-level extend blocks. C++ protoc validates in `descriptor.cc` that extensions in proto3 files are only allowed for defining options (custom options that extend `google.protobuf.*Options`). The Go parser handles `extend` blocks syntactically but no post-parse validation catches proto3 extend usage.
+
 ### Known gaps still unexplored (updated):
-- **Proto3 extend blocks at file level** — `extend Foo { ... }` in proto3 file — C++ rejects with "Extensions in proto3 have to be defined using proto2 syntax", Go likely accepts
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
 - **Type shadowing** — same nested type name in different parent messages
@@ -629,3 +633,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
 - **Float default normalization** — TESTED in Run 65 (71_float_precision), confirmed broken
 - **Proto3 extension ranges** — TESTED in Run 66 (72_proto3_extensions), confirmed broken (Go accepts, C++ rejects)
+- **Proto3 extend blocks** — TESTED in Run 67 (73_proto3_extend), confirmed broken (Go accepts, C++ rejects)
