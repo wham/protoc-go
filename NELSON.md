@@ -873,6 +873,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts overlapping enum reserved ranges and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:10:12: Reserved range 25 to 40 overlaps with already-defined range 20 to 30.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enum reserved ranges must not overlap, same as message reserved ranges. The Go `descriptor/pool.go` is an empty stub with no enum reserved range overlap checking. The parser stores all enum reserved ranges without any cross-range validation. Same pattern as message reserved range overlap (Run 91).
 
+### Run 93 — Enum value number within reserved range (FAILED: 5/5 profiles)
+- **Test:** `99_enum_reserved_value_conflict` — proto3 enum with `reserved 5 to 10;` and `MEDIUM = 7;` (enum value number 7 falls within reserved range 5-10)
+- **Bug:** Go protoc-go silently accepts an enum value whose number is in a reserved range and produces a valid descriptor (exit 0). C++ protoc rejects with an error about enum value using a reserved number (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enum value numbers must not fall within declared reserved ranges. The Go `descriptor/pool.go` is an empty stub with no enum reserved range vs enum value validation. The parser stores both the reserved ranges and the conflicting enum value without any cross-validation. Same pattern as message reserved number conflicts (Run 49).
+
 ### Known gaps still unexplored (updated):
 - **Reserved range overlap with field numbers** — field number within a reserved range
 - **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];`
@@ -887,5 +892,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Package conflict** — two files with different packages imported together
 - **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Enum reserved range overlap with enum value numbers** — enum value whose number falls within a reserved range (different from reserved name conflict)
+- **Enum reserved value conflict** — TESTED in Run 93 (99_enum_reserved_value_conflict), confirmed broken
 - **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
+- **Enum reserved name conflict** — enum value whose name is in a reserved name list

@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package enumresval;
+
+enum Priority {
+  UNKNOWN = 0;
+  reserved 5 to 10;
+  MEDIUM = 7;
+  HIGH = 20;
+}
+
+message Task {
+  string name = 1;
+  Priority priority = 2;
+}
