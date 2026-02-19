@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 483/483 tests passing.
+ALL DONE — 488/488 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -149,6 +149,7 @@ ALL DONE — 483/483 tests passing.
 99. ✅ JSON name string validation — reject non-string values for `json_name` field option with `Expected string for JSON name.` error at value token position
 100. ✅ Extension range overlap validation — reject overlapping extension ranges within a message with `Extension range X to Y overlaps with already-defined range A to B.` error at the already-defined range's start number SCI location
 101. ✅ Extension range / field number conflict validation — reject field numbers that fall within the message's declared extension ranges with `Extension range X to Y includes field "name" (N).` error at extension range start SCI location, plus suggested field number
+102. ✅ Reserved range overlap validation — reject overlapping reserved ranges within a message with `Reserved range X to Y overlaps with already-defined range A to B.` error at the already-defined range's start number SCI location (path `[4, msgIdx, 9, i, 1]`), same pattern as extension range overlap validation
 
 ## Notes
 
@@ -233,3 +234,4 @@ ALL DONE — 483/483 tests passing.
 - String file option validation: string-typed file options (java_package, java_outer_classname, go_package, php_namespace, php_class_prefix, php_metadata_namespace, ruby_package, objc_class_prefix, csharp_namespace, swift_prefix) must use quoted string values (TokenString). Reject integers/identifiers with `Value must be quoted string for string option "google.protobuf.FileOptions.X".` at value token position. Uses `validateString` helper in `parseFileOption` — checks `valTok.Type == TokenString`.
 - Extension range overlap validation: C++ protoc rejects overlapping extension ranges within a message. Error format: `filename:line:col: Extension range X to Y overlaps with already-defined range A to B.` Iterate i=0..n-1 (outer), j=i+1..n-1 (inner). Error text shows range j first ("Extension range") then range i ("already-defined range"). Location from SCI path `[4, msgIdx, 5, i, 1]` (the already-defined range's start, NOT the new range). End values displayed as `End-1` (user-visible inclusive). Validated in `validateExtensionRangeOverlaps` (cli.go) with `collectExtensionRangeOverlapErrors` recursing into nested messages.
 - Extension range / field number conflict validation: C++ protoc rejects fields whose numbers fall within the message's declared extension ranges. Error format: `filename:line:col: Extension range X to Y includes field "name" (N).` followed by `Suggested field numbers for pkg.Msg: N`. Location from SCI path `[4, msgIdx, 5, rangeIdx, 1]` (extension range start). End displayed as `End-1` (user-visible inclusive). Validated in `validateExtensionFieldConflicts` (cli.go) before extension range overlap checks. Recurses into nested messages, skips map entry types.
+- Reserved range overlap validation: C++ protoc rejects overlapping reserved ranges within a message. Error format: `filename:line:col: Reserved range X to Y overlaps with already-defined range A to B.` Same pattern as extension range overlaps — iterate i=0..n-1, j=i+1..n-1; error text shows range j ("Reserved range") then range i ("already-defined"); location from SCI path `[4, msgIdx, 9, i, 1]` (already-defined range's start). End values displayed as End-1 (inclusive). Validated in `validateReservedRangeOverlaps` (cli.go), called before extension range overlap validation. Recurses into nested messages, skips map entry types.
