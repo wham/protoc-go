@@ -161,12 +161,19 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Top-level parser switch at line 42-82 has no case for `";"`. The `;` token falls to the `default` case at line 80, which returns `unexpected token ";"`. C++ protoc treats standalone `;` as valid empty statements per the protobuf language spec (`emptyStatement = ";"`).
 - **Root cause:** `parser.go:42-82` — file-level parser switch only handles `syntax`, `package`, `import`, `message`, `enum`, `service`, `option`. No handling for empty statements. Same issue likely exists inside message bodies (line 211-273) and enum bodies.
 
+### Run 18 — Empty statements inside message/enum/service bodies (FAILED: 5/5 profiles)
+- **Test:** `24_empty_stmt_body` — proto3 file with `;` inside message body, enum body, and service body
+- **Bug:** Message body parser (lines 214-277) has no `case ";"`. The `;` falls to the `default` case at line 261, which calls `parseField()`. `parseField` tries to interpret `;` as a type name and fails. C++ protoc allows empty statements inside all body types per the language spec (`emptyStatement = ";"`).
+- **Root cause:** `parser.go:214-277` — message body switch handles `message`, `enum`, `oneof`, `map`, `reserved`, `option`, `extensions` but not `";"`. Same issue in enum body and service body parsers. File-level fix (Run 17, line 80-82) was not applied to inner body parsers.
+
 ### Known gaps still unexplored (updated):
-- **Empty statements inside message/enum/service bodies** — likely also broken (same missing `;` case)
-- **Oneof options** — not tested (oneof-level options likely skipped at line 1253)
+- **Empty statements inside oneof bodies** — likely also broken (same missing `;` case in parseOneof)
+- **Oneof options** — not tested (oneof-level options likely skipped at line 1256-1260)
 - **`extend` blocks** (proto2/proto3 custom options) — not handled at file level
 - **Proto2 groups** — not implemented at all
 - **Proto2 default values** — parser crashes before reaching defaults
 - **String escape sequences** (`\n`, `\t`, `\x41`) — tokenizer at line 259-264 strips backslash but doesn't interpret escape codes (writes literal char after `\`)
 - **String concatenation** (adjacent string literals `"abc" "def"`) — parser only reads one string token for option values
-- **Trailing semicolons inside oneof bodies** — empty statements in oneof
+- **Map field with enum value type** — `map<string, SomeEnum>` might resolve to TYPE_MESSAGE instead of TYPE_ENUM in the synthetic entry
+- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
+- **Type shadowing** — same nested type name in different parent messages
