@@ -253,18 +253,25 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:42-88` — file-level parser switch only handles `syntax`, `package`, `import`, `message`, `enum`, `service`, `option`, `extend`, `";"`. No handling for `edition` keyword. Editions require: parsing `edition = "2023";`, setting `fd.Edition` field, and resolving feature defaults for the edition. Go protoc-go has zero edition support.
 - **Also:** Updated `protoc-gen-dump` to advertise `FEATURE_SUPPORTS_EDITIONS` with `minimum_edition = EDITION_PROTO2` and `maximum_edition = EDITION_2023` so C++ protoc sends edition files to the dump plugin.
 
+### Run 30 — Method idempotency_level option (FAILED: 5/5 profiles)
+- **Test:** `36_idempotency_level` — proto3 service with two methods using `option idempotency_level = NO_SIDE_EFFECTS;` and `option idempotency_level = IDEMPOTENT;`
+- **Bug:** `parseMethodOption()` at lines 1421-1427 only handles `deprecated` in its switch. The `default` case at line 1425-1426 does `return nil`, silently discarding `idempotency_level` (field 34 of MethodOptions). C++ protoc populates `MethodOptions.idempotency_level` with the enum value. Go produces 33 SourceCodeInfo locations vs C++ protoc's 37 — the 4 missing locations are for the two option statements (2 locations each: option container path + specific field path).
+- **Root cause:** `parser.go:1421-1427` — `parseMethodOption` switch only handles `deprecated`. `idempotency_level` (and any other method option) hits the `default` case and is silently dropped. Same pattern as `parseMessageOption` (only handles `deprecated`), `parseServiceOption` (only handles `deprecated`).
+
 ### Known gaps still unexplored (updated):
 - **Empty statements inside oneof bodies** — C++ protoc also rejects these, so NOT a valid test (tested and discarded in Run 29)
-- **Oneof options** — not tested (oneof-level options likely skipped at line 1553-1557)
+- **Oneof options** — not tested (oneof-level options likely skipped at line 1593-1597)
 - **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
 - **Map field with enum value type** — tested in Run 29 prep, passes (type resolution works correctly)
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth
 - **Type shadowing** — same nested type name in different parent messages
 - **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
 - **Other missing file options** — `java_generate_equals_and_hash` (20, deprecated), any other standard options not in the switch
-- **Missing message/enum/service/method options** — similar pattern: only a few built-in options are in each switch
+- **Missing message options** — `message_set_wire_format` (field 1), `no_standard_descriptor_accessor` (field 2), `map_entry` (field 7) — only `deprecated` handled
 - **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
 - **`extend` inside oneof** — proto2 allows group/extend inside oneof, same issues
 - **Hex/octal escape in strings** — `\x48\x65` or `\110\145` — span computation even more wrong
 - **String default with multiple escapes** — each escape adds 1 char discrepancy, accumulating error
 - **Edition features** — `edition = "2023"` with feature overrides on fields/messages/enums
+- **Enum options beyond allow_alias** — `deprecated` on enum (field 3 of EnumOptions) — check if handled
+- **Field option `unverified_lazy`** (field 15), `debug_redact` (field 16) — not in parseFieldOptions switch

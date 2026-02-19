@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package idempotency;
+
+message GetRequest {
+  string id = 1;
+}
+
+message GetResponse {
+  string name = 1;
+}
+
+message DeleteRequest {
+  string id = 1;
+}
+
+message DeleteResponse {}
+
+service ItemService {
+  rpc GetItem(GetRequest) returns (GetResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  rpc DeleteItem(DeleteRequest) returns (DeleteResponse) {
+    option idempotency_level = IDEMPOTENT;
+  }
+}
