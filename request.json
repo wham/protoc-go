@@ -5,32 +5,24 @@
   "protoFile": [
     {
       "name": "test.proto",
-      "package": "oneofdefault",
+      "package": "jsonconflict",
       "messageType": [
         {
-          "name": "Request",
+          "name": "User",
           "field": [
             {
-              "name": "name",
+              "name": "foo_bar",
               "number": 1,
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
-              "defaultValue": "hello",
-              "oneofIndex": 0,
-              "jsonName": "name"
+              "jsonName": "fooBar"
             },
             {
-              "name": "count",
+              "name": "fooBar",
               "number": 2,
               "label": "LABEL_OPTIONAL",
-              "type": "TYPE_INT32",
-              "oneofIndex": 0,
-              "jsonName": "count"
-            }
-          ],
-          "oneofDecl": [
-            {
-              "name": "payload"
+              "type": "TYPE_STRING",
+              "jsonName": "fooBar"
             }
           ]
         }
@@ -41,7 +33,7 @@
             "span": [
               0,
               0,
-              9,
+              7,
               1
             ]
           },
@@ -73,7 +65,7 @@
             "span": [
               4,
               0,
-              9,
+              7,
               1
             ]
           },
@@ -86,35 +78,7 @@
             "span": [
               4,
               8,
-              15
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              8,
-              0
-            ],
-            "span": [
-              5,
-              2,
-              8,
-              3
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              8,
-              0,
-              1
-            ],
-            "span": [
-              5,
-              8,
-              15
+              12
             ]
           },
           {
@@ -125,9 +89,9 @@
               0
             ],
             "span": [
-              6,
-              4,
-              40
+              5,
+              2,
+              21
             ]
           },
           {
@@ -139,9 +103,9 @@
               5
             ],
             "span": [
-              6,
-              4,
-              10
+              5,
+              2,
+              8
             ]
           },
           {
@@ -153,9 +117,9 @@
               1
             ],
             "span": [
-              6,
-              11,
-              15
+              5,
+              9,
+              16
             ]
           },
           {
@@ -167,37 +131,9 @@
               3
             ],
             "span": [
-              6,
-              18,
-              19
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              8
-            ],
-            "span": [
-              6,
-              20,
-              39
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              7
-            ],
-            "span": [
-              6,
-              31,
-              38
+              5,
+              19,
+              20
             ]
           },
           {
@@ -208,8 +144,8 @@
               1
             ],
             "span": [
-              7,
-              4,
+              6,
+              2,
               20
             ]
           },
@@ -222,9 +158,9 @@
               5
             ],
             "span": [
-              7,
-              4,
-              9
+              6,
+              2,
+              8
             ]
           },
           {
@@ -236,8 +172,8 @@
               1
             ],
             "span": [
-              7,
-              10,
+              6,
+              9,
               15
             ]
           },
@@ -250,44 +186,37 @@
               3
             ],
             "span": [
-              7,
+              6,
               18,
               19
             ]
           }
         ]
-      }
+      },
+      "syntax": "proto3"
     }
   ],
   "sourceFileDescriptors": [
     {
       "name": "test.proto",
-      "package": "oneofdefault",
+      "package": "jsonconflict",
       "messageType": [
         {
-          "name": "Request",
+          "name": "User",
           "field": [
             {
-              "name": "name",
+              "name": "foo_bar",
               "number": 1,
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
-              "defaultValue": "hello",
-              "oneofIndex": 0,
-              "jsonName": "name"
+              "jsonName": "fooBar"
             },
             {
-              "name": "count",
+              "name": "fooBar",
               "number": 2,
               "label": "LABEL_OPTIONAL",
-              "type": "TYPE_INT32",
-              "oneofIndex": 0,
-              "jsonName": "count"
-            }
-          ],
-          "oneofDecl": [
-            {
-              "name": "payload"
+              "type": "TYPE_STRING",
+              "jsonName": "fooBar"
             }
           ]
         }
@@ -298,7 +227,7 @@
             "span": [
               0,
               0,
-              9,
+              7,
               1
             ]
           },
@@ -330,7 +259,7 @@
             "span": [
               4,
               0,
-              9,
+              7,
               1
             ]
           },
@@ -343,35 +272,7 @@
             "span": [
               4,
               8,
-              15
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              8,
-              0
-            ],
-            "span": [
-              5,
-              2,
-              8,
-              3
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              8,
-              0,
-              1
-            ],
-            "span": [
-              5,
-              8,
-              15
+              12
             ]
           },
           {
@@ -382,9 +283,9 @@
               0
             ],
             "span": [
-              6,
-              4,
-              40
+              5,
+              2,
+              21
             ]
           },
           {
@@ -396,9 +297,9 @@
               5
             ],
             "span": [
-              6,
-              4,
-              10
+              5,
+              2,
+              8
             ]
           },
           {
@@ -410,9 +311,9 @@
               1
             ],
             "span": [
-              6,
-              11,
-              15
+              5,
+              9,
+              16
             ]
           },
           {
@@ -424,37 +325,9 @@
               3
             ],
             "span": [
-              6,
-              18,
-              19
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              8
-            ],
-            "span": [
-              6,
-              20,
-              39
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              7
-            ],
-            "span": [
-              6,
-              31,
-              38
+              5,
+              19,
+              20
             ]
           },
           {
@@ -465,8 +338,8 @@
               1
             ],
             "span": [
-              7,
-              4,
+              6,
+              2,
               20
             ]
           },
@@ -479,9 +352,9 @@
               5
             ],
             "span": [
-              7,
-              4,
-              9
+              6,
+              2,
+              8
             ]
           },
           {
@@ -493,8 +366,8 @@
               1
             ],
             "span": [
-              7,
-              10,
+              6,
+              9,
               15
             ]
           },
@@ -507,13 +380,14 @@
               3
             ],
             "span": [
-              7,
+              6,
               18,
               19
             ]
           }
         ]
-      }
+      },
+      "syntax": "proto3"
     }
   ],
   "compilerVersion": {

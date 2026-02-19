@@ -249,6 +249,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate JSON name conflicts
+	if errs := validateJsonNameConflicts(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate proto3 constraints
 	if errs := validateProto3(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -1044,6 +1049,42 @@ func nextAvailableEnumValue(e *descriptorpb.EnumDescriptorProto) int32 {
 		if !used[i] {
 			return i
 		}
+	}
+}
+
+// validateJsonNameConflicts checks that no two fields in a message have conflicting default JSON names.
+func validateJsonNameConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for i, msg := range fd.GetMessageType() {
+			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+	}
+	return errs
+}
+
+func collectJsonNameConflictErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	// Map default JSON name -> first field name
+	seen := make(map[string]string)
+	for i, field := range msg.GetField() {
+		jsonName := field.GetJsonName()
+		if firstName, ok := seen[jsonName]; ok {
+			// Find location of the second field's name
+			namePath := append(append([]int32{}, msgPath...), 2, int32(i), 1)
+			line, col := findLocationByPath(namePath, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: The default JSON name of field \"%s\" (\"%s\") conflicts with the default JSON name of field \"%s\".",
+				filename, line, col, field.GetName(), jsonName, firstName))
+		} else {
+			seen[jsonName] = field.GetName()
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectJsonNameConflictErrors(filename, nested, nestedPath, sci, errs)
 	}
 }
 
