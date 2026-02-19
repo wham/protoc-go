@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 433/433 tests passing.
+ALL DONE — 438/438 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -140,6 +140,7 @@ ALL DONE — 433/433 tests passing.
 90. ✅ Duplicate enum value option validation — reject duplicate options within enum value option brackets (e.g., `HIGH = 1 [deprecated = true, deprecated = false]`) with `Option "X" was already set.` error at option name position, using per-value `seenEnumValOpts` map
 91. ✅ Invalid syntax identifier validation — reject unrecognized syntax values (e.g., `syntax = "proto4"`) with `Unrecognized syntax identifier "X".  This parser only recognizes "proto2" and "proto3".` error at syntax value token position
 92. ✅ Boolean file option validation — reject non-identifier values (e.g., `option java_multiple_files = 1;`) for boolean file options with `Value must be identifier for boolean option "google.protobuf.FileOptions.X".` error at value token position
+93. ✅ Extension range validation — reject extension field numbers outside declared extension ranges with `"pkg.Msg" does not declare N as an extension number.` error at field number SCI location, checks both file-level and message-level extensions
 
 ## Notes
 
@@ -218,3 +219,4 @@ ALL DONE — 433/433 tests passing.
 - Duplicate method option validation: parser tracks `seenMethodOptions` map per method (created in method body parsing loop). When a method option name is encountered a second time, returns `Option "X" was already set.` error at the option name token position (1-indexed line:col). Passed to `parseMethodOption` same pattern as service/enum/field/message options.
 - Proto3 optional synthetic oneof ordering: declared oneofs are placed before synthetic oneofs in OneofDecl by deferring synthetic oneof creation until after message body parsing completes. This matches C++ protoc behavior where declared oneof blocks get lower indices than synthetic oneofs from proto3 optional fields.
 - Boolean file option validation: boolean file options (java_multiple_files, cc_generic_services, java_generic_services, py_generic_services, deprecated, java_string_check_utf8, cc_enable_arenas) must use identifier values (`true`/`false`), not integers (`0`/`1`). Error: `Value must be identifier for boolean option "google.protobuf.FileOptions.X".` at value token position. Uses `validateBool` helper in `parseFileOption`.
+- Extension range validation: extension field numbers must fall within the extendee message's declared extension ranges. Error format: `filename:line:col: "pkg.Msg" does not declare N as an extension number.` Location from SCI path for field number: `[7, extIdx, 3]` for file-level, `[msgPath..., 6, extIdx, 3]` for message-level. `validateExtensionRanges` in cli.go builds a map of message FQN → extension ranges from all files, then checks each extension field. `isInExtensionRange` checks if a number falls within any range (Start inclusive, End exclusive).

@@ -244,6 +244,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate extension field numbers are within declared extension ranges
+	if errs := validateExtensionRanges(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate proto3 constraints
 	if errs := validateProto3(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -1346,6 +1351,83 @@ func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgP
 		oFQN := msgFQN + "." + oneof.GetName()
 		// C++ protoc omits line:col for duplicate oneof names
 		check(oFQN, oneof.GetName(), msgFQN, 0, 0, "")
+	}
+}
+
+// validateExtensionRanges checks that extension field numbers fall within
+// the extendee message's declared extension ranges.
+func validateExtensionRanges(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	// Build map of message FQN -> extension ranges
+	msgRanges := map[string][]*descriptorpb.DescriptorProto_ExtensionRange{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		for _, msg := range fd.GetMessageType() {
+			collectExtensionRanges(msg, pkg, msgRanges)
+		}
+	}
+
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		// File-level extensions
+		for i, ext := range fd.GetExtension() {
+			extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+			ranges := msgRanges[extendee]
+			if !isInExtensionRange(ext.GetNumber(), ranges) {
+				line, col := findLocationByPath([]int32{7, int32(i), 3}, sci)
+				errs = append(errs, fmt.Sprintf("%s:%d:%d: \"%s\" does not declare %d as an extension number.",
+					fd.GetName(), line, col, extendee, ext.GetNumber()))
+			}
+		}
+		// Message-level extensions
+		for i, msg := range fd.GetMessageType() {
+			collectExtensionRangeErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, msgRanges, &errs)
+		}
+	}
+	return errs
+}
+
+func collectExtensionRanges(msg *descriptorpb.DescriptorProto, prefix string, out map[string][]*descriptorpb.DescriptorProto_ExtensionRange) {
+	fqn := msg.GetName()
+	if prefix != "" {
+		fqn = prefix + "." + fqn
+	}
+	if len(msg.GetExtensionRange()) > 0 {
+		out[fqn] = msg.GetExtensionRange()
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectExtensionRanges(nested, fqn, out)
+	}
+}
+
+func isInExtensionRange(number int32, ranges []*descriptorpb.DescriptorProto_ExtensionRange) bool {
+	for _, r := range ranges {
+		if number >= r.GetStart() && number < r.GetEnd() {
+			return true
+		}
+	}
+	return false
+}
+
+func collectExtensionRangeErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, msgRanges map[string][]*descriptorpb.DescriptorProto_ExtensionRange, errs *[]string) {
+	for i, ext := range msg.GetExtension() {
+		extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+		ranges := msgRanges[extendee]
+		if !isInExtensionRange(ext.GetNumber(), ranges) {
+			path := append(append([]int32{}, msgPath...), 6, int32(i), 3)
+			line, col := findLocationByPath(path, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: \"%s\" does not declare %d as an extension number.",
+				filename, line, col, extendee, ext.GetNumber()))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectExtensionRangeErrors(filename, nested, nestedPath, sci, msgRanges, errs)
 	}
 }
 
