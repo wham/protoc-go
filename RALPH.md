@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 48/48 tests passing.
+ALL DONE — 53/53 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -64,6 +64,7 @@ ALL DONE — 48/48 tests passing.
 14. ✅ Reserved field/name parsing in messages (reserved ranges + reserved names with source code info)
 15. ✅ Streaming RPC support (client_streaming/server_streaming flags + source code info)
 16. ✅ File-level option parsing (java_package, java_outer_classname, go_package, optimize_for, cc_enable_arenas, etc.) with source code info
+17. ✅ Field option parsing (deprecated, packed, json_name, etc.) with proper FieldOptions and source code info
 
 ## Notes
 
@@ -79,4 +80,8 @@ ALL DONE — 48/48 tests passing.
 - protoc-gen-dump clears parameter field before writing summary.txt and request.pb (avoids path differences)
 - Source code info ordering: use placeholder-then-update pattern so container spans come before children
 - compiler_version: major=5, minor=29, patch=3
-- Go binary hardcodes "protoc" in usage text to match C++ protoc argv[0]
+- Field options (deprecated, packed, json_name, etc.) are parsed by `parseFieldOptions` in parser.go
+- Field options source code info is deferred and appended after field number span to match C++ ordering
+- The tokenizer strips quotes from strings, so string option values need +2 for column end calculation
+- FieldOptions field numbers: ctype=1, packed=2, deprecated=3, lazy=5, jstype=6
+- json_name is field 10 of FieldDescriptorProto (NOT FieldOptions) and gets TWO source code info entries: one for key=value, one for value only

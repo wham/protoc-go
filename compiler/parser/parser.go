@@ -396,8 +396,9 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	field.Number = proto.Int32(int32(num))
 
 	// Optional field options [deprecated = true, etc.]
+	var optionLocs []*descriptorpb.SourceCodeInfo_Location
 	if p.tok.Peek().Value == "[" {
-		p.skipBracketedOptions()
+		optionLocs = p.parseFieldOptions(field, path)
 	}
 
 	endTok, err := p.tok.Expect(";")
@@ -434,6 +435,9 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	// Number span - path [3] = number
 	p.addLocationSpan(append(copyPath(path), 3),
 		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+
+	// Option source code info (after number, matching C++ order)
+	p.locations = append(p.locations, optionLocs...)
 
 	return field, nil
 }
@@ -991,6 +995,137 @@ func (p *parser) skipStatement() error {
 			return nil
 		}
 	}
+}
+
+// parseFieldOptions parses [option = value, ...] on a field declaration.
+// Returns deferred source code info locations to be appended after field spans.
+func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fieldPath []int32) []*descriptorpb.SourceCodeInfo_Location {
+	bracketTok := p.tok.Next() // consume "["
+	var optLocs []*descriptorpb.SourceCodeInfo_Location
+
+	addLoc := func(path []int32, startLine, startCol, endLine, endCol int) {
+		optLocs = append(optLocs, &descriptorpb.SourceCodeInfo_Location{
+			Path: path,
+			Span: multiSpan(startLine, startCol, endLine, endCol),
+		})
+	}
+
+	for {
+		optNameTok := p.tok.Next()
+		optName := optNameTok.Value
+
+		// Consume "="
+		p.tok.Next()
+
+		valTok := p.tok.Next()
+		valEnd := valTok.Column + len(valTok.Value)
+		if valTok.Type == tokenizer.TokenString {
+			valEnd += 2 // account for quotes stripped by tokenizer
+		}
+
+		switch optName {
+		case "json_name":
+			field.JsonName = proto.String(valTok.Value)
+		case "deprecated":
+			if field.Options == nil {
+				field.Options = &descriptorpb.FieldOptions{}
+			}
+			field.Options.Deprecated = proto.Bool(valTok.Value == "true")
+		case "packed":
+			if field.Options == nil {
+				field.Options = &descriptorpb.FieldOptions{}
+			}
+			field.Options.Packed = proto.Bool(valTok.Value == "true")
+		case "lazy":
+			if field.Options == nil {
+				field.Options = &descriptorpb.FieldOptions{}
+			}
+			field.Options.Lazy = proto.Bool(valTok.Value == "true")
+		case "jstype":
+			if field.Options == nil {
+				field.Options = &descriptorpb.FieldOptions{}
+			}
+			switch valTok.Value {
+			case "JS_NORMAL":
+				field.Options.Jstype = descriptorpb.FieldOptions_JS_NORMAL.Enum()
+			case "JS_STRING":
+				field.Options.Jstype = descriptorpb.FieldOptions_JS_STRING.Enum()
+			case "JS_NUMBER":
+				field.Options.Jstype = descriptorpb.FieldOptions_JS_NUMBER.Enum()
+			}
+		case "ctype":
+			if field.Options == nil {
+				field.Options = &descriptorpb.FieldOptions{}
+			}
+			switch valTok.Value {
+			case "STRING":
+				field.Options.Ctype = descriptorpb.FieldOptions_STRING.Enum()
+			case "CORD":
+				field.Options.Ctype = descriptorpb.FieldOptions_CORD.Enum()
+			case "STRING_PIECE":
+				field.Options.Ctype = descriptorpb.FieldOptions_STRING_PIECE.Enum()
+			}
+		}
+
+		// Build source code info for this option
+		switch optName {
+		case "json_name":
+			// json_name goes to path [10] (field 10 of FieldDescriptorProto)
+			addLoc(append(copyPath(fieldPath), 10),
+				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+			addLoc(append(copyPath(fieldPath), 10),
+				valTok.Line, valTok.Column, valTok.Line, valEnd)
+		case "deprecated":
+			addLoc(append(copyPath(fieldPath), 8, 3),
+				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+		case "packed":
+			addLoc(append(copyPath(fieldPath), 8, 2),
+				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+		case "lazy":
+			addLoc(append(copyPath(fieldPath), 8, 5),
+				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+		case "jstype":
+			addLoc(append(copyPath(fieldPath), 8, 6),
+				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+		case "ctype":
+			addLoc(append(copyPath(fieldPath), 8, 1),
+				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+		}
+
+		// Check for comma (more options) or closing bracket
+		next := p.tok.Peek()
+		if next.Value == "," {
+			p.tok.Next()
+		} else if next.Value == "]" {
+			break
+		} else {
+			break
+		}
+	}
+
+	closeTok := p.tok.Next() // consume "]"
+
+	// Build final result: options container first, then individual options
+	var result []*descriptorpb.SourceCodeInfo_Location
+
+	// Options container span [fieldPath..., 8]
+	containerLoc := &descriptorpb.SourceCodeInfo_Location{
+		Path: append(copyPath(fieldPath), 8),
+		Span: multiSpan(bracketTok.Line, bracketTok.Column, closeTok.Line, closeTok.Column+1),
+	}
+	result = append(result, containerLoc)
+
+	// Then individual option locations
+	result = append(result, optLocs...)
+
+	return result
+}
+
+func unquoteString(s string) string {
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 func (p *parser) skipBracketedOptions() {
