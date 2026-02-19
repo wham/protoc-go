@@ -207,6 +207,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate duplicate enum values (without allow_alias)
+	if errs := validateDuplicateEnumValues(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate proto3 constraints
 	if errs := validateProto3(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -634,6 +639,80 @@ func findFieldNumberLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.So
 		}
 	}
 	return 0, 0
+}
+
+// validateDuplicateEnumValues checks that no two enum values share the same number
+// unless allow_alias is set to true.
+func validateDuplicateEnumValues(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		for i, e := range fd.GetEnumType() {
+			parentScope := pkg
+			collectDuplicateEnumValueErrors(fd.GetName(), e, parentScope, []int32{5, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+		for i, msg := range fd.GetMessageType() {
+			msgFqn := msg.GetName()
+			if pkg != "" {
+				msgFqn = pkg + "." + msgFqn
+			}
+			collectDuplicateEnumValuesInMessage(fd.GetName(), msg, msgFqn, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+	}
+	return errs
+}
+
+func collectDuplicateEnumValuesInMessage(filename string, msg *descriptorpb.DescriptorProto, msgFqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, e := range msg.GetEnumType() {
+		enumPath := append(append([]int32{}, msgPath...), 4, int32(i))
+		collectDuplicateEnumValueErrors(filename, e, msgFqn, enumPath, sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedFqn := msgFqn + "." + nested.GetName()
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectDuplicateEnumValuesInMessage(filename, nested, nestedFqn, nestedPath, sci, errs)
+	}
+}
+
+func collectDuplicateEnumValueErrors(filename string, e *descriptorpb.EnumDescriptorProto, parentScope string, enumPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if e.GetOptions().GetAllowAlias() {
+		return
+	}
+	// Map enum number -> first value name
+	seen := make(map[int32]string)
+	for i, val := range e.GetValue() {
+		num := val.GetNumber()
+		if firstName, ok := seen[num]; ok {
+			line, col := findEnumValueNumberLocation(enumPath, i, sci)
+			// Enum values are scoped to the parent (package or message), not the enum
+			valFqn := parentScope + "." + val.GetName()
+			firstFqn := parentScope + "." + firstName
+			// Find next available enum value
+			nextAvail := nextAvailableEnumValue(e)
+			*errs = append(*errs, fmt.Sprintf(
+				"%s:%d:%d: \"%s\" uses the same enum value as \"%s\". If this is intended, set 'option allow_alias = true;' to the enum definition. The next available enum value is %d.",
+				filename, line, col, valFqn, firstFqn, nextAvail))
+		} else {
+			seen[num] = val.GetName()
+		}
+	}
+}
+
+func nextAvailableEnumValue(e *descriptorpb.EnumDescriptorProto) int32 {
+	used := make(map[int32]bool)
+	for _, val := range e.GetValue() {
+		used[val.GetNumber()] = true
+	}
+	// Find smallest non-negative integer not in use
+	for i := int32(0); ; i++ {
+		if !used[i] {
+			return i
+		}
+	}
 }
 
 // validateProto3 checks proto3-specific constraints and returns error strings.
