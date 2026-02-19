@@ -796,6 +796,8 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 	case "message_set_wire_format":
 		msg.Options.MessageSetWireFormat = proto.Bool(valTok.Value == "true")
 		fieldNum = 1
+	case "map_entry":
+		return fmt.Errorf("%d:%d: map_entry should not be set explicitly. Use map<KeyType, ValueType> instead.", nameTok.Line+1, nameTok.Column+1)
 	default:
 		return nil
 	}
