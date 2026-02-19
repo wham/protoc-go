@@ -563,3 +563,33 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
 - **Hex default values** — `[default = 0x1F]` — same bug as octal defaults (raw text vs decimal)
 - **Octal default values** — TESTED in Run 58 (64_octal_default), confirmed broken (raw text vs decimal)
+
+### Run 59 — String concatenation in default values (FAILED: 5/5 profiles)
+- **Test:** `65_string_concat_default` — proto2 message with `optional string greeting = 1 [default = "hello" " world"];` and `optional string farewell = 2 [default = "goodbye"];`
+- **Bug:** `parseFieldOptions()` at line 2001 reads `valTok = p.tok.Next()` — a single token `"hello"`. The next token `" world"` is not consumed/concatenated. The parser then expects `;` or `,` or `]` but sees `" world"`, causing error: `expected ";", got "]"` (cascading parse failure). C++ protoc concatenates adjacent string literals into a single value per the protobuf language spec.
+- **Root cause:** `parser.go:2001` — `parseFieldOptions` reads only one token for the option value. The string concatenation fix from commit 6fd286e was only applied to `parseFileOption` (file-level options), NOT to `parseFieldOptions` (field-level options). Same bug exists for import paths (though imports typically use single strings), and enum value options. The fix pattern — `for p.tok.Peek().Type == tokenizer.TokenString { ... }` — needs to be applied everywhere string values are read.
+- **Also tried:** map entry name with digits (`items2get`) — BOTH compilers produce `Items2getEntry`, NOT a gap (C++ toCamelCase matches Go).
+
+### Known gaps still unexplored (updated):
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
+- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
+- **Type shadowing** — same nested type name in different parent messages
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
+- **Missing message options** — `message_set_wire_format`, `no_standard_descriptor_accessor`, `map_entry`
+- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]`
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
+- **Edition features** — `edition = "2023"` with feature overrides
+- **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
+- **Option validation** — Go silently accepts ANY option name without validation
+- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
+- **Self-referencing message** — type resolution may differ
+- **Package conflict** — two files with different packages imported together
+- **Self-import / circular import** — cycle detection may differ
+- **Map key type `bytes`/`float`** — accepted by Go, rejected by C++
+- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
+- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
+- **Hex default values** — `[default = 0x1F]` — same bug as octal defaults (raw text vs decimal)
+- **String concatenation in service/method/enum option values** — same single-token bug as field defaults
+- **Map entry name with digits** — TESTED, both produce same result — NOT a gap
