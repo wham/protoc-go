@@ -2779,9 +2779,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 					return optLocs, nil
 				}
 			}
-			// Bool fields require identifier "true" or "false", reject string literals
+			// Bool fields require identifier "true" or "false", reject string/integer literals
 			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL {
-				if valTok.Type == tokenizer.TokenString {
+				if valTok.Type == tokenizer.TokenString || valTok.Type == tokenizer.TokenInt {
 					p.errors = append(p.errors, fmt.Sprintf(`%s:%d:%d: Expected "true" or "false".`, p.filename, valTok.Line+1, valTok.Column+1))
 					p.skipToToken("]")
 					return optLocs, nil
