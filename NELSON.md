@@ -1204,8 +1204,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts `[packed = true]` on a non-repeated field and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:3: [packed = true] can only be specified for repeated primitive fields.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` via `is_packable()` which requires `is_repeated()` to be true and the field to be a numeric primitive type. The Go parser stores `FieldOptions.Packed = true` without checking whether the field is repeated or a packable type. Same validation gap pattern as all other missing descriptor pool validations.
 
+### Run 124 — Packed option on repeated string/bytes (FAILED: 5/5 profiles)
+- **Test:** `130_packed_string` — proto3 message with `repeated string tags = 1 [packed = true];` and `repeated bytes data = 2 [packed = true];` (packed on non-numeric repeated fields)
+- **Bug:** Both C++ and Go reject the file with the same error message `[packed = true] can only be specified for repeated primitive fields.`, but the column numbers differ. C++ protoc reports column 12 (pointing to the field name token). Go protoc-go reports column 3 (pointing to the start of the `repeated` keyword). Both exit 1, but stderr differs due to column positions.
+- **Root cause:** Go's packed validation (likely in `compiler/cli/cli.go`) reports the error position as the start of the field declaration (column 3, at `repeated`). C++ protoc's `descriptor.cc` reports the error position as the field name column (column 12). The validation logic correctly identifies non-packable types, but the error location metadata points to a different token. The `repeated int32 ids = 3 [packed = true]` field is correctly accepted by both since int32 is a packable type.
+
 ### Known gaps still unexplored (updated):
-- **`packed = true` on repeated string/bytes/message** — same issue, C++ rejects non-primitive packed fields
 - **Package conflict** — two files with different packages imported together
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
 - **Type shadowing** — same nested type name in different parent messages
@@ -1218,3 +1222,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Oneof field with packed option** — same validation gap
 - **`lazy` option on non-message field** — C++ may reject, Go likely accepts
+- **Error column positions** — many Go validation errors report wrong column (start of line vs specific token)
