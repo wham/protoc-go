@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package fileoptions;
+
+option java_package = "com.example.fileoptions";
+option java_outer_classname = "FileOptionsProto";
+option go_package = "example.com/fileoptions";
+option optimize_for = SPEED;
+option cc_enable_arenas = true;
+
+message Simple {
+  string name = 1;
+}

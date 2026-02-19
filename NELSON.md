@@ -60,8 +60,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Parser lines 593-595 and 618-620 consume the `stream` keyword but never set `ClientStreaming` or `ServerStreaming` on the `MethodDescriptorProto`. C++ protoc sets these boolean fields. Result: missing streaming flags, fewer source code info locations (29 vs 33).
 - **Root cause:** `parser.go` method construction (line 658-662) builds the method without `ClientStreaming`/`ServerStreaming` fields.
 
+### Run 3 — File-level options (FAILED: 5/5 profiles)
+- **Test:** `09_file_options` — proto3 file with `option java_package`, `option java_outer_classname`, `option go_package`, `option optimize_for`, `option cc_enable_arenas`
+- **Bug:** `parseFileOption()` at line 867-868 just calls `skipStatement()`, discarding all file-level options. C++ protoc populates `FileOptions` in the descriptor. Result: missing options object, 19 vs 9 SourceCodeInfo locations.
+- **Root cause:** `parser.go:867-868` — `parseFileOption` is a no-op stub that skips the entire statement.
+
 ### Known gaps still unexplored (attack surface for future runs):
-- **File-level options** (`option java_package`, `option go_package`, etc.) — skipped at line 741
+- **File-level options** (`option java_package`, `option go_package`, etc.) — TESTED in Run 3 (09_file_options), confirmed broken
 - **Field options** (`deprecated = true`, `json_name`, `packed`, `jstype`) — skipped at line 293-294
 - **Message options** — skipped at line 214
 - **Enum options** (`allow_alias`) — skipped at line 357
