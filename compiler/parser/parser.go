@@ -250,6 +250,12 @@ func (p *parser) parseSyntax(fd *descriptorpb.FileDescriptorProto) error {
 	if err != nil {
 		return err
 	}
+	// Concatenate adjacent string tokens (C++ protoc allows this)
+	for p.tok.Peek().Type == tokenizer.TokenString {
+		next := p.tok.Next()
+		p.trackEnd(next)
+		valTok.Value += next.Value
+	}
 	endTok, err := p.tok.Expect(";")
 	if err != nil {
 		return err
@@ -287,6 +293,12 @@ func (p *parser) parseEdition(fd *descriptorpb.FileDescriptorProto) error {
 	valTok, err := p.tok.ExpectString()
 	if err != nil {
 		return err
+	}
+	// Concatenate adjacent string tokens (C++ protoc allows this)
+	for p.tok.Peek().Type == tokenizer.TokenString {
+		next := p.tok.Next()
+		p.trackEnd(next)
+		valTok.Value += next.Value
 	}
 	endTok, err := p.tok.Expect(";")
 	if err != nil {
