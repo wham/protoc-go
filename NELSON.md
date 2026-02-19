@@ -1046,3 +1046,23 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Boolean default for string field** — `optional string x = 1 [default = true];` — Go likely accepts, C++ rejects
 - **Float default for integer field** — `optional int32 x = 1 [default = 1.5];` — Go likely accepts, C++ rejects
 - **Default value type validation** — all type mismatches between default value token type and field type
+
+### Run 109 — String default value on integer field (FAILED: 5/5 profiles)
+- **Test:** `115_string_default_int` — proto2 message with `optional int32 count = 1 [default = "42"];` (string literal instead of integer for int32 field default)
+- **Bug:** Go protoc-go silently accepts a string literal `"42"` as a default value for an int32 field and stores `default_value = "42"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:39: Expected integer for field default value.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go` — `case "default"` stores `valTok.Value` as the default value without validating that the token type matches the field type. For int32/int64/uint32/uint64/sint32/sint64/fixed32/fixed64/sfixed32/sfixed64 fields, the value must be an integer literal (`TokenInt`). C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeSignedInteger` for integer fields. The Go parser has zero default value type validation — any token type is accepted for any field type. Same category as Run 108 (integer for string field), but reversed direction.
+
+### Known gaps still unexplored (updated):
+- **Boolean default for string field** — `optional string x = 1 [default = true];` — Go likely accepts, C++ rejects
+- **Float default for integer field** — `optional int32 x = 1 [default = 1.5];` — Go likely accepts, C++ rejects
+- **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
+- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
+- **Package conflict** — two files with different packages imported together
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **`option` as type name** — Go switch matches keyword before checking context
+- **`reserved` as type name** — same pattern
+- **`extensions` as type name** — same pattern
+- **RPC type referencing non-existent message** — C++ rejects, Go likely accepts
