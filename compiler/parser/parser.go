@@ -31,6 +31,7 @@ type parser struct {
 	hadNonSyntaxStmt    bool
 	packageParsed       bool
 	seenFileOptions     map[string]bool
+	seenImports         map[string]bool
 	filename     string
 	errors       []string
 	inOneof      bool
@@ -38,7 +39,7 @@ type parser struct {
 
 // ParseFile parses a .proto file and returns a FileDescriptorProto.
 func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorProto, error) {
-	p := &parser{tok: tokenizer.New(content), filename: filename, syntax: "proto2", seenFileOptions: map[string]bool{}}
+	p := &parser{tok: tokenizer.New(content), filename: filename, syntax: "proto2", seenFileOptions: map[string]bool{}, seenImports: map[string]bool{}}
 
 	fd := &descriptorpb.FileDescriptorProto{
 		Name: proto.String(filename),
@@ -271,6 +272,11 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 		return err
 	}
 	p.trackEnd(endTok)
+
+	if p.seenImports[pathTok.Value] {
+		return fmt.Errorf("%d:%d: Import \"%s\" was listed twice.", startTok.Line+1, startTok.Column+1, pathTok.Value)
+	}
+	p.seenImports[pathTok.Value] = true
 
 	depIdx := int32(len(fd.Dependency))
 	fd.Dependency = append(fd.Dependency, pathTok.Value)
