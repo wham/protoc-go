@@ -1403,4 +1403,23 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Labeled map fields** — TESTED in Run 143 (149_labeled_map), confirmed broken (Go gives "Expected identifier", C++ gives domain-specific label error)
 - **`optional map<...>` in proto3** — same issue, `optional` label + map<... gets wrong error
 - **`required map<...>` in proto2** — same issue
-- **Group name validation** — C++ requires group names start with uppercase, Go likely doesn't validate
+- **Group name validation** — TESTED in Run 144 (150_group_lowercase), confirmed broken (Go accepts lowercase, C++ rejects)
+
+### Run 144 — Group name must start with uppercase (FAILED: 5/5 profiles)
+- **Test:** `150_group_lowercase` — proto2 message with `optional group result = 1 { ... }` (group name starts with lowercase letter)
+- **Bug:** Go protoc-go accepts the lowercase group name and produces a downstream error: `"result" is already defined in "grouplower.SearchResponse".` (because lowercased field name matches group type name). C++ protoc immediately rejects with: `test.proto:6:18: Group names must start with a capital letter.` (exit 1). The error messages are completely different.
+- **Root cause:** `parser.go` — `parseGroupField` reads the group name via `ExpectIdent()` but never validates that the first character is uppercase. C++ protoc's `ParseMessageField` in `parser.cc` checks `LookingAtType(io::Tokenizer::TYPE_START)` which verifies the name starts with an uppercase letter. The Go parser should check `unicode.IsUpper(rune(groupName[0]))` after reading the group name and error if it's lowercase.
+
+### Known gaps still unexplored (updated):
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **Missing message options** — `map_entry` (field 7)
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Error column positions** — many Go validation errors report wrong column
+- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
+- **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
+- **Group name starting with digit** — `optional group 123foo = 1 {}` — same missing validation
+- **Group name all lowercase in extend** — same issue in `parseGroupFieldInExtend`
+- **Group name all lowercase in oneof** — same issue in `parseGroupFieldInOneof`
