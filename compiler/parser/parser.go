@@ -838,6 +838,14 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 
 	var endTok tokenizer.Token
 	for p.tok.Peek().Value != "}" {
+		// Reject map fields in extend blocks
+		peek := p.tok.Peek()
+		if peek.Value == "map" && p.tok.PeekAt(1).Value == "<" {
+			p.tok.Next() // consume "map"
+			ltTok := p.tok.Next() // consume "<"
+			return fmt.Errorf("%d:%d: Map fields are not allowed to be extensions.", ltTok.Line+1, ltTok.Column+1)
+		}
+
 		extIdx := int32(len(fd.Extension))
 		fieldPath := []int32{7, extIdx}
 
@@ -906,6 +914,14 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 
 	var endTok tokenizer.Token
 	for p.tok.Peek().Value != "}" {
+		// Reject map fields in extend blocks
+		peek := p.tok.Peek()
+		if peek.Value == "map" && p.tok.PeekAt(1).Value == "<" {
+			p.tok.Next() // consume "map"
+			ltTok := p.tok.Next() // consume "<"
+			return fmt.Errorf("%d:%d: Map fields are not allowed to be extensions.", ltTok.Line+1, ltTok.Column+1)
+		}
+
 		fieldPath := append(copyPath(msgPath), 6, *extIdx)
 
 		locCountBefore := len(p.locations)
