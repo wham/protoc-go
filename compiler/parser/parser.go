@@ -1943,6 +1943,10 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 				}
 			}
 
+			if endNum < startNum {
+				return fmt.Errorf("%d:%d: Reserved range end number must be greater than start number.", numTok.Line+1, numTok.Column+1)
+			}
+
 			e.ReservedRange = append(e.ReservedRange, &descriptorpb.EnumDescriptorProto_EnumReservedRange{
 				Start: proto.Int32(int32(startNum)),
 				End:   proto.Int32(int32(endNum)),
