@@ -1344,6 +1344,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:10:39: Messages can't have default values.` Go protoc-go: `test.proto:10:39: Expected number.` C++ correctly identifies that message-typed fields cannot have default values. Go doesn't recognize the field as message-typed at parse time and produces a generic type mismatch error ("Expected number" because unresolved named types fall through to the numeric default parsing path).
 - **Root cause:** `parser.go` — `case "default"` in `parseFieldOptions` doesn't have special handling for message-typed fields. When the field type is an unresolved reference (a named type like `Inner`), the parser doesn't know if it's a message or enum. C++ protoc's `ParseDefaultAssignment` in `parser.cc` handles this by checking if the type is a message reference and immediately rejecting with "Messages can't have default values." The Go parser falls through to a generic number parsing path, producing the wrong diagnostic.
 
+### Run 138 — Negative default on unsigned integer fields (FAILED: 5/5 profiles)
+- **Test:** `144_negative_unsigned_default` — proto2 message with `optional uint32 value = 1 [default = -5];` and `optional uint64 large = 2 [default = -100];` (negative defaults on unsigned integer fields)
+- **Bug:** Go protoc-go silently accepts negative default values on unsigned integer fields and stores `default_value = "-5"` / `"-100"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:41: Unsigned field can't have negative default value.` and `test.proto:7:41: Unsigned field can't have negative default value.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:2803-2805` — when `negative == true`, the parser prepends `"-"` to `defVal` regardless of the field's type. No check for unsigned types (uint32/uint64/fixed32/fixed64). C++ protoc's `ParseDefaultAssignment` in `parser.cc` calls `ConsumeUnsignedInteger` for unsigned fields, which rejects negative values. The Go parser should check if the field type is unsigned and reject negative defaults for those types.
+
 ### Known gaps still unexplored (updated):
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
 - **Type shadowing** — same nested type name in different parent messages
@@ -1356,3 +1361,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages (field numbers are positive), but may produce different error messages
 - **Negative extension range start** — `extensions -1 to 10;` — C++ rejects, Go may also reject but with different error
 - **Default on message field** — TESTED in Run 137 (143_message_default), confirmed broken (different error messages)
+- **Negative unsigned default** — TESTED in Run 138 (144_negative_unsigned_default), confirmed broken (Go accepts, C++ rejects)
+- **Default value overflow** — `optional int32 x = 1 [default = 99999999999];` — Go silently truncates, C++ rejects
