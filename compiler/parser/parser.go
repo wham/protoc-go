@@ -1960,7 +1960,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 
 	// Helper to validate boolean option values
 	validateBool := func(name string) error {
-		if valTok.Value != "true" && valTok.Value != "false" {
+		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
 			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FileOptions.%s\".", valTok.Line+1, valTok.Column+1, name)
 		}
 		return nil
