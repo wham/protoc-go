@@ -508,7 +508,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 				return nil, err
 			}
 		case "extend":
-			if err := p.parseNestedExtend(msg, path, &nestedExtIdx); err != nil {
+			if err := p.parseNestedExtend(msg, path, &nestedExtIdx, &nestedMsgIdx); err != nil {
 				return nil, err
 			}
 		case "extensions":
@@ -882,6 +882,18 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 		extIdx := int32(len(fd.Extension))
 		fieldPath := []int32{7, extIdx}
 
+		// Check if this is a group field in extend block
+		if isGroupField(peek.Value, p.tok.PeekAt(1).Value) {
+			nestedMsgIdx := int32(len(fd.MessageType))
+			field, nested, err := p.parseGroupFieldInExtend(fieldPath, []int32{4, nestedMsgIdx}, extendeeName, extNameStartLine, extNameStartCol, extNameEndCol)
+			if err != nil {
+				return err
+			}
+			fd.Extension = append(fd.Extension, field)
+			fd.MessageType = append(fd.MessageType, nested)
+			continue
+		}
+
 		// Track location count before parseField to insert extendee span right after field span
 		locCountBefore := len(p.locations)
 
@@ -914,7 +926,119 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 	return nil
 }
 
-func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []int32, extIdx *int32) error {
+// parseGroupFieldInExtend parses a group field inside an extend block.
+// The extension field goes to fd.Extension, the nested message to fd.MessageType (or msg.NestedType).
+func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendeeName string, extNameStartLine, extNameStartCol, extNameEndCol int) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
+	firstIdx := p.tok.CurrentIndex()
+	field := &descriptorpb.FieldDescriptorProto{}
+
+	// Label
+	labelTok := p.tok.Next()
+	switch labelTok.Value {
+	case "required":
+		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REQUIRED.Enum()
+	case "optional":
+		field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+	case "repeated":
+		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum()
+	}
+
+	// "group" keyword
+	groupTok := p.tok.Next()
+
+	// Group name
+	nameTok, err := p.tok.ExpectIdent()
+	if err != nil {
+		return nil, nil, err
+	}
+	groupName := nameTok.Value
+	fieldName := strings.ToLower(groupName)
+
+	field.Name = proto.String(fieldName)
+	field.JsonName = proto.String(tokenizer.ToJSONName(fieldName))
+	field.Type = descriptorpb.FieldDescriptorProto_TYPE_GROUP.Enum()
+	field.TypeName = proto.String(groupName)
+	field.Extendee = proto.String(extendeeName)
+
+	// = number
+	if _, err := p.tok.Expect("="); err != nil {
+		return nil, nil, err
+	}
+	numTok, err := p.tok.ExpectInt()
+	if err != nil {
+		return nil, nil, err
+	}
+	num, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
+		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
+	}
+	field.Number = proto.Int32(int32(num))
+
+	if _, err := p.tok.Expect("{"); err != nil {
+		return nil, nil, err
+	}
+
+	// SCI: field placeholder
+	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
+	p.attachComments(fieldLocIdx, firstIdx)
+
+	// SCI: extendee (right after field span)
+	p.addLocationSpan(append(copyPath(fieldPath), 2),
+		extNameStartLine, extNameStartCol, extNameStartLine, extNameEndCol)
+
+	// SCI: label
+	p.addLocationSpan(append(copyPath(fieldPath), 4),
+		labelTok.Line, labelTok.Column, labelTok.Line, labelTok.Column+len(labelTok.Value))
+
+	// SCI: type ("group" keyword)
+	p.addLocationSpan(append(copyPath(fieldPath), 5),
+		groupTok.Line, groupTok.Column, groupTok.Line, groupTok.Column+len(groupTok.Value))
+
+	// SCI: name
+	p.addLocationSpan(append(copyPath(fieldPath), 1),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// SCI: number
+	p.addLocationSpan(append(copyPath(fieldPath), 3),
+		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+
+	// SCI: nested message placeholder
+	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
+
+	// SCI: nested message name
+	p.addLocationSpan(append(copyPath(nestedPath), 1),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// SCI: type_name
+	p.addLocationSpan(append(copyPath(fieldPath), 6),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// Parse nested fields inside group body
+	nested := &descriptorpb.DescriptorProto{
+		Name: proto.String(groupName),
+	}
+	var innerFieldIdx int32
+	for p.tok.Peek().Value != "}" {
+		innerField, err := p.parseField(append(copyPath(nestedPath), 2, innerFieldIdx))
+		if err != nil {
+			return nil, nil, err
+		}
+		nested.Field = append(nested.Field, innerField)
+		innerFieldIdx++
+	}
+
+	endTok := p.tok.Next() // consume "}"
+	p.trackEnd(endTok)
+
+	// Update field and nested type spans
+	groupSpan := multiSpan(labelTok.Line, labelTok.Column, endTok.Line, endTok.Column+1)
+	p.locations[fieldLocIdx].Span = groupSpan
+	p.locations[nestedLocIdx].Span = groupSpan
+
+	return field, nested, nil
+}
+
+func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []int32, extIdx *int32, nestedMsgIdx *int32) error {
 	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "extend"
 
@@ -965,6 +1089,20 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 		}
 
 		fieldPath := append(copyPath(msgPath), 6, *extIdx)
+
+		// Check if this is a group field in extend block
+		if isGroupField(peek.Value, p.tok.PeekAt(1).Value) {
+			nestedPath := append(copyPath(msgPath), 3, *nestedMsgIdx)
+			field, nested, err := p.parseGroupFieldInExtend(fieldPath, nestedPath, extendeeName, extNameStartLine, extNameStartCol, extNameEndCol)
+			if err != nil {
+				return err
+			}
+			msg.Extension = append(msg.Extension, field)
+			msg.NestedType = append(msg.NestedType, nested)
+			*extIdx++
+			*nestedMsgIdx++
+			continue
+		}
 
 		locCountBefore := len(p.locations)
 
@@ -2944,12 +3082,14 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 			origName := ext.GetTypeName()
 			resolved := resolveTypeName(origName, prefix, types)
 			ext.TypeName = proto.String(resolved)
-			if tp, ok := types[resolved]; ok {
-				ext.Type = tp.Enum()
-			} else {
-				path := []int32{7, int32(extIdx), 6}
-				if line, col, ok := findSCISpanStart(fd, path); ok {
-					errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+			if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+				if tp, ok := types[resolved]; ok {
+					ext.Type = tp.Enum()
+				} else {
+					path := []int32{7, int32(extIdx), 6}
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					}
 				}
 			}
 		}
@@ -3031,8 +3171,10 @@ func resolveMessageFields(msgs []*descriptorpb.DescriptorProto, prefix string, t
 			if ext.TypeName != nil {
 				resolved := resolveTypeName(ext.GetTypeName(), msgPrefix, types)
 				ext.TypeName = proto.String(resolved)
-				if tp, ok := types[resolved]; ok {
-					ext.Type = tp.Enum()
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					if tp, ok := types[resolved]; ok {
+						ext.Type = tp.Enum()
+					}
 				}
 			}
 		}
@@ -3087,12 +3229,14 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 				origName := ext.GetTypeName()
 				resolved := resolveTypeName(origName, msgPrefix, types)
 				ext.TypeName = proto.String(resolved)
-				if tp, ok := types[resolved]; ok {
-					ext.Type = tp.Enum()
-				} else {
-					path := append(copyPath(msgPath), 6, int32(extIdx), 6)
-					if line, col, ok := findSCISpanStart(fd, path); ok {
-						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					if tp, ok := types[resolved]; ok {
+						ext.Type = tp.Enum()
+					} else {
+						path := append(copyPath(msgPath), 6, int32(extIdx), 6)
+						if line, col, ok := findSCISpanStart(fd, path); ok {
+							*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						}
 					}
 				}
 			}
