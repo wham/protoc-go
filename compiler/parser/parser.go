@@ -2804,6 +2804,14 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if negative && isUnsignedType(field.GetType()) {
 				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Unsigned field can't have negative default value.", p.filename, valTok.Line+1, valTok.Column+1))
 			}
+			// Check integer default value overflow for field type
+			if isIntegerType(field.GetType()) {
+				maxVal := intDefaultMaxValue(field.GetType(), negative)
+				n, err := strconv.ParseUint(valTok.Value, 0, 64)
+				if err != nil || n > maxVal {
+					p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Integer out of range.", p.filename, valTok.Line+1, valTok.Column+1))
+				}
+			}
 			defVal := valTok.Value
 			if negative {
 				defVal = "-" + defVal
@@ -3009,6 +3017,33 @@ func simpleFtoa(v float32) string {
 		s = strconv.FormatFloat(float64(v), 'g', 9, 64)
 	}
 	return s
+}
+
+func intDefaultMaxValue(ft descriptorpb.FieldDescriptorProto_Type, negative bool) uint64 {
+	switch ft {
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+		if negative {
+			return 2147483648
+		}
+		return 2147483647
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
+		return 4294967295
+	case descriptorpb.FieldDescriptorProto_TYPE_INT64,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+		if negative {
+			return 9223372036854775808
+		}
+		return 9223372036854775807
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_FIXED64:
+		return 18446744073709551615
+	default:
+		return 18446744073709551615
+	}
 }
 
 func normalizeIntDefault(s string) string {
