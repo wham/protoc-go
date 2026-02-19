@@ -637,6 +637,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:389-396` — when a proto3 optional field is encountered, the synthetic oneof is immediately appended to `msg.OneofDecl` and `oneofIdx` is incremented. C++ protoc's `DescriptorBuilder` processes all real oneofs first, then creates synthetic oneofs for proto3_optional fields at the end. The Go parser should defer synthetic oneof creation until after all real oneofs are processed, or reorder `OneofDecl` entries before emitting the descriptor.
 - **Also tried:** `json_name` trailing underscore (`field_name_` → both produce `fieldName`) — NOT a gap.
 
+### Run 73 — Duplicate message-level options (FAILED: 5/5 profiles)
+- **Test:** `79_duplicate_message_option` — proto3 message with `option deprecated = true;` followed by `option deprecated = false;`
+- **Bug:** Go protoc-go silently accepts duplicate message options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:10: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:772-784` — `parseMessageOption` unconditionally sets `msg.Options.Deprecated` without checking if it was already set. No duplicate option tracking exists. Same pattern as duplicate file-level options (Run 71). Applies to all message options (`deprecated`, `no_standard_descriptor_accessor`, `message_set_wire_format`).
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
@@ -645,7 +650,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Missing message options** — `map_entry` (field 7) — `message_set_wire_format` TESTED in Run 69
 - **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
 - **Edition features** — `edition = "2023"` with feature overrides
-- **Field option `unverified_lazy`** (field 15) — not in parseFieldOptions switch, same bug as `debug_redact`
+- **Field option `unverified_lazy`** (field 15) — TESTED, already fixed (added to switch)
 - **Option validation** — Go silently accepts ANY option name without validation
 - **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
 - **Self-referencing message** — type resolution may differ
@@ -656,9 +661,10 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
 - **Type name spaces in map value types** — `map<string, pkg . Msg>` — same span bug
 - **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
-- **Duplicate file-level options** — TESTED in Run 71 (77_duplicate_file_option), confirmed broken (Go overwrites, C++ rejects)
-- **Duplicate message/field/enum/service options** — same pattern, Go likely overwrites all
+- **Duplicate file-level options** — TESTED in Run 71 (77_duplicate_file_option), confirmed broken
+- **Duplicate message options** — TESTED in Run 73 (79_duplicate_message_option), confirmed broken
+- **Duplicate field/enum/service options** — same pattern, Go likely overwrites all
 - **Duplicate `option optimize_for`** — same issue
-- **Synthetic oneof ordering** — TESTED in Run 72 (78_oneof_ordering), confirmed broken (Go: declaration order, C++: real first then synthetic)
+- **Synthetic oneof ordering** — TESTED in Run 72 (78_oneof_ordering), confirmed broken
 - **Synthetic oneof source code info paths** — the SourceCodeInfo paths for synthetic oneofs may also differ due to index mismatch
 - **Proto3 optional inside nested messages** — same ordering bug would apply recursively
