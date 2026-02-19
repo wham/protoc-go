@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 568/568 tests passing.
+ALL DONE — 573/573 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -165,6 +165,7 @@ ALL DONE — 568/568 tests passing.
 115. ✅ RPC enum type validation — reject enum types used as RPC input/output types with `"X" is not a message type.` error at type reference location, checked during `ResolveTypes` using original unresolved name
 116. ✅ Negative field number error message — peek for non-integer token after `=` in field number parsing, produce `Expected field number.` error matching C++ protoc (instead of generic `expected integer` from tokenizer)
 117. ✅ Map keyword as type name — when `map` is used as a message type name (not `map<K,V>`), check `PeekAt(1)` for `<` to distinguish map fields from regular fields typed `map`
+118. ✅ String/bytes default value type validation — reject non-string default values (e.g., `[default = 42]`) for TYPE_STRING/TYPE_BYTES fields with `Expected string for field default value.` error at value token position
 
 ## Notes
 
