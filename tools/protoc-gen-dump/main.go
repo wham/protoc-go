@@ -38,7 +38,13 @@ func run() error {
 		return fmt.Errorf("unmarshaling CodeGeneratorRequest: %w", err)
 	}
 
-	// Marshal to deterministic JSON for diffing
+	// Write to the output directory specified by the parameter
+	outputDir := req.GetParameter()
+	if outputDir == "" {
+		outputDir = "."
+	}
+
+	// Marshal to deterministic JSON for diffing (includes original parameter for debugging)
 	marshaler := protojson.MarshalOptions{
 		Multiline: true,
 		Indent:    "  ",
@@ -46,12 +52,6 @@ func run() error {
 	jsonBytes, err := marshaler.Marshal(&req)
 	if err != nil {
 		return fmt.Errorf("marshaling to JSON: %w", err)
-	}
-
-	// Write to the output directory specified by the parameter
-	outputDir := req.GetParameter()
-	if outputDir == "" {
-		outputDir = "."
 	}
 
 	outputPath := filepath.Join(outputDir, "request.json")
@@ -72,9 +72,15 @@ func run() error {
 		return fmt.Errorf("writing response: %w", err)
 	}
 
-	// Also write request as binary for exact comparison
+	// For comparison outputs (summary + binary), clear the parameter field
+	// since it contains the output directory path which inherently differs
+	// between C++ protoc and Go protoc-go test runs.
+	reqForCompare := proto.Clone(&req).(*pluginpb.CodeGeneratorRequest)
+	reqForCompare.Parameter = nil
+
+	// Write request as binary for exact comparison (parameter cleared)
 	binaryPath := filepath.Join(outputDir, "request.pb")
-	deterministicBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(&req)
+	deterministicBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(reqForCompare)
 	if err != nil {
 		return fmt.Errorf("marshaling deterministic binary: %w", err)
 	}
@@ -82,8 +88,8 @@ func run() error {
 		return fmt.Errorf("writing binary output: %w", err)
 	}
 
-	// Write a sorted summary for quick human-readable diffing
-	summary := buildSummary(&req)
+	// Write a sorted summary for quick human-readable diffing (parameter cleared)
+	summary := buildSummary(reqForCompare)
 	summaryPath := filepath.Join(outputDir, "summary.txt")
 	if err := os.WriteFile(summaryPath, []byte(summary), 0o644); err != nil {
 		return fmt.Errorf("writing summary: %w", err)
