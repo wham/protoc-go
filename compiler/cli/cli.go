@@ -240,6 +240,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate packed option on non-repeated or non-primitive fields
+	if errs := validatePackedNonRepeated(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate empty enums (must contain at least one value)
 	if errs := validateEmptyEnums(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -702,6 +707,80 @@ func collectMapKeyTypeErrors(filename string, msg *descriptorpb.DescriptorProto,
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectMapKeyTypeErrors(filename, nested, nestedPath, sci, errs)
+	}
+}
+
+// isPackableType returns true if the field type can be packed (numeric, bool, enum).
+func isPackableType(t descriptorpb.FieldDescriptorProto_Type) bool {
+	switch t {
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32,
+		descriptorpb.FieldDescriptorProto_TYPE_INT64,
+		descriptorpb.FieldDescriptorProto_TYPE_UINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_UINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_FLOAT,
+		descriptorpb.FieldDescriptorProto_TYPE_DOUBLE,
+		descriptorpb.FieldDescriptorProto_TYPE_BOOL,
+		descriptorpb.FieldDescriptorProto_TYPE_ENUM:
+		return true
+	}
+	return false
+}
+
+// validatePackedNonRepeated checks that [packed = true] is only on repeated primitive fields.
+func validatePackedNonRepeated(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectPackedErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		// Check file-level extensions
+		for i, ext := range fd.GetExtension() {
+			if ext.GetOptions().GetPacked() {
+				if ext.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED || !isPackableType(ext.GetType()) {
+					path := []int32{7, int32(i)}
+					line, col := findLocationByPath(path, sci)
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: [packed = true] can only be specified for repeated primitive fields.", fd.GetName(), line, col))
+				}
+			}
+		}
+	}
+	return errs
+}
+
+func collectPackedErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, field := range msg.GetField() {
+		if field.GetOptions().GetPacked() {
+			if field.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED || !isPackableType(field.GetType()) {
+				fieldPath := append(append([]int32{}, msgPath...), 2, int32(i))
+				line, col := findLocationByPath(fieldPath, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: [packed = true] can only be specified for repeated primitive fields.", filename, line, col))
+			}
+		}
+	}
+	// Check message-level extensions
+	for i, ext := range msg.GetExtension() {
+		if ext.GetOptions().GetPacked() {
+			if ext.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED || !isPackableType(ext.GetType()) {
+				extPath := append(append([]int32{}, msgPath...), 6, int32(i))
+				line, col := findLocationByPath(extPath, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: [packed = true] can only be specified for repeated primitive fields.", filename, line, col))
+			}
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectPackedErrors(filename, nested, nestedPath, sci, errs)
 	}
 }
 
