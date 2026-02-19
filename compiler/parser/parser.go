@@ -2105,6 +2105,16 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			case "STRING_PIECE":
 				field.Options.Ctype = descriptorpb.FieldOptions_STRING_PIECE.Enum()
 			}
+		case "debug_redact":
+			if field.Options == nil {
+				field.Options = &descriptorpb.FieldOptions{}
+			}
+			field.Options.DebugRedact = proto.Bool(valTok.Value == "true")
+		case "unverified_lazy":
+			if field.Options == nil {
+				field.Options = &descriptorpb.FieldOptions{}
+			}
+			field.Options.UnverifiedLazy = proto.Bool(valTok.Value == "true")
 		}
 
 		// Build source code info for this option
@@ -2137,6 +2147,12 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
 		case "ctype":
 			addLoc(append(copyPath(fieldPath), 8, 1),
+				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+		case "debug_redact":
+			addLoc(append(copyPath(fieldPath), 8, 16),
+				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+		case "unverified_lazy":
+			addLoc(append(copyPath(fieldPath), 8, 15),
 				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
 		}
 
