@@ -55,6 +55,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Parser line 214 skips `reserved` via `skipStatement()`. No `ReservedRange` or `ReservedName` populated in descriptor. C++ protoc includes them. Descriptor binary size differs (108 vs 76 bytes). Also 26 vs 13 SourceCodeInfo locations.
 - **Root cause:** `parser.go:214` treats `reserved` same as `option` and `extensions` — all skipped.
 
+### Run 2 — Streaming methods (FAILED: 5/5 profiles)
+- **Test:** `08_streaming` — service with server-streaming, client-streaming, and bidi-streaming methods
+- **Bug:** Parser lines 593-595 and 618-620 consume the `stream` keyword but never set `ClientStreaming` or `ServerStreaming` on the `MethodDescriptorProto`. C++ protoc sets these boolean fields. Result: missing streaming flags, fewer source code info locations (29 vs 33).
+- **Root cause:** `parser.go` method construction (line 658-662) builds the method without `ClientStreaming`/`ServerStreaming` fields.
+
 ### Known gaps still unexplored (attack surface for future runs):
 - **File-level options** (`option java_package`, `option go_package`, etc.) — skipped at line 741
 - **Field options** (`deprecated = true`, `json_name`, `packed`, `jstype`) — skipped at line 293-294
@@ -68,6 +73,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Enum value options** — skipped at line 385
 - **`optional` keyword in proto3** (proto3 explicit optional) — parseField only handles `repeated`, not `optional` with proto3_optional flag
 - **`import public`** — parsed but `PublicDependency` index not set (line 136-140 reads but discards)
-- **Streaming methods** — `ClientStreaming`/`ServerStreaming` flags not set (line 487-513)
+- **Streaming methods** — TESTED in Run 2 (08_streaming), confirmed broken
 - **Negative enum values** source code info (the `-` token position)
 - **Multiple files in same testdata dir** (import resolution across files)

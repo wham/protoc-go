@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package streaming;
+
+message Request {
+  string data = 1;
+}
+
+message Response {
+  string result = 1;
+}
+
+service StreamService {
+  rpc ServerStream(Request) returns (stream Response);
+  rpc ClientStream(stream Request) returns (Response);
+  rpc BidiStream(stream Request) returns (stream Response);
+}
