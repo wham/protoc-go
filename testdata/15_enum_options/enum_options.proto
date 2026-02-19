@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package enum_options;
+
+enum Status {
+  option allow_alias = true;
+  UNKNOWN = 0;
+  STARTED = 1;
+  RUNNING = 1;
+}
+
+message Task {
+  string name = 1;
+  Status status = 2;
+}
