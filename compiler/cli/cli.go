@@ -1140,6 +1140,14 @@ func findFieldTypeLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.Sour
 	return 0, 0
 }
 
+func collectProto3ExtensionRangeErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i := range msg.GetExtensionRange() {
+		path := append(append([]int32{}, msgPath...), 5, int32(i), 1)
+		line, col := findLocationByPath(path, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extension ranges are not allowed in proto3.", filename, line, col))
+	}
+}
+
 func collectProto3GroupErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
 	for i, field := range msg.GetField() {
 		if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
@@ -1150,6 +1158,7 @@ func collectProto3GroupErrors(filename string, msg *descriptorpb.DescriptorProto
 }
 
 func collectProto3MessageErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	collectProto3ExtensionRangeErrors(filename, msg, msgPath, sci, errs)
 	collectProto3GroupErrors(filename, msg, msgPath, sci, errs)
 	collectProto3RequiredErrors(filename, msg, msgPath, sci, errs)
 	collectProto3DefaultErrors(filename, msg, msgPath, sci, errs)
