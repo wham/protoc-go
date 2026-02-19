@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 693/693 tests passing.
+ALL DONE — 698/698 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -189,6 +189,7 @@ ALL DONE — 693/693 tests passing.
 139. ✅ Unicode escape sequences (`\uNNNN`, `\UNNNNNNNN`) — tokenizer handles 4-digit and 8-digit Unicode escapes with UTF-16 surrogate pair support, matching C++ protoc's `FetchUnicodePoint` + `AppendUTF8`
 140. ✅ Numeric package name validation — reject non-identifier tokens in `package` declaration (e.g., `package 123;`) with `Expected identifier.` error at the token position, validates each dot-separated component
 141. ✅ Empty extend block validation — reject `extend Msg { }` (no fields) with `Expected "required", "optional", or "repeated".` + `Expected type name.` errors at `}` position (proto2), or just `Expected type name.` (proto3/editions), in both `parseExtend` and `parseNestedExtend`
+142. ✅ Group fields in extend blocks (`extend Msg { optional group MyGroup = 100 { ... } }`) — creates TYPE_GROUP extension field + top-level (or parent-nested) message type, SCI ordering: field placeholder, extendee, label, type ("group"), name, number, nested message, nested name, type_name, inner fields. `parseGroupFieldInExtend` shared by both `parseExtend` (file-level) and `parseNestedExtend` (message-level). TYPE_GROUP protection added to all extension type resolution paths.
 
 ## Notes
 
