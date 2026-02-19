@@ -2800,6 +2800,10 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				p.skipToToken("]")
 				return optLocs, nil
 			}
+			// Unsigned fields reject negative default values
+			if negative && isUnsignedType(field.GetType()) {
+				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Unsigned field can't have negative default value.", p.filename, valTok.Line+1, valTok.Column+1))
+			}
 			defVal := valTok.Value
 			if negative {
 				defVal = "-" + defVal
@@ -2973,6 +2977,17 @@ func isIntegerType(t descriptorpb.FieldDescriptorProto_Type) bool {
 		descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
 		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32,
 		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+		return true
+	}
+	return false
+}
+
+func isUnsignedType(t descriptorpb.FieldDescriptorProto_Type) bool {
+	switch t {
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_UINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_FIXED64:
 		return true
 	}
 	return false
