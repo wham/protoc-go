@@ -393,6 +393,15 @@ func (t *Tokenizer) Peek() Token {
 	return Token{Type: TokenEOF}
 }
 
+// PeekAt returns the token at offset positions ahead without advancing.
+func (t *Tokenizer) PeekAt(offset int) Token {
+	idx := t.idx + offset
+	if idx < len(t.tokens) {
+		return t.tokens[idx]
+	}
+	return Token{Type: TokenEOF}
+}
+
 // Next returns the current token and advances.
 func (t *Tokenizer) Next() Token {
 	tok := t.Peek()

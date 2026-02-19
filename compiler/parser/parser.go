@@ -265,20 +265,32 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 		case ";":
 			p.tok.Next() // consume empty statement
 		default:
-			field, err := p.parseField(append(copyPath(path), 2, fieldIdx))
-			if err != nil {
-				return nil, err
+			// Check if this is a group field: label followed by "group"
+			if isGroupField(tok.Value, p.tok.PeekAt(1).Value) {
+				field, nested, err := p.parseGroupField(path, fieldIdx, nestedMsgIdx)
+				if err != nil {
+					return nil, err
+				}
+				msg.Field = append(msg.Field, field)
+				msg.NestedType = append(msg.NestedType, nested)
+				fieldIdx++
+				nestedMsgIdx++
+			} else {
+				field, err := p.parseField(append(copyPath(path), 2, fieldIdx))
+				if err != nil {
+					return nil, err
+				}
+				if field.Proto3Optional != nil && *field.Proto3Optional {
+					syntheticName := "_" + field.GetName()
+					field.OneofIndex = proto.Int32(oneofIdx)
+					msg.OneofDecl = append(msg.OneofDecl, &descriptorpb.OneofDescriptorProto{
+						Name: proto.String(syntheticName),
+					})
+					oneofIdx++
+				}
+				msg.Field = append(msg.Field, field)
+				fieldIdx++
 			}
-			if field.Proto3Optional != nil && *field.Proto3Optional {
-				syntheticName := "_" + field.GetName()
-				field.OneofIndex = proto.Int32(oneofIdx)
-				msg.OneofDecl = append(msg.OneofDecl, &descriptorpb.OneofDescriptorProto{
-					Name: proto.String(syntheticName),
-				})
-				oneofIdx++
-			}
-			msg.Field = append(msg.Field, field)
-			fieldIdx++
 		}
 	}
 
@@ -707,6 +719,124 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	p.locations = append(p.locations, optionLocs...)
 
 	return field, nil
+}
+
+func isGroupField(tok1, tok2 string) bool {
+	switch tok1 {
+	case "required", "optional", "repeated":
+		return tok2 == "group"
+	}
+	return false
+}
+
+// parseGroupField parses a group field declaration: label "group" Name "=" Number "{" fields... "}"
+// Returns the group field and the nested message type.
+func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
+	fieldPath := append(copyPath(msgPath), 2, fieldIdx)
+	nestedPath := append(copyPath(msgPath), 3, nestedMsgIdx)
+
+	firstIdx := p.tok.CurrentIndex()
+	field := &descriptorpb.FieldDescriptorProto{}
+
+	// Label
+	labelTok := p.tok.Next()
+	switch labelTok.Value {
+	case "required":
+		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REQUIRED.Enum()
+	case "optional":
+		field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+	case "repeated":
+		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum()
+	}
+
+	// "group" keyword
+	groupTok := p.tok.Next()
+
+	// Group name (must start with uppercase)
+	nameTok, err := p.tok.ExpectIdent()
+	if err != nil {
+		return nil, nil, err
+	}
+	groupName := nameTok.Value
+	fieldName := strings.ToLower(groupName)
+
+	field.Name = proto.String(fieldName)
+	field.JsonName = proto.String(tokenizer.ToJSONName(fieldName))
+	field.Type = descriptorpb.FieldDescriptorProto_TYPE_GROUP.Enum()
+	field.TypeName = proto.String(groupName)
+
+	// = number
+	if _, err := p.tok.Expect("="); err != nil {
+		return nil, nil, err
+	}
+	numTok, err := p.tok.ExpectInt()
+	if err != nil {
+		return nil, nil, err
+	}
+	num, parseErr := strconv.ParseInt(numTok.Value, 0, 32)
+	if parseErr != nil {
+		return nil, nil, fmt.Errorf("invalid field number: %s", numTok.Value)
+	}
+	field.Number = proto.Int32(int32(num))
+
+	if _, err := p.tok.Expect("{"); err != nil {
+		return nil, nil, err
+	}
+
+	// Source code info for the field
+	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
+	p.attachComments(fieldLocIdx, firstIdx)
+
+	// Label span
+	p.addLocationSpan(append(copyPath(fieldPath), 4),
+		labelTok.Line, labelTok.Column, labelTok.Line, labelTok.Column+len(labelTok.Value))
+
+	// Type span (the "group" keyword) — path [5] = type
+	p.addLocationSpan(append(copyPath(fieldPath), 5),
+		groupTok.Line, groupTok.Column, groupTok.Line, groupTok.Column+len(groupTok.Value))
+
+	// Name span — path [1] = name (points to the group name in source, e.g., "Result")
+	p.addLocationSpan(append(copyPath(fieldPath), 1),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// Number span — path [3] = number
+	p.addLocationSpan(append(copyPath(fieldPath), 3),
+		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+
+	// Nested message type placeholder
+	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
+
+	// Nested type name span
+	p.addLocationSpan(append(copyPath(nestedPath), 1),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// Type name span — path [6] = type_name (same span as group name)
+	p.addLocationSpan(append(copyPath(fieldPath), 6),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// Parse nested fields inside group body
+	nested := &descriptorpb.DescriptorProto{
+		Name: proto.String(groupName),
+	}
+	var innerFieldIdx int32
+	for p.tok.Peek().Value != "}" {
+		innerField, err := p.parseField(append(copyPath(nestedPath), 2, innerFieldIdx))
+		if err != nil {
+			return nil, nil, err
+		}
+		nested.Field = append(nested.Field, innerField)
+		innerFieldIdx++
+	}
+
+	endTok := p.tok.Next() // consume "}"
+	p.trackEnd(endTok)
+
+	// Update field and nested type spans
+	groupSpan := multiSpan(labelTok.Line, labelTok.Column, endTok.Line, endTok.Column+1)
+	p.locations[fieldLocIdx].Span = groupSpan
+	p.locations[nestedLocIdx].Span = groupSpan
+
+	return field, nested, nil
 }
 
 func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, error) {
@@ -2003,8 +2133,11 @@ func resolveMessageFields(msgs []*descriptorpb.DescriptorProto, prefix string, t
 			if f.TypeName != nil {
 				resolved := resolveTypeName(f.GetTypeName(), msgPrefix, types)
 				f.TypeName = proto.String(resolved)
-				if tp, ok := types[resolved]; ok {
-					f.Type = tp.Enum()
+				// Don't override TYPE_GROUP with TYPE_MESSAGE
+				if f.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					if tp, ok := types[resolved]; ok {
+						f.Type = tp.Enum()
+					}
 				}
 			}
 		}
