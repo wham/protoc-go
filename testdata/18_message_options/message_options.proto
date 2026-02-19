@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package msgoptions;
+
+message OldApi {
+  option deprecated = true;
+
+  string name = 1;
+  int32 version = 2;
+}
+
+message Config {
+  option deprecated = false;
+
+  string key = 1;
+  string value = 2;
+}
