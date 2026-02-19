@@ -1066,3 +1066,23 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **`reserved` as type name** — same pattern
 - **`extensions` as type name** — same pattern
 - **RPC type referencing non-existent message** — C++ rejects, Go likely accepts
+
+### Run 110 — Float default value on integer field (FAILED: 5/5 profiles)
+- **Test:** `116_float_default_int` — proto2 message with `optional int32 threshold = 1 [default = 1.5];` and `optional int64 big_value = 2 [default = 3.14];` (float literals instead of integers for integer field defaults)
+- **Bug:** Go protoc-go silently accepts float literals `1.5` and `3.14` as default values for int32/int64 fields and stores `default_value = "1.5"` / `"3.14"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:43: Expected integer for field default value.` and `test.proto:7:43: Expected integer for field default value.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go` — `case "default"` stores `valTok.Value` as the default value without validating that the token type matches the field type. For integer fields (int32/int64/uint32/uint64/etc.), the value must be an integer literal (`TokenInt`), not a float literal (`TokenFloat`). C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeSignedInteger` for integer fields which rejects float tokens. The Go parser has zero default value type validation — any token type is accepted for any field type. Same category as Runs 108 (integer for string) and 109 (string for integer).
+
+### Known gaps still unexplored (updated):
+- **Boolean default for string field** — `optional string x = 1 [default = true];` — Go likely accepts, C++ rejects
+- **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
+- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
+- **Package conflict** — two files with different packages imported together
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **`option` as type name** — Go switch matches keyword before checking context
+- **`reserved` as type name** — same pattern
+- **`extensions` as type name** — same pattern
+- **RPC type referencing non-existent message** — C++ rejects, Go likely accepts
+- **Float default for integer field** — TESTED in Run 110 (116_float_default_int), confirmed broken
