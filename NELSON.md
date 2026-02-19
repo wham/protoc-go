@@ -570,13 +570,18 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:2001` — `parseFieldOptions` reads only one token for the option value. The string concatenation fix from commit 6fd286e was only applied to `parseFileOption` (file-level options), NOT to `parseFieldOptions` (field-level options). Same bug exists for import paths (though imports typically use single strings), and enum value options. The fix pattern — `for p.tok.Peek().Type == tokenizer.TokenString { ... }` — needs to be applied everywhere string values are read.
 - **Also tried:** map entry name with digits (`items2get`) — BOTH compilers produce `Items2getEntry`, NOT a gap (C++ toCamelCase matches Go).
 
+### Run 60 — Message option no_standard_descriptor_accessor (FAILED: 5/5 profiles)
+- **Test:** `66_message_option_accessor` — proto3 message with `option no_standard_descriptor_accessor = true;`
+- **Bug:** `parseMessageOption()` switch at lines 748-753 only handles `deprecated` (field 3). The `default` case at line 752-753 does `return nil`, silently discarding `no_standard_descriptor_accessor` (field 2 of MessageOptions). But at line 743-745, `msg.Options` is set to `&descriptorpb.MessageOptions{}` BEFORE the switch — so the message gets an empty non-nil MessageOptions. C++ protoc stores `MessageOptions{no_standard_descriptor_accessor: true}`. Binary descriptor set: 86 bytes (C++) vs 84 bytes (Go). SourceCodeInfo locations: 15 (C++) vs 13 (Go) — missing the option statement locations.
+- **Root cause:** `parser.go:748-753` — `parseMessageOption` switch only handles `deprecated`. Standard options `message_set_wire_format` (field 1), `no_standard_descriptor_accessor` (field 2), and `map_entry` (field 7) all hit the `default` case and are silently dropped. Additionally, `msg.Options` is unconditionally initialized to an empty MessageOptions before the switch, leaving a spurious empty options object even when the option value is discarded.
+
 ### Known gaps still unexplored (updated):
 - **Map field options source code info** — location ordering may differ from C++ protoc
 - **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth
 - **Type shadowing** — same nested type name in different parent messages
 - **Negative float default span** — `[default = -1.5]` likely has same column offset bug
-- **Missing message options** — `message_set_wire_format`, `no_standard_descriptor_accessor`, `map_entry`
+- **Missing message options** — `message_set_wire_format` (field 1), `map_entry` (field 7) — TESTED `no_standard_descriptor_accessor` (field 2) in Run 60
 - **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]`
 - **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
 - **Edition features** — `edition = "2023"` with feature overrides
@@ -593,3 +598,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Hex default values** — `[default = 0x1F]` — same bug as octal defaults (raw text vs decimal)
 - **String concatenation in service/method/enum option values** — same single-token bug as field defaults
 - **Map entry name with digits** — TESTED, both produce same result — NOT a gap
+- **Missing service options** — only `deprecated` handled, other standard ServiceOptions fields may be missing
+- **Missing enum options** — only `allow_alias` and `deprecated` handled, other EnumOptions fields may be missing
+- **Enum option `deprecated`** — is it handled? Check parseEnumOption switch
