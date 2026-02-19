@@ -2334,12 +2334,16 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING ||
 				field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
 				if valTok.Type != tokenizer.TokenString {
-					return nil, fmt.Errorf("%d:%d: Expected string for field default value.", valTok.Line+1, valTok.Column+1)
+					p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected string for field default value.", p.filename, valTok.Line+1, valTok.Column+1))
+					p.skipToToken("]")
+					return optLocs, nil
 				}
 			}
-			// Integer fields reject string literal default values
-			if isIntegerType(field.GetType()) && valTok.Type == tokenizer.TokenString {
-				return nil, fmt.Errorf("%d:%d: Expected integer for field default value.", valTok.Line+1, valTok.Column+1)
+			// Integer fields reject string literal and float literal default values
+			if isIntegerType(field.GetType()) && (valTok.Type == tokenizer.TokenString || valTok.Type == tokenizer.TokenFloat) {
+				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected integer for field default value.", p.filename, valTok.Line+1, valTok.Column+1))
+				p.skipToToken("]")
+				return optLocs, nil
 			}
 			defVal := valTok.Value
 			if negative {
@@ -2561,6 +2565,16 @@ func normalizeIntDefault(s string) string {
 		return "-" + dec
 	}
 	return dec
+}
+
+// skipToToken consumes tokens until the target token is found and consumed.
+func (p *parser) skipToToken(target string) {
+	for {
+		tok := p.tok.Next()
+		if tok.Value == target || tok.Type == tokenizer.TokenEOF {
+			return
+		}
+	}
 }
 
 func (p *parser) skipBracketedOptions() {

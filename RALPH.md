@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 578/578 tests passing.
+ALL DONE — 583/583 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -167,6 +167,7 @@ ALL DONE — 578/578 tests passing.
 117. ✅ Map keyword as type name — when `map` is used as a message type name (not `map<K,V>`), check `PeekAt(1)` for `<` to distinguish map fields from regular fields typed `map`
 118. ✅ String/bytes default value type validation — reject non-string default values (e.g., `[default = 42]`) for TYPE_STRING/TYPE_BYTES fields with `Expected string for field default value.` error at value token position
 119. ✅ Integer default value type validation — reject string literal default values (e.g., `[default = "42"]`) for integer fields with `Expected integer for field default value.` error at value token position
+120. ✅ Float default value type validation for integer fields — reject float literals (e.g., `[default = 1.5]`) for integer fields with `Expected integer for field default value.` error, using error recovery (`p.errors` + `skipToToken`) to collect all errors across multiple fields
 
 ## Notes
 
@@ -263,3 +264,4 @@ ALL DONE — 578/578 tests passing.
 - RPC enum type validation: C++ protoc rejects enum types used as RPC input/output types with `"X" is not a message type.` error. The check is in `ResolveTypes` (parser.go) which now returns `[]string` errors. Uses the original unresolved name (before resolution) in the error message to match C++ protoc. Location from SCI path `[6, svcIdx, 2, methodIdx, 2]` for input type, `[6, svcIdx, 2, methodIdx, 3]` for output type. Also checked in `CheckUnresolvedTypes` for the circular import path.
 - Map keyword as type name: `map` can be used as a message type name (e.g., `message map { ... }` then `map data = 1;`). In the message body parser's `case "map":`, check `p.tok.PeekAt(1).Value == "<"` — if `<` follows, parse as map field; otherwise fall through to regular field parsing via `parseField`. Same pattern already used in `parseOneof` (line 1866).
 - Integer default value type validation: reject string literal defaults for integer fields with `Expected integer for field default value.` error. Uses `isIntegerType` helper + `valTok.Type == tokenizer.TokenString` check in `parseFieldOptions`'s `default` case, after string/bytes check and before float normalization.
+- Float default value type validation for integer fields: reject float literals (e.g., `1.5`) for integer fields with `Expected integer for field default value.` error. Uses `valTok.Type == tokenizer.TokenFloat` check combined with string check. Uses error recovery (`p.errors` + `skipToToken("]")`) to continue parsing and collect errors from subsequent fields, matching C++ protoc multi-error behavior. `skipToToken` consumes tokens up to and including the target.
