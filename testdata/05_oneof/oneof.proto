@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package oneof_example;
+
+message LoginRequest {
+  oneof credentials {
+    string username = 1;
+    string token = 2;
+  }
+  string device_id = 3;
+}

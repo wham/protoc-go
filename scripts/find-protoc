@@ -1,0 +1,28 @@
+#!/bin/bash
+# Locates the C++ protoc binary and its include directory.
+# Sources this file to set PROTOC and PROTOC_INCLUDE.
+
+set -euo pipefail
+
+# Try homebrew first, then PATH
+if command -v protoc &>/dev/null; then
+    PROTOC="$(command -v protoc)"
+else
+    echo "Error: protoc not found. Install with: brew install protobuf" >&2
+    exit 1
+fi
+
+# Find include directory for well-known types
+if [ -d "/opt/homebrew/include/google/protobuf" ]; then
+    PROTOC_INCLUDE="/opt/homebrew/include"
+elif [ -d "/usr/local/include/google/protobuf" ]; then
+    PROTOC_INCLUDE="/usr/local/include"
+elif [ -d "/usr/include/google/protobuf" ]; then
+    PROTOC_INCLUDE="/usr/include"
+else
+    echo "Error: Could not find protobuf well-known type includes" >&2
+    exit 1
+fi
+
+export PROTOC
+export PROTOC_INCLUDE
