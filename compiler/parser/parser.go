@@ -163,6 +163,10 @@ func (p *parser) parseSyntax(fd *descriptorpb.FileDescriptorProto) error {
 		return err
 	}
 
+	if valTok.Value != "proto2" && valTok.Value != "proto3" {
+		return fmt.Errorf("%d:%d: Unrecognized syntax identifier \"%s\".  This parser only recognizes \"proto2\" and \"proto3\".", valTok.Line+1, valTok.Column+1, valTok.Value)
+	}
+
 	// proto2 files omit the syntax field; proto3 sets it explicitly
 	if valTok.Value != "proto2" {
 		fd.Syntax = proto.String(valTok.Value)
