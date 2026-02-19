@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package revrange;
+
+message Config {
+  reserved 10 to 5;
+  string name = 1;
+}
