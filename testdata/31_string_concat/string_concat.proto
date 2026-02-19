@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package string_concat;
+
+option java_package = "com.example"
+                      ".concat";
+
+option go_package = "example.com/"
+                    "concat/test";
+
+message Request {
+  string query = 1;
+}
