@@ -1234,6 +1234,12 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	typeTok := p.tok.Next()
 	typeStartLine, typeStartCol := typeTok.Line, typeTok.Column
 
+	// Reject labels on map fields
+	if typeTok.Value == "map" && p.tok.Peek().Value == "<" && labelTok != nil {
+		angleTok := p.tok.Peek()
+		return nil, fmt.Errorf("%d:%d: Field labels (required/optional/repeated) are not allowed on map fields.", angleTok.Line+1, angleTok.Column+1)
+	}
+
 	typeEndTok := typeTok
 	if builtinType, ok := builtinTypes[typeTok.Value]; ok {
 		field.Type = builtinType.Enum()
