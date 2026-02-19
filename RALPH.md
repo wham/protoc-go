@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 183/183 tests passing.
+ALL DONE — 188/188 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -91,6 +91,7 @@ ALL DONE — 183/183 tests passing.
 41. ✅ String escape raw length tracking — Token.RawLen field for correct source code info spans on strings with escape sequences
 42. ✅ Edition support (`edition = "2023"`) — sets `syntax="editions"` and `edition=EDITION_2023`, fields default to LABEL_OPTIONAL without synthetic oneofs
 43. ✅ Method `idempotency_level` option (`NO_SIDE_EFFECTS`, `IDEMPOTENT`, `IDEMPOTENCY_UNKNOWN`) with MethodOptions field 34 and source code info
+44. ✅ Oneof option validation — reject unknown options (e.g., `deprecated`) inside oneof blocks with matching C++ protoc error message
 
 ## Notes
 
@@ -137,3 +138,4 @@ ALL DONE — 183/183 tests passing.
 - String concatenation: C++ protoc allows adjacent string literals to be concatenated (like C/C++). In `parseFileOption`, after reading the first string token, keep consuming adjacent string tokens and concatenate their values. This is used in options like `option java_package = "com.example" ".concat";`.
 - Edition support: `edition = "2023";` parsed by `parseEdition` in parser.go. Sets `fd.Syntax = "editions"` and `fd.Edition = EDITION_2023`. SCI at path [12] (same as syntax). Fields without explicit labels get LABEL_OPTIONAL (no Proto3Optional, no synthetic oneofs). The `editionMap` in parser.go maps edition strings to `descriptorpb.Edition` enum values.
 - Nested extend blocks: `extend TypeName { fields... }` inside a message body creates entries in `msg.Extension` (field 6 of DescriptorProto), NOT `fd.Extension`. Source code info paths use `[4,msgIdx,6]` for the block, `[4,msgIdx,6,extIdx]` for each field. Type/extendee resolution handled in `resolveMessageFields`. Parsed by `parseNestedExtend` in parser.go.
+- Oneof options: `OneofOptions` in protoc v29.3 only has `features` (field 1) and `uninterpreted_option` (field 999). Standard options like `deprecated` are rejected with error: `Option "X" unknown. Ensure that your proto definition file imports the proto which defines the option.` Error is produced at parse time in `parseOneof`. CLI error wrapping uses `%s:%w` (no space) to match C++ format `filename:line:col: message`.
