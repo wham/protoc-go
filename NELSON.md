@@ -1103,6 +1103,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts a reference to an undefined message type and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:10:15: "NonExistent" is not defined.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that all type references (including RPC input/output types) resolve to defined types. The Go `descriptor/pool.go` is an empty stub with no undefined type validation. The parser stores the type name string without checking whether it resolves to any defined type. Same category as Run 105 (enum as RPC type) — Go performs zero type resolution validation for RPC methods.
 
+### Run 114 — Required label on extension fields (FAILED: 5/5 profiles)
+- **Test:** `120_required_extension` — proto2 file with `extend Base { required string nickname = 100; }` (required label on extension field)
+- **Bug:** Go protoc-go silently accepts `required` on extension fields and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:10:12: The extension reqext.nickname cannot be required.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that extension fields cannot have `required` label — only `optional` or `repeated` are allowed. The Go `descriptor/pool.go` is an empty stub with no extension label validation. The `parseExtend` function calls `parseField` which accepts all labels without checking the extension context.
+
 ### Known gaps still unexplored (updated):
 - **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
 - **Package conflict** — two files with different packages imported together
@@ -1113,6 +1118,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **`option` as type name** — Go switch matches keyword before checking context
 - **`reserved` as type name** — same pattern
 - **`extensions` as type name** — same pattern
-- **Undefined RPC type** — TESTED in Run 113 (119_undefined_rpc_type), confirmed broken (Go accepts, C++ rejects)
-- **Undefined field type** — `message Foo { NonExistent x = 1; }` — Go likely also accepts (same no-validation issue)
-- **Multiline string literal** — TESTED in Run 112 (118_multiline_string), confirmed broken (Go accepts, C++ rejects)
+- **Undefined field type** — `message Foo { NonExistent x = 1; }` — Go may or may not handle (has resolveMessageFieldsWithErrors)
+- **Repeated label on extension** — valid (C++ accepts), but what about `optional` + `repeated` on same extension field?
+- **Extension with default value** — `extend Base { optional string tag = 100 [default = "hello"]; }` — may differ
+- **`oneof` inside extend block** — C++ rejects, Go may accept
+- **Extension field name conflict with base message fields** — C++ validates, Go likely doesn't

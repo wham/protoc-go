@@ -1,0 +1,11 @@
+syntax = "proto2";
+package reqext;
+
+message Base {
+  required string id = 1;
+  extensions 100 to 200;
+}
+
+extend Base {
+  required string nickname = 100;
+}
