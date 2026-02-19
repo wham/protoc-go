@@ -67,6 +67,8 @@ func (t *Tokenizer) tokenize() {
 			t.readString()
 		} else if ch >= '0' && ch <= '9' {
 			t.readNumber()
+		} else if ch == '.' && t.pos+1 < len(t.input) && t.input[t.pos+1] >= '0' && t.input[t.pos+1] <= '9' {
+			t.readFloatStartingWithDot()
 		} else if isIdentStart(ch) {
 			t.readIdent()
 		} else {
@@ -362,6 +364,27 @@ func (t *Tokenizer) readNumber() {
 		tokType = TokenFloat
 	}
 	t.tokens = append(t.tokens, Token{Type: tokType, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
+}
+
+// readFloatStartingWithDot handles float literals that begin with '.' (e.g., .5, .25).
+func (t *Tokenizer) readFloatStartingWithDot() {
+	startLine := t.line
+	startCol := t.col
+	start := t.pos
+	t.advance() // skip '.'
+	for t.pos < len(t.input) && t.input[t.pos] >= '0' && t.input[t.pos] <= '9' {
+		t.advance()
+	}
+	if t.pos < len(t.input) && (t.input[t.pos] == 'e' || t.input[t.pos] == 'E') {
+		t.advance()
+		if t.pos < len(t.input) && (t.input[t.pos] == '+' || t.input[t.pos] == '-') {
+			t.advance()
+		}
+		for t.pos < len(t.input) && t.input[t.pos] >= '0' && t.input[t.pos] <= '9' {
+			t.advance()
+		}
+	}
+	t.tokens = append(t.tokens, Token{Type: TokenFloat, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
 }
 
 func (t *Tokenizer) readIdent() {

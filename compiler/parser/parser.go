@@ -1939,6 +1939,13 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if negative {
 				defVal = "-" + defVal
 			}
+			// Normalize float/double defaults to match C++ protoc (SimpleDtoa/SimpleFtoa)
+			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE ||
+				field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT {
+				if v, err := strconv.ParseFloat(defVal, 64); err == nil {
+					defVal = strconv.FormatFloat(v, 'g', -1, 64)
+				}
+			}
 			field.DefaultValue = proto.String(defVal)
 		case "json_name":
 			field.JsonName = proto.String(valTok.Value)
