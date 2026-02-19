@@ -1086,3 +1086,22 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **`extensions` as type name** — same pattern
 - **RPC type referencing non-existent message** — C++ rejects, Go likely accepts
 - **Float default for integer field** — TESTED in Run 110 (116_float_default_int), confirmed broken
+- **Boolean default for string field** — TESTED locally, Go now rejects identically to C++ — NOT a gap
+
+### Run 111 — Nested oneof (FAILED: 5/5 profiles)
+- **Test:** `117_nested_oneof` — proto3 message with `oneof outer { string text = 2; oneof inner { int32 count = 3; bool flag = 4; } }` (oneof nested inside another oneof)
+- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:9:17: Missing field number.` Go protoc-go: `test.proto:line 9:17: expected "=", got "{"`. C++ treats `inner` as a field name and expects a `=` + field number. Go's `parseField` treats `oneof` as a type name, `inner` as the field name, and then expects `=` but gets `{`. The error messages differ in both content and format.
+- **Root cause:** `parseOneof()` body parsing loop falls through to `parseField()` for any non-`option`/`";"` token. When `oneof` appears inside a oneof body, `parseField` treats `oneof` as a type name (message reference) and `inner` as the field name. C++ protoc's parser handles `oneof` differently — it recognizes `inner` as a potential field name but then expects `=` and a field number, producing "Missing field number." Both reject correctly, but error messages differ.
+
+### Known gaps still unexplored (updated):
+- **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
+- **Oneof inside oneof** — TESTED in Run 111 (117_nested_oneof), confirmed broken (different error messages)
+- **Package conflict** — two files with different packages imported together
+- **Duplicate `import public`** — same file imported as both `import` and `import public`
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **`option` as type name** — Go switch matches keyword before checking context
+- **`reserved` as type name** — same pattern
+- **`extensions` as type name** — same pattern
+- **RPC type referencing non-existent message** — C++ rejects, Go likely accepts

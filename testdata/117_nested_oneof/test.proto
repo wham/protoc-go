@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package nestedoneof;
+
+message Request {
+  string id = 1;
+  oneof outer {
+    string text = 2;
+    oneof inner {
+      int32 count = 3;
+      bool flag = 4;
+    }
+  }
+}
