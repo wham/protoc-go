@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package map_example;
+
+message Config {
+  map<string, string> metadata = 1;
+  map<int32, string> labels = 2;
+}

@@ -1,0 +1,19 @@
+# Binaries
+cmd/protoc-go/protoc-go
+tools/protoc-gen-dump/protoc-gen-dump
+tools/protoc-bin/protoc
+tools/protoc-bin/include/
+
+# Test results
+results/
+
+# OS files
+.DS_Store
+
+# Editor files
+.idea/
+*.swp
+*~
+
+# Status file is tracked
+!status.txt
