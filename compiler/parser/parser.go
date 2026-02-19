@@ -26,9 +26,10 @@ type parser struct {
 	locations []*descriptorpb.SourceCodeInfo_Location
 	lastLine  int
 	lastCol   int
-	syntax       string // "proto2" or "proto3"
-	syntaxParsed  bool
-	packageParsed bool
+	syntax              string // "proto2" or "proto3"
+	syntaxParsed        bool
+	hadNonSyntaxStmt    bool
+	packageParsed       bool
 	filename     string
 	errors       []string
 }
@@ -52,17 +53,37 @@ func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorPro
 	for p.tok.Peek().Type != tokenizer.TokenEOF {
 		tok := p.tok.Peek()
 
+		// Track if any non-syntax/edition statement has been seen
+		if tok.Value != "syntax" && tok.Value != "edition" && tok.Value != ";" {
+			p.hadNonSyntaxStmt = true
+		}
+
 		switch tok.Value {
 		case "syntax":
-			if p.syntaxParsed {
-				return nil, fmt.Errorf("%d:%d: Expected top-level statement (e.g. \"message\").", tok.Line+1, tok.Column+1)
+			if p.syntaxParsed || p.hadNonSyntaxStmt {
+				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected top-level statement (e.g. \"message\").", p.filename, tok.Line+1, tok.Column+1))
+				// Skip until semicolon (error recovery)
+				for p.tok.Peek().Type != tokenizer.TokenEOF && p.tok.Peek().Value != ";" {
+					p.tok.Next()
+				}
+				if p.tok.Peek().Value == ";" {
+					p.tok.Next()
+				}
+				continue
 			}
 			if err := p.parseSyntax(fd); err != nil {
 				return nil, err
 			}
 		case "edition":
-			if p.syntaxParsed {
-				return nil, fmt.Errorf("%d:%d: Expected top-level statement (e.g. \"message\").", tok.Line+1, tok.Column+1)
+			if p.syntaxParsed || p.hadNonSyntaxStmt {
+				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected top-level statement (e.g. \"message\").", p.filename, tok.Line+1, tok.Column+1))
+				for p.tok.Peek().Type != tokenizer.TokenEOF && p.tok.Peek().Value != ";" {
+					p.tok.Next()
+				}
+				if p.tok.Peek().Value == ";" {
+					p.tok.Next()
+				}
+				continue
 			}
 			if err := p.parseEdition(fd); err != nil {
 				return nil, err

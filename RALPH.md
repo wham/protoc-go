@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 313/313 tests passing.
+ALL DONE — 318/318 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -117,6 +117,7 @@ ALL DONE — 313/313 tests passing.
 68. ✅ Duplicate syntax/edition declaration validation — reject second `syntax` or `edition` statement with `Expected top-level statement (e.g. "message").` error at duplicate keyword position
 
 69. ✅ Duplicate package declaration validation — reject second `package` statement with `Multiple package definitions.` error at duplicate `package` keyword position (1-indexed line:col, no filename prefix since CLI adds it)
+70. ✅ Late syntax/edition rejection — reject `syntax` or `edition` statements that appear after any other non-syntax statement (e.g., `package`) with `Expected top-level statement` error, using error recovery to continue parsing and collect subsequent errors (e.g., missing labels in proto2 mode)
 
 ## Notes
 
@@ -183,3 +184,4 @@ ALL DONE — 313/313 tests passing.
 - Map key type validation: C++ protoc rejects float/double/bytes/message/group as map key types. Error format: `filename:line:col: Key in map fields cannot be float/double, bytes or message types.` Location from the map field's SCI span start (path `[msgPath..., 2, fieldIdx]`). Validated in `validateMapKeyTypes` (cli.go) with `collectMapKeyTypeErrors` recursing into nested messages. Finds parent field by matching TypeName to map entry NestedType name.
 - Empty enum validation: C++ protoc rejects enums with zero values. Error format: `filename:line:col: Enums must contain at least one value.` Location from SCI path for enum name (field 1). Validated in `validateEmptyEnums` (cli.go) with `collectEmptyEnumErrors` recursing into nested messages. Runs before duplicate enum value validation.
 - Proto3 group validation: C++ protoc rejects groups in proto3 with `Groups are not supported in proto3 syntax.` at the "group" keyword position. Validated in `collectProto3GroupErrors` (cli.go), called first in `collectProto3MessageErrors` before required/default checks. Uses existing `findFieldTypeLocation` to get the TYPE_GROUP field's type SCI path position.
+- Late syntax/edition rejection: `syntax` or `edition` must be the very first statement. If any other statement (e.g., `package`, `import`, `message`) appears before it, `syntax`/`edition` is rejected with `Expected top-level statement (e.g. "message").` error. Uses error recovery (skips to `;` and continues parsing) so subsequent errors (e.g., missing labels in proto2 default mode) are also collected. `hadNonSyntaxStmt` flag in parser tracks this.
