@@ -254,6 +254,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate overlapping enum reserved ranges
+	if errs := validateEnumReservedRangeOverlaps(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate overlapping extension ranges within a message
 	if errs := validateExtensionRangeOverlaps(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -1493,6 +1498,53 @@ func collectReservedRangeOverlapErrors(filename string, msg *descriptorpb.Descri
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectReservedRangeOverlapErrors(filename, nested, nestedPath, sci, errs)
+	}
+}
+
+// validateEnumReservedRangeOverlaps checks that reserved ranges within an enum don't overlap.
+func validateEnumReservedRangeOverlaps(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		for i, enum := range fd.GetEnumType() {
+			collectEnumReservedRangeOverlapErrors(fd.GetName(), enum, []int32{5, int32(i)}, sci, &errs)
+		}
+		for i, msg := range fd.GetMessageType() {
+			collectEnumReservedRangeOverlapInMsg(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectEnumReservedRangeOverlapErrors(filename string, enum *descriptorpb.EnumDescriptorProto, enumPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	ranges := enum.GetReservedRange()
+	for i := 0; i < len(ranges); i++ {
+		for j := i + 1; j < len(ranges); j++ {
+			// Enum reserved ranges have inclusive end
+			if ranges[i].GetStart() <= ranges[j].GetEnd() && ranges[j].GetStart() <= ranges[i].GetEnd() {
+				path := append(append([]int32{}, enumPath...), 4, int32(i), 1)
+				line, col := findLocationByPath(path, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Reserved range %d to %d overlaps with already-defined range %d to %d.",
+					filename, line, col,
+					ranges[j].GetStart(), ranges[j].GetEnd(),
+					ranges[i].GetStart(), ranges[i].GetEnd()))
+			}
+		}
+	}
+}
+
+func collectEnumReservedRangeOverlapInMsg(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, enum := range msg.GetEnumType() {
+		enumPath := append(append([]int32{}, msgPath...), 4, int32(i))
+		collectEnumReservedRangeOverlapErrors(filename, enum, enumPath, sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectEnumReservedRangeOverlapInMsg(filename, nested, nestedPath, sci, errs)
 	}
 }
 

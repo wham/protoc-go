@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 488/488 tests passing.
+ALL DONE — 493/493 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -150,6 +150,7 @@ ALL DONE — 488/488 tests passing.
 100. ✅ Extension range overlap validation — reject overlapping extension ranges within a message with `Extension range X to Y overlaps with already-defined range A to B.` error at the already-defined range's start number SCI location
 101. ✅ Extension range / field number conflict validation — reject field numbers that fall within the message's declared extension ranges with `Extension range X to Y includes field "name" (N).` error at extension range start SCI location, plus suggested field number
 102. ✅ Reserved range overlap validation — reject overlapping reserved ranges within a message with `Reserved range X to Y overlaps with already-defined range A to B.` error at the already-defined range's start number SCI location (path `[4, msgIdx, 9, i, 1]`), same pattern as extension range overlap validation
+103. ✅ Enum reserved range overlap validation — reject overlapping reserved ranges within an enum with `Reserved range X to Y overlaps with already-defined range A to B.` error at already-defined range's start SCI location (path `[5, enumIdx, 4, i, 1]` for top-level, `[msgPath..., 4, enumIdx, 4, i, 1]` for nested), enum ranges have inclusive end (no -1 in display), recurses into nested messages
 
 ## Notes
 
