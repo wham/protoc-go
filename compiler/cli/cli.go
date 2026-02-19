@@ -745,7 +745,7 @@ func validatePackedNonRepeated(orderedFiles []string, parsed map[string]*descrip
 		for i, ext := range fd.GetExtension() {
 			if ext.GetOptions().GetPacked() {
 				if ext.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED || !isPackableType(ext.GetType()) {
-					path := []int32{7, int32(i)}
+					path := []int32{7, int32(i), 5}
 					line, col := findLocationByPath(path, sci)
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: [packed = true] can only be specified for repeated primitive fields.", fd.GetName(), line, col))
 				}
@@ -759,7 +759,7 @@ func collectPackedErrors(filename string, msg *descriptorpb.DescriptorProto, msg
 	for i, field := range msg.GetField() {
 		if field.GetOptions().GetPacked() {
 			if field.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED || !isPackableType(field.GetType()) {
-				fieldPath := append(append([]int32{}, msgPath...), 2, int32(i))
+				fieldPath := append(append([]int32{}, msgPath...), 2, int32(i), 5)
 				line, col := findLocationByPath(fieldPath, sci)
 				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: [packed = true] can only be specified for repeated primitive fields.", filename, line, col))
 			}
@@ -769,7 +769,7 @@ func collectPackedErrors(filename string, msg *descriptorpb.DescriptorProto, msg
 	for i, ext := range msg.GetExtension() {
 		if ext.GetOptions().GetPacked() {
 			if ext.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED || !isPackableType(ext.GetType()) {
-				extPath := append(append([]int32{}, msgPath...), 6, int32(i))
+				extPath := append(append([]int32{}, msgPath...), 6, int32(i), 5)
 				line, col := findLocationByPath(extPath, sci)
 				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: [packed = true] can only be specified for repeated primitive fields.", filename, line, col))
 			}
