@@ -865,7 +865,110 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 }
 
 func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
-	return p.skipStatement()
+	startTok := p.tok.Next() // consume "option"
+	p.trackEnd(startTok)
+
+	nameTok := p.tok.Next()
+	p.trackEnd(nameTok)
+	optName := nameTok.Value
+
+	if _, err := p.tok.Expect("="); err != nil {
+		return err
+	}
+
+	valTok := p.tok.Next()
+	p.trackEnd(valTok)
+
+	endTok, err := p.tok.Expect(";")
+	if err != nil {
+		return err
+	}
+	p.trackEnd(endTok)
+
+	if fd.Options == nil {
+		fd.Options = &descriptorpb.FileOptions{}
+	}
+
+	// Map option name to FileOptions field number
+	var fieldNum int32
+	switch optName {
+	case "java_package":
+		fd.Options.JavaPackage = proto.String(valTok.Value)
+		fieldNum = 1
+	case "java_outer_classname":
+		fd.Options.JavaOuterClassname = proto.String(valTok.Value)
+		fieldNum = 8
+	case "java_multiple_files":
+		fd.Options.JavaMultipleFiles = proto.Bool(valTok.Value == "true")
+		fieldNum = 10
+	case "go_package":
+		fd.Options.GoPackage = proto.String(valTok.Value)
+		fieldNum = 11
+	case "optimize_for":
+		switch valTok.Value {
+		case "SPEED":
+			fd.Options.OptimizeFor = descriptorpb.FileOptions_SPEED.Enum()
+		case "CODE_SIZE":
+			fd.Options.OptimizeFor = descriptorpb.FileOptions_CODE_SIZE.Enum()
+		case "LITE_RUNTIME":
+			fd.Options.OptimizeFor = descriptorpb.FileOptions_LITE_RUNTIME.Enum()
+		default:
+			return fmt.Errorf("line %d:%d: unknown optimize_for value %q", valTok.Line+1, valTok.Column+1, valTok.Value)
+		}
+		fieldNum = 9
+	case "cc_generic_services":
+		fd.Options.CcGenericServices = proto.Bool(valTok.Value == "true")
+		fieldNum = 16
+	case "java_generic_services":
+		fd.Options.JavaGenericServices = proto.Bool(valTok.Value == "true")
+		fieldNum = 17
+	case "py_generic_services":
+		fd.Options.PyGenericServices = proto.Bool(valTok.Value == "true")
+		fieldNum = 18
+	case "deprecated":
+		fd.Options.Deprecated = proto.Bool(valTok.Value == "true")
+		fieldNum = 23
+	case "cc_enable_arenas":
+		fd.Options.CcEnableArenas = proto.Bool(valTok.Value == "true")
+		fieldNum = 31
+	case "php_namespace":
+		fd.Options.PhpNamespace = proto.String(valTok.Value)
+		fieldNum = 41
+	case "php_class_prefix":
+		fd.Options.PhpClassPrefix = proto.String(valTok.Value)
+		fieldNum = 40
+	case "php_metadata_namespace":
+		fd.Options.PhpMetadataNamespace = proto.String(valTok.Value)
+		fieldNum = 44
+	case "ruby_package":
+		fd.Options.RubyPackage = proto.String(valTok.Value)
+		fieldNum = 45
+	case "objc_class_prefix":
+		fd.Options.ObjcClassPrefix = proto.String(valTok.Value)
+		fieldNum = 36
+	case "csharp_namespace":
+		fd.Options.CsharpNamespace = proto.String(valTok.Value)
+		fieldNum = 37
+	case "swift_prefix":
+		fd.Options.SwiftPrefix = proto.String(valTok.Value)
+		fieldNum = 39
+	default:
+		// Unknown option — store as uninterpreted option (skip for now)
+		return nil
+	}
+
+	// Source code info: [8] for the option statement, [8, fieldNum] for the specific option
+	span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+		Path: []int32{8},
+		Span: span,
+	})
+	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+		Path: []int32{8, fieldNum},
+		Span: span,
+	})
+
+	return nil
 }
 
 func (p *parser) skipStatement() error {
