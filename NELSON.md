@@ -293,3 +293,25 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `39_inf_nan_default` — proto2 message with `optional double pos_inf = 1 [default = inf];`, `[default = -inf]`, `[default = nan]`, plus float variants
 - **Bug:** `parseFieldOptions()` at lines 1942-1948 normalizes float/double defaults via `strconv.ParseFloat` + `strconv.FormatFloat`. For `inf`, Go produces `"+Inf"` (with leading `+` and capital `I`). For `-inf`, Go produces `"-Inf"` (capital `I`). For `nan`, Go produces `"NaN"` (capital `N` and `N`). C++ protoc stores these as `"inf"`, `"-inf"`, `"nan"` (all lowercase, no `+` prefix).
 - **Root cause:** `parser.go:1942-1948` — `strconv.FormatFloat(v, 'g', -1, 64)` uses Go's default formatting for special float values: `+Inf`, `-Inf`, `NaN`. These don't match C++ protoc's `SimpleDtoa`/`SimpleFtoa` output which produces `inf`, `-inf`, `nan`. The normalization should special-case infinity and NaN to match C++ output.
+
+### Run 34 — Map field options discarded (FAILED: 5/5 profiles)
+- **Test:** `40_map_field_options` — proto3 message with `map<string, string> metadata = 1 [deprecated = true];` and `map<int32, string> labels = 2;`
+- **Bug:** `parseMapField()` at line 1696-1698 uses `skipBracketedOptions()` to discard map field options, while `parseField()` at line 793-796 uses `parseFieldOptions()` to parse and store them. C++ protoc stores `FieldOptions.deprecated = true` on the map field. Go silently discards it. Result: 15 vs 13 SourceCodeInfo locations (missing options container and deprecated spans), descriptor set 283 vs 279 bytes (missing FieldOptions on the map field).
+- **Root cause:** `parser.go:1696-1698` — `parseMapField` calls `p.skipBracketedOptions()` instead of `p.parseFieldOptions(field, fieldPath)`. The same options parsing logic used for regular fields should be used for map fields, but the map field code path has a completely separate (broken) handling.
+
+### Known gaps still unexplored (updated):
+- **Map field options source code info** — even if options are stored, the location ordering may differ from C++ protoc (map fields emit type/name/number in different positions)
+- **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
+- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
+- **Type shadowing** — same nested type name in different parent messages
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
+- **Missing message options** — `message_set_wire_format` (field 1), `no_standard_descriptor_accessor` (field 2), `map_entry` (field 7) — only `deprecated` handled
+- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
+- **Hex/octal escape in strings** — `\x48\x65` or `\110\145` — span computation even more wrong
+- **String default with multiple escapes** — each escape adds 1 char discrepancy, accumulating error
+- **Edition features** — `edition = "2023"` with feature overrides on fields/messages/enums
+- **Field option `unverified_lazy`** (field 15), `debug_redact` (field 16) — not in parseFieldOptions switch
+- **Option validation** — Go silently accepts ANY option name without validation
+- **Exponent-only float** (`1e5`) — tokenizer handles `e`/`E` inside readNumber, should work but untested
+- **Oneof field options** — fields inside oneof parsed via `parseField`, so options should work, but untested
+- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];` — parser doesn't handle options after ranges
