@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 133/133 tests passing.
+ALL DONE — 138/138 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -81,6 +81,7 @@ ALL DONE — 133/133 tests passing.
 31. ✅ Empty statements inside message, enum, and service bodies
 32. ✅ `max` keyword in message reserved ranges (`reserved 100 to max;`)
 33. ✅ String escape sequences in tokenizer (`\n`, `\t`, `\r`, `\\`, `\"`, `\'`, hex `\xHH`, octal `\NNN`)
+34. ✅ Extend blocks (`extend Message { ... }`) with extension fields, extendee resolution, and source code info
 
 ## Notes
 
@@ -120,3 +121,4 @@ ALL DONE — 133/133 tests passing.
 - Empty statements (`;`) must be handled not only at top-level file scope but also inside message, enum, and service body loops. Just consume the token and continue.
 - Message reserved ranges support `max` keyword same as extension ranges: maps to 536870912 (kMaxRangeSentinel, 2^29). Parsed in `parseMessageReserved`.
 - String escape sequences: tokenizer's `readString()` now handles C-style escapes (`\n`, `\t`, `\r`, `\a`, `\b`, `\f`, `\v`, `\\`, `\'`, `\"`, `\?`), hex escapes (`\xHH`), and octal escapes (`\NNN` up to 3 digits). Values stored unescaped in token.
+- Extend blocks: `extend TypeName { fields... }` creates entries in `fd.Extension` (field 7 of FileDescriptorProto). Each field gets `Extendee` set to the fully-qualified extendee name. Source code info ordering: [7] (block), [7,N] (field), [7,N,2] (extendee — inserted right after field span), [7,N,4] (label), [7,N,5] (type), [7,N,1] (name), [7,N,3] (number). Extendee resolution handled in `ResolveTypes` alongside service methods.
