@@ -77,6 +77,9 @@ func ParseFile(filename string, content string) (*descriptorpb.FileDescriptorPro
 			if err := p.parseFileOption(fd); err != nil {
 				return nil, err
 			}
+		case ";":
+			// Empty statement — consume and continue (C++ protoc allows these)
+			p.tok.Next()
 		default:
 			return nil, fmt.Errorf("line %d:%d: unexpected token %q", tok.Line+1, tok.Column+1, tok.Value)
 		}
