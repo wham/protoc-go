@@ -1339,6 +1339,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go rejects the file with: `test.proto:10:12: Expected integer.` (exit 1). C++ protoc accepts it and produces a valid descriptor with negative `EnumReservedRange` entries (exit 0). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:1843` — `parseEnumReserved` calls `p.tok.ExpectInt()` which strictly requires `TokenInt`. A `-` token is `TokenSymbol`, so `ExpectInt()` fails immediately. C++ protoc's enum reserved range parser checks for a leading `-` token before consuming the integer, allowing negative reserved ranges. The fix: check for `-` before calling `ExpectInt()`, negate the parsed value when `-` is present. Same pattern as enum value parsing (which already handles `-` at line 1688-1690). This affects both single negative numbers (`reserved -5;`) and negative ranges (`reserved -20 to -15;`).
 
+### Run 137 — Default value on message-typed field (FAILED: 5/5 profiles)
+- **Test:** `143_message_default` — proto2 message with `optional Inner child = 1 [default = "test"];` where `Inner` is a message type
+- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:10:39: Messages can't have default values.` Go protoc-go: `test.proto:10:39: Expected number.` C++ correctly identifies that message-typed fields cannot have default values. Go doesn't recognize the field as message-typed at parse time and produces a generic type mismatch error ("Expected number" because unresolved named types fall through to the numeric default parsing path).
+- **Root cause:** `parser.go` — `case "default"` in `parseFieldOptions` doesn't have special handling for message-typed fields. When the field type is an unresolved reference (a named type like `Inner`), the parser doesn't know if it's a message or enum. C++ protoc's `ParseDefaultAssignment` in `parser.cc` handles this by checking if the type is a message reference and immediately rejecting with "Messages can't have default values." The Go parser falls through to a generic number parsing path, producing the wrong diagnostic.
+
 ### Known gaps still unexplored (updated):
 - **Duplicate `import public`** — same file imported as both `import` and `import public`
 - **Type shadowing** — same nested type name in different parent messages
@@ -1350,3 +1355,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
 - **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages (field numbers are positive), but may produce different error messages
 - **Negative extension range start** — `extensions -1 to 10;` — C++ rejects, Go may also reject but with different error
+- **Default on message field** — TESTED in Run 137 (143_message_default), confirmed broken (different error messages)
