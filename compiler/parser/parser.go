@@ -620,6 +620,37 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 		copy(p.locations[len(p.locations)-int(*nameIdx):], p.locations[len(p.locations)-int(*nameIdx)-1:len(p.locations)-1])
 		p.locations[len(p.locations)-int(*nameIdx)-1] = stmtLoc
 		p.attachComments(len(p.locations)-int(*nameIdx)-1, firstIdx)
+	} else if p.tok.Peek().Type == tokenizer.TokenIdent && p.syntax == "editions" {
+		// Editions supports bare identifier reserved names: reserved foo, bar;
+		stmtPath := append(copyPath(msgPath), 10) // field 10 = reserved_name
+		for {
+			nameTok := p.tok.Next() // consume identifier
+			nameVal := nameTok.Value
+			msg.ReservedName = append(msg.ReservedName, nameVal)
+
+			// Source code info for individual reserved name
+			p.addLocationSpan(append(copyPath(stmtPath), *nameIdx),
+				nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+			*nameIdx++
+
+			if p.tok.Peek().Value == "," {
+				p.tok.Next()
+			} else {
+				break
+			}
+		}
+		endTok, err := p.tok.Expect(";")
+		if err != nil {
+			return err
+		}
+		p.trackEnd(endTok)
+		// Statement-level span
+		p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		// Move statement span before individual names
+		stmtLoc := p.locations[len(p.locations)-1]
+		copy(p.locations[len(p.locations)-int(*nameIdx):], p.locations[len(p.locations)-int(*nameIdx)-1:len(p.locations)-1])
+		p.locations[len(p.locations)-int(*nameIdx)-1] = stmtLoc
+		p.attachComments(len(p.locations)-int(*nameIdx)-1, firstIdx)
 	} else {
 		// reserved 2, 15, 9 to 11;
 		stmtPath := append(copyPath(msgPath), 9) // field 9 = reserved_range
@@ -627,7 +658,11 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 
 		// Check if the first token is valid for a number range
 		if pk := p.tok.Peek(); pk.Type != tokenizer.TokenInt {
-			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected field name or number range.", p.filename, pk.Line+1, pk.Column+1))
+			if pk.Type == tokenizer.TokenIdent {
+				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Reserved names must be string literals. (Only editions supports identifiers.)", p.filename, pk.Line+1, pk.Column+1))
+			} else {
+				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected field name or number range.", p.filename, pk.Line+1, pk.Column+1))
+			}
 			p.skipToToken(";")
 			return nil
 		}
