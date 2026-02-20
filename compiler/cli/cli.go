@@ -680,8 +680,12 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "-") {
-			// Unknown flag — ignore for now
-			continue
+			// Extract flag name (before '=')
+			flagName := arg
+			if idx := strings.Index(arg, "="); idx >= 0 {
+				flagName = arg[:idx]
+			}
+			return nil, fmt.Errorf("Unknown flag: %s", flagName)
 		}
 
 		// Proto file
