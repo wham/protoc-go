@@ -1536,3 +1536,24 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `164_custom_option` — proto3 file with `option (undefined_opt) = "hello";`
 - **Bug:** `parseFileOption()` at line 2540 reads the next token as the option name. When the option uses custom syntax `(name)`, the `(` token is read as the name. Then `p.tok.Expect("=")` at line 2549 finds `undefined_opt` instead of `=` → parse error: `Expected "="`. C++ protoc correctly parses parenthesized custom option names and gives a proper error: `Option "(undefined_opt)" unknown.`
 - **Root cause:** `parser.go:2540` — `nameTok := p.tok.Next()` reads a single token. Custom option names use `(qualified.name)` syntax which requires consuming `(`, identifier(s), `)` as a compound option name. The Go parser has no support for this syntax at all — not in file options, message options, field options, enum options, service options, or method options. This is a fundamental gap in option name parsing.
+
+### Run 159 — Negative message reserved ranges (FAILED: 5/5 profiles)
+- **Test:** `165_negative_msg_reserved` — proto3 message with `reserved -5 to -1;` and `reserved -10;` (negative numbers in message reserved ranges)
+- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages and different error counts. C++ protoc produces 2 errors: `test.proto:6:12: Expected field name or number range.` and `test.proto:7:12: Expected field name or number range.` (one per reserved statement). Go protoc-go produces 1 error: `test.proto:6:12: Expected integer.` (stops after first error). Error messages differ in content ("Expected field name or number range" vs "Expected integer") and Go only reports the first error.
+- **Root cause:** `parser.go` — `parseMessageReserved` calls `p.tok.ExpectInt()` which strictly requires `TokenInt`. A `-` token is `TokenSymbol`, so `ExpectInt()` fails with a generic "Expected integer" error. C++ protoc's `ParseReserved` in `parser.cc` has special handling for reserved ranges — it checks for string tokens (reserved names) OR number tokens (reserved numbers/ranges) and gives the domain-specific error "Expected field name or number range" when neither is found. Additionally, C++ continues parsing after the first error and reports errors for all problematic reserved statements, while Go stops at the first error.
+
+### Known gaps still unexplored (updated):
+- **Invalid content in service body** — `service Foo { string x = 1; }` — Go treats as rpc, C++ rejects differently
+- **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Error column positions** — many Go validation errors report wrong column
+- **Custom option syntax** — TESTED in Run 158 (164_custom_option), confirmed broken
+- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
+- **Negative message reserved ranges** — TESTED in Run 159 (165_negative_msg_reserved), confirmed broken (different error messages)
+- **Invalid content in method body** — arbitrary non-option content — TESTED in Run 145 (151_method_body_invalid)
+- **Package with dots** — `package foo.bar.baz;` — should work, likely not a gap
+- **Empty message** — `message Foo {}` — should work, likely not a gap
+- **Deeply nested messages (5+ levels)** — source code info path correctness at depth

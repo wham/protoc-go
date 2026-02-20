@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package negres;
+
+message Config {
+  reserved -5 to -1;
+  reserved -10;
+  string name = 1;
+  int32 count = 2;
+}
