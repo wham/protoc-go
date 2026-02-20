@@ -1544,11 +1544,53 @@ func validateFeatureTargets(orderedFiles []string, parsed map[string]*descriptor
 				}
 			}
 		}
+		for _, e := range fd.GetEnumType() {
+			collectEnumEntryFeatureErrors(name, e, &errs)
+		}
+		for _, msg := range fd.GetMessageType() {
+			collectEnumEntryFeatureErrorsInMsg(name, msg, &errs)
+		}
 	}
 	return errs
 }
 
-// validateProto3 checks proto3-specific constraints and returns error strings.
+func collectEnumEntryFeatureErrors(filename string, e *descriptorpb.EnumDescriptorProto, errs *[]string) {
+	for _, val := range e.GetValue() {
+		if val.GetOptions() != nil && val.GetOptions().GetFeatures() != nil {
+			feat := val.GetOptions().GetFeatures()
+			if feat.FieldPresence != nil {
+				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum entry`.", filename, featureProtoNames["field_presence"]))
+			}
+			if feat.EnumType != nil {
+				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum entry`.", filename, featureProtoNames["enum_type"]))
+			}
+			if feat.RepeatedFieldEncoding != nil {
+				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum entry`.", filename, featureProtoNames["repeated_field_encoding"]))
+			}
+			if feat.Utf8Validation != nil {
+				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum entry`.", filename, featureProtoNames["utf8_validation"]))
+			}
+			if feat.MessageEncoding != nil {
+				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum entry`.", filename, featureProtoNames["message_encoding"]))
+			}
+			if feat.JsonFormat != nil {
+				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum entry`.", filename, featureProtoNames["json_format"]))
+			}
+		}
+	}
+}
+
+func collectEnumEntryFeatureErrorsInMsg(filename string, msg *descriptorpb.DescriptorProto, errs *[]string) {
+	for _, e := range msg.GetEnumType() {
+		collectEnumEntryFeatureErrors(filename, e, errs)
+	}
+	for _, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		collectEnumEntryFeatureErrorsInMsg(filename, nested, errs)
+	}
+}
 func validateProto3(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
 	for _, name := range orderedFiles {
