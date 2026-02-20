@@ -613,6 +613,10 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
+		if strings.HasPrefix(arg, "--dependency_out=") {
+			continue
+		}
+
 		// --X_out=DIR
 		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "_out=") {
 			withoutDashes := arg[2:]
