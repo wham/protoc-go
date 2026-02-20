@@ -1897,11 +1897,12 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		// Optional options [deprecated = true]
 		var enumValOpts *descriptorpb.EnumValueOptions
 		var hasOpts bool
-		var optsBracketStartLine, optsBracketStartCol, optsBracketEndCol int
+		var optsBracketStartLine, optsBracketStartCol, optsBracketEndLine, optsBracketEndCol int
 		type enumValOptInfo struct {
-			fieldNum             int32
-			nameStartCol, endCol int
-			featFieldNum         int32
+			fieldNum                          int32
+			nameStartLine, nameStartCol       int
+			endLine, endCol                   int
+			featFieldNum                      int32
 		}
 		var parsedEnumValOpts []enumValOptInfo
 
@@ -2036,10 +2037,12 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 						}
 						endCol := optValTok.Column + len(optValTok.Value)
 						parsedEnumValOpts = append(parsedEnumValOpts, enumValOptInfo{
-							fieldNum:     2,
-							nameStartCol: optNameTok.Column,
-							endCol:       endCol,
-							featFieldNum: featFieldNum,
+							fieldNum:      2,
+							nameStartLine: optNameTok.Line,
+							nameStartCol:  optNameTok.Column,
+							endLine:       optValTok.Line,
+							endCol:        endCol,
+							featFieldNum:  featFieldNum,
 						})
 					} else {
 						return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", optNameTok.Line+1, optNameTok.Column+1, optName)
@@ -2049,9 +2052,11 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 				if fieldNum != 0 {
 					endCol := optValTok.Column + len(optValTok.Value)
 					parsedEnumValOpts = append(parsedEnumValOpts, enumValOptInfo{
-						fieldNum:     fieldNum,
-						nameStartCol: optNameTok.Column,
-						endCol:       endCol,
+						fieldNum:      fieldNum,
+						nameStartLine: optNameTok.Line,
+						nameStartCol:  optNameTok.Column,
+						endLine:       optValTok.Line,
+						endCol:        endCol,
 					})
 				}
 
@@ -2071,6 +2076,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 				return nil, err
 			}
 			p.trackEnd(closeBracket)
+			optsBracketEndLine = closeBracket.Line
 			optsBracketEndCol = closeBracket.Column
 		}
 
@@ -2119,14 +2125,14 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		if hasOpts {
 			optPath := append(copyPath(valuePath), 3)
 			p.addLocationSpan(optPath, optsBracketStartLine, optsBracketStartCol,
-				optsBracketStartLine, optsBracketEndCol+1)
+				optsBracketEndLine, optsBracketEndCol+1)
 			for _, oi := range parsedEnumValOpts {
 				if oi.featFieldNum != 0 {
 					p.addLocationSpan(append(copyPath(optPath), oi.fieldNum, oi.featFieldNum),
-						optsBracketStartLine, oi.nameStartCol, optsBracketStartLine, oi.endCol)
+						oi.nameStartLine, oi.nameStartCol, oi.endLine, oi.endCol)
 				} else {
 					p.addLocationSpan(append(copyPath(optPath), oi.fieldNum),
-						optsBracketStartLine, oi.nameStartCol, optsBracketStartLine, oi.endCol)
+						oi.nameStartLine, oi.nameStartCol, oi.endLine, oi.endCol)
 				}
 			}
 		}
