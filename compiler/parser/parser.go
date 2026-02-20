@@ -574,6 +574,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 }
 
 func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath []int32, rangeIdx, nameIdx *int32) error {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "reserved"
 
 	// Determine if this is a name reservation (first token is a string) or range reservation
@@ -618,6 +619,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 		stmtLoc := p.locations[len(p.locations)-1]
 		copy(p.locations[len(p.locations)-int(*nameIdx):], p.locations[len(p.locations)-int(*nameIdx)-1:len(p.locations)-1])
 		p.locations[len(p.locations)-int(*nameIdx)-1] = stmtLoc
+		p.attachComments(len(p.locations)-int(*nameIdx)-1, firstIdx)
 	} else {
 		// reserved 2, 15, 9 to 11;
 		stmtPath := append(copyPath(msgPath), 9) // field 9 = reserved_range
@@ -707,6 +709,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 		stmtLoc := p.locations[len(p.locations)-1]
 		copy(p.locations[len(p.locations)-count*3:], p.locations[len(p.locations)-count*3-1:len(p.locations)-1])
 		p.locations[len(p.locations)-count*3-1] = stmtLoc
+		p.attachComments(len(p.locations)-count*3-1, firstIdx)
 	}
 	return nil
 }
