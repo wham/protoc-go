@@ -1179,6 +1179,7 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 }
 
 func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath []int32, seenOptions map[string]bool) error {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "option"
 	p.trackEnd(startTok)
 
@@ -1236,6 +1237,7 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		Path: append(copyPath(optPath), fieldNum),
 		Span: span,
 	})
+	p.attachComments(len(p.locations)-1, firstIdx)
 
 	return nil
 }
