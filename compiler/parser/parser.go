@@ -2541,6 +2541,32 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 	p.trackEnd(nameTok)
 	optName := nameTok.Value
 
+	// Handle parenthesized custom option names: option (name) = value;
+	if optName == "(" {
+		innerTok := p.tok.Next()
+		p.trackEnd(innerTok)
+		fullName := "(" + innerTok.Value
+		// Handle dotted names like (pkg.name)
+		for p.tok.Peek().Value == "." {
+			dotTok := p.tok.Next()
+			p.trackEnd(dotTok)
+			partTok := p.tok.Next()
+			p.trackEnd(partTok)
+			fullName += "." + partTok.Value
+		}
+		closeTok, err := p.tok.Expect(")")
+		if err != nil {
+			return err
+		}
+		p.trackEnd(closeTok)
+		fullName += ")"
+		// Skip to end of statement to consume `= value ;`
+		if err := p.skipStatement(); err != nil {
+			return err
+		}
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, fullName)
+	}
+
 	if p.seenFileOptions[optName] {
 		return fmt.Errorf("%d:%d: Option \"%s\" was already set.", nameTok.Line+1, nameTok.Column+1, optName)
 	}
