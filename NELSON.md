@@ -1475,3 +1475,21 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `157_method_empty_stmt` — proto3 service with `rpc Search(Request) returns (Response) { ; }` (empty statement `;` inside method body)
 - **Bug:** Go protoc-go rejects the file with: `test.proto:15:5: Expected "option".` (exit 1). C++ protoc accepts the empty statement inside the method body and produces a valid descriptor (exit 0). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:2271-2280` — the method body parsing loop checks for `"option"` keyword, but has no handling for `";"` (empty statements). The `else` branch at line 2276-2278 rejects anything that isn't `option` with "Expected \"option\".". The service body parser (line 2005-2007) correctly handles `;` by consuming it and continuing, but the method body parser does not. C++ protoc's `ParseMethodBlock` accepts both `option` statements and empty statements (`;`) per the protobuf language spec. The fix: add `if p.tok.Peek().Value == ";" { p.tok.Next(); continue }` before the `option` check in the method body loop.
+
+### Run 152 — Unknown message option silently accepted (FAILED: 5/5 profiles)
+- **Test:** `158_unknown_msg_option` — proto3 message with `option foobar = true;` (completely unknown option name, not a standard MessageOptions field)
+- **Bug:** Go protoc-go silently accepts the unknown message option and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:10: Option "foobar" unknown. Ensure that your proto definition file imports the proto which defines the option.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1193-1194` — `parseMessageOption` switch handles `deprecated` (field 3), `no_standard_descriptor_accessor` (field 2), `message_set_wire_format` (field 1), and `map_entry` (field 7, rejected). The `default` case at line 1193-1194 does `return nil`, silently accepting any unknown option name. C++ protoc stores all options as `UninterpretedOption` during parsing, then during linking in `descriptor.cc`, resolves each option name against the relevant options message fields. Unknown names are rejected. Go's parser should return an error for unknown option names: `return fmt.Errorf(... "Option \"%s\" unknown. ...")`. Same bug exists in `parseEnumOption` (line 1809), `parseServiceOption` (line 2067), and `parseMethodOption` (line 2134) — all silently drop unknown option names.
+
+### Known gaps still unexplored (updated):
+- **Unknown enum/service/method options** — same `return nil` default case as message options (lines 1809, 2067, 2134)
+- **Invalid content in service body** — `service Foo { string x = 1; }` — Go treats as rpc, C++ rejects differently
+- **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Error column positions** — many Go validation errors report wrong column
+- **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
+- **Custom option syntax** — `option (custom_opt) = "foo";` — Go can't parse parenthesized option names
+- **Unknown field options** — `string name = 1 [foobar = true];` — Go likely silently drops unknown field options too
