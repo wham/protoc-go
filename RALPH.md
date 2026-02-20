@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1003/1003 tests passing.
+ALL DONE — 1008/1008 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -226,6 +226,8 @@ ALL DONE — 1003/1003 tests passing.
 186. ✅ Reserved declaration comment tracking — `parseMessageReserved` now captures `firstIdx` before consuming `reserved` token and calls `attachComments` on the statement-level SCI location (both reserved names path `[10]` and reserved ranges path `[9]`), matching other declaration parsers for leading/trailing/detached comments
 
 187. ✅ Extension range declaration comment tracking — `parseExtensionRange` now captures `firstIdx` before consuming `extensions` token and calls `attachComments` on the statement-level SCI location, matching other declaration parsers for leading/trailing/detached comments
+
+198. ✅ Empty import file-not-found handling — when `srcTree.Open(filename)` fails for a dependency and `collectErrors` is active, add `<filename>: File not found.` to collectErrors and return `(false, nil)` instead of propagating error, so parent also emits `Import "" was not found or had errors.` follow-up error matching C++ protoc's two-line output
 
 ## Notes
 
