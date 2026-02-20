@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 928/928 tests passing.
+ALL DONE — 933/933 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -224,6 +224,8 @@ ALL DONE — 928/928 tests passing.
 184. ✅ Method declaration comment tracking — `parseMethod` now captures `firstIdx` before consuming `rpc` token and calls `attachComments` on the method's SCI location, matching other declaration parsers for leading/trailing/detached comments
 185. ✅ Import declaration comment tracking — `parseImport` now captures `firstIdx` before consuming `import` token and calls `attachComments` on the import's SCI location (path `[3, depIdx]`), matching other declaration parsers for leading/trailing/detached comments
 186. ✅ Reserved declaration comment tracking — `parseMessageReserved` now captures `firstIdx` before consuming `reserved` token and calls `attachComments` on the statement-level SCI location (both reserved names path `[10]` and reserved ranges path `[9]`), matching other declaration parsers for leading/trailing/detached comments
+
+187. ✅ Extension range declaration comment tracking — `parseExtensionRange` now captures `firstIdx` before consuming `extensions` token and calls `attachComments` on the statement-level SCI location, matching other declaration parsers for leading/trailing/detached comments
 
 ## Notes
 
