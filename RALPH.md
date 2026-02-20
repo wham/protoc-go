@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1053/1053 tests passing.
+ALL DONE — 1058/1058 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -364,7 +364,7 @@ ALL DONE — 1053/1053 tests passing.
 201. ✅ Trailing comma rejection in enum value options — reject `[deprecated = true,]` (trailing comma before `]`) with `Expected identifier.` error at `]` token position, matching field option trailing comma behavior
 202. ✅ Invalid optimize_for/idempotency_level enum value error messages — use `Enum type "google.protobuf.FileOptions.OptimizeMode" has no value named "X" for option "google.protobuf.FileOptions.optimize_for".` format (and matching format for `MethodOptions.IdempotencyLevel`) to match C++ protoc, replacing old ad-hoc error format
 
-- Import declaration comment tracking: `parseImport` captures `firstIdx` before consuming `import` token and calls `attachComments` on the import SCI location (path `[3, depIdx]`), same pattern as message/enum/service/oneof/field/map/method declarations.
+208. ✅ Boolean enum option validation — reject string/integer/float values for boolean enum options (allow_alias, deprecated, deprecated_legacy_json_field_conflicts) with `Value must be identifier for boolean option "google.protobuf.EnumOptions.X".` error at value token position, check `valTok.Type == TokenIdent && (value == "true" || value == "false")` in each boolean case of `parseEnumOption`
 - File option declaration comment tracking: `parseFileOption` captures `firstIdx` before consuming `option` token and calls `attachComments` on the `[8, fieldNum]` SCI location (the specific option entry, not the statement entry), same pattern as message/enum/service/field/method declarations.
 - Block comment asterisk stripping: C++ protoc's `ConsumeBlockComment` strips leading whitespace and one leading `*` after each newline inside `/* ... */` block comments. Go tokenizer's `readBlockCommentText` now mirrors this: after consuming `\n` (included in content), it skips non-newline whitespace (`' '`, `\t`, `\r`, `\v`, `\f`) and one `*` (if not followed by `/`). This produces clean comment text like `\n The name of the\n configuration entry.\n` from Javadoc-style block comments.
 - Negative zero integer default normalization: C++ protoc normalizes `[default = -0]` to `"0"` for integer fields (since `atoi("-0") == 0`). Go `normalizeIntDefault` now handles `-0` and `-0x0`/`-00` cases by checking if the parsed value is zero after negation and returning `"0"` instead of `"-0"`.
