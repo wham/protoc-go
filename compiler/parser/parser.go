@@ -2596,6 +2596,7 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 }
 
 func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "option"
 	p.trackEnd(startTok)
 
@@ -2816,6 +2817,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		Path: []int32{8, fieldNum},
 		Span: span,
 	})
+	p.attachComments(len(p.locations)-1, firstIdx)
 
 	return nil
 }
