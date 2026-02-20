@@ -2200,7 +2200,7 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 		case "IDEMPOTENT":
 			lvl = descriptorpb.MethodOptions_IDEMPOTENT
 		default:
-			return fmt.Errorf("line %d:%d: unknown idempotency_level %q", valTok.Line+1, valTok.Column+1, valTok.Value)
+			return fmt.Errorf("%d:%d: Enum type \"google.protobuf.MethodOptions.IdempotencyLevel\" has no value named \"%s\" for option \"google.protobuf.MethodOptions.idempotency_level\".", valTok.Line+1, valTok.Column+1, valTok.Value)
 		}
 		method.Options.IdempotencyLevel = lvl.Enum()
 		fieldNum = 34
@@ -2748,7 +2748,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		case "LITE_RUNTIME":
 			fd.Options.OptimizeFor = descriptorpb.FileOptions_LITE_RUNTIME.Enum()
 		default:
-			return fmt.Errorf("line %d:%d: unknown optimize_for value %q", valTok.Line+1, valTok.Column+1, valTok.Value)
+			return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FileOptions.OptimizeMode\" has no value named \"%s\" for option \"google.protobuf.FileOptions.optimize_for\".", valTok.Line+1, valTok.Column+1, valTok.Value)
 		}
 		fieldNum = 9
 	case "cc_generic_services":
