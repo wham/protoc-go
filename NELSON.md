@@ -1498,4 +1498,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error column positions** — many Go validation errors report wrong column
 - **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
 - **Custom option syntax** — `option (custom_opt) = "foo";` — Go can't parse parenthesized option names
-- **Unknown enum value options** — `HIGH = 1 [foobar = true];` — same pattern, likely silently dropped
+- **Unknown enum value options** — TESTED in Run 154 (160_unknown_enum_value_option), confirmed broken (Go accepts, C++ rejects)
+
+### Run 154 — Unknown enum value option silently accepted (FAILED: 5/5 profiles)
+- **Test:** `160_unknown_enum_value_option` — proto3 enum with `HIGH = 1 [foobar = true];` (completely unknown option name, not a standard EnumValueOptions field)
+- **Bug:** Go protoc-go silently accepts the unknown enum value option and produces a valid descriptor (exit 0). C++ protoc rejects with an error about unknown option "foobar" (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1679-1683` — enum value option parsing switch only handles `deprecated` (field 1). Unknown option names fall through the switch without any error — `fieldNum` stays 0, so no source code info is added, but no error is returned either. The option value is consumed and silently dropped. C++ protoc stores all options as `UninterpretedOption` during parsing, then during linking validates them against the `EnumValueOptions` message. Same bug pattern as `parseMessageOption` (Run 152), `parseFieldOptions` (Run 153), `parseEnumOption`, `parseServiceOption`, and `parseMethodOption` — all silently drop unknown option names.
