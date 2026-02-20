@@ -3058,6 +3058,30 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		optNameTok := p.tok.Next()
 		optName := optNameTok.Value
 
+		// Handle parenthesized custom option names: [(name) = value]
+		if optName == "(" {
+			fullName, err := p.parseParenthesizedOptionName(optNameTok)
+			if err != nil {
+				return nil, err
+			}
+			// Skip to end of option (consume = value, up to , or ])
+			for {
+				tok := p.tok.Next()
+				if tok.Type == tokenizer.TokenEOF || tok.Value == "]" || tok.Value == "," {
+					if tok.Value == "," {
+						// Check for trailing comma
+						if p.tok.Peek().Value == "]" {
+							p.tok.Next()
+						} else {
+							continue // more options after this one — but we still error
+						}
+					}
+					break
+				}
+			}
+			return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", optNameTok.Line+1, optNameTok.Column+1, fullName)
+		}
+
 		if optName != "targets" && seenFieldOpts[optName] {
 			return nil, fmt.Errorf("%d:%d: Option \"%s\" was already set.", optNameTok.Line+1, optNameTok.Column+1, optName)
 		}
