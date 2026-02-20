@@ -2087,6 +2087,7 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 }
 
 func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, svcPath []int32, seenServiceOptions map[string]bool) error {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "option"
 	p.trackEnd(startTok)
 
@@ -2135,6 +2136,7 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 		Path: append(copyPath(optPath), fieldNum),
 		Span: span,
 	})
+	p.attachComments(len(p.locations)-1, firstIdx)
 
 	return nil
 }

@@ -1,30 +1,50 @@
 {
   "fileToGenerate": [
-    "test_cr.proto"
+    "test.proto"
   ],
   "protoFile": [
     {
-      "name": "test_cr.proto",
-      "package": "crtest",
+      "name": "test.proto",
+      "package": "svcoptcomment",
       "messageType": [
         {
-          "name": "Config",
+          "name": "Request",
           "field": [
             {
-              "name": "name",
+              "name": "query",
               "number": 1,
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
-              "jsonName": "name"
-            },
-            {
-              "name": "count",
-              "number": 2,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_INT32",
-              "jsonName": "count"
+              "jsonName": "query"
             }
           ]
+        },
+        {
+          "name": "Response",
+          "field": [
+            {
+              "name": "result",
+              "number": 1,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_STRING",
+              "jsonName": "result"
+            }
+          ]
+        }
+      ],
+      "service": [
+        {
+          "name": "SearchService",
+          "method": [
+            {
+              "name": "Search",
+              "inputType": ".svcoptcomment.Request",
+              "outputType": ".svcoptcomment.Response"
+            }
+          ],
+          "options": {
+            "deprecated": true
+          }
         }
       ],
       "sourceCodeInfo": {
@@ -33,7 +53,8 @@
             "span": [
               0,
               0,
-              92
+              17,
+              1
             ]
           },
           {
@@ -51,9 +72,9 @@
               2
             ],
             "span": [
+              2,
               0,
-              19,
-              34
+              22
             ]
           },
           {
@@ -62,9 +83,10 @@
               0
             ],
             "span": [
+              4,
               0,
-              36,
-              92
+              6,
+              1
             ]
           },
           {
@@ -74,9 +96,9 @@
               1
             ],
             "span": [
-              0,
-              44,
-              50
+              4,
+              8,
+              15
             ]
           },
           {
@@ -87,9 +109,9 @@
               0
             ],
             "span": [
-              0,
-              55,
-              71
+              5,
+              2,
+              19
             ]
           },
           {
@@ -101,9 +123,9 @@
               5
             ],
             "span": [
-              0,
-              55,
-              61
+              5,
+              2,
+              8
             ]
           },
           {
@@ -115,9 +137,9 @@
               1
             ],
             "span": [
-              0,
-              62,
-              66
+              5,
+              9,
+              14
             ]
           },
           {
@@ -129,64 +151,192 @@
               3
             ],
             "span": [
-              0,
-              69,
-              70
+              5,
+              17,
+              18
             ]
           },
           {
             "path": [
               4,
-              0,
-              2,
               1
             ],
             "span": [
+              8,
               0,
-              74,
-              90
+              10,
+              1
             ]
           },
           {
             "path": [
               4,
-              0,
-              2,
               1,
+              1
+            ],
+            "span": [
+              8,
+              8,
+              16
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0
+            ],
+            "span": [
+              9,
+              2,
+              20
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0,
               5
             ],
             "span": [
-              0,
-              74,
-              79
+              9,
+              2,
+              8
             ]
           },
           {
             "path": [
               4,
-              0,
-              2,
               1,
+              2,
+              0,
               1
             ],
             "span": [
-              0,
-              80,
-              85
+              9,
+              9,
+              15
             ]
           },
           {
             "path": [
               4,
-              0,
-              2,
               1,
+              2,
+              0,
               3
             ],
             "span": [
+              9,
+              18,
+              19
+            ]
+          },
+          {
+            "path": [
+              6,
+              0
+            ],
+            "span": [
+              12,
               0,
-              88,
-              89
+              17,
+              1
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              1
+            ],
+            "span": [
+              12,
+              8,
+              21
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              3
+            ],
+            "span": [
+              14,
+              2,
+              27
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              3,
+              33
+            ],
+            "span": [
+              14,
+              2,
+              27
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0
+            ],
+            "span": [
+              16,
+              2,
+              41
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              16,
+              6,
+              12
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0,
+              2
+            ],
+            "span": [
+              16,
+              13,
+              20
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              16,
+              31,
+              39
             ]
           }
         ]
@@ -196,27 +346,47 @@
   ],
   "sourceFileDescriptors": [
     {
-      "name": "test_cr.proto",
-      "package": "crtest",
+      "name": "test.proto",
+      "package": "svcoptcomment",
       "messageType": [
         {
-          "name": "Config",
+          "name": "Request",
           "field": [
             {
-              "name": "name",
+              "name": "query",
               "number": 1,
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
-              "jsonName": "name"
-            },
-            {
-              "name": "count",
-              "number": 2,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_INT32",
-              "jsonName": "count"
+              "jsonName": "query"
             }
           ]
+        },
+        {
+          "name": "Response",
+          "field": [
+            {
+              "name": "result",
+              "number": 1,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_STRING",
+              "jsonName": "result"
+            }
+          ]
+        }
+      ],
+      "service": [
+        {
+          "name": "SearchService",
+          "method": [
+            {
+              "name": "Search",
+              "inputType": ".svcoptcomment.Request",
+              "outputType": ".svcoptcomment.Response"
+            }
+          ],
+          "options": {
+            "deprecated": true
+          }
         }
       ],
       "sourceCodeInfo": {
@@ -225,7 +395,8 @@
             "span": [
               0,
               0,
-              92
+              17,
+              1
             ]
           },
           {
@@ -243,9 +414,9 @@
               2
             ],
             "span": [
+              2,
               0,
-              19,
-              34
+              22
             ]
           },
           {
@@ -254,9 +425,10 @@
               0
             ],
             "span": [
+              4,
               0,
-              36,
-              92
+              6,
+              1
             ]
           },
           {
@@ -266,9 +438,9 @@
               1
             ],
             "span": [
-              0,
-              44,
-              50
+              4,
+              8,
+              15
             ]
           },
           {
@@ -279,9 +451,9 @@
               0
             ],
             "span": [
-              0,
-              55,
-              71
+              5,
+              2,
+              19
             ]
           },
           {
@@ -293,9 +465,9 @@
               5
             ],
             "span": [
-              0,
-              55,
-              61
+              5,
+              2,
+              8
             ]
           },
           {
@@ -307,9 +479,9 @@
               1
             ],
             "span": [
-              0,
-              62,
-              66
+              5,
+              9,
+              14
             ]
           },
           {
@@ -321,64 +493,192 @@
               3
             ],
             "span": [
-              0,
-              69,
-              70
+              5,
+              17,
+              18
             ]
           },
           {
             "path": [
               4,
-              0,
-              2,
               1
             ],
             "span": [
+              8,
               0,
-              74,
-              90
+              10,
+              1
             ]
           },
           {
             "path": [
               4,
-              0,
-              2,
               1,
+              1
+            ],
+            "span": [
+              8,
+              8,
+              16
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0
+            ],
+            "span": [
+              9,
+              2,
+              20
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0,
               5
             ],
             "span": [
-              0,
-              74,
-              79
+              9,
+              2,
+              8
             ]
           },
           {
             "path": [
               4,
-              0,
-              2,
               1,
+              2,
+              0,
               1
             ],
             "span": [
-              0,
-              80,
-              85
+              9,
+              9,
+              15
             ]
           },
           {
             "path": [
               4,
-              0,
-              2,
               1,
+              2,
+              0,
               3
             ],
             "span": [
+              9,
+              18,
+              19
+            ]
+          },
+          {
+            "path": [
+              6,
+              0
+            ],
+            "span": [
+              12,
               0,
-              88,
-              89
+              17,
+              1
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              1
+            ],
+            "span": [
+              12,
+              8,
+              21
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              3
+            ],
+            "span": [
+              14,
+              2,
+              27
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              3,
+              33
+            ],
+            "span": [
+              14,
+              2,
+              27
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0
+            ],
+            "span": [
+              16,
+              2,
+              41
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              16,
+              6,
+              12
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0,
+              2
+            ],
+            "span": [
+              16,
+              13,
+              20
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              16,
+              31,
+              39
             ]
           }
         ]
