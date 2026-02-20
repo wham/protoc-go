@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 903/903 tests passing.
+ALL DONE — 908/908 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -220,7 +220,7 @@ ALL DONE — 903/903 tests passing.
 
 181. ✅ Oneof declaration comment tracking — `parseOneof` now captures `firstIdx` before consuming `oneof` token and calls `attachComments` on the oneof's SCI location, matching `parseField`/`parseMapField` behavior for leading/trailing/detached comments
 
-182. ✅ Service declaration comment tracking — `parseService` now captures `firstIdx` before consuming `service` token and calls `attachComments` on the service's SCI location, matching `parseMessage`/`parseField`/`parseMapField`/`parseOneof` behavior for leading/trailing/detached comments
+183. ✅ Enum declaration comment tracking — `parseEnum` now captures `firstIdx` before consuming `enum` token and calls `attachComments` on the enum's SCI location, matching `parseMessage`/`parseService`/`parseOneof`/`parseMapField` behavior for leading/trailing/detached comments
 
 ## Notes
 
