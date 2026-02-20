@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1243/1243 tests passing.
+ALL DONE — 1245/1245 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -411,4 +411,6 @@ ALL DONE — 1243/1243 tests passing.
 239. ✅ Map entry conflict validation — detect naming conflicts between expanded map entry types and existing nested message types with `Expanded map entry type X conflicts with an existing nested message type.` error at containing message name position, plus duplicate field/type name errors for synthetic map entry children (key, value). Matched C++ symbol registration order (children before parent: oneofs → fields → enums → nested types → message name).
 240. ✅ `--print_free_field_numbers` flag
 241. ✅ `--deterministic_output` flag parsing — accept flag without error, value is currently ignored (only relevant for `--encode` mode). C++ protoc accepts this flag and continues to normal validation (e.g., `Missing input file.`). — parse protos and print free (unoccupied) field numbers for each message to stdout, accounting for used field numbers, reserved ranges, and extension ranges. Post-order traversal (nested messages before parent). Output format: `fullname                            free: N-M ...`
+242. ✅ `--retain_options` flag parsing — accept flag without error, value is currently ignored (only relevant for `--descriptor_set_out` mode to prevent stripping source-retention options). C++ protoc accepts this flag and continues to normal validation.
+243. ✅ `--decode_raw` flag parsing — accept flag and exit immediately with no error (reads binary proto from stdin; with empty stdin exits 0). Skips input file and output directive validation.
 - Type shadowing resolution: C++ protoc's `LookupSymbolNoPlaceholder` uses first-component-first resolution for compound names. For `Outer.Inner` in scope `Container`: find `Outer` at innermost scope first → if found as TYPE_MESSAGE (aggregate), try full `Container.Outer.Inner` → if not found, stop and report shadowing error (don't fall through to outer scopes). `resolveTypeName` returns `(resolved, shadowCandidate)` where shadowCandidate is non-empty when shadowing fails. `shadowErrorMsg` formats the error. Callers in `ResolveTypes`, `resolveMessageFieldsWithErrorsPath`, `CheckUnresolvedTypes`, and `checkMsgUnresolved` all updated to emit shadowing error when shadowCandidate is set.

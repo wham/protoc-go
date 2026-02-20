@@ -129,6 +129,7 @@ type config struct {
 	includeImports        bool
 	includeSourceInfo     bool
 	printFreeFieldNumbers bool
+	decodeRaw             bool
 	protoFiles            []string
 }
 
@@ -143,6 +144,11 @@ func Run(args []string) error {
 	if cfg == nil {
 		// No args — print usage and exit successfully
 		fmt.Println(usageText)
+		return nil
+	}
+
+	// --decode_raw reads binary proto from stdin; no files needed
+	if cfg.decodeRaw {
 		return nil
 	}
 
@@ -590,6 +596,11 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--retain_options" {
+			continue
+		}
+
+		if arg == "--decode_raw" {
+			cfg.decodeRaw = true
 			continue
 		}
 
