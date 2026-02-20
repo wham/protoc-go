@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 958/958 tests passing.
+ALL DONE — 963/963 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -351,6 +351,7 @@ ALL DONE — 958/958 tests passing.
 189. ✅ Message option declaration comment tracking — `parseMessageOption` now captures `firstIdx` before consuming `option` token and calls `attachComments` on the specific option's SCI location (path `[msgPath..., 7, fieldNum]`), matching `parseFileOption` pattern for leading/trailing/detached comments
 190. ✅ Enum option declaration comment tracking — `parseEnumOption` now captures `firstIdx` before consuming `option` token and calls `attachComments` on the specific option's SCI location (path `[enumPath..., 3, fieldNum]`), matching `parseFileOption`/`parseMessageOption` pattern for leading/trailing/detached comments
 191. ✅ Service option declaration comment tracking — `parseServiceOption` now captures `firstIdx` before consuming `option` token and calls `attachComments` on the specific option's SCI location (path `[svcPath..., 3, fieldNum]`), matching `parseFileOption`/`parseMessageOption`/`parseEnumOption` pattern for leading/trailing/detached comments
+192. ✅ Method option declaration comment tracking — `parseMethodOption` now captures `firstIdx` before consuming `option` token and calls `attachComments` on the specific option's SCI location (path `[methodPath..., 4, fieldNum]`), matching `parseServiceOption`/`parseFileOption`/`parseMessageOption`/`parseEnumOption` pattern for leading/trailing/detached comments
 
 - Import declaration comment tracking: `parseImport` captures `firstIdx` before consuming `import` token and calls `attachComments` on the import SCI location (path `[3, depIdx]`), same pattern as message/enum/service/oneof/field/map/method declarations.
 - File option declaration comment tracking: `parseFileOption` captures `firstIdx` before consuming `option` token and calls `attachComments` on the `[8, fieldNum]` SCI location (the specific option entry, not the statement entry), same pattern as message/enum/service/field/method declarations.
