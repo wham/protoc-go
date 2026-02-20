@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 773/773 tests passing.
+ALL DONE — 778/778 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -205,6 +205,7 @@ ALL DONE — 773/773 tests passing.
 155. ✅ Reversed reserved range validation — reject `reserved 10 to 5;` (end < start) with `Reserved range end number must be greater than start number.` error at start number token position
 156. ✅ Reversed extension range validation — reject `extensions 200 to 100;` (end < start) with `Extension range end number must be greater than start number.` error at start number token position
 157. ✅ Reversed enum reserved range validation — reject `reserved 20 to 10;` (end < start) in enums with `Reserved range end number must be greater than start number.` error at start number token position, uses `endNum < startNum` (not `<=`) since enum ranges have inclusive end
+158. ✅ UTF-8 BOM handling — tokenizer skips BOM bytes (EF BB BF) at start of input while preserving column offsets (col starts at 3) to match C++ protoc position accounting
 
 ## Notes
 
