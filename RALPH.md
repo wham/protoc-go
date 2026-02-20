@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1169/1169 tests passing.
+ALL DONE — 1174/1174 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -398,3 +398,4 @@ ALL DONE — 1169/1169 tests passing.
 226. ✅ Enum feature target validation — reject FeatureSet fields not targeting ENUM (field_presence, repeated_field_encoding, utf8_validation, message_encoding, json_format) on enum declarations with `Option google.protobuf.FeatureSet.X cannot be set on an entity of type \`enum\`.` error (no line:col), only `enum_type` is allowed on enums (targets ENUM), validated in `collectEnumFeatureErrors`/`collectEnumFeatureErrorsInMsg` (cli.go) recursing into nested messages, skips map entry types
 227. ✅ Field feature target validation — reject FeatureSet fields not targeting FIELD (enum_type targets ENUM, json_format targets MESSAGE) on fields with `Option google.protobuf.FeatureSet.X cannot be set on an entity of type \`field\`.` error (no line:col), field_presence/repeated_field_encoding/utf8_validation/message_encoding are allowed (target FIELD), validated in `collectFieldFeatureErrors`/`collectFieldFeatureErrorsInMsg`/`collectFieldFeatureErrorsForExtensions` (cli.go) recursing into nested messages and checking file-level extensions, skips map entry types
 228. ✅ Reserved identifier name validation — reject unquoted identifiers in `reserved` declarations in proto2/proto3 with `Reserved names must be string literals. (Only editions supports identifiers.)` error at identifier position, editions allows bare identifiers as reserved names with full SCI support
+229. ✅ MessageSet field validation — reject regular fields in messages with `message_set_wire_format = true` with `MessageSets cannot have fields, only extensions.` error at field name location (SCI path `[msgPath..., 2, fieldIdx, 1]`), recurses into nested messages, skips map entry types
