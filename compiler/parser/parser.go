@@ -2962,13 +2962,13 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 			clientStreamTok.Line, clientStreamTok.Column, clientStreamTok.Line, clientStreamTok.Column+len("stream"))
 	}
 	p.addLocationSpan(append(copyPath(path), 2),
-		inputTok.Line, inputTok.Column, inputTok.Line, inputEndCol)
+		inputTok.Line, inputTok.Column, inputEndTok.Line, inputEndCol)
 	if serverStreaming {
 		p.addLocationSpan(append(copyPath(path), 6),
 			serverStreamTok.Line, serverStreamTok.Column, serverStreamTok.Line, serverStreamTok.Column+len("stream"))
 	}
 	p.addLocationSpan(append(copyPath(path), 3),
-		outputTok.Line, outputTok.Column, outputTok.Line, outputEndCol)
+		outputTok.Line, outputTok.Column, outputEndTok.Line, outputEndCol)
 
 	var endTok tokenizer.Token
 	if p.tok.Peek().Value == "{" {
