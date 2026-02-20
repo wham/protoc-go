@@ -1869,9 +1869,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts a string literal for the enum-valued field option `jstype` and correctly sets `jstype = JS_STRING`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:33: Value must be identifier for enum-valued option "google.protobuf.FieldOptions.jstype".` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:3150` — `switch valTok.Value` matches the decoded string content without checking `valTok.Type`. A TokenString `"JS_STRING"` has `valTok.Value = "JS_STRING"` (decoded without quotes), so it matches `case "JS_STRING":`. No validation that `valTok.Type == tokenizer.TokenIdent`. C++ protoc uses `ConsumeIdentifier` for enum-typed options, rejecting string literal tokens. Same bug affects `ctype` (line 3164) — `[ctype = "CORD"]` would also be accepted by Go, rejected by C++. Same category as Run 85 (string for optimize_for file option), but at field option level for enum-typed options.
 
+### Run 207 — String literal for idempotency_level method option (FAILED: 5/5 profiles)
+- **Test:** `213_string_idempotency_level` — proto3 service method with `option idempotency_level = "NO_SIDE_EFFECTS";` (string literal instead of identifier for enum-typed method option)
+- **Bug:** Go protoc-go silently accepts a string literal for the enum-valued method option `idempotency_level` and sets it correctly (exit 0). C++ protoc rejects with: `test.proto:15:32: Value must be identifier for enum-valued option "google.protobuf.MethodOptions.idempotency_level".` (exit 1).
+- **Root cause:** `parser.go:2233-2244` — `case "idempotency_level"` does `switch valTok.Value` without checking `valTok.Type`. A TokenString `"NO_SIDE_EFFECTS"` has decoded `valTok.Value = "NO_SIDE_EFFECTS"`, matching the case. No `valTok.Type == tokenizer.TokenIdent` guard. C++ uses `ConsumeIdentifier`. Same category as Runs 85, 206.
+
 ### Known gaps still unexplored (updated):
 - **String literal for ctype** — `[ctype = "CORD"]` — same bug at line 3164
-- **String literal for idempotency_level** — `option idempotency_level = "IDEMPOTENT";` — same bug at line 2235
 - **String literal for allow_alias** — `option allow_alias = "true";` — same bug at line 1881
 - **String literal for message_set_wire_format** — same bug pattern
 - **String literal for no_standard_descriptor_accessor** — same bug pattern
