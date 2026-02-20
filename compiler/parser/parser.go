@@ -1851,6 +1851,9 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 	case "deprecated":
 		e.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 3
+	case "deprecated_legacy_json_field_conflicts":
+		e.Options.DeprecatedLegacyJsonFieldConflicts = proto.Bool(valTok.Value == "true")
+		fieldNum = 6
 	default:
 		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
 	}
