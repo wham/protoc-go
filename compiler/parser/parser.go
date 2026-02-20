@@ -1598,6 +1598,7 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 }
 
 func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, error) {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "enum"
 	nameTok, err := p.tok.ExpectIdent()
 	if err != nil {
@@ -1790,6 +1791,8 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 
 	// Update enum declaration span
 	p.locations[enumLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+
+	p.attachComments(enumLocIdx, firstIdx)
 
 	return e, nil
 }
