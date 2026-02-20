@@ -1951,6 +1951,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseFieldOptions()` at line 3058 reads `features` as a single option name token. The switch `default` case at line 3314 returns: `Option "features" unknown. Ensure that your proto definition file imports the proto which defines the option.` C++ protoc parses the full dotted path `features.field_presence` and accepts the option, producing a valid descriptor (exit 0). Go fails with exit 1.
 - **Root cause:** `parser.go:3058` — `parseFieldOptions` reads only a single token for the option name via `optNameTok := p.tok.Next()`. No handling for dotted names like `features.field_presence`. The file-level option parser (`parseFileOption`) has dotted name handling at line 2756, but `parseFieldOptions` lacks it. Same bug as Runs 214-217 (message/enum/service/method level) but in the field option brackets code path. This completes the full set of all option-level dotted name bugs — file, message, field, enum, service, and method option parsers all fail to handle dotted names.
 
+### Run 219 — Dotted option names on enum value options (FAILED: 5/5 profiles)
+- **Test:** `224_enum_val_features` — edition 2023 enum with `PRIORITY_HIGH = 1 [features.enum_type = CLOSED];` (dotted option name on enum value)
+- **Bug:** Enum value option inline loop at lines 1805-1864 reads option name as a single token (`optNameTok := p.tok.Next()` at line 1806). No handling for dotted names like `features.X`. When it reads `features`, then `Expect("=")` at line 1837 encounters `.` → error: `Expected "=".`. C++ protoc parses the full dotted path and gives a semantic error: `Option google.protobuf.FeatureSet.enum_type cannot be set on an entity of type 'enum entry'.` Both exit 1 but with completely different error messages.
+- **Root cause:** `parser.go:1806-1808` — enum value option inline loop reads only a single token for the option name. Unlike `parseFieldOptions` (line 3423), `parseFileOption` (line 2756), `parseMessageOption`, `parseEnumOption`, `parseServiceOption`, and `parseMethodOption` which all now handle `features.X` dotted names, the enum value option loop lacks this handling. This is the last remaining option scope without dotted name support.
+
 ### Known gaps still unexplored (updated):
 - **Trailing comma in map field options** — same trailing comma issue
 - **Type shadowing** — same nested type name in different parent messages
@@ -1958,7 +1963,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error column positions** — many Go validation errors report wrong column
 - **FieldOptions.feature_support** (field 49) — likely missing from parser switch
 - **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
-- **Dotted option names on enum value options** — `HIGH = 1 [features.X = Y];` — same single-token bug in enum value option inline loop
 - **Custom option in service body** — `option (my_opt) = "x";` — same missing parenthesized name handling
 - **Custom option in method body** — same bug
 - **Custom option in enum body** — same bug

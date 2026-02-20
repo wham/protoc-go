@@ -1,0 +1,12 @@
+edition = "2023";
+
+package enumvalfeat;
+
+enum Priority {
+  PRIORITY_UNKNOWN = 0;
+  PRIORITY_HIGH = 1 [features.enum_type = CLOSED];
+}
+
+message Container {
+  Priority level = 1;
+}
