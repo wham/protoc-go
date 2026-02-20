@@ -2070,14 +2070,20 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts `json_name` on an extension field and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:11:35: option json_name is not allowed on extension fields.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation in Go implementation that checks whether `json_name` is used on extension fields. C++ protoc validates in `descriptor.cc` that `json_name` is not allowed on extension fields. The Go parser stores `json_name` on any field via `parseFieldOptions` without checking if the field is an extension. The `cli.go` validation layer has no extension-specific json_name check.
 
+### Run 233 — Validation error accumulation (FAILED: 5/5 profiles)
+- **Test:** `238_multi_error` — proto3 message with `string name = 1; string name = 2; int32 count = 1;` (duplicate name "name" AND duplicate field number 1)
+- **Bug:** Go reports only 1 error: `"name" is already defined in "multierr.Config".` C++ protoc reports 2 errors: the duplicate name AND `Field number 1 has already been used in "multierr.Config" by field "name".` Go short-circuits after the first validation category that finds errors.
+- **Root cause:** `cli.go:204-370` — each validation function (`validateDuplicateNames`, `validateDuplicateFieldNumbers`, etc.) is called sequentially with early return: `if errs := validateX(...); len(errs) > 0 { return fmt.Errorf(...) }`. When `validateDuplicateNames` (line 209) finds errors, it returns immediately. `validateDuplicateFieldNumbers` (line 229) never runs. C++ protoc's `descriptor.cc` collects all validation errors across all checks before reporting them. The Go implementation should accumulate errors across all validation passes instead of returning on first failure.
+
 ### Known gaps still unexplored (updated):
+- **Validation error accumulation** — TESTED in Run 233 (238_multi_error), confirmed broken (Go returns on first validation category; C++ accumulates all)
 - **Feature target validation on method/enum value scope** — may now be validated (service was fixed)
 - **Trailing comma in field options** — `[deprecated = true,]` — different error messages
 - **Type shadowing** — same nested type name in different parent messages
 - **Error column positions in validation errors** — Go often differs from C++
-- **MessageSet without extensions** — `message_set_wire_format = true` but no `extensions` range (proto2, no extension range)
-- **MessageSet with nested messages** — `message_set_wire_format = true` with nested message types
+- **MessageSet without extensions** — `message_set_wire_format = true` but no `extensions` range (valid in proto2)
+- **MessageSet with nested messages** — `message_set_wire_format = true` with nested message types (valid)
 - **Extension range declaration content** — Go skips `declaration = {...}` entirely; C++ populates ExtensionRangeOptions.declaration
-- **json_name on extension fields** — TESTED in Run 232 (237_ext_json_name), confirmed broken (Go accepts, C++ rejects)
 - **packed on extension fields** — `extend Base { repeated int32 ids = 101 [packed = true]; }` — may produce different results
 - **Extension field with default in proto3** — `extend Base { string tag = 100 [default = "x"]; }` in proto3 — double validation failure
+- **Multiple errors from different validation passes** — many combinations possible (e.g., reserved+duplicate, proto3+extension, etc.)
