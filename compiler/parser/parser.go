@@ -316,6 +316,9 @@ func (p *parser) parseEdition(fd *descriptorpb.FileDescriptorProto) error {
 	if !ok {
 		return fmt.Errorf("%d:%d: unknown edition %q", valTok.Line+1, valTok.Column+1, valTok.Value)
 	}
+	if edEnum > descriptorpb.Edition_EDITION_2023 {
+		return fmt.Errorf("%d:%d: Edition %s is later than the maximum supported edition 2023", startTok.Line+1, startTok.Column+1, valTok.Value)
+	}
 
 	fd.Syntax = proto.String("editions")
 	fd.Edition = edEnum.Enum()

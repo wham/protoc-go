@@ -1,10 +1,6 @@
-files_to_generate: [test.proto]
+files_to_generate: []
 parameter: ""
-compiler_version: major:5 minor:29 patch:3 suffix:""
-proto_file_count: 1
-source_file_descriptor_count: 1
+compiler_version: <nil>
+proto_file_count: 0
+source_file_descriptor_count: 0
 
-proto_file[0]: test.proto (package="mapupper", syntax="proto3")
-  message: Config
-    field: FOO_BAR (number=1, type=TYPE_MESSAGE, label=LABEL_REPEATED)
-  source_code_info_locations: 9
