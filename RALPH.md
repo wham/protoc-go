@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1033/1033 tests passing.
+ALL DONE — 1038/1038 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -370,3 +370,4 @@ ALL DONE — 1033/1033 tests passing.
 - Negative zero integer default normalization: C++ protoc normalizes `[default = -0]` to `"0"` for integer fields (since `atoi("-0") == 0`). Go `normalizeIntDefault` now handles `-0` and `-0x0`/`-00` cases by checking if the parsed value is zero after negation and returning `"0"` instead of `"-0"`.
 - Edition features file option: `option features.X = Y;` sets `FileOptions.features` (field 50 of FileOptions) sub-fields. `features` is detected by checking `optName == "features" && peek == "."`, then consuming dot + sub-field name. FeatureSet sub-field mapping: field_presence=1, enum_type=2, repeated_field_encoding=3, utf8_validation=4, message_encoding=5, json_format=6. Values are enum identifiers (e.g., `IMPLICIT`, `OPEN`, `PACKED`). SCI: `[8]` for statement, `[8, 50, subFieldNum]` for the specific feature. `seenFileOptions` tracks full dotted name (e.g., `features.field_presence`) to allow multiple different features. Features are NOT stripped for source retention (unlike extension range verification options).
 203. ✅ Boolean message option validation — reject string/integer values for boolean message options (deprecated, no_standard_descriptor_accessor, message_set_wire_format, deprecated_legacy_json_field_conflicts) with `Value must be identifier for boolean option "google.protobuf.MessageOptions.X".` error at value token position, using `validateMsgBool` helper in `parseMessageOption`
+204. ✅ Boolean field option validation — reject string/integer/float values for boolean field options (deprecated, packed, lazy, debug_redact, unverified_lazy, weak) with `Value must be identifier for boolean option "google.protobuf.FieldOptions.X".` error at value token position, check `valTok.Type == TokenIdent && (value == "true" || value == "false")` in each boolean case of `parseFieldOptions`
