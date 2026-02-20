@@ -1692,11 +1692,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:365-422` — `parseImport` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the import's SCI location at line 406. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), and enum value declarations (Run 177).
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 179 — Comments on reserved declarations not attached (FAILED: 4/5 profiles)
+- **Test:** `185_reserved_comment` — proto3 message with a leading comment on a `reserved 5, 10 to 20;` statement: `// These field numbers are reserved for legacy fields.\nreserved 5, 10 to 20;`
+- **Bug:** `parseMessageReserved()` at lines 576-712 never calls `attachComments()`. It creates SCI locations for individual reserved ranges (path `[4, 0, 9, idx]`) and the container (path `[4, 0, 9]`), but never attaches leading/trailing/detached comments to any of them. C++ protoc attaches comments to reserved statement declarations just like any other entity. Binary descriptor sizes differ (418 vs 363 bytes for descriptor_set_src) because the leading comment text is missing from the reserved statement's SCI location.
+- **Root cause:** `parser.go:576-712` — `parseMessageReserved` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the statement-level SCI location. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), enum value declarations (Run 177), and import declarations (Run 178).
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
 ### Known gaps still unexplored (updated):
-- **Comments on import declarations** — TESTED in Run 178 (184_import_comment), confirmed broken
-- **Comments on extension range declarations** — no `attachComments` call
-- **Comments on reserved declarations** — no `attachComments` call
-- **Comments on package declarations** — no `attachComments` call (likely)
+- **Comments on extension range declarations** — no `attachComments` call in `parseExtensionRange`
+- **Comments on option statements** — no `attachComments` call in `parseMessageOption`, `parseFileOption`, etc.
+- **Comments on enum reserved declarations** — no `attachComments` call in `parseEnumReserved`
 - **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ
 - **String default value on bytes field** — C++ may treat differently than Go
 - **Type shadowing** — same nested type name in different parent messages
@@ -1704,3 +1709,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Error column positions** — many Go validation errors report wrong column
 - **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
+- **Comments on reserved declarations** — TESTED in Run 179 (185_reserved_comment), confirmed broken

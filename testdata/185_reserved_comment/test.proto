@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package reservedcomment;
+
+message Config {
+  string name = 1;
+
+  // These field numbers are reserved for legacy fields.
+  reserved 5, 10 to 20;
+
+  int32 count = 2;
+}
