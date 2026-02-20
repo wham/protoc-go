@@ -2170,13 +2170,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** C++ protoc reports 4 errors: `"key" is already defined`, `"value" is already defined`, `"TagsEntry" is already defined`, and `Expanded map entry type TagsEntry conflicts with an existing nested message type.` Go protoc-go reports only 1 error: `"TagsEntry" is already defined in "mapentry.Container".` Both reject (exit 1), but error messages differ — Go is missing 3 of the 4 diagnostics (the field-level duplicates and the specific map entry conflict message).
 - **Root cause:** Go's duplicate name validation catches `TagsEntry` as a duplicate message name, but doesn't validate the individual fields inside the synthetic map entry (key/value) against the user-defined message's fields, and doesn't produce the domain-specific "Expanded map entry type conflicts" error. C++ protoc validates both the nested message name collision AND the individual field collisions within the entry, plus adds a specific map entry conflict diagnostic.
 
+### Run 245 — --print_free_field_numbers CLI flag (FAILED: 1/1 CLI test)
+- **Test:** CLI test `print_free_field` — `--print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto`
+- **Bug:** `parseArgs()` at lines 492-615 has no case for `--print_free_field_numbers`. The flag falls to the `strings.HasPrefix(arg, "-")` catch-all at line 604, which returns `Unknown flag: --print_free_field_numbers` (exit 1). C++ protoc accepts this flag, parses the proto file, and prints free field numbers to stdout: `basic.Person                        free: 4-INF` (exit 0).
+- **Root cause:** `compiler/cli/cli.go:492-615` — `parseArgs` switch handles `--help`, `--version`, `--proto_path`, `-I`, `--plugin`, `--descriptor_set_out`, `--include_imports`, `--include_source_info`, `--error_format`, `--fatal_warnings`, `--X_out`, `--X_opt`. Missing: `--print_free_field_numbers`, `--deterministic_output`, `--encode`, `--decode`, `--decode_raw`, `--dependency_out`, `--descriptor_set_in`. Any undocumented flags would also be rejected.
+
 ### Known gaps still unexplored (updated):
-- **`--print_free_field_numbers`** — documented in help, likely not parsed (same pattern as --fatal_warnings)
 - **`--deterministic_output`** — documented in help, likely not parsed
 - **Multiline extension range** — `extensions 100\n  to 200;` may have similar span issues
 - **Multiline reserved range** — `reserved 100\n  to 200;` may have similar span issues
 - **--error_format=msvs** — even if `--error_format` is parsed, MSVS formatting logic is likely not implemented
-- **--fatal_warnings** — also documented in help but may not be implemented
-- **--print_free_field_numbers** — documented in help, may produce different output
+- **--print_free_field_numbers** — TESTED in Run 245, confirmed broken (Go rejects flag, C++ accepts and prints field numbers)
 - **--deterministic_output** — documented in help, may not be implemented
 - **Map entry name collision** — TESTED in Run 244 (247_map_entry_conflict), confirmed broken (Go reports 1 error, C++ reports 4)

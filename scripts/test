@@ -391,6 +391,7 @@ CLI_TESTS=(
   "unknown_flag|--unknown_flag=test"
   "error_format|--error_format=gcc"
   "fatal_warnings|--fatal_warnings"
+  "print_free_field|--print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
