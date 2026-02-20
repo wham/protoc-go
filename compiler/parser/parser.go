@@ -4450,12 +4450,16 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 		for methodIdx, m := range svc.GetMethod() {
 			if m.InputType != nil {
 				origName := m.GetInputType()
-				resolved := resolveTypeName(origName, prefix, types)
+				resolved, shadow := resolveTypeName(origName, prefix, types)
 				m.InputType = proto.String(resolved)
 				if tp, ok := types[resolved]; !ok {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 2}
 					if line, col, ok := findSCISpanStart(fd, path); ok {
-						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						if shadow != "" {
+							errors = append(errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
+						} else {
+							errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						}
 					}
 				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 2}
@@ -4466,12 +4470,16 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 			}
 			if m.OutputType != nil {
 				origName := m.GetOutputType()
-				resolved := resolveTypeName(origName, prefix, types)
+				resolved, shadow := resolveTypeName(origName, prefix, types)
 				m.OutputType = proto.String(resolved)
 				if tp, ok := types[resolved]; !ok {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 3}
 					if line, col, ok := findSCISpanStart(fd, path); ok {
-						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						if shadow != "" {
+							errors = append(errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
+						} else {
+							errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						}
 					}
 				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 3}
@@ -4487,18 +4495,22 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 	for extIdx, ext := range fd.GetExtension() {
 		if ext.Extendee != nil {
 			origName := ext.GetExtendee()
-			resolved := resolveTypeName(origName, prefix, types)
+			resolved, shadow := resolveTypeName(origName, prefix, types)
 			ext.Extendee = proto.String(resolved)
 			if _, ok := types[resolved]; !ok {
 				path := []int32{7, int32(extIdx), 2}
 				if line, col, ok := findSCISpanStart(fd, path); ok {
-					errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					if shadow != "" {
+						errors = append(errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
+					} else {
+						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					}
 				}
 			}
 		}
 		if ext.TypeName != nil {
 			origName := ext.GetTypeName()
-			resolved := resolveTypeName(origName, prefix, types)
+			resolved, shadow := resolveTypeName(origName, prefix, types)
 			ext.TypeName = proto.String(resolved)
 			if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 				if tp, ok := types[resolved]; ok {
@@ -4506,7 +4518,11 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 				} else {
 					path := []int32{7, int32(extIdx), 6}
 					if line, col, ok := findSCISpanStart(fd, path); ok {
-						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						if shadow != "" {
+							errors = append(errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
+						} else {
+							errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						}
 					}
 				}
 			}
@@ -4570,9 +4586,8 @@ func resolveMessageFields(msgs []*descriptorpb.DescriptorProto, prefix string, t
 		msgPrefix := prefix + "." + msg.GetName()
 		for _, f := range msg.GetField() {
 			if f.TypeName != nil {
-				resolved := resolveTypeName(f.GetTypeName(), msgPrefix, types)
+				resolved, _ := resolveTypeName(f.GetTypeName(), msgPrefix, types)
 				f.TypeName = proto.String(resolved)
-				// Don't override TYPE_GROUP with TYPE_MESSAGE
 				if f.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					if tp, ok := types[resolved]; ok {
 						f.Type = tp.Enum()
@@ -4581,13 +4596,13 @@ func resolveMessageFields(msgs []*descriptorpb.DescriptorProto, prefix string, t
 			}
 		}
 		resolveMessageFields(msg.GetNestedType(), msgPrefix, types)
-		// Resolve nested extension field types and extendee names
 		for _, ext := range msg.GetExtension() {
 			if ext.Extendee != nil {
-				ext.Extendee = proto.String(resolveTypeName(ext.GetExtendee(), msgPrefix, types))
+				resolved, _ := resolveTypeName(ext.GetExtendee(), msgPrefix, types)
+				ext.Extendee = proto.String(resolved)
 			}
 			if ext.TypeName != nil {
-				resolved := resolveTypeName(ext.GetTypeName(), msgPrefix, types)
+				resolved, _ := resolveTypeName(ext.GetTypeName(), msgPrefix, types)
 				ext.TypeName = proto.String(resolved)
 				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					if tp, ok := types[resolved]; ok {
@@ -4615,7 +4630,7 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 		for fieldIdx, f := range msg.GetField() {
 			if f.TypeName != nil {
 				origName := f.GetTypeName()
-				resolved := resolveTypeName(origName, msgPrefix, types)
+				resolved, shadow := resolveTypeName(origName, msgPrefix, types)
 				f.TypeName = proto.String(resolved)
 				if f.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					if tp, ok := types[resolved]; ok {
@@ -4623,7 +4638,11 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 					} else {
 						path := append(copyPath(msgPath), 2, int32(fieldIdx), 6)
 						if line, col, ok := findSCISpanStart(fd, path); ok {
-							*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+							if shadow != "" {
+								*errors = append(*errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
+							} else {
+								*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+							}
 						} else {
 							*errors = append(*errors, fmt.Sprintf("%s: \"%s\" is not defined.", filename, origName))
 						}
@@ -4632,22 +4651,25 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 			}
 		}
 		resolveMessageFieldsWithErrorsPath(msg.GetNestedType(), msgPrefix, types, filename, fd, msgPath, errors)
-		// Resolve nested extension field types and extendee names
 		for extIdx, ext := range msg.GetExtension() {
 			if ext.Extendee != nil {
 				origName := ext.GetExtendee()
-				resolved := resolveTypeName(origName, msgPrefix, types)
+				resolved, shadow := resolveTypeName(origName, msgPrefix, types)
 				ext.Extendee = proto.String(resolved)
 				if _, ok := types[resolved]; !ok {
 					path := append(copyPath(msgPath), 6, int32(extIdx), 2)
 					if line, col, ok := findSCISpanStart(fd, path); ok {
-						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						if shadow != "" {
+							*errors = append(*errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
+						} else {
+							*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						}
 					}
 				}
 			}
 			if ext.TypeName != nil {
 				origName := ext.GetTypeName()
-				resolved := resolveTypeName(origName, msgPrefix, types)
+				resolved, shadow := resolveTypeName(origName, msgPrefix, types)
 				ext.TypeName = proto.String(resolved)
 				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					if tp, ok := types[resolved]; ok {
@@ -4655,7 +4677,11 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 					} else {
 						path := append(copyPath(msgPath), 6, int32(extIdx), 6)
 						if line, col, ok := findSCISpanStart(fd, path); ok {
-							*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+							if shadow != "" {
+								*errors = append(*errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
+							} else {
+								*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+							}
 						}
 					}
 				}
@@ -4664,16 +4690,42 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 	}
 }
 
-func resolveTypeName(name string, scope string, types map[string]descriptorpb.FieldDescriptorProto_Type) string {
+// resolveTypeName resolves a type name using C++ protoc's scope-based lookup.
+// For compound names (containing dots), it first resolves the first component
+// using innermost-scope-first search, then looks up the rest within that scope.
+// Returns (resolved, shadowCandidate) where shadowCandidate is non-empty if
+// the first component was found at a closer scope but the full compound doesn't
+// exist there (type shadowing error).
+func resolveTypeName(name string, scope string, types map[string]descriptorpb.FieldDescriptorProto_Type) (string, string) {
 	if strings.HasPrefix(name, ".") {
-		return name
+		return name, ""
+	}
+
+	firstDot := strings.Index(name, ".")
+	firstPart := name
+	if firstDot >= 0 {
+		firstPart = name[:firstDot]
 	}
 
 	s := scope
 	for s != "" {
-		candidate := s + "." + name
-		if _, ok := types[candidate]; ok {
-			return candidate
+		firstCandidate := s + "." + firstPart
+		if tp, ok := types[firstCandidate]; ok {
+			if firstDot >= 0 {
+				// Compound name: first part found, check if aggregate (message)
+				if tp == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
+					fullCandidate := s + "." + name
+					if _, ok := types[fullCandidate]; ok {
+						return fullCandidate, ""
+					}
+					// Shadowing: first part found but full compound doesn't exist
+					return "." + name, fullCandidate
+				}
+				// Non-aggregate (enum): skip, continue searching outer scopes
+			} else {
+				// Simple name: found
+				return firstCandidate, ""
+			}
 		}
 		lastDot := strings.LastIndex(s, ".")
 		if lastDot < 0 {
@@ -4682,12 +4734,24 @@ func resolveTypeName(name string, scope string, types map[string]descriptorpb.Fi
 		s = s[:lastDot]
 	}
 
+	// Root scope fallback: try full name directly
 	candidate := "." + name
 	if _, ok := types[candidate]; ok {
-		return candidate
+		return candidate, ""
 	}
 
-	return "." + name
+	return "." + name, ""
+}
+
+func shadowErrorMsg(origName, shadowCandidate string) string {
+	display := shadowCandidate
+	if strings.HasPrefix(display, ".") {
+		display = display[1:]
+	}
+	return fmt.Sprintf("\"%s\" is resolved to \"%s\", which is not defined. "+
+		"The innermost scope is searched first in name resolution. "+
+		"Consider using a leading '.'(i.e., \".%s\") to start from the outermost scope.",
+		origName, display, origName)
 }
 
 // CheckUnresolvedTypes checks for unresolved type references in fd,
@@ -4729,11 +4793,15 @@ func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles m
 			methodPrefix := prefix
 			if m.InputType != nil {
 				origName := m.GetInputType()
-				resolved := resolveTypeName(origName, methodPrefix, types)
+				resolved, shadow := resolveTypeName(origName, methodPrefix, types)
 				if tp, ok := types[resolved]; !ok {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 2}
 					if line, col, ok := findSCISpanStart(fd, path); ok {
-						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						if shadow != "" {
+							errors = append(errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
+						} else {
+							errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						}
 					}
 				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 2}
@@ -4744,11 +4812,15 @@ func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles m
 			}
 			if m.OutputType != nil {
 				origName := m.GetOutputType()
-				resolved := resolveTypeName(origName, methodPrefix, types)
+				resolved, shadow := resolveTypeName(origName, methodPrefix, types)
 				if tp, ok := types[resolved]; !ok {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 3}
 					if line, col, ok := findSCISpanStart(fd, path); ok {
-						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						if shadow != "" {
+							errors = append(errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
+						} else {
+							errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						}
 					}
 				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 3}
@@ -4773,11 +4845,15 @@ func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, 
 	for fieldIdx, f := range msg.GetField() {
 		if f.TypeName != nil {
 			origName := f.GetTypeName()
-			resolved := resolveTypeName(origName, msgPrefix, types)
+			resolved, shadow := resolveTypeName(origName, msgPrefix, types)
 			if _, ok := types[resolved]; !ok {
 				path := append(copyPath(msgPath), 2, int32(fieldIdx), 6)
 				if line, col, ok := findSCISpanStart(fd, path); ok {
-					*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					if shadow != "" {
+						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
+					} else {
+						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+					}
 				}
 			}
 		}
