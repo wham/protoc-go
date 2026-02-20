@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package multiline_enumval_opt;
+
+enum Priority {
+  PRIORITY_UNSPECIFIED = 0;
+  PRIORITY_LOW = 1 [deprecated
+    = true];
+  PRIORITY_HIGH = 2;
+}
