@@ -2165,6 +2165,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `--fatal_warnings` is documented in Go's help text (cli.go line 76) but not parsed in the argument handler. Go returns `Unknown flag: --fatal_warnings` (exit 1). C++ protoc accepts the flag and returns `Missing input file.` (exit 1). Same exit code, different stderr.
 - **Root cause:** `cli.go` argument parsing loop (lines 508-608) has no `if arg == "--fatal_warnings"` check. The flag falls through to line 597 (`strings.HasPrefix(arg, "-")`) which returns `Unknown flag: --fatal_warnings`. C++ protoc parses this flag in `command_line_interface.cc` and uses it to promote warnings to fatal errors.
 
+### Run 244 — Map entry name collision with user-defined message (FAILED: 5/5 profiles)
+- **Test:** `247_map_entry_conflict` — proto3 message with a user-defined `message TagsEntry { string key = 1; string value = 2; }` AND `map<string, string> tags = 1;` (synthetic `TagsEntry` collides with user-defined one)
+- **Bug:** C++ protoc reports 4 errors: `"key" is already defined`, `"value" is already defined`, `"TagsEntry" is already defined`, and `Expanded map entry type TagsEntry conflicts with an existing nested message type.` Go protoc-go reports only 1 error: `"TagsEntry" is already defined in "mapentry.Container".` Both reject (exit 1), but error messages differ — Go is missing 3 of the 4 diagnostics (the field-level duplicates and the specific map entry conflict message).
+- **Root cause:** Go's duplicate name validation catches `TagsEntry` as a duplicate message name, but doesn't validate the individual fields inside the synthetic map entry (key/value) against the user-defined message's fields, and doesn't produce the domain-specific "Expanded map entry type conflicts" error. C++ protoc validates both the nested message name collision AND the individual field collisions within the entry, plus adds a specific map entry conflict diagnostic.
+
 ### Known gaps still unexplored (updated):
 - **`--print_free_field_numbers`** — documented in help, likely not parsed (same pattern as --fatal_warnings)
 - **`--deterministic_output`** — documented in help, likely not parsed
@@ -2174,3 +2179,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **--fatal_warnings** — also documented in help but may not be implemented
 - **--print_free_field_numbers** — documented in help, may produce different output
 - **--deterministic_output** — documented in help, may not be implemented
+- **Map entry name collision** — TESTED in Run 244 (247_map_entry_conflict), confirmed broken (Go reports 1 error, C++ reports 4)
