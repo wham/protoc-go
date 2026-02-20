@@ -1528,6 +1528,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Error column positions** — many Go validation errors report wrong column
 - **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
-- **Custom option syntax** — `option (custom_opt) = "foo";` — Go can't parse parenthesized option names
+- **Custom option syntax** — TESTED in Run 158 (164_custom_option), confirmed broken (Go can't parse parenthesized option names)
 - **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
 - **Unknown enum option** — TESTED in Run 157 (163_unknown_enum_option), confirmed broken (Go accepts, C++ rejects)
+
+### Run 158 — Custom option syntax with parenthesized name (FAILED: 5/5 profiles)
+- **Test:** `164_custom_option` — proto3 file with `option (undefined_opt) = "hello";`
+- **Bug:** `parseFileOption()` at line 2540 reads the next token as the option name. When the option uses custom syntax `(name)`, the `(` token is read as the name. Then `p.tok.Expect("=")` at line 2549 finds `undefined_opt` instead of `=` → parse error: `Expected "="`. C++ protoc correctly parses parenthesized custom option names and gives a proper error: `Option "(undefined_opt)" unknown.`
+- **Root cause:** `parser.go:2540` — `nameTok := p.tok.Next()` reads a single token. Custom option names use `(qualified.name)` syntax which requires consuming `(`, identifier(s), `)` as a compound option name. The Go parser has no support for this syntax at all — not in file options, message options, field options, enum options, service options, or method options. This is a fundamental gap in option name parsing.
