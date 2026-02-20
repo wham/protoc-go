@@ -1209,18 +1209,37 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		msg.Options = &descriptorpb.MessageOptions{}
 	}
 
+	validateMsgBool := func(name string) error {
+		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.MessageOptions.%s\".", valTok.Line+1, valTok.Column+1, name)
+		}
+		return nil
+	}
+
 	var fieldNum int32
 	switch optName {
 	case "deprecated":
+		if err := validateMsgBool("deprecated"); err != nil {
+			return err
+		}
 		msg.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 3
 	case "no_standard_descriptor_accessor":
+		if err := validateMsgBool("no_standard_descriptor_accessor"); err != nil {
+			return err
+		}
 		msg.Options.NoStandardDescriptorAccessor = proto.Bool(valTok.Value == "true")
 		fieldNum = 2
 	case "message_set_wire_format":
+		if err := validateMsgBool("message_set_wire_format"); err != nil {
+			return err
+		}
 		msg.Options.MessageSetWireFormat = proto.Bool(valTok.Value == "true")
 		fieldNum = 1
 	case "deprecated_legacy_json_field_conflicts":
+		if err := validateMsgBool("deprecated_legacy_json_field_conflicts"); err != nil {
+			return err
+		}
 		msg.Options.DeprecatedLegacyJsonFieldConflicts = proto.Bool(valTok.Value == "true")
 		fieldNum = 11
 	case "map_entry":
