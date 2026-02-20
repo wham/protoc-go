@@ -2015,6 +2015,7 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 }
 
 func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProto, error) {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "service"
 	nameTok, err := p.tok.ExpectIdent()
 	if err != nil {
@@ -2031,6 +2032,7 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 
 	// Add service declaration and name spans BEFORE methods (C++ order)
 	svcLocIdx := p.addLocationPlaceholder(path)
+	p.attachComments(svcLocIdx, firstIdx)
 	p.addLocationSpan(append(copyPath(path), 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
