@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/wham/protoc-go/compiler/importer"
@@ -122,12 +123,13 @@ type pluginSpec struct {
 }
 
 type config struct {
-	protoPaths        []string
-	plugins           map[string]*pluginSpec
-	descriptorSetOut  string
-	includeImports    bool
-	includeSourceInfo bool
-	protoFiles        []string
+	protoPaths            []string
+	plugins               map[string]*pluginSpec
+	descriptorSetOut      string
+	includeImports        bool
+	includeSourceInfo     bool
+	printFreeFieldNumbers bool
+	protoFiles            []string
 }
 
 // Run executes the protocol buffer compiler with the given command-line arguments.
@@ -150,7 +152,7 @@ func Run(args []string) error {
 	}
 
 	// Validate we have output directives
-	if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" {
+	if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers {
 		return fmt.Errorf("Missing output directives.")
 	}
 
@@ -257,6 +259,22 @@ func Run(args []string) error {
 	}
 	if len(valErrors) > 0 {
 		return fmt.Errorf("%s", strings.Join(valErrors, "\n"))
+	}
+
+	// Handle --print_free_field_numbers mode
+	if cfg.printFreeFieldNumbers {
+		for _, f := range relFiles {
+			fd := parsed[f]
+			pkg := fd.GetPackage()
+			for _, msg := range fd.GetMessageType() {
+				fqn := msg.GetName()
+				if pkg != "" {
+					fqn = pkg + "." + msg.GetName()
+				}
+				printFreeFieldNumbers(fqn, msg)
+			}
+		}
+		return nil
 	}
 
 	// Build ordered list of FileDescriptorProtos (stripped of source-retention options)
@@ -564,6 +582,11 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--fatal_warnings" {
+			continue
+		}
+
+		if arg == "--print_free_field_numbers" {
+			cfg.printFreeFieldNumbers = true
 			continue
 		}
 
@@ -2942,5 +2965,60 @@ func collectEnumDefaultErrors(msgs []*descriptorpb.DescriptorProto, prefix strin
 		nestedBase := append(append([]int32{}, msgPath...), 3)
 		collectEnumDefaultErrors(msg.GetNestedType(), msgFQN, nestedBase, sci, filename, enumValues, errs)
 	}
+}
+
+// printFreeFieldNumbers recursively prints free field numbers for a message and its nested messages.
+func printFreeFieldNumbers(fullName string, msg *descriptorpb.DescriptorProto) {
+	type fieldRange struct{ start, end int }
+	var ranges []fieldRange
+
+	// Collect used field numbers
+	for _, f := range msg.GetField() {
+		n := int(f.GetNumber())
+		ranges = append(ranges, fieldRange{n, n + 1})
+	}
+	// Collect extension ranges (already [start, end) in proto)
+	for _, er := range msg.GetExtensionRange() {
+		ranges = append(ranges, fieldRange{int(er.GetStart()), int(er.GetEnd())})
+	}
+	// Collect reserved ranges (already [start, end) in proto)
+	for _, rr := range msg.GetReservedRange() {
+		ranges = append(ranges, fieldRange{int(rr.GetStart()), int(rr.GetEnd())})
+	}
+
+	// Sort ranges
+	sort.Slice(ranges, func(i, j int) bool {
+		if ranges[i].start != ranges[j].start {
+			return ranges[i].start < ranges[j].start
+		}
+		return ranges[i].end < ranges[j].end
+	})
+
+	// Print nested messages first (post-order: children before parent)
+	for _, nested := range msg.GetNestedType() {
+		printFreeFieldNumbers(fullName+"."+nested.GetName(), nested)
+	}
+
+	// Format free field numbers
+	const kMaxNumber = 536870911 // 2^29 - 1
+	output := fmt.Sprintf("%-35s free:", fullName)
+	nextFree := 1
+	for _, r := range ranges {
+		if nextFree >= r.end {
+			continue
+		}
+		if nextFree < r.start {
+			if nextFree+1 == r.start {
+				output += fmt.Sprintf(" %d", nextFree)
+			} else {
+				output += fmt.Sprintf(" %d-%d", nextFree, r.start-1)
+			}
+		}
+		nextFree = r.end
+	}
+	if nextFree <= kMaxNumber {
+		output += fmt.Sprintf(" %d-INF", nextFree)
+	}
+	fmt.Println(output)
 }
 
