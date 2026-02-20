@@ -1945,3 +1945,21 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `222_method_features_option` — edition 2023 service method with `option features.json_format = ALLOW;` inside method body `{ }`
 - **Bug:** `parseMethodOption()` at line 2494 reads `features` as a single option name token, then calls `Expect("=")` at line 2514 which encounters `.` instead of `=` → error: `test.proto:15:20: Expected "=".` C++ protoc parses the full dotted path `features.json_format` and rejects it at a higher level: `Option google.protobuf.FeatureSet.json_format cannot be set on an entity of type 'method'.` Both reject, but different error messages.
 - **Root cause:** `parser.go:2494` — `parseMethodOption` reads only a single token for the option name. No handling for dotted names like `features.json_format`. Same bug as Runs 214-216 (message/enum/service level) but in `parseMethodOption` code path. Completes the set of all option-level dotted name bugs.
+
+### Run 218 — Dotted option name on field options in editions (FAILED: 5/5 profiles)
+- **Test:** `223_field_features_option` — edition 2023 message with `string name = 1 [features.field_presence = EXPLICIT];` (dotted option name inside field option brackets)
+- **Bug:** `parseFieldOptions()` at line 3058 reads `features` as a single option name token. The switch `default` case at line 3314 returns: `Option "features" unknown. Ensure that your proto definition file imports the proto which defines the option.` C++ protoc parses the full dotted path `features.field_presence` and accepts the option, producing a valid descriptor (exit 0). Go fails with exit 1.
+- **Root cause:** `parser.go:3058` — `parseFieldOptions` reads only a single token for the option name via `optNameTok := p.tok.Next()`. No handling for dotted names like `features.field_presence`. The file-level option parser (`parseFileOption`) has dotted name handling at line 2756, but `parseFieldOptions` lacks it. Same bug as Runs 214-217 (message/enum/service/method level) but in the field option brackets code path. This completes the full set of all option-level dotted name bugs — file, message, field, enum, service, and method option parsers all fail to handle dotted names.
+
+### Known gaps still unexplored (updated):
+- **Trailing comma in map field options** — same trailing comma issue
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ
+- **Error column positions** — many Go validation errors report wrong column
+- **FieldOptions.feature_support** (field 49) — likely missing from parser switch
+- **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
+- **Dotted option names on enum value options** — `HIGH = 1 [features.X = Y];` — same single-token bug in enum value option inline loop
+- **Custom option in service body** — `option (my_opt) = "x";` — same missing parenthesized name handling
+- **Custom option in method body** — same bug
+- **Custom option in enum body** — same bug
+- **Custom option on enum values** — same bug in inline loop
