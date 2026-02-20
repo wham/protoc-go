@@ -1736,6 +1736,10 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 
 				if p.tok.Peek().Value == "," {
 					p.tok.Next() // consume ","
+					if p.tok.Peek().Value == "]" {
+						tok := p.tok.Peek()
+						return nil, fmt.Errorf("%d:%d: Expected identifier.", tok.Line+1, tok.Column+1)
+					}
 				} else {
 					break
 				}

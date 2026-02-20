@@ -4,9 +4,7 @@ compiler_version: major:5 minor:29 patch:3 suffix:""
 proto_file_count: 1
 source_file_descriptor_count: 1
 
-proto_file[0]: test.proto (package="blockcomment", syntax="proto3")
-  message: Config
-    field: id (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
-    field: name (number=2, type=TYPE_STRING, label=LABEL_OPTIONAL)
-    field: value (number=3, type=TYPE_INT32, label=LABEL_OPTIONAL)
-  source_code_info_locations: 17
+proto_file[0]: test.proto (package="editionsci", syntax="editions")
+  message: Simple
+    field: name (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
+  source_code_info_locations: 9
