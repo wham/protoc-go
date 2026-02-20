@@ -2231,6 +2231,9 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 		method.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 33
 	case "idempotency_level":
+		if valTok.Type != tokenizer.TokenIdent {
+			return fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.MethodOptions.idempotency_level\".", valTok.Line+1, valTok.Column+1)
+		}
 		var lvl descriptorpb.MethodOptions_IdempotencyLevel
 		switch valTok.Value {
 		case "IDEMPOTENCY_UNKNOWN":
