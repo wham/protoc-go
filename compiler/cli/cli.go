@@ -1645,10 +1645,12 @@ func validateFeatureTargets(orderedFiles []string, parsed map[string]*descriptor
 		}
 		for _, msg := range fd.GetMessageType() {
 			collectMessageFeatureErrors(name, msg, &errs)
+			collectFieldFeatureErrorsInMsg(name, msg, &errs)
 			collectEnumFeatureErrorsInMsg(name, msg, &errs)
 			collectEnumEntryFeatureErrorsInMsg(name, msg, &errs)
 			collectOneofFeatureErrorsInMsg(name, msg, &errs)
 		}
+		collectFieldFeatureErrorsForExtensions(name, fd.GetExtension(), &errs)
 	}
 	return errs
 }
@@ -1785,6 +1787,42 @@ func collectEnumEntryFeatureErrorsInMsg(filename string, msg *descriptorpb.Descr
 		collectEnumEntryFeatureErrorsInMsg(filename, nested, errs)
 	}
 }
+func collectFieldFeatureErrors(filename string, field *descriptorpb.FieldDescriptorProto, errs *[]string) {
+	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil {
+		feat := field.GetOptions().GetFeatures()
+		// field_presence, repeated_field_encoding, utf8_validation, message_encoding target FIELD — allowed
+		// enum_type targets ENUM — not allowed on field
+		if feat.EnumType != nil {
+			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `field`.", filename, featureProtoNames["enum_type"]))
+		}
+		// json_format targets MESSAGE — not allowed on field
+		if feat.JsonFormat != nil {
+			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `field`.", filename, featureProtoNames["json_format"]))
+		}
+	}
+}
+
+func collectFieldFeatureErrorsInMsg(filename string, msg *descriptorpb.DescriptorProto, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	for _, field := range msg.GetField() {
+		collectFieldFeatureErrors(filename, field, errs)
+	}
+	for _, ext := range msg.GetExtension() {
+		collectFieldFeatureErrors(filename, ext, errs)
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectFieldFeatureErrorsInMsg(filename, nested, errs)
+	}
+}
+
+func collectFieldFeatureErrorsForExtensions(filename string, exts []*descriptorpb.FieldDescriptorProto, errs *[]string) {
+	for _, ext := range exts {
+		collectFieldFeatureErrors(filename, ext, errs)
+	}
+}
+
 func validateProto3(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
 	for _, name := range orderedFiles {

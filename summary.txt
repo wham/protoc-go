@@ -4,8 +4,9 @@ compiler_version: major:5 minor:29 patch:3 suffix:""
 proto_file_count: 1
 source_file_descriptor_count: 1
 
-proto_file[0]: test.proto (package="fieldfeatures", syntax="editions")
+proto_file[0]: test.proto (package="maporder", syntax="proto3")
   message: Config
     field: name (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
-    field: value (number=2, type=TYPE_INT32, label=LABEL_OPTIONAL)
-  source_code_info_locations: 15
+    field: settings (number=2, type=TYPE_MESSAGE, label=LABEL_REPEATED)
+    field: version (number=3, type=TYPE_INT32, label=LABEL_OPTIONAL)
+  source_code_info_locations: 17
