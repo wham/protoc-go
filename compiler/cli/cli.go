@@ -144,6 +144,11 @@ func Run(args []string) error {
 		return nil
 	}
 
+	// Validate we have input files
+	if len(cfg.protoFiles) == 0 {
+		return fmt.Errorf("Missing input file.")
+	}
+
 	// Validate we have output directives
 	if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" {
 		return fmt.Errorf("Missing output directives.")
@@ -548,6 +553,10 @@ func parseArgs(args []string) (*config, error) {
 
 		if arg == "--include_source_info" {
 			cfg.includeSourceInfo = true
+			continue
+		}
+
+		if strings.HasPrefix(arg, "--error_format=") {
 			continue
 		}
 
