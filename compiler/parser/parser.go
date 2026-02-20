@@ -165,23 +165,29 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 	if len(p.tok.Errors) > 0 {
 		var allErrs []posError
 		for _, te := range p.tok.Errors {
-			allErrs = append(allErrs, posError{te.Line, te.Column, fmt.Sprintf("%s:%d:%d: %s", p.filename, te.Line+1, te.Column+1, te.Message)})
+			msg := fmt.Sprintf("%s:%d:%d: %s", p.filename, te.Line+1, te.Column+1, te.Message)
+			var notesMsgs []string
+			for _, n := range te.Notes {
+				notesMsgs = append(notesMsgs, fmt.Sprintf("%s:%d:%d: %s", p.filename, n.Line+1, n.Column+1, n.Message))
+			}
+			allErrs = append(allErrs, posError{te.Line, te.Column, msg, notesMsgs})
 		}
 		if parseErr != nil {
 			// Parse the line:col from the error string
 			errStr := parseErr.Error()
 			eLine, eCol := parseErrorPos(errStr)
-			allErrs = append(allErrs, posError{eLine, eCol, fmt.Sprintf("%s:%s", p.filename, errStr)})
+			allErrs = append(allErrs, posError{eLine, eCol, fmt.Sprintf("%s:%s", p.filename, errStr), nil})
 		}
 		for _, e := range p.errors {
 			eLine, eCol := parseErrorPosFromFormatted(e, p.filename)
-			allErrs = append(allErrs, posError{eLine, eCol, e})
+			allErrs = append(allErrs, posError{eLine, eCol, e, nil})
 		}
 		// Sort by position
 		sortPosErrors(allErrs)
 		var msgs []string
 		for _, e := range allErrs {
 			msgs = append(msgs, e.msg)
+			msgs = append(msgs, e.notes...)
 		}
 		return nil, &MultiError{Errors: msgs}
 	}
@@ -229,6 +235,7 @@ func parseErrorPosFromFormatted(s string, filename string) (int, int) {
 type posError struct {
 	line, col int
 	msg       string
+	notes     []string
 }
 
 func sortPosErrors(errs []posError) {

@@ -41,6 +41,7 @@ type TokenError struct {
 	Line    int    // 0-based
 	Column  int    // 0-based
 	Message string
+	Notes   []TokenError // follow-up notes (printed after main error, not sorted separately)
 }
 
 type Tokenizer struct {
@@ -131,9 +132,10 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 			canAttachToPrev = false
 		} else if t.pos+1 < len(t.input) && t.input[t.pos] == '/' && t.input[t.pos+1] == '*' {
 			// Block comment on same line → trailing of prev
+			bcStartLine, bcStartCol := t.line, t.col
 			t.advance() // skip /
 			t.advance() // skip *
-			text := t.readBlockCommentText()
+			text := t.readBlockCommentText(bcStartLine, bcStartCol)
 			result.PrevTrailing = text
 			canAttachToPrev = false
 			// Consume rest of line
@@ -181,9 +183,10 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 				t.flushComment(&result, &commentBuf, canAttachToPrev)
 				canAttachToPrev = false
 			}
+			bcStartLine, bcStartCol := t.line, t.col
 			t.advance() // skip /
 			t.advance() // skip *
-			text := t.readBlockCommentText()
+			text := t.readBlockCommentText(bcStartLine, bcStartCol)
 			commentBuf.WriteString(text)
 			hasComment = true
 			isLineComment = false
@@ -240,7 +243,8 @@ func (t *Tokenizer) readLineCommentText() string {
 }
 
 // readBlockCommentText reads text between /* and */, returns content without delimiters.
-func (t *Tokenizer) readBlockCommentText() string {
+// startLine and startCol are the 0-based position of the '/' in '/*'.
+func (t *Tokenizer) readBlockCommentText(startLine, startCol int) string {
 	var buf strings.Builder
 	for t.pos < len(t.input) {
 		if t.input[t.pos] == '*' && t.pos+1 < len(t.input) && t.input[t.pos+1] == '/' {
@@ -251,6 +255,14 @@ func (t *Tokenizer) readBlockCommentText() string {
 		buf.WriteByte(t.input[t.pos])
 		t.advance()
 	}
+	// EOF inside block comment
+	t.Errors = append(t.Errors,
+		TokenError{
+			Line: t.line, Column: t.col,
+			Message: "End-of-file inside block comment.",
+			Notes:   []TokenError{{Line: startLine, Column: startCol, Message: "  Comment started here."}},
+		},
+	)
 	return buf.String()
 }
 
