@@ -3144,6 +3144,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			}
 			field.Options.Lazy = proto.Bool(valTok.Value == "true")
 		case "jstype":
+			if valTok.Type != tokenizer.TokenIdent {
+				return nil, fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.FieldOptions.jstype\".", valTok.Line+1, valTok.Column+1)
+			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}
@@ -3158,6 +3161,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FieldOptions.JSType\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.jstype\".", valTok.Line+1, valTok.Column+1, valTok.Value)
 			}
 		case "ctype":
+			if valTok.Type != tokenizer.TokenIdent {
+				return nil, fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.FieldOptions.ctype\".", valTok.Line+1, valTok.Column+1)
+			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}

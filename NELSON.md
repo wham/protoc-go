@@ -1864,20 +1864,20 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts a string literal for the boolean enum option `deprecated` and correctly sets `deprecated = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:23: Value must be identifier for boolean option "google.protobuf.EnumOptions.deprecated".` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:1884` — `e.Options.Deprecated = proto.Bool(valTok.Value == "true")` accepts any token type and does a string comparison. No validation that `valTok.Type == tokenizer.TokenIdent`. A TokenString with decoded value `"true"` passes because `valTok.Value` is `"true"` (decoded content without quotes). C++ protoc uses `ConsumeIdentifier` for boolean values, rejecting string literal tokens. The `validateBool` function exists for FILE-level options but is NOT used for ENUM, MESSAGE, FIELD, ENUM VALUE, SERVICE, or METHOD boolean options — all do `proto.Bool(valTok.Value == "true")` without type checking. Same category as Run 84 (file-level), Run 200 (message-level), Run 201 (field-level), Run 202 (enum value-level), Run 203 (service-level), Run 204 (method-level), but at enum option level. This completes the full set of all option levels.
 
+### Run 206 — String literal for jstype enum field option (FAILED: 5/5 profiles)
+- **Test:** `212_string_jstype` — proto3 message with `int64 big_value = 2 [jstype = "JS_STRING"];` (string literal `"JS_STRING"` instead of identifier `JS_STRING` for enum-typed field option)
+- **Bug:** Go protoc-go silently accepts a string literal for the enum-valued field option `jstype` and correctly sets `jstype = JS_STRING`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:33: Value must be identifier for enum-valued option "google.protobuf.FieldOptions.jstype".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:3150` — `switch valTok.Value` matches the decoded string content without checking `valTok.Type`. A TokenString `"JS_STRING"` has `valTok.Value = "JS_STRING"` (decoded without quotes), so it matches `case "JS_STRING":`. No validation that `valTok.Type == tokenizer.TokenIdent`. C++ protoc uses `ConsumeIdentifier` for enum-typed options, rejecting string literal tokens. Same bug affects `ctype` (line 3164) — `[ctype = "CORD"]` would also be accepted by Go, rejected by C++. Same category as Run 85 (string for optimize_for file option), but at field option level for enum-typed options.
+
 ### Known gaps still unexplored (updated):
-- **String literal for enum-level boolean option** — TESTED in Run 205 (211_string_bool_enum_option), confirmed broken
-- **String literal for method-level boolean option** — TESTED in Run 204 (210_string_bool_method_option), confirmed broken
-- **String literal for service-level boolean option** — TESTED in Run 203 (209_string_bool_service_option), confirmed broken
-- **String literal for enum value boolean option** — TESTED in Run 202 (208_string_bool_enum_val_option), confirmed broken
-- **String literal for field boolean option** — TESTED in Run 201 (207_string_bool_field_option), confirmed broken
-- **String literal for message boolean option** — TESTED in Run 200 (206_string_bool_msg_option), confirmed broken
-- **Invalid idempotency_level error** — same `"line %d:%d:"` format bug at parser.go:2203
+- **String literal for ctype** — `[ctype = "CORD"]` — same bug at line 3164
+- **String literal for idempotency_level** — `option idempotency_level = "IDEMPOTENT";` — same bug at line 2235
+- **String literal for allow_alias** — `option allow_alias = "true";` — same bug at line 1881
+- **String literal for message_set_wire_format** — same bug pattern
+- **String literal for no_standard_descriptor_accessor** — same bug pattern
 - **Trailing comma in map field options** — same trailing comma issue
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ
 - **Error column positions** — many Go validation errors report wrong column
 - **Dotted option names on message/field/enum/service options** — same bug as file options, `features.X` pattern
 - **FieldOptions.targets** (field 19) — likely also missing from parser switch
-- **String literal for allow_alias** — `option allow_alias = "true";` — same bug at line 1881
-- **String literal for message_set_wire_format** — same bug pattern
-- **String literal for no_standard_descriptor_accessor** — same bug pattern
