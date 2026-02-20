@@ -2067,7 +2067,7 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 		svc.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 33
 	default:
-		return nil
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
 	optPath := append(copyPath(svcPath), 3)
