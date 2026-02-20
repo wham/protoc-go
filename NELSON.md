@@ -1967,3 +1967,21 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Custom option in method body** — same bug
 - **Custom option in enum body** — same bug
 - **Custom option on enum values** — same bug in inline loop
+
+### Run 220 — Oneof option (FAILED: 5/5 profiles)
+- **Test:** `225_oneof_option` — proto3 message with `oneof choice { option features.field_presence = IMPLICIT; string name = 1; int32 count = 2; }`
+- **Bug:** `parseOneof()` at lines 2914-2917 unconditionally rejects ANY `option` keyword inside a oneof body. It consumes `option`, peeks at the next token, and returns an error: `Option "features" unknown. Ensure that your proto definition file imports the proto which defines the option.` C++ protoc parses the oneof option and rejects it at a higher semantic level: `Features are only valid under editions.` Both exit 1, but different error messages.
+- **Root cause:** `parser.go:2914-2917` — `parseOneof` has a hard-coded rejection of all options inside oneofs. It doesn't attempt to parse the option at all — just errors immediately. C++ protoc parses the option into OneofOptions, then validates it semantically. The error message format differs completely. This also means Go would reject valid oneof options in editions syntax where C++ protoc would accept them (e.g., `option features.field_presence = IMPLICIT;` in an editions file).
+
+### Known gaps still unexplored (updated):
+- **Oneof options in editions** — Go rejects all oneof options; C++ accepts valid ones in editions
+- **Trailing comma in map field options** — same trailing comma issue
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ
+- **Error column positions** — many Go validation errors report wrong column
+- **FieldOptions.feature_support** (field 49) — likely missing from parser switch
+- **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
+- **Custom option in service body** — `option (my_opt) = "x";` — same missing parenthesized name handling
+- **Custom option in method body** — same bug
+- **Custom option in enum body** — same bug
+- **Custom option on enum values** — same bug in inline loop
