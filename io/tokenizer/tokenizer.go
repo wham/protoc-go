@@ -243,16 +243,50 @@ func (t *Tokenizer) readLineCommentText() string {
 }
 
 // readBlockCommentText reads text between /* and */, returns content without delimiters.
+// Mirrors C++ Tokenizer::ConsumeBlockComment: after each newline, strips leading
+// whitespace and one leading '*' (if not followed by '/').
 // startLine and startCol are the 0-based position of the '/' in '/*'.
 func (t *Tokenizer) readBlockCommentText(startLine, startCol int) string {
 	var buf strings.Builder
 	for t.pos < len(t.input) {
-		if t.input[t.pos] == '*' && t.pos+1 < len(t.input) && t.input[t.pos+1] == '/' {
-			t.advance() // skip *
-			t.advance() // skip /
-			return buf.String()
+		ch := t.input[t.pos]
+
+		if ch == '\n' {
+			buf.WriteByte('\n')
+			t.advance()
+			// Strip leading non-newline whitespace
+			for t.pos < len(t.input) {
+				c := t.input[t.pos]
+				if c == ' ' || c == '\t' || c == '\r' || c == '\v' || c == '\f' {
+					t.advance()
+				} else {
+					break
+				}
+			}
+			// Strip one leading '*' if not followed by '/'
+			if t.pos < len(t.input) && t.input[t.pos] == '*' {
+				if t.pos+1 < len(t.input) && t.input[t.pos+1] == '/' {
+					t.advance() // *
+					t.advance() // /
+					return buf.String()
+				}
+				t.advance() // strip the *
+			}
+			continue
 		}
-		buf.WriteByte(t.input[t.pos])
+
+		if ch == '*' {
+			if t.pos+1 < len(t.input) && t.input[t.pos+1] == '/' {
+				t.advance() // *
+				t.advance() // /
+				return buf.String()
+			}
+			buf.WriteByte(ch)
+			t.advance()
+			continue
+		}
+
+		buf.WriteByte(ch)
 		t.advance()
 	}
 	// EOF inside block comment

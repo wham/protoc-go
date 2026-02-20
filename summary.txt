@@ -4,11 +4,9 @@ compiler_version: major:5 minor:29 patch:3 suffix:""
 proto_file_count: 1
 source_file_descriptor_count: 1
 
-proto_file[0]: test.proto (package="svcoptcomment", syntax="proto3")
-  message: Request
-    field: query (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
-  message: Response
-    field: result (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
-  service: SearchService
-    rpc: Search(.svcoptcomment.Request) returns (.svcoptcomment.Response)
-  source_code_info_locations: 23
+proto_file[0]: test.proto (package="blockcomment", syntax="proto3")
+  message: Config
+    field: id (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
+    field: name (number=2, type=TYPE_STRING, label=LABEL_OPTIONAL)
+    field: value (number=3, type=TYPE_INT32, label=LABEL_OPTIONAL)
+  source_code_info_locations: 17
