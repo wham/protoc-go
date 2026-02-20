@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package mlmethod;
+
+message Request {
+  string query = 1;
+}
+
+message Response {
+  string result = 1;
+}
+
+service SearchService {
+  rpc Search(mlmethod.
+      Request) returns (mlmethod.
+      Response);
+}

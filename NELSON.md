@@ -2149,3 +2149,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Multiline regular field type** — same end-line bug may exist in `parseField` for multiline type references
 - **Multiline extension range** — `extensions 100\n  to 200;` may have similar span issues
 - **Multiline reserved range** — `reserved 100\n  to 200;` may have similar span issues
+
+### Run 241 — Multiline method input/output type SCI spans (FAILED: 4/5 profiles)
+- **Test:** `246_multiline_method_type` — proto3 service with `rpc Search(mlmethod.\n      Request) returns (mlmethod.\n      Response);` where input and output type references span two lines
+- **Bug:** `parseMethod()` at lines 2964-2965 and 2970-2971 uses `inputTok.Line` / `outputTok.Line` as the end line for the type SCI span, instead of `inputEndTok.Line` / `outputEndTok.Line`. When the type reference spans multiple lines, Go produces a 3-element span (single-line) while C++ produces a 4-element span (multi-line). Descriptor set size differs by 2 bytes (449 vs 451) — one missing line number varint per type span.
+- **Root cause:** `parser.go:2964-2965` — `p.addLocationSpan(path, inputTok.Line, inputTok.Column, inputTok.Line, inputEndCol)` should use `inputEndTok.Line` as the 4th argument. Same at line 2970-2971 for the output type. This is the same class of bug as Run 240 (multiline map type) but in method type references.
