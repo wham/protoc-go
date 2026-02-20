@@ -1874,8 +1874,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts a string literal for the enum-valued method option `idempotency_level` and sets it correctly (exit 0). C++ protoc rejects with: `test.proto:15:32: Value must be identifier for enum-valued option "google.protobuf.MethodOptions.idempotency_level".` (exit 1).
 - **Root cause:** `parser.go:2233-2244` — `case "idempotency_level"` does `switch valTok.Value` without checking `valTok.Type`. A TokenString `"NO_SIDE_EFFECTS"` has decoded `valTok.Value = "NO_SIDE_EFFECTS"`, matching the case. No `valTok.Type == tokenizer.TokenIdent` guard. C++ uses `ConsumeIdentifier`. Same category as Runs 85, 206.
 
+### Run 208 — String literal for retention enum field option (FAILED: 5/5 profiles)
+- **Test:** `214_string_retention` — proto3 message with `int32 value = 2 [retention = "RETENTION_SOURCE"];` (string literal instead of identifier for enum-typed field option)
+- **Bug:** Go protoc-go silently accepts a string literal for the enum-valued field option `retention` and sets it correctly (exit 0). C++ protoc rejects with: `test.proto:7:32: Value must be identifier for enum-valued option "google.protobuf.FieldOptions.retention".` (exit 1).
+- **Root cause:** `parser.go:3207-3220` — `case "retention"` does `switch valTok.Value` without checking `valTok.Type`. A TokenString `"RETENTION_SOURCE"` has decoded `valTok.Value = "RETENTION_SOURCE"`, matching the case. No `valTok.Type == tokenizer.TokenIdent` guard. C++ uses `ConsumeIdentifier`. Same category as Runs 85, 206, 207.
+
 ### Known gaps still unexplored (updated):
-- **String literal for ctype** — `[ctype = "CORD"]` — same bug at line 3164
+- **String literal for ctype** — `[ctype = "CORD"]` — same bug at line 3164, but check if TokenIdent guard was added
 - **String literal for allow_alias** — `option allow_alias = "true";` — same bug at line 1881
 - **String literal for message_set_wire_format** — same bug pattern
 - **String literal for no_standard_descriptor_accessor** — same bug pattern
