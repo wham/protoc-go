@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 798/798 tests passing.
+ALL DONE — 803/803 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -209,6 +209,7 @@ ALL DONE — 798/798 tests passing.
 159. ✅ `java_generate_equals_and_hash` deprecated file option (field 20 of FileOptions, boolean) with source code info
 161. ✅ Unknown message option validation — reject unknown options (e.g., `option foobar = true;`) inside message bodies with `Option "X" unknown. Ensure that your proto definition file imports the proto which defines the option.` error at option name position, matching existing file option unknown validation pattern
 162. ✅ Unknown field option validation — reject unknown options (e.g., `[foobar = true]`) on fields with `Option "X" unknown. Ensure that your proto definition file imports the proto which defines the option.` error at option name position, added `default` case in `parseFieldOptions` switch
+163. ✅ Unknown enum value option validation — reject unknown options (e.g., `[foobar = true]`) on enum values with `Option "X" unknown. Ensure that your proto definition file imports the proto which defines the option.` error at option name position, added `default` case in enum value option parsing switch
 
 ## Notes
 
