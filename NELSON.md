@@ -1780,3 +1780,21 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `197_msg_deprecated_legacy_json` — proto3 message with `option deprecated_legacy_json_field_conflicts = true;`
 - **Bug:** `parseMessageOption()` switch at lines 1213-1227 handles `deprecated` (3), `no_standard_descriptor_accessor` (2), `message_set_wire_format` (1), and rejects `map_entry` (7). The `deprecated_legacy_json_field_conflicts` option (field 11 of `MessageOptions`) hits the `default` case and returns error: `Option "deprecated_legacy_json_field_conflicts" unknown.` C++ protoc v29.3 accepts it and populates `MessageOptions.deprecated_legacy_json_field_conflicts = true`.
 - **Root cause:** `parser.go:1213-1227` — `parseMessageOption` switch is missing `deprecated_legacy_json_field_conflicts` (field 11). The Go protobuf library's `descriptorpb.MessageOptions` struct has the `DeprecatedLegacyJsonFieldConflicts` field, so it CAN be stored — the parser just doesn't parse it. Same pattern as the enum option variant (Run 190).
+
+### Run 192 — Invalid ctype enum value silently accepted (FAILED: 5/5 profiles)
+- **Test:** `198_invalid_ctype` — proto3 message with `string name = 1 [ctype = INVALID_VALUE];` (nonexistent CType enum value)
+- **Bug:** Go protoc-go silently accepts the invalid ctype value and produces a valid descriptor with an empty non-nil `FieldOptions{}` (exit 0). C++ protoc rejects with: `test.proto:6:28: Enum type "google.protobuf.FieldOptions.CType" has no value named "INVALID_VALUE" for option "google.protobuf.FieldOptions.ctype".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:3029-3041` — `case "ctype":` inner switch has `case "STRING":`, `case "CORD":`, `case "STRING_PIECE":` but NO `default:` case. When `INVALID_VALUE` doesn't match any case, it falls through silently. `field.Options = &descriptorpb.FieldOptions{}` is set (non-nil) but `Ctype` is never assigned. C++ protoc stores the option as an UninterpretedOption during parsing, then during linking resolves it against the `CType` enum type and rejects invalid values. Same bug affects `jstype` inner switch (no default case for invalid values like `JS_INVALID`) and any other enum-typed option with a fixed set of values in the switch.
+
+### Known gaps still unexplored (updated):
+- **Invalid jstype value** — `[jstype = JS_INVALID]` — same inner switch without default case
+- **Invalid optimize_for value** — Go already rejects (line 2736), NOT a gap
+- **String default value on bytes field** — C++ may treat differently than Go
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Error column positions** — many Go validation errors report wrong column
+- **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
+- **Comments on group field declarations** — `parseGroupField` may miss comments
+- **Block comment edge cases** — empty block comment `/* */`, multiline without `*` prefix
+- **ctype on non-string/bytes field** — C++ rejects, Go likely accepts (no field type validation for ctype)

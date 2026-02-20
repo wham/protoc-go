@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package invalidctype;
+
+message Config {
+  string name = 1 [ctype = INVALID_VALUE];
+}
