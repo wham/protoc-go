@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1094/1094 tests passing.
+ALL DONE — 1104/1104 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -368,6 +368,7 @@ ALL DONE — 1094/1094 tests passing.
 211. ✅ `targets` field option (field 19 of FieldOptions, repeated `OptionTargetType`) with source code info — `[targets = TARGET_TYPE_FIELD]` appends to `FieldOptions.Targets`, SCI path `[..., 8, 19, index]` for each repeated entry, skip duplicate option check since repeated
 
 208. ✅ Boolean enum option validation — reject string/integer/float values for boolean enum options (allow_alias, deprecated, deprecated_legacy_json_field_conflicts) with `Value must be identifier for boolean option "google.protobuf.EnumOptions.X".` error at value token position, check `valTok.Type == TokenIdent && (value == "true" || value == "false")` in each boolean case of `parseEnumOption`
+- Enum features option: `option features.X = Y;` inside enum bodies sets `EnumOptions.features` (field 7 of EnumOptions) sub-fields. Same FeatureSet sub-field mapping as file/message features (field_presence=1, enum_type=2, repeated_field_encoding=3, utf8_validation=4, message_encoding=5, json_format=6). SCI: `[enumPath..., 3]` for statement, `[enumPath..., 3, 7, subFieldNum]` for the specific feature. `seenOptions` tracks full dotted name (e.g., `features.enum_type`) to allow multiple different features while rejecting duplicates.
 - File option declaration comment tracking: `parseFileOption` captures `firstIdx` before consuming `option` token and calls `attachComments` on the `[8, fieldNum]` SCI location (the specific option entry, not the statement entry), same pattern as message/enum/service/field/method declarations.
 - Block comment asterisk stripping: C++ protoc's `ConsumeBlockComment` strips leading whitespace and one leading `*` after each newline inside `/* ... */` block comments. Go tokenizer's `readBlockCommentText` now mirrors this: after consuming `\n` (included in content), it skips non-newline whitespace (`' '`, `\t`, `\r`, `\v`, `\f`) and one `*` (if not followed by `/`). This produces clean comment text like `\n The name of the\n configuration entry.\n` from Javadoc-style block comments.
 - Negative zero integer default normalization: C++ protoc normalizes `[default = -0]` to `"0"` for integer fields (since `atoi("-0") == 0`). Go `normalizeIntDefault` now handles `-0` and `-0x0`/`-00` cases by checking if the parsed value is zero after negation and returning `"0"` instead of `"-0"`.
@@ -381,3 +382,4 @@ ALL DONE — 1094/1094 tests passing.
 213. ✅ Parenthesized custom option names in message/enum/service/method — handle `option (name) = value;` syntax with parenthesized (extension) option names using shared `parseParenthesizedOptionName` helper, skip to end of statement and report `Option "(name)" unknown.` error at `(` position
 214. ✅ Parenthesized custom field option names — handle `[(name) = value]` syntax in field option brackets, parse full name with `parseParenthesizedOptionName`, skip to `]`/`,`, report `Option "(name)" unknown.` error at `(` position
 215. ✅ Parenthesized custom enum value option names — handle `[(name) = value]` syntax in enum value option brackets (e.g., `PRIORITY_HIGH = 1 [(my_custom_opt) = "important"]`), parse full name with `parseParenthesizedOptionName`, skip to `]`/`,`, report `Option "(name)" unknown.` error at `(` position
+216. ✅ Enum features option parsing — `option features.enum_type = CLOSED;` etc. inside enum bodies sets `EnumOptions.features` (field 7) FeatureSet sub-fields, SCI paths `[enumPath..., 3]` and `[enumPath..., 3, 7, subFieldNum]` with same span, dotted name parsed after `features` token, same pattern as file/message features options
