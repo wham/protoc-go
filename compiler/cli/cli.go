@@ -235,6 +235,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate duplicate reserved names within a message
+	if errs := validateDuplicateReservedNames(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate reserved name conflicts (field names vs reserved names)
 	if errs := validateReservedNameConflicts(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -1193,6 +1198,39 @@ func findReservedRangeStartLocation(msgPath []int32, rangeIdx int, sci *descript
 		}
 	}
 	return 0, 0
+}
+
+// validateDuplicateReservedNames checks that no reserved name appears more than once in a message.
+func validateDuplicateReservedNames(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectDuplicateReservedNameErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectDuplicateReservedNameErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	seen := make(map[string]bool)
+	for _, rn := range msg.GetReservedName() {
+		if seen[rn] {
+			path := append(append([]int32{}, msgPath...), 1)
+			line, col := findLocationByPath(path, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Field name \"%s\" is reserved multiple times.",
+				filename, line, col, rn))
+		}
+		seen[rn] = true
+	}
+	for i, nested := range msg.GetNestedType() {
+		np := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectDuplicateReservedNameErrors(filename, nested, np, sci, errs)
+	}
 }
 
 // validateReservedNameConflicts checks that no field uses a reserved name in its message.
