@@ -2098,11 +2098,18 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go rejects the file (exit 1) with: `test.proto: Option google.protobuf.FeatureSet.json_format cannot be set on an entity of type 'enum'.` C++ protoc accepts the file (exit 0) and produces a valid descriptor. Different exit codes across all 5 profiles.
 - **Root cause:** `cli.go:1633-1635` — `collectEnumFeatureErrors` incorrectly includes a check for `feat.JsonFormat != nil`, rejecting `json_format` on enums. But `json_format` targets `TARGET_TYPE_FILE`, `TARGET_TYPE_MESSAGE`, AND `TARGET_TYPE_ENUM` — so it IS allowed on enums. The `featureTargets` map at line 1385 correctly lists `"enum": true` for `json_format`, but the validation function at line 1633 contradicts it by rejecting `json_format` on enums. The fix would be to remove the `json_format` check from `collectEnumFeatureErrors`.
 
+### Run 236 — Capitalized bool default identifiers (FAILED: 5/5 profiles)
+- **Test:** `241_capitalized_bool_default` — proto2 message with `optional bool verbose = 1 [default = True];` and `optional bool debug = 2 [default = False];`
+- **Bug:** `parseFieldOptions()` at line 3785-3790 validates bool defaults by rejecting TokenString, TokenInt, TokenFloat, but does NOT check if a TokenIdent value is actually "true" or "false". So `True` (capitalized, valid identifier token) passes through and gets stored as `default_value = "True"`. C++ protoc rejects with `Expected "true" or "false".` — it requires exact lowercase identifiers.
+- **Root cause:** `parser.go:3785-3790` — the bool default validation check only filters by token TYPE (rejects string/int/float tokens) but never validates the token VALUE. Any identifier token passes, including `True`, `False`, `Yes`, `No`, `on`, `off`, etc. C++ protoc's `ConsumeIdentifier()` followed by explicit `value == "true" || value == "false"` check catches this.
+
 ### Known gaps still unexplored (updated):
 - **Feature target validation on remaining scopes** — method, enum value
 - **Trailing comma in field options** — `[deprecated = true,]` — different error messages
 - **Type shadowing** — same nested type name in different parent messages
 - **Error column positions** — many Go validation errors report wrong column
+- **`[default = yes]` / `[default = on]` on bool field** — same bug, different identifiers
+- **`[default = TRUE]` on bool field** — all-caps variant, same root cause
 - **MessageSet without extensions** — `message_set_wire_format = true` but no `extensions` range
 - **MessageSet with nested messages** — `message_set_wire_format = true` with nested message types
 - **Extension range declaration content** — Go skips `declaration = {...}` entirely

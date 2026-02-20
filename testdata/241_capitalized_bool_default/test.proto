@@ -1,0 +1,7 @@
+syntax = "proto2";
+package capbool;
+
+message Config {
+  optional bool verbose = 1 [default = True];
+  optional bool debug = 2 [default = False];
+}
