@@ -2418,6 +2418,7 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32, ne
 func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
 	fieldPath := append(copyPath(msgPath), 2, fieldIdx)
 
+	firstIdx := p.tok.CurrentIndex()
 	mapTok := p.tok.Next() // consume "map"
 	startLine, startCol := mapTok.Line, mapTok.Column
 
@@ -2557,6 +2558,8 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 
 	// Source code info
 	p.addLocationSpan(fieldPath, startLine, startCol, endTok.Line, endTok.Column+1)
+	fieldLocIdx := len(p.locations) - 1
+	p.attachComments(fieldLocIdx, firstIdx)
 	p.addLocationSpan(append(copyPath(fieldPath), 6),
 		startLine, startCol, mapTok.Line, typeNameEndCol)
 	p.addLocationSpan(append(copyPath(fieldPath), 1),
