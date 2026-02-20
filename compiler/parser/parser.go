@@ -1735,9 +1735,15 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 				var fieldNum int32
 				switch optName {
 				case "deprecated":
+					if optValTok.Type != tokenizer.TokenIdent || (optValTok.Value != "true" && optValTok.Value != "false") {
+						return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.EnumValueOptions.deprecated\".", optValTok.Line+1, optValTok.Column+1)
+					}
 					enumValOpts.Deprecated = proto.Bool(optValTok.Value == "true")
 					fieldNum = 1
 				case "debug_redact":
+					if optValTok.Type != tokenizer.TokenIdent || (optValTok.Value != "true" && optValTok.Value != "false") {
+						return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.EnumValueOptions.debug_redact\".", optValTok.Line+1, optValTok.Column+1)
+					}
 					enumValOpts.DebugRedact = proto.Bool(optValTok.Value == "true")
 					fieldNum = 3
 				default:
