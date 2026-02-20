@@ -1643,3 +1643,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Unterminated line comment at EOF** — `// comment with no newline` — may or may not differ
 - **Duplicate enum reserved numbers** — TESTED, both reject identically — NOT a gap
 - **String concatenation in enum reserved names** — TESTED, fixed in recent changes — NOT a gap
+- **Empty statements inside oneof bodies** — TESTED in Run 171 (177_oneof_empty_stmt), confirmed broken (Go gives wrong error)
+
+### Run 171 — Empty statement inside oneof body (FAILED: 5/5 profiles)
+- **Test:** `177_oneof_empty_stmt` — proto3 message with `oneof choice { ; string name = 1; int32 id = 2; }` (empty statement `;` inside oneof body)
+- **Bug:** Both C++ and Go reject the file (`;` inside oneof is not valid per the proto3 grammar), but they produce different error messages. C++ protoc: `test.proto:7:5: Expected type name.` (error at the `;` token position). Go protoc-go: `test.proto:8:12: Missing field number.` (error at a different line and column because Go's parseOneof calls parseField which consumes `;` as a type name, then `string` as a field name, then fails when `name` is not `=`).
+- **Root cause:** `parser.go:2362-2398` — `parseOneof` loop has no `case ";"` for empty statements. The `;` token falls through all the `if` checks (option, map, labels, group) and reaches the else branch which calls `parseField`. `parseField` interprets `;` as a message type name (sets `TypeName = ";"`) and `string` as the field name, then expects `=` but finds `name` → "Missing field number" error at the wrong position. C++ protoc's oneof parser recognizes `;` is not a valid type name and immediately reports "Expected type name" at the correct position.
