@@ -1728,11 +1728,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:1812-1870` — `parseEnumOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations. Same bug pattern as file option declarations (Run 182), message option declarations (Run 183), etc.
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 185 — Comments on service option declarations not attached (FAILED: 4/5 profiles)
+- **Test:** `191_service_option_comment` — proto3 service with a leading comment on `option deprecated = true;`: `// This service is deprecated and should not be used.`
+- **Bug:** `parseServiceOption()` at lines 2089-2140 never calls `attachComments()`. It creates SCI locations at paths `[svcPath, 3]` and `[svcPath, 3, fieldNum]`, but never attaches leading/trailing/detached comments to them. C++ protoc attaches comments to service option declarations just like any other entity. Binary descriptor sizes differ because the leading comment text is missing from the service option's SCI location.
+- **Root cause:** `parser.go:2089-2140` — `parseServiceOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations. Same bug pattern as file option declarations (Run 182), message option declarations (Run 183), and enum option declarations (Run 184).
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
 ### Known gaps still unexplored (updated):
-- **Comments on service/method option statements** — same missing `attachComments` in `parseServiceOption`, `parseMethodOption`
-- **Comments on enum option** — TESTED in Run 184 (190_enum_option_comment), confirmed broken
-- **Comments on message option** — TESTED in Run 183 (189_message_option_comment), confirmed broken
-- **File option comment** — TESTED in Run 182 (188_file_option_comment), confirmed broken
+- **Comments on method option statements** — same missing `attachComments` in `parseMethodOption`
+- **Comments on service option** — TESTED in Run 185 (191_service_option_comment), confirmed broken
 - **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ
 - **String default value on bytes field** — C++ may treat differently than Go
 - **Type shadowing** — same nested type name in different parent messages

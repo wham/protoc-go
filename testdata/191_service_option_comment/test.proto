@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package svcoptcomment;
+
+message Request {
+  string query = 1;
+}
+
+message Response {
+  string result = 1;
+}
+
+service SearchService {
+  // This service is deprecated and should not be used.
+  option deprecated = true;
+
+  rpc Search(Request) returns (Response);
+}
