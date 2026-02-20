@@ -585,6 +585,10 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
+		if arg == "--deterministic_output" {
+			continue
+		}
+
 		if arg == "--print_free_field_numbers" {
 			cfg.printFreeFieldNumbers = true
 			continue
