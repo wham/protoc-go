@@ -4516,6 +4516,8 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 						path := append(copyPath(msgPath), 2, int32(fieldIdx), 6)
 						if line, col, ok := findSCISpanStart(fd, path); ok {
 							*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						} else {
+							*errors = append(*errors, fmt.Sprintf("%s: \"%s\" is not defined.", filename, origName))
 						}
 					}
 				}
