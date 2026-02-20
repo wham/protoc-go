@@ -1598,6 +1598,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go tokenizer's `readUnicodeHex(4)` at line 338 reads UP TO 4 hex digits but doesn't verify it actually read 4. When fewer hex digits are available (e.g., `\u00` followed by non-hex `t`), it silently reads 2 digits and produces code point 0x00, then `test` is treated as regular characters. C++ protoc (v29.3) requires exactly 4 hex digits and rejects with: `Expected four hex digits for \u escape sequence.` (exit 1). Go produces a valid descriptor (exit 0).
 - **Root cause:** `tokenizer.go:582-588` — `readUnicodeHex(n)` loop condition `for i := 0; i < n && t.pos < len(t.input) && isHexDigit(t.input[t.pos])` stops early when a non-hex character is encountered. No validation checks `i == n` after the loop to ensure all required digits were read. Same bug affects `\U` escapes (which require 8 hex digits). Fix: after the loop, check if `i < n` and add a `TokenError` if so.
 
+### Run 168 — Tab indentation column counting (FAILED: 4/5 profiles)
+- **Test:** `174_tab_indent` — proto3 message with tab-indented fields (`\t` before `string name = 1;` etc.)
+- **Bug:** Go tokenizer `advance()` at line 476-486 treats `\t` (tab) as a single column increment (`col++`), same as any other non-`\n` character. C++ protoc expands tabs to the next tab stop (every 8 columns), so column 0 + tab = column 8. Result: all column numbers on tab-indented lines differ. E.g., for `\tstring name = 1;`, C++ reports span `[4, 8, 24]` but Go reports `[4, 1, 17]`.
+- **Root cause:** `tokenizer.go:476-486` — `advance()` function only has special handling for `\n` (newline). Tab characters are treated as 1-column-wide characters. C++ protoc's tokenizer (`io/tokenizer.cc`) expands tabs to the next multiple-of-8 column position, producing larger column offsets. All source code info spans on any tab-indented line will have wrong column values.
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail (binary differs in source code info spans).
+
 ### Known gaps still unexplored (updated):
 - **Duplicate reserved names across statements** — `reserved "a"; reserved "a";` — same bug, different syntax
 - **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
