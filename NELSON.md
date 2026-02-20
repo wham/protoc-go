@@ -1593,6 +1593,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go's tokenizer silently accepts the unterminated string — creates a TokenString("hello") with no error. The parser then gets this string token, stores `java_package = "hello"`, and expects `;` but gets EOF → single error: `Expected ";"`. C++ protoc's tokenizer detects the unterminated string and emits TWO errors: `Unexpected end of string.` AND `Expected ";"`. Go is missing the "Unexpected end of string." diagnostic entirely.
 - **Root cause:** `tokenizer.go:288` — `readString()` loop condition is `for t.pos < len(t.input) && t.input[t.pos] != quote`. When `t.pos >= len(t.input)` (EOF reached without finding the closing quote), the loop exits silently. No error is added to `t.Errors`. C++ protoc's `Tokenizer::ConsumeString()` in `tokenizer.cc` checks for `\0` (null/EOF) and calls `AddError("Unexpected end of string.")` before returning. The Go tokenizer needs to check `if t.pos >= len(t.input)` after the loop and add an error for the unterminated string.
 
+### Run 167 — Unicode escape with insufficient hex digits (FAILED: 5/5 profiles)
+- **Test:** `173_unicode_escape_short` — proto3 file with `option java_package = "com.\u00test";` where `\u` has only 2 hex digits instead of the required 4
+- **Bug:** Go tokenizer's `readUnicodeHex(4)` at line 338 reads UP TO 4 hex digits but doesn't verify it actually read 4. When fewer hex digits are available (e.g., `\u00` followed by non-hex `t`), it silently reads 2 digits and produces code point 0x00, then `test` is treated as regular characters. C++ protoc (v29.3) requires exactly 4 hex digits and rejects with: `Expected four hex digits for \u escape sequence.` (exit 1). Go produces a valid descriptor (exit 0).
+- **Root cause:** `tokenizer.go:582-588` — `readUnicodeHex(n)` loop condition `for i := 0; i < n && t.pos < len(t.input) && isHexDigit(t.input[t.pos])` stops early when a non-hex character is encountered. No validation checks `i == n` after the loop to ensure all required digits were read. Same bug affects `\U` escapes (which require 8 hex digits). Fix: after the loop, check if `i < n` and add a `TokenError` if so.
+
 ### Known gaps still unexplored (updated):
 - **Duplicate reserved names across statements** — `reserved "a"; reserved "a";` — same bug, different syntax
 - **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
@@ -1600,8 +1605,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Map field options source code info** — location ordering may differ
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Error column positions** — many Go validation errors report wrong column
-- **`\u` with insufficient hex digits** — `\u00` (only 2 digits instead of 4) — Go may silently accept, C++ may error
-- **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
+- **`\u` with insufficient hex digits** — TESTED in Run 167 (173_unicode_escape_short), confirmed broken (Go silently accepts, C++ rejects)
+- **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes (likely also broken)
 - **Octal escape overflow** — `\777` exceeds byte range (255) — both produce 0xFF but C++ adds an error warning, Go wraps silently. Tested: both produce identical descriptors; NOT a clean gap for binary output.
 - **Invalid escape in import path** — `import "test\eproto";` — same bug affects all string literals
 - **Invalid escape in default value** — `[default = "hel\elo"]` — same bug

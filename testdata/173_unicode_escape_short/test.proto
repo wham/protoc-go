@@ -1,0 +1,5 @@
+syntax = "proto3";
+
+package unicodetest;
+
+option java_package = "com.\u00test";
