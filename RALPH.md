@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1124/1124 tests passing.
+ALL DONE — 1129/1129 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -390,3 +390,5 @@ ALL DONE — 1124/1124 tests passing.
 220. ✅ Enum value features option parsing and target validation — `[features.enum_type = CLOSED]` etc. on enum values sets `EnumValueOptions.features` (field 2) FeatureSet sub-fields, SCI path `[valuePath..., 3, 2, featFieldNum]`, dotted name parsed after `features` token in enum value option brackets. Feature target validation in `validateFeatureTargets` rejects ALL standard FeatureSet fields on enum entries with `Option google.protobuf.FeatureSet.X cannot be set on an entity of type \`enum entry\`.` error (no line:col)
 - Field features option: `[features.X = Y]` on fields sets `FieldOptions.features` (field 21 of FieldOptions) sub-fields. Same FeatureSet sub-field mapping as file/message/enum/service/method features (field_presence=1, enum_type=2, repeated_field_encoding=3, utf8_validation=4, message_encoding=5, json_format=6). SCI: `[fieldPath..., 8, 21, subFieldNum]` for the specific feature. `seenFieldOpts` tracks full dotted name (e.g., `features.field_presence`) to allow multiple different features while rejecting duplicates.
 - Enum value features option: `[features.X = Y]` on enum values sets `EnumValueOptions.features` (field 2 of EnumValueOptions) sub-fields. Same FeatureSet sub-field mapping as all other features. SCI: `[valuePath..., 3, 2, subFieldNum]` for the specific feature. `seenEnumValOpts` tracks full dotted name. Feature target validation: none of the standard FeatureSet fields target ENUM_ENTRY, so all are rejected with `Option google.protobuf.FeatureSet.X cannot be set on an entity of type \`enum entry\`.` error (no line:col). Validation in `collectEnumEntryFeatureErrors` (cli.go) checks top-level enums and enums nested in messages.
+221. ✅ Oneof features option parsing — `option features.field_presence = IMPLICIT;` etc. inside oneof blocks sets `OneofOptions.features` (field 1) FeatureSet sub-fields, SCI paths `[oneofPath..., 2]` and `[oneofPath..., 2, 1, featFieldNum]`, `parseOneofOption` handles features/unknown/parenthesized options
+222. ✅ Features editions-only validation — reject features on any entity (file, message, field, enum, service, method, oneof, extension, enum value) in non-editions files with `filename: Features are only valid under editions.` error (no line:col), validated in `validateFeaturesEditions` (cli.go) after feature target validation
