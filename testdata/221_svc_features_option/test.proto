@@ -1,0 +1,17 @@
+edition = "2023";
+
+package svcfeatures;
+
+message Request {
+  string id = 1;
+}
+
+message Response {
+  string name = 1;
+}
+
+service MyService {
+  option features.json_format = ALLOW;
+
+  rpc GetItem(Request) returns (Response);
+}
