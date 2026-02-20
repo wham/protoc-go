@@ -1674,8 +1674,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:1600-1700` — `parseEnum` function is missing two things: (1) it doesn't save `p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(enumLocIdx, firstIdx)` after the enum declaration span is set. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), and service declarations (Run 174). The fix: add `firstIdx := p.tok.CurrentIndex()` at the start, and call `p.attachComments(enumLocIdx, firstIdx)` after the enum span is finalized.
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 176 — Comments on method declarations not attached (FAILED: 4/5 profiles)
+- **Test:** `182_method_comment` — proto3 service with a leading comment on an `rpc Search(Request) returns (Response);` declaration: `// Performs a search query against the index.\nrpc Search(Request) returns (Response);`
+- **Bug:** `parseMethod()` at lines 2192-2340 never calls `attachComments()`. It creates `methodLocIdx` via `addLocationPlaceholder` at line 2291, but never calls `p.attachComments(methodLocIdx, firstIdx)` after setting the method declaration span at line 2338. C++ protoc attaches comments to method declarations just like any other entity. Binary CodeGeneratorRequest differs because the leading comment text is missing from the method's SCI location.
+- **Root cause:** `parser.go:2192-2340` — `parseMethod` function is missing two things: (1) it doesn't save `p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(methodLocIdx, firstIdx)` after the method declaration span is set. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), and enum declarations (Run 175). The fix: add `firstIdx := p.tok.CurrentIndex()` at the start, and call `p.attachComments(methodLocIdx, firstIdx)` after line 2338.
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
 ### Known gaps still unexplored (updated):
-- **Comments on method declarations** — `parseMethod` same pattern — no comment attachment
+- **Comments on method declarations** — TESTED in Run 176 (182_method_comment), confirmed broken
 - **Comments on enum declarations** — TESTED in Run 175 (181_enum_comment), confirmed broken
 - **Comments on enum value declarations** — no `attachComments` call for enum values
 - **Comments on extension range declarations** — no `attachComments` call

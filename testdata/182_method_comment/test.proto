@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package methodcomment;
+
+message Request {
+  string query = 1;
+}
+
+message Response {
+  string result = 1;
+}
+
+service SearchService {
+  // Performs a search query against the index.
+  rpc Search(Request) returns (Response);
+}
