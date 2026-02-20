@@ -2190,6 +2190,7 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 }
 
 func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto, error) {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "rpc"
 	if startTok.Value != "rpc" {
 		return nil, fmt.Errorf("%d:%d: Expected \"rpc\".", startTok.Line+1, startTok.Column+1)
@@ -2336,6 +2337,7 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 
 	// Update method declaration span
 	p.locations[methodLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.attachComments(methodLocIdx, firstIdx)
 
 	return method, nil
 }
