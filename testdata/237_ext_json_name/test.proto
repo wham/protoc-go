@@ -1,0 +1,12 @@
+syntax = "proto2";
+
+package extjson;
+
+message Base {
+  optional int32 id = 1;
+  extensions 100 to 200;
+}
+
+extend Base {
+  optional string nickname = 100 [json_name = "customNick"];
+}

@@ -2065,6 +2065,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseExtensionRange()` at lines 877-878 unconditionally adds an SCI location for path `[4, 0, 5, 0, 3]` (ExtensionRange.options) even when the only option present is `declaration = { ... }`, which Go skips via depth-tracking without populating any options on the descriptor. C++ protoc does NOT emit an SCI location for the options path in this case. Result: Go emits 17 SCI locations vs C++ protoc's 16. Descriptor set binary sizes also differ (294 vs 279 bytes).
 - **Root cause:** `parser.go:877-878` — the SCI loop `for i := startCount; i < *rangeIdx; i++` always adds a location for `optsPath` (field 3 = options) regardless of whether any options were actually parsed and stored. The `declaration = { ... }` aggregate value is skipped by depth tracking (lines 853-860) without adding to `parsedOpts` or setting any options on ExtensionRange, but the SCI location is still emitted. C++ protoc only emits SCI for options that are populated in the descriptor.
 
+### Run 232 — json_name on extension fields (FAILED: 5/5 profiles)
+- **Test:** `237_ext_json_name` — proto2 file with `extend Base { optional string nickname = 100 [json_name = "customNick"]; }` (json_name on an extension field)
+- **Bug:** Go protoc-go silently accepts `json_name` on an extension field and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:11:35: option json_name is not allowed on extension fields.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation in Go implementation that checks whether `json_name` is used on extension fields. C++ protoc validates in `descriptor.cc` that `json_name` is not allowed on extension fields. The Go parser stores `json_name` on any field via `parseFieldOptions` without checking if the field is an extension. The `cli.go` validation layer has no extension-specific json_name check.
+
 ### Known gaps still unexplored (updated):
 - **Feature target validation on method/enum value scope** — may now be validated (service was fixed)
 - **Trailing comma in field options** — `[deprecated = true,]` — different error messages
@@ -2073,3 +2078,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **MessageSet without extensions** — `message_set_wire_format = true` but no `extensions` range (proto2, no extension range)
 - **MessageSet with nested messages** — `message_set_wire_format = true` with nested message types
 - **Extension range declaration content** — Go skips `declaration = {...}` entirely; C++ populates ExtensionRangeOptions.declaration
+- **json_name on extension fields** — TESTED in Run 232 (237_ext_json_name), confirmed broken (Go accepts, C++ rejects)
+- **packed on extension fields** — `extend Base { repeated int32 ids = 101 [packed = true]; }` — may produce different results
+- **Extension field with default in proto3** — `extend Base { string tag = 100 [default = "x"]; }` in proto3 — double validation failure
