@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1236/1236 tests passing.
+ALL DONE — 1241/1241 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -408,4 +408,5 @@ ALL DONE — 1236/1236 tests passing.
 236. ✅ Proto2 JSON name conflict non-fatal — skip JSON name conflict validation for proto2 files (C++ protoc treats these as warnings, not errors; only proto3/editions produce fatal errors)
 237. ✅ `--error_format` flag parsing — accept `--error_format=FORMAT` flag (gcc/msvs) without error, value is currently ignored (GCC format is default). Added `Missing input file.` validation before `Missing output directives.` to match C++ protoc ordering.
 238. ✅ `--fatal_warnings` flag parsing — accept `--fatal_warnings` flag without error, value is currently ignored (warnings not yet promoted to errors). C++ protoc accepts this flag and continues to normal validation (e.g., `Missing input file.`).
+239. ✅ Map entry conflict validation — detect naming conflicts between expanded map entry types and existing nested message types with `Expanded map entry type X conflicts with an existing nested message type.` error at containing message name position, plus duplicate field/type name errors for synthetic map entry children (key, value). Matched C++ symbol registration order (children before parent: oneofs → fields → enums → nested types → message name).
 - Type shadowing resolution: C++ protoc's `LookupSymbolNoPlaceholder` uses first-component-first resolution for compound names. For `Outer.Inner` in scope `Container`: find `Outer` at innermost scope first → if found as TYPE_MESSAGE (aggregate), try full `Container.Outer.Inner` → if not found, stop and report shadowing error (don't fall through to outer scopes). `resolveTypeName` returns `(resolved, shadowCandidate)` where shadowCandidate is non-empty when shadowing fails. `shadowErrorMsg` formats the error. Callers in `ResolveTypes`, `resolveMessageFieldsWithErrorsPath`, `CheckUnresolvedTypes`, and `checkMsgUnresolved` all updated to emit shadowing error when shadowCandidate is set.
