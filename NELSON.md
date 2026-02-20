@@ -2045,6 +2045,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseEnumReserved()` at line 2239 checks if the next token is `TokenString`. When it's an identifier like `DELETED`, it falls to the `else` branch (line 2279) which tries integer/range parsing. `ExpectInt()` at line 2291 fails because `DELETED` is an identifier, not an integer. Go error: `test.proto:8:12: Expected integer.` C++ protoc error: `test.proto:8:12: Reserved names must be string literals. (Only editions supports identifiers.)` Both reject (exit 1), but error messages differ completely.
 - **Root cause:** `parser.go:2239` — `parseEnumReserved` checks for `TokenString` (name reservation) or falls through to integer (range reservation). When a `TokenIdent` appears, it doesn't check for it between the two branches. C++ protoc detects identifiers and gives a specific error about requiring string literals (with an editions hint). Go's error is generic and misleading. Same pattern as Run 226 (message reserved identifier) but in the enum reserved code path.
 
+### Run 228 — Oneof field_presence feature target (FAILED: 5/5 profiles)
+- **Test:** `233_oneof_field_presence` — edition 2023 file with `option features.field_presence = IMPLICIT;` inside a oneof body
+- **Bug:** `collectOneofFeatureErrors()` at cli.go:1690 has a WRONG comment: "field_presence targets ONEOF, so it's allowed — skip it". In reality, `field_presence` targets only FILE and FIELD (not ONEOF). C++ protoc rejects with: "Option google.protobuf.FeatureSet.field_presence cannot be set on an entity of type `oneof`." Go accepts the file successfully. C++ `cpp_ok.txt` = false, Go `go_ok.txt` = true.
+- **Root cause:** `compiler/cli/cli.go:1690` — incorrect comment and missing validation. The `field_presence` check is intentionally skipped based on a wrong assumption about its target types. All other features (enum_type, repeated_field_encoding, utf8_validation, message_encoding, json_format) are correctly validated for oneof, but field_presence is the one that slipped through.
+
 ### Known gaps still unexplored (updated):
 - **Feature target validation on method/enum value scope** — may now be validated (service was fixed)
 - **Trailing comma in field options** — `[deprecated = true,]` — different error messages

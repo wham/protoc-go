@@ -1,0 +1,11 @@
+edition = "2023";
+
+package oneoffp;
+
+message Settings {
+  oneof value {
+    option features.field_presence = IMPLICIT;
+    string text = 1;
+    int32 number = 2;
+  }
+}
