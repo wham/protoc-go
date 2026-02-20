@@ -2012,3 +2012,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Custom option on enum values** — same bug in inline loop
 - **Map field with undefined key type** — `map<NonExistent, string>` — same issue, key type unresolved
 - **Undefined type in extension field** — `extend Foo { optional NonExistent bar = 100; }` — may also silently accept
+
+### Run 223 — Feature target validation on message scope (FAILED: 5/5 profiles)
+- **Test:** `228_msg_features_target` — edition 2023 file with `option features.enum_type = CLOSED;` inside a message body
+- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `MessageOptions.Features.EnumType = CLOSED`. C++ protoc rejects with: `test.proto: Option google.protobuf.FeatureSet.enum_type cannot be set on an entity of type 'message'.` (exit 1). Different exit codes across all 5 profiles.
+- **Root cause:** `parser.go:1181-1240` — `parseMessageOption` handles all `features.X` dotted names and blindly sets the corresponding field on `MessageOptions.Features` without validating feature target applicability. `enum_type` targets `TARGET_TYPE_FILE` and `TARGET_TYPE_ENUM`, NOT `TARGET_TYPE_MESSAGE`. Same category as Run 222 (oneof features), confirming the feature target validation gap extends to all entity scopes.
+
+### Known gaps still unexplored (updated):
+- **Feature target validation on remaining scopes** — enum, service, method, field, enum value all likely accept features on wrong targets
+- **Trailing comma in map field options** — same trailing comma issue
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ
+- **Error column positions** — many Go validation errors report wrong column
