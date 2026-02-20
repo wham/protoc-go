@@ -1578,7 +1578,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts the unterminated block comment and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:11:1: End-of-file inside block comment.` and `test.proto:10:1:   Comment started here.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `tokenizer.go:242-255` — `readBlockCommentText()` reads until `*/` or end of input. When end of input is reached, it silently returns whatever was read — no error is added to `t.Errors`. C++ protoc's `Tokenizer::ConsumeBlockComment()` in `tokenizer.cc` calls `AddError("End-of-file inside block comment.")` when the input ends without `*/`, causing the parse to fail. The Go tokenizer needs to check if the loop exited without finding `*/` and add a `TokenError`.
 
+### Run 164 — Duplicate reserved names (FAILED: 5/5 profiles)
+- **Test:** `170_duplicate_reserved_name` — proto3 message with `reserved "name", "name";` (same name listed twice in reserved names)
+- **Bug:** Go protoc-go silently accepts duplicate reserved names and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:9: Field name "name" is reserved multiple times.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that each reserved name appears at most once within a message. The Go `descriptor/pool.go` is an empty stub with no duplicate reserved name checking. The parser stores all reserved names without checking for duplicates. Same pattern applies to duplicate reserved names across multiple `reserved` statements in the same message.
+
 ### Known gaps still unexplored (updated):
+- **Duplicate reserved names across statements** — `reserved "a"; reserved "a";` — same bug, different syntax
+- **Duplicate enum reserved names** — `reserved "A", "A";` inside enum — same validation gap
 - **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ

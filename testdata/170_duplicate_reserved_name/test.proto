@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package dupreserved;
+
+message Config {
+  reserved "name", "name";
+  string value = 1;
+}
