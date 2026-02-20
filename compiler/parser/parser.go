@@ -583,11 +583,20 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 			if err != nil {
 				return err
 			}
-			msg.ReservedName = append(msg.ReservedName, nameTok.Value)
+			nameVal := nameTok.Value
+			nameEndLine, nameEndCol := nameTok.Line, nameTok.Column+nameTok.RawLen
+			// Adjacent string concatenation
+			for p.tok.Peek().Type == tokenizer.TokenString {
+				nextStr := p.tok.Next()
+				nameVal += nextStr.Value
+				nameEndLine = nextStr.Line
+				nameEndCol = nextStr.Column + nextStr.RawLen
+			}
+			msg.ReservedName = append(msg.ReservedName, nameVal)
 
 			// Source code info for individual reserved name
 			p.addLocationSpan(append(copyPath(stmtPath), *nameIdx),
-				nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+nameTok.RawLen)
+				nameTok.Line, nameTok.Column, nameEndLine, nameEndCol)
 			*nameIdx++
 
 			if p.tok.Peek().Value == "," {
@@ -1853,10 +1862,19 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 			if err != nil {
 				return err
 			}
-			e.ReservedName = append(e.ReservedName, nameTok.Value)
+			nameVal := nameTok.Value
+			nameEndLine, nameEndCol := nameTok.Line, nameTok.Column+nameTok.RawLen
+			// Adjacent string concatenation
+			for p.tok.Peek().Type == tokenizer.TokenString {
+				nextStr := p.tok.Next()
+				nameVal += nextStr.Value
+				nameEndLine = nextStr.Line
+				nameEndCol = nextStr.Column + nextStr.RawLen
+			}
+			e.ReservedName = append(e.ReservedName, nameVal)
 
 			p.addLocationSpan(append(copyPath(stmtPath), *nameIdx),
-				nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+nameTok.RawLen)
+				nameTok.Line, nameTok.Column, nameEndLine, nameEndCol)
 			*nameIdx++
 
 			if p.tok.Peek().Value == "," {

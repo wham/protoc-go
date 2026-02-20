@@ -5,42 +5,29 @@
   "protoFile": [
     {
       "name": "test.proto",
-      "package": "methodstmt",
+      "package": "reservedconcat",
       "messageType": [
         {
-          "name": "Request",
+          "name": "Config",
           "field": [
             {
-              "name": "query",
+              "name": "name",
               "number": 1,
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
-              "jsonName": "query"
-            }
-          ]
-        },
-        {
-          "name": "Response",
-          "field": [
+              "jsonName": "name"
+            },
             {
-              "name": "result",
-              "number": 1,
+              "name": "active",
+              "number": 2,
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
-              "jsonName": "result"
+              "jsonName": "active"
             }
-          ]
-        }
-      ],
-      "service": [
-        {
-          "name": "SearchService",
-          "method": [
-            {
-              "name": "Search",
-              "inputType": ".methodstmt.Request",
-              "outputType": ".methodstmt.Response"
-            }
+          ],
+          "reservedName": [
+            "deleted",
+            "removed"
           ]
         }
       ],
@@ -50,7 +37,7 @@
             "span": [
               0,
               0,
-              16,
+              8,
               1
             ]
           },
@@ -71,7 +58,7 @@
             "span": [
               2,
               0,
-              19
+              23
             ]
           },
           {
@@ -82,7 +69,7 @@
             "span": [
               4,
               0,
-              6,
+              8,
               1
             ]
           },
@@ -95,47 +82,6 @@
             "span": [
               4,
               8,
-              15
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0
-            ],
-            "span": [
-              5,
-              2,
-              19
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              5
-            ],
-            "span": [
-              5,
-              2,
-              8
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              1
-            ],
-            "span": [
-              5,
-              9,
               14
             ]
           },
@@ -143,63 +89,63 @@
             "path": [
               4,
               0,
-              2,
-              0,
-              3
+              10
             ],
             "span": [
               5,
-              17,
+              2,
+              38
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              10,
+              0
+            ],
+            "span": [
+              5,
+              11,
+              23
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              10,
+              1
+            ],
+            "span": [
+              5,
+              25,
+              37
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0
+            ],
+            "span": [
+              6,
+              2,
               18
             ]
           },
           {
             "path": [
               4,
-              1
-            ],
-            "span": [
-              8,
               0,
-              10,
-              1
-            ]
-          },
-          {
-            "path": [
-              4,
-              1,
-              1
-            ],
-            "span": [
-              8,
-              8,
-              16
-            ]
-          },
-          {
-            "path": [
-              4,
-              1,
-              2,
-              0
-            ],
-            "span": [
-              9,
-              2,
-              20
-            ]
-          },
-          {
-            "path": [
-              4,
-              1,
               2,
               0,
               5
             ],
             "span": [
-              9,
+              6,
               2,
               8
             ]
@@ -207,13 +153,68 @@
           {
             "path": [
               4,
-              1,
+              0,
               2,
               0,
               1
             ],
             "span": [
+              6,
               9,
+              13
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              6,
+              16,
+              17
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1
+            ],
+            "span": [
+              7,
+              2,
+              20
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              5
+            ],
+            "span": [
+              7,
+              2,
+              8
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              1
+            ],
+            "span": [
+              7,
               9,
               15
             ]
@@ -221,95 +222,15 @@
           {
             "path": [
               4,
-              1,
-              2,
               0,
+              2,
+              1,
               3
             ],
             "span": [
-              9,
+              7,
               18,
               19
-            ]
-          },
-          {
-            "path": [
-              6,
-              0
-            ],
-            "span": [
-              12,
-              0,
-              16,
-              1
-            ]
-          },
-          {
-            "path": [
-              6,
-              0,
-              1
-            ],
-            "span": [
-              12,
-              8,
-              21
-            ]
-          },
-          {
-            "path": [
-              6,
-              0,
-              2,
-              0
-            ],
-            "span": [
-              13,
-              2,
-              15,
-              3
-            ]
-          },
-          {
-            "path": [
-              6,
-              0,
-              2,
-              0,
-              1
-            ],
-            "span": [
-              13,
-              6,
-              12
-            ]
-          },
-          {
-            "path": [
-              6,
-              0,
-              2,
-              0,
-              2
-            ],
-            "span": [
-              13,
-              13,
-              20
-            ]
-          },
-          {
-            "path": [
-              6,
-              0,
-              2,
-              0,
-              3
-            ],
-            "span": [
-              13,
-              31,
-              39
             ]
           }
         ]
@@ -320,42 +241,29 @@
   "sourceFileDescriptors": [
     {
       "name": "test.proto",
-      "package": "methodstmt",
+      "package": "reservedconcat",
       "messageType": [
         {
-          "name": "Request",
+          "name": "Config",
           "field": [
             {
-              "name": "query",
+              "name": "name",
               "number": 1,
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
-              "jsonName": "query"
-            }
-          ]
-        },
-        {
-          "name": "Response",
-          "field": [
+              "jsonName": "name"
+            },
             {
-              "name": "result",
-              "number": 1,
+              "name": "active",
+              "number": 2,
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
-              "jsonName": "result"
+              "jsonName": "active"
             }
-          ]
-        }
-      ],
-      "service": [
-        {
-          "name": "SearchService",
-          "method": [
-            {
-              "name": "Search",
-              "inputType": ".methodstmt.Request",
-              "outputType": ".methodstmt.Response"
-            }
+          ],
+          "reservedName": [
+            "deleted",
+            "removed"
           ]
         }
       ],
@@ -365,7 +273,7 @@
             "span": [
               0,
               0,
-              16,
+              8,
               1
             ]
           },
@@ -386,7 +294,7 @@
             "span": [
               2,
               0,
-              19
+              23
             ]
           },
           {
@@ -397,7 +305,7 @@
             "span": [
               4,
               0,
-              6,
+              8,
               1
             ]
           },
@@ -410,47 +318,6 @@
             "span": [
               4,
               8,
-              15
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0
-            ],
-            "span": [
-              5,
-              2,
-              19
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              5
-            ],
-            "span": [
-              5,
-              2,
-              8
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              1
-            ],
-            "span": [
-              5,
-              9,
               14
             ]
           },
@@ -458,63 +325,63 @@
             "path": [
               4,
               0,
-              2,
-              0,
-              3
+              10
             ],
             "span": [
               5,
-              17,
+              2,
+              38
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              10,
+              0
+            ],
+            "span": [
+              5,
+              11,
+              23
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              10,
+              1
+            ],
+            "span": [
+              5,
+              25,
+              37
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0
+            ],
+            "span": [
+              6,
+              2,
               18
             ]
           },
           {
             "path": [
               4,
-              1
-            ],
-            "span": [
-              8,
               0,
-              10,
-              1
-            ]
-          },
-          {
-            "path": [
-              4,
-              1,
-              1
-            ],
-            "span": [
-              8,
-              8,
-              16
-            ]
-          },
-          {
-            "path": [
-              4,
-              1,
-              2,
-              0
-            ],
-            "span": [
-              9,
-              2,
-              20
-            ]
-          },
-          {
-            "path": [
-              4,
-              1,
               2,
               0,
               5
             ],
             "span": [
-              9,
+              6,
               2,
               8
             ]
@@ -522,13 +389,68 @@
           {
             "path": [
               4,
-              1,
+              0,
               2,
               0,
               1
             ],
             "span": [
+              6,
               9,
+              13
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              6,
+              16,
+              17
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1
+            ],
+            "span": [
+              7,
+              2,
+              20
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              5
+            ],
+            "span": [
+              7,
+              2,
+              8
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              1
+            ],
+            "span": [
+              7,
               9,
               15
             ]
@@ -536,95 +458,15 @@
           {
             "path": [
               4,
-              1,
-              2,
               0,
+              2,
+              1,
               3
             ],
             "span": [
-              9,
+              7,
               18,
               19
-            ]
-          },
-          {
-            "path": [
-              6,
-              0
-            ],
-            "span": [
-              12,
-              0,
-              16,
-              1
-            ]
-          },
-          {
-            "path": [
-              6,
-              0,
-              1
-            ],
-            "span": [
-              12,
-              8,
-              21
-            ]
-          },
-          {
-            "path": [
-              6,
-              0,
-              2,
-              0
-            ],
-            "span": [
-              13,
-              2,
-              15,
-              3
-            ]
-          },
-          {
-            "path": [
-              6,
-              0,
-              2,
-              0,
-              1
-            ],
-            "span": [
-              13,
-              6,
-              12
-            ]
-          },
-          {
-            "path": [
-              6,
-              0,
-              2,
-              0,
-              2
-            ],
-            "span": [
-              13,
-              13,
-              20
-            ]
-          },
-          {
-            "path": [
-              6,
-              0,
-              2,
-              0,
-              3
-            ],
-            "span": [
-              13,
-              31,
-              39
             ]
           }
         ]
