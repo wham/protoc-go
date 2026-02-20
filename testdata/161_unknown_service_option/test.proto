@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package unksvcopt;
+
+message Request {
+  string query = 1;
+}
+
+message Response {
+  string result = 1;
+}
+
+service SearchService {
+  option foobar = true;
+  rpc Search(Request) returns (Response);
+}
