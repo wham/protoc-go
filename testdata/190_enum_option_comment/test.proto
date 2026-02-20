@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package enumoptcomment;
+
+enum Status {
+  // Allow multiple enum values to share the same number.
+  option allow_alias = true;
+
+  UNKNOWN = 0;
+  STARTED = 1;
+  RUNNING = 1;
+}
+
+message Config {
+  Status status = 1;
+}
