@@ -1978,6 +1978,17 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, fullName)
 	}
 
+	// Handle dotted option names like features.enum_type
+	var featSubField string
+	if optName == "features" && p.tok.Peek().Value == "." {
+		dotTok := p.tok.Next()
+		p.trackEnd(dotTok)
+		subTok := p.tok.Next()
+		p.trackEnd(subTok)
+		featSubField = subTok.Value
+		optName = "features." + featSubField
+	}
+
 	if seenOptions[optName] {
 		return fmt.Errorf("%d:%d: Option \"%s\" was already set.", nameTok.Line+1, nameTok.Column+1, optName)
 	}
@@ -2021,6 +2032,74 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		e.Options.DeprecatedLegacyJsonFieldConflicts = proto.Bool(valTok.Value == "true")
 		fieldNum = 6
 	default:
+		if featSubField != "" {
+			if e.Options.Features == nil {
+				e.Options.Features = &descriptorpb.FeatureSet{}
+			}
+			if valTok.Type != tokenizer.TokenIdent {
+				return fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.EnumOptions.features.%s\".", valTok.Line+1, valTok.Column+1, featSubField)
+			}
+			var featFieldNum int32
+			switch featSubField {
+			case "field_presence":
+				v, ok := descriptorpb.FeatureSet_FieldPresence_value[valTok.Value]
+				if !ok {
+					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.FieldPresence\" has no value named \"%s\" for option \"google.protobuf.EnumOptions.features.field_presence\".", valTok.Line+1, valTok.Column+1, valTok.Value)
+				}
+				e.Options.Features.FieldPresence = descriptorpb.FeatureSet_FieldPresence(v).Enum()
+				featFieldNum = 1
+			case "enum_type":
+				v, ok := descriptorpb.FeatureSet_EnumType_value[valTok.Value]
+				if !ok {
+					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.EnumType\" has no value named \"%s\" for option \"google.protobuf.EnumOptions.features.enum_type\".", valTok.Line+1, valTok.Column+1, valTok.Value)
+				}
+				e.Options.Features.EnumType = descriptorpb.FeatureSet_EnumType(v).Enum()
+				featFieldNum = 2
+			case "repeated_field_encoding":
+				v, ok := descriptorpb.FeatureSet_RepeatedFieldEncoding_value[valTok.Value]
+				if !ok {
+					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.RepeatedFieldEncoding\" has no value named \"%s\" for option \"google.protobuf.EnumOptions.features.repeated_field_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
+				}
+				e.Options.Features.RepeatedFieldEncoding = descriptorpb.FeatureSet_RepeatedFieldEncoding(v).Enum()
+				featFieldNum = 3
+			case "utf8_validation":
+				v, ok := descriptorpb.FeatureSet_Utf8Validation_value[valTok.Value]
+				if !ok {
+					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.Utf8Validation\" has no value named \"%s\" for option \"google.protobuf.EnumOptions.features.utf8_validation\".", valTok.Line+1, valTok.Column+1, valTok.Value)
+				}
+				e.Options.Features.Utf8Validation = descriptorpb.FeatureSet_Utf8Validation(v).Enum()
+				featFieldNum = 4
+			case "message_encoding":
+				v, ok := descriptorpb.FeatureSet_MessageEncoding_value[valTok.Value]
+				if !ok {
+					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.MessageEncoding\" has no value named \"%s\" for option \"google.protobuf.EnumOptions.features.message_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
+				}
+				e.Options.Features.MessageEncoding = descriptorpb.FeatureSet_MessageEncoding(v).Enum()
+				featFieldNum = 5
+			case "json_format":
+				v, ok := descriptorpb.FeatureSet_JsonFormat_value[valTok.Value]
+				if !ok {
+					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.JsonFormat\" has no value named \"%s\" for option \"google.protobuf.EnumOptions.features.json_format\".", valTok.Line+1, valTok.Column+1, valTok.Value)
+				}
+				e.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
+				featFieldNum = 6
+			default:
+				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+			}
+			// SCI: [enumPath..., 3] for options statement, [enumPath..., 3, 7, featFieldNum] for specific feature
+			optPath := append(copyPath(enumPath), 3)
+			span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+				Path: optPath,
+				Span: span,
+			})
+			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+				Path: append(copyPath(optPath), 7, featFieldNum),
+				Span: span,
+			})
+			p.attachComments(len(p.locations)-1, firstIdx)
+			return nil
+		}
 		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
