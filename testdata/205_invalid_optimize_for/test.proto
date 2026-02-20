@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package invalid_opt;
+
+option optimize_for = UNKNOWN;
+
+message Msg {
+  string name = 1;
+}

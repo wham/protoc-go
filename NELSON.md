@@ -1816,7 +1816,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:7:31: Expected identifier.` (expects another option name after the comma). Go protoc-go: `test.proto:7:32: Expected "=".` (reads `]` as the next option name token, then tries to consume `=` but gets `;`). Column also differs (31 vs 32).
 - **Root cause:** Same pattern as Run 194 (trailing comma in field options). After consuming `,`, the enum value option loop continues and reads the next token as an option name. `]` is consumed as `optNameTok.Value = "]"`, then `p.tok.Expect("=")` at line 1705 gets `;` → error. C++ protoc expects an identifier (option name) after `,` and reports "Expected identifier" at the `,` or `]` position. Go doesn't check for `]` after `,` and produces a misleading error at the wrong position.
 
+### Run 199 — Invalid optimize_for error message mismatch (FAILED: 5/5 profiles)
+- **Test:** `205_invalid_optimize_for` — proto3 file with `option optimize_for = UNKNOWN;` (invalid enum value for optimize_for)
+- **Bug:** Both C++ and Go reject the file (exit 1), but with completely different error messages. C++ protoc: `test.proto:5:23: Enum type "google.protobuf.FileOptions.OptimizeMode" has no value named "UNKNOWN" for option "google.protobuf.FileOptions.optimize_for".` Go protoc-go: `test.proto:line 5:23: unknown optimize_for value "UNKNOWN"`. Three differences: (1) Go has spurious "line " prefix before line number, (2) completely different message text, (3) Go message lacks trailing period.
+- **Root cause:** `parser.go:2751` — the error format string is `"line %d:%d: unknown optimize_for value %q"`. The `"line "` prefix is wrong (should be just `"%d:%d:"`). The message text doesn't match C++ protoc's format which says `Enum type "..." has no value named "..." for option "...".`. Same bug exists at `parser.go:2203` for `idempotency_level`.
+
 ### Known gaps still unexplored (updated):
+- **Invalid idempotency_level error** — same `"line %d:%d:"` format bug at parser.go:2203
 - **Trailing comma in map field options** — same trailing comma issue
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ
