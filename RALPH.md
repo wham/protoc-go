@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 848/848 tests passing.
+ALL DONE — 853/853 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -329,3 +329,4 @@ ALL DONE — 848/848 tests passing.
 169. ✅ Invalid escape sequence validation — reject unknown escape sequences (e.g., `\e`) in string literals with `Invalid escape sequence in string literal.` error at the escape character position (after backslash), tokenizer records `TokenError` which gets merged with parser errors
 170. ✅ Hex escape no-digits validation — reject `\x` not followed by any hex digits with `Expected hex digits for escape sequence.` error at the position after `\x`, tokenizer tracks hex digit count and reports error when count is 0
 171. ✅ Unterminated block comment detection — detect EOF inside `/* ... */` block comments with two-line error: `End-of-file inside block comment.` at EOF position + `  Comment started here.` at `/*` position, using `TokenError.Notes` for follow-up lines that preserve ordering after position-based sort
+172. ✅ Duplicate reserved name validation — reject reserved names that appear more than once within a message with `Field name "X" is reserved multiple times.` error at message name location (SCI path `[4, msgIdx, 1]`), recurses into nested messages, skips map entry types
