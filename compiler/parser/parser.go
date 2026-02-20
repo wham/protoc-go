@@ -2935,6 +2935,8 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				field.Options = &descriptorpb.FieldOptions{}
 			}
 			field.Options.UnverifiedLazy = proto.Bool(valTok.Value == "true")
+		default:
+			return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", optNameTok.Line+1, optNameTok.Column+1, optName)
 		}
 
 		// Build source code info for this option
