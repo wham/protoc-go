@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1109/1109 tests passing.
+ALL DONE — 1114/1114 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -385,3 +385,4 @@ ALL DONE — 1109/1109 tests passing.
 215. ✅ Parenthesized custom enum value option names — handle `[(name) = value]` syntax in enum value option brackets (e.g., `PRIORITY_HIGH = 1 [(my_custom_opt) = "important"]`), parse full name with `parseParenthesizedOptionName`, skip to `]`/`,`, report `Option "(name)" unknown.` error at `(` position
 216. ✅ Enum features option parsing — `option features.enum_type = CLOSED;` etc. inside enum bodies sets `EnumOptions.features` (field 7) FeatureSet sub-fields, SCI paths `[enumPath..., 3]` and `[enumPath..., 3, 7, subFieldNum]` with same span, dotted name parsed after `features` token, same pattern as file/message features options
 217. ✅ Service features option parsing and target validation — `option features.json_format = ALLOW;` etc. inside service bodies sets `ServiceOptions.features` (field 34) FeatureSet sub-fields, SCI paths `[svcPath..., 3]` and `[svcPath..., 3, 34, featFieldNum]`. Feature target validation in `validateFeatureTargets` (cli.go) rejects features not allowed on services with `Option google.protobuf.FeatureSet.X cannot be set on an entity of type \`service\`.` error (no line:col)
+218. ✅ Method features option parsing and target validation — `option features.json_format = ALLOW;` etc. inside method bodies sets `MethodOptions.features` (field 35) FeatureSet sub-fields, SCI paths `[methodPath..., 4]` and `[methodPath..., 4, 35, featFieldNum]`. Feature target validation in `validateFeatureTargets` (cli.go) rejects features not allowed on methods with `Option google.protobuf.FeatureSet.X cannot be set on an entity of type \`method\`.` error (no line:col)
