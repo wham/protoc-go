@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 998/998 tests passing.
+ALL DONE — 1003/1003 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -356,6 +356,7 @@ ALL DONE — 998/998 tests passing.
 194. ✅ `deprecated_legacy_json_field_conflicts` message option (field 11 of MessageOptions, boolean) with source code info, added to `parseMessageOption` switch alongside `deprecated`, `no_standard_descriptor_accessor`, `message_set_wire_format`
 195. ✅ Invalid ctype/jstype enum value validation — reject unknown enum values for `ctype` and `jstype` field options with `Enum type "google.protobuf.FieldOptions.CType/JSType" has no value named "X" for option "google.protobuf.FieldOptions.ctype/jstype".` error at value token position
 196. ✅ Edition features file option parsing — `option features.field_presence = IMPLICIT;` etc. sets `FileOptions.features` (field 50) FeatureSet sub-fields (field_presence=1, enum_type=2, repeated_field_encoding=3, utf8_validation=4, message_encoding=5, json_format=6), SCI paths `[8]` and `[8, 50, subFieldNum]` with same span, dotted name parsed after `features` token
+197. ✅ Trailing comma rejection in field options — reject `[deprecated = true,]` (trailing comma before `]`) with `Expected identifier.` error at `]` token position, matching C++ protoc behavior
 
 - Import declaration comment tracking: `parseImport` captures `firstIdx` before consuming `import` token and calls `attachComments` on the import SCI location (path `[3, depIdx]`), same pattern as message/enum/service/oneof/field/map/method declarations.
 - File option declaration comment tracking: `parseFileOption` captures `firstIdx` before consuming `option` token and calls `attachComments` on the `[8, fieldNum]` SCI location (the specific option entry, not the statement entry), same pattern as message/enum/service/field/method declarations.
