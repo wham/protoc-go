@@ -345,6 +345,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate feature targets (e.g., features that can't be set on services)
+	if errs := validateFeatureTargets(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Build ordered list of FileDescriptorProtos (stripped of source-retention options)
 	var protoFiles []*descriptorpb.FileDescriptorProto
 	strippedMap := make(map[string]*descriptorpb.FileDescriptorProto)
@@ -1467,6 +1472,57 @@ func collectJsonNameConflictErrors(filename string, msg *descriptorpb.Descriptor
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectJsonNameConflictErrors(filename, nested, nestedPath, sci, explicitJsonNames, useCustom, errs)
 	}
+}
+
+// featureTargets maps FeatureSet field names to the entity types where they can be used.
+var featureTargets = map[string]map[string]bool{
+	"field_presence":         {"file": true, "field": true},
+	"enum_type":              {"file": true, "enum": true},
+	"repeated_field_encoding": {"file": true, "field": true},
+	"utf8_validation":        {"file": true, "field": true},
+	"message_encoding":       {"file": true, "field": true},
+	"json_format":            {"file": true, "message": true, "enum": true},
+}
+
+// featureProtoNames maps FeatureSet field names to their full proto path names.
+var featureProtoNames = map[string]string{
+	"field_presence":         "google.protobuf.FeatureSet.field_presence",
+	"enum_type":              "google.protobuf.FeatureSet.enum_type",
+	"repeated_field_encoding": "google.protobuf.FeatureSet.repeated_field_encoding",
+	"utf8_validation":        "google.protobuf.FeatureSet.utf8_validation",
+	"message_encoding":       "google.protobuf.FeatureSet.message_encoding",
+	"json_format":            "google.protobuf.FeatureSet.json_format",
+}
+
+func validateFeatureTargets(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, svc := range fd.GetService() {
+			if svc.GetOptions() != nil && svc.GetOptions().GetFeatures() != nil {
+				feat := svc.GetOptions().GetFeatures()
+				if feat.FieldPresence != nil {
+					errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `service`.", name, featureProtoNames["field_presence"]))
+				}
+				if feat.EnumType != nil {
+					errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `service`.", name, featureProtoNames["enum_type"]))
+				}
+				if feat.RepeatedFieldEncoding != nil {
+					errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `service`.", name, featureProtoNames["repeated_field_encoding"]))
+				}
+				if feat.Utf8Validation != nil {
+					errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `service`.", name, featureProtoNames["utf8_validation"]))
+				}
+				if feat.MessageEncoding != nil {
+					errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `service`.", name, featureProtoNames["message_encoding"]))
+				}
+				if feat.JsonFormat != nil {
+					errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `service`.", name, featureProtoNames["json_format"]))
+				}
+			}
+		}
+	}
+	return errs
 }
 
 // validateProto3 checks proto3-specific constraints and returns error strings.
