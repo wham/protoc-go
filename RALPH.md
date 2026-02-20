@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 968/968 tests passing.
+ALL DONE — 973/973 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -356,3 +356,4 @@ ALL DONE — 968/968 tests passing.
 - Import declaration comment tracking: `parseImport` captures `firstIdx` before consuming `import` token and calls `attachComments` on the import SCI location (path `[3, depIdx]`), same pattern as message/enum/service/oneof/field/map/method declarations.
 - File option declaration comment tracking: `parseFileOption` captures `firstIdx` before consuming `option` token and calls `attachComments` on the `[8, fieldNum]` SCI location (the specific option entry, not the statement entry), same pattern as message/enum/service/field/method declarations.
 - Block comment asterisk stripping: C++ protoc's `ConsumeBlockComment` strips leading whitespace and one leading `*` after each newline inside `/* ... */` block comments. Go tokenizer's `readBlockCommentText` now mirrors this: after consuming `\n` (included in content), it skips non-newline whitespace (`' '`, `\t`, `\r`, `\v`, `\f`) and one `*` (if not followed by `/`). This produces clean comment text like `\n The name of the\n configuration entry.\n` from Javadoc-style block comments.
+- Negative zero integer default normalization: C++ protoc normalizes `[default = -0]` to `"0"` for integer fields (since `atoi("-0") == 0`). Go `normalizeIntDefault` now handles `-0` and `-0x0`/`-00` cases by checking if the parsed value is zero after negation and returning `"0"` instead of `"-0"`.
