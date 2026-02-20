@@ -1,0 +1,14 @@
+syntax = "proto2";
+
+package mlextend;
+
+message Outer {
+  message Inner {
+    extensions 100 to 200;
+  }
+}
+
+extend Outer.
+  Inner {
+  optional string tag = 100;
+}
