@@ -2160,14 +2160,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** C++ protoc accepts `--error_format=gcc` (and `--error_format=msvs`) as a valid flag, then reports `Missing input file.` because no .proto was provided. Go protoc-go rejects the flag itself with `Unknown flag: --error_format` — the flag is documented in Go's `--help` text (cli.go lines 73-74) but never actually parsed from argv.
 - **Root cause:** `cli.go` help text at lines 73-77 documents `--error_format=FORMAT` as a supported flag, but the argument parsing logic never checks for `--error_format`. The flag is silently unrecognized. C++ protoc implements this in `command_line_interface.cc` and uses it to switch between GCC-style (`file:line:col: error`) and MSVS-style (`file(line) : error in column=col:`) error formatting.
 
+### Run 243 — --fatal_warnings CLI flag (FAILED: 1/1 CLI test)
+- **Test:** CLI test `fatal_warnings` — invokes both compilers with `--fatal_warnings` (no proto files)
+- **Bug:** `--fatal_warnings` is documented in Go's help text (cli.go line 76) but not parsed in the argument handler. Go returns `Unknown flag: --fatal_warnings` (exit 1). C++ protoc accepts the flag and returns `Missing input file.` (exit 1). Same exit code, different stderr.
+- **Root cause:** `cli.go` argument parsing loop (lines 508-608) has no `if arg == "--fatal_warnings"` check. The flag falls through to line 597 (`strings.HasPrefix(arg, "-")`) which returns `Unknown flag: --fatal_warnings`. C++ protoc parses this flag in `command_line_interface.cc` and uses it to promote warnings to fatal errors.
+
 ### Known gaps still unexplored (updated):
-- **Feature target validation on remaining scopes** — method, enum value
-- **Error column positions** — many Go validation errors report wrong column
-- **packed on extension fields** — may produce different results
-- **Multiple errors from different validation passes** — many combinations possible
-- **debug_redact on non-string field** — may or may not be validated differently
-- **Other proto2-only warnings** — C++ protoc may have other proto2-specific warnings that Go treats as errors
-- **Multiline regular field type** — same end-line bug may exist in `parseField` for multiline type references
+- **`--print_free_field_numbers`** — documented in help, likely not parsed (same pattern as --fatal_warnings)
+- **`--deterministic_output`** — documented in help, likely not parsed
 - **Multiline extension range** — `extensions 100\n  to 200;` may have similar span issues
 - **Multiline reserved range** — `reserved 100\n  to 200;` may have similar span issues
 - **--error_format=msvs** — even if `--error_format` is parsed, MSVS formatting logic is likely not implemented

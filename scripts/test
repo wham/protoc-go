@@ -390,6 +390,7 @@ CLI_TESTS=(
   "bad_proto_path|--proto_path=/nonexistent/path --dump_out=/tmp missing.proto"
   "unknown_flag|--unknown_flag=test"
   "error_format|--error_format=gcc"
+  "fatal_warnings|--fatal_warnings"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
