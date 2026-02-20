@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package methoptcomment;
+
+message Request {
+  string query = 1;
+}
+
+message Response {
+  string result = 1;
+}
+
+service SearchService {
+  rpc Search(Request) returns (Response) {
+    // This option marks the method as deprecated.
+    option deprecated = true;
+  }
+}

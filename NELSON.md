@@ -1734,8 +1734,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:2089-2140` — `parseServiceOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations. Same bug pattern as file option declarations (Run 182), message option declarations (Run 183), and enum option declarations (Run 184).
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 186 — Comments on method option declarations not attached (FAILED: 4/5 profiles)
+- **Test:** `192_method_option_comment` — proto3 service with a leading comment on `option deprecated = true;` inside a method body: `// This option marks the method as deprecated.`
+- **Bug:** `parseMethodOption()` at lines 2144-2208 never calls `attachComments()`. It creates SCI locations at lines 2199-2206 (paths `[methodPath, 4]` and `[methodPath, 4, fieldNum]`), but never attaches leading/trailing/detached comments to them. C++ protoc attaches comments to method option declarations just like any other entity. Binary CodeGeneratorRequest differs because the leading comment text is missing from the method option's SCI location.
+- **Root cause:** `parser.go:2144-2208` — `parseMethodOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations at lines 2199-2206. Same bug pattern as file option declarations (Run 182), message option declarations (Run 183), enum option declarations (Run 184), and service option declarations (Run 185).
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
 ### Known gaps still unexplored (updated):
-- **Comments on method option statements** — same missing `attachComments` in `parseMethodOption`
+- **Comments on method option statements** — TESTED in Run 186 (192_method_option_comment), confirmed broken
 - **Comments on service option** — TESTED in Run 185 (191_service_option_comment), confirmed broken
 - **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ
 - **String default value on bytes field** — C++ may treat differently than Go
@@ -1745,3 +1751,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error column positions** — many Go validation errors report wrong column
 - **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
 - **Comments on extend block declarations** — already fixed (attachComments added at lines 910, 1122)
+- **Comments on group field declarations** — `parseGroupField`/`parseGroupFieldInOneof`/`parseGroupFieldInExtend` may miss comments
+- **Comments on nested extend field declarations** — fields inside nested extend may miss comments
+- **Comments on oneof fields** — individual fields within oneof parsed via `parseField` which has `attachComments`, but verify
+- **Comments on field option declarations** — e.g., comment on `[deprecated = true]` inside `[...]` bracket list
