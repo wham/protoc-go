@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 988/988 tests passing.
+ALL DONE — 998/998 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -354,8 +354,11 @@ ALL DONE — 988/988 tests passing.
 192. ✅ Method option declaration comment tracking — `parseMethodOption` now captures `firstIdx` before consuming `option` token and calls `attachComments` on the specific option's SCI location (path `[methodPath..., 4, fieldNum]`), matching `parseServiceOption`/`parseFileOption`/`parseMessageOption`/`parseEnumOption` pattern for leading/trailing/detached comments
 193. ✅ `deprecated_legacy_json_field_conflicts` enum option (field 6 of EnumOptions, boolean) with source code info, added to `parseEnumOption` switch alongside `allow_alias` and `deprecated`
 194. ✅ `deprecated_legacy_json_field_conflicts` message option (field 11 of MessageOptions, boolean) with source code info, added to `parseMessageOption` switch alongside `deprecated`, `no_standard_descriptor_accessor`, `message_set_wire_format`
+195. ✅ Invalid ctype/jstype enum value validation — reject unknown enum values for `ctype` and `jstype` field options with `Enum type "google.protobuf.FieldOptions.CType/JSType" has no value named "X" for option "google.protobuf.FieldOptions.ctype/jstype".` error at value token position
+196. ✅ Edition features file option parsing — `option features.field_presence = IMPLICIT;` etc. sets `FileOptions.features` (field 50) FeatureSet sub-fields (field_presence=1, enum_type=2, repeated_field_encoding=3, utf8_validation=4, message_encoding=5, json_format=6), SCI paths `[8]` and `[8, 50, subFieldNum]` with same span, dotted name parsed after `features` token
 
 - Import declaration comment tracking: `parseImport` captures `firstIdx` before consuming `import` token and calls `attachComments` on the import SCI location (path `[3, depIdx]`), same pattern as message/enum/service/oneof/field/map/method declarations.
 - File option declaration comment tracking: `parseFileOption` captures `firstIdx` before consuming `option` token and calls `attachComments` on the `[8, fieldNum]` SCI location (the specific option entry, not the statement entry), same pattern as message/enum/service/field/method declarations.
 - Block comment asterisk stripping: C++ protoc's `ConsumeBlockComment` strips leading whitespace and one leading `*` after each newline inside `/* ... */` block comments. Go tokenizer's `readBlockCommentText` now mirrors this: after consuming `\n` (included in content), it skips non-newline whitespace (`' '`, `\t`, `\r`, `\v`, `\f`) and one `*` (if not followed by `/`). This produces clean comment text like `\n The name of the\n configuration entry.\n` from Javadoc-style block comments.
 - Negative zero integer default normalization: C++ protoc normalizes `[default = -0]` to `"0"` for integer fields (since `atoi("-0") == 0`). Go `normalizeIntDefault` now handles `-0` and `-0x0`/`-00` cases by checking if the parsed value is zero after negation and returning `"0"` instead of `"-0"`.
+- Edition features file option: `option features.X = Y;` sets `FileOptions.features` (field 50 of FileOptions) sub-fields. `features` is detected by checking `optName == "features" && peek == "."`, then consuming dot + sub-field name. FeatureSet sub-field mapping: field_presence=1, enum_type=2, repeated_field_encoding=3, utf8_validation=4, message_encoding=5, json_format=6. Values are enum identifiers (e.g., `IMPLICIT`, `OPEN`, `PACKED`). SCI: `[8]` for statement, `[8, 50, subFieldNum]` for the specific feature. `seenFileOptions` tracks full dotted name (e.g., `features.field_presence`) to allow multiple different features. Features are NOT stripped for source retention (unlike extension range verification options).
