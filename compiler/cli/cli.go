@@ -2064,6 +2064,15 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 			line, col := findLocationByPath([]int32{6, int32(i), 1}, sci)
 			check(svcFQN, svc.GetName(), pkg, line, col, "")
 		}
+
+		for i, ext := range fd.GetExtension() {
+			extFQN := ext.GetName()
+			if pkg != "" {
+				extFQN = pkg + "." + extFQN
+			}
+			line, col := findLocationByPath([]int32{7, int32(i), 1}, sci)
+			check(extFQN, ext.GetName(), pkg, line, col, "")
+		}
 	}
 	return errs
 }
@@ -2080,6 +2089,12 @@ func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgP
 		p := append(append([]int32{}, msgPath...), 2, int32(i), 1)
 		l, c := findLocationByPath(p, sci)
 		check(fqn, field.GetName(), msgFQN, l, c, "")
+	}
+	for i, ext := range msg.GetExtension() {
+		eFQN := msgFQN + "." + ext.GetName()
+		p := append(append([]int32{}, msgPath...), 6, int32(i), 1)
+		l, c := findLocationByPath(p, sci)
+		check(eFQN, ext.GetName(), msgFQN, l, c, "")
 	}
 	for i, enum := range msg.GetEnumType() {
 		eFQN := msgFQN + "." + enum.GetName()
