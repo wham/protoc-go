@@ -2134,7 +2134,7 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 		method.Options.IdempotencyLevel = lvl.Enum()
 		fieldNum = 34
 	default:
-		return nil
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
 	optPath := append(copyPath(methodPath), 4)
