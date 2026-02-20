@@ -1770,3 +1770,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `195_enum_val_debug_redact` — proto3 enum with `SECRET = 1 [debug_redact = true];`
 - **Bug:** Enum value option parsing switch at line 1714 only handles `deprecated`. The `debug_redact` option (field 3 of `EnumValueOptions`) hits the `default` case and returns error: `Option "debug_redact" unknown.` C++ protoc accepts it and populates `EnumValueOptions.debug_redact = true` in the descriptor.
 - **Root cause:** `parser.go:1714-1719` — enum value option switch only has `case "deprecated":`. Missing `case "debug_redact":` to handle `EnumValueOptions.debug_redact` (field 3). Other potentially missing enum value options: `features` (field 2, editions-only).
+
+### Run 190 — Enum option deprecated_legacy_json_field_conflicts (FAILED: 5/5 profiles)
+- **Test:** `196_enum_deprecated_legacy_json` — proto3 enum with `option deprecated_legacy_json_field_conflicts = true;`
+- **Bug:** `parseEnumOption()` switch at lines 1847-1855 only handles `allow_alias` (field 2) and `deprecated` (field 3). The `deprecated_legacy_json_field_conflicts` option (field 6 of `EnumOptions`) hits the `default` case and returns error: `Option "deprecated_legacy_json_field_conflicts" unknown.` C++ protoc v29.3 accepts it and populates `EnumOptions.deprecated_legacy_json_field_conflicts = true`.
+- **Root cause:** `parser.go:1847-1855` — `parseEnumOption` switch is missing `deprecated_legacy_json_field_conflicts` (field 6). Same pattern as all other missing option bugs. Also potentially missing: `deprecated_legacy_json_field_conflicts` on `MessageOptions` (field 11).

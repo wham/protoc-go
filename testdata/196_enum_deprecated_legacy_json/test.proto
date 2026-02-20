@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package enumlegacyjson;
+
+enum Status {
+  option deprecated_legacy_json_field_conflicts = true;
+  STATUS_UNSPECIFIED = 0;
+  STATUS_ACTIVE = 1;
+}
