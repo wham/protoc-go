@@ -603,6 +603,10 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
+		if strings.HasPrefix(arg, "--encode=") || strings.HasPrefix(arg, "--decode=") {
+			continue
+		}
+
 		if arg == "--decode_raw" {
 			cfg.decodeRaw = true
 			continue
