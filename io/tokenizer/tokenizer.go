@@ -56,6 +56,12 @@ type Tokenizer struct {
 
 func New(input string) *Tokenizer {
 	t := &Tokenizer{input: input}
+	// Skip UTF-8 BOM if present (matching C++ protoc behavior).
+	// Keep in input so positions account for BOM bytes.
+	if len(input) >= 3 && input[0] == 0xEF && input[1] == 0xBB && input[2] == 0xBF {
+		t.pos = 3
+		t.col = 3
+	}
 	t.tokenize()
 	return t
 }
