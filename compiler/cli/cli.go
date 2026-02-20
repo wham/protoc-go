@@ -200,169 +200,55 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(resolveErrors, "\n"))
 	}
 
-	// Validate map key types (float/double/bytes/message not allowed)
-	if errs := validateMapKeyTypes(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	// Phase 1: Build/cross-link validation — accumulate errors (C++ protoc collects all)
+	var buildErrors []string
+	buildErrors = append(buildErrors, validateMapKeyTypes(orderedFiles, parsed)...)
+	dupNameErrs := validateDuplicateNames(orderedFiles, parsed)
+	buildErrors = append(buildErrors, dupNameErrs...)
+	buildErrors = append(buildErrors, validatePositiveFieldNumbers(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateMaxFieldNumbers(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateReservedFieldNumbers(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateDuplicateFieldNumbers(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateReservedNumberConflicts(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateDuplicateReservedNames(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateReservedNameConflicts(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateEmptyEnums(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateDuplicateEnumValues(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateExtensionFieldConflicts(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateReservedRangeOverlaps(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateEnumReservedRangeOverlaps(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateEnumReservedValueConflicts(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateEnumReservedNameConflicts(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateExtensionRangeOverlaps(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateExtensionReservedOverlaps(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateExtensionRanges(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateDuplicateExtensionNumbers(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateRequiredExtensions(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateExtensionJsonName(orderedFiles, parsed, explicitJsonNames)...)
+	buildErrors = append(buildErrors, validateMessageSetFields(orderedFiles, parsed)...)
+	if len(buildErrors) > 0 {
+		return fmt.Errorf("%s", strings.Join(buildErrors, "\n"))
 	}
 
-	// Validate duplicate symbol names
-	if errs := validateDuplicateNames(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	// Phase 2: Descriptor validation — only runs when no build errors (C++ had_errors_ gate)
+	var valErrors []string
+	if len(dupNameErrs) == 0 {
+		valErrors = append(valErrors, validateJsonNameConflicts(orderedFiles, parsed, explicitJsonNames)...)
 	}
-
-	// Validate non-positive field numbers
-	if errs := validatePositiveFieldNumbers(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	valErrors = append(valErrors, validatePackedNonRepeated(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateLazyNonMessage(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateJstypeNonInt64(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateRepeatedDefault(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateMessageDefault(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateEnumDefaultValues(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateProto3(orderedFiles, parsed)...)
+	featEditionErrs := validateFeaturesEditions(orderedFiles, parsed)
+	valErrors = append(valErrors, featEditionErrs...)
+	if len(featEditionErrs) == 0 {
+		valErrors = append(valErrors, validateFeatureTargets(orderedFiles, parsed)...)
 	}
-
-	// Validate max field numbers (> 536870911)
-	if errs := validateMaxFieldNumbers(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate reserved field numbers (applies to all syntaxes)
-	if errs := validateReservedFieldNumbers(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate duplicate field numbers
-	if errs := validateDuplicateFieldNumbers(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate reserved number conflicts (field numbers vs message reserved ranges)
-	if errs := validateReservedNumberConflicts(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate duplicate reserved names within a message
-	if errs := validateDuplicateReservedNames(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate reserved name conflicts (field names vs reserved names)
-	if errs := validateReservedNameConflicts(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate packed option on non-repeated or non-primitive fields
-	if errs := validatePackedNonRepeated(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate lazy option only on submessage fields
-	if errs := validateLazyNonMessage(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate jstype option only on int64-family fields
-	if errs := validateJstypeNonInt64(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate empty enums (must contain at least one value)
-	if errs := validateEmptyEnums(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate duplicate enum values (without allow_alias)
-	if errs := validateDuplicateEnumValues(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate extension range / field number conflicts
-	if errs := validateExtensionFieldConflicts(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate overlapping reserved ranges within a message
-	if errs := validateReservedRangeOverlaps(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate overlapping enum reserved ranges
-	if errs := validateEnumReservedRangeOverlaps(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate enum values don't use reserved numbers
-	if errs := validateEnumReservedValueConflicts(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate enum values don't use reserved names
-	if errs := validateEnumReservedNameConflicts(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate overlapping extension ranges within a message
-	if errs := validateExtensionRangeOverlaps(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate extension ranges don't overlap with reserved ranges
-	if errs := validateExtensionReservedOverlaps(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate extension field numbers are within declared extension ranges
-	if errs := validateExtensionRanges(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate duplicate extension numbers (same extendee, same field number)
-	if errs := validateDuplicateExtensionNumbers(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate required extensions (extensions cannot be required)
-	if errs := validateRequiredExtensions(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate json_name not used on extension fields
-	if errs := validateExtensionJsonName(orderedFiles, parsed, explicitJsonNames); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate MessageSet messages don't have regular fields
-	if errs := validateMessageSetFields(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate JSON name conflicts
-	if errs := validateJsonNameConflicts(orderedFiles, parsed, explicitJsonNames); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate repeated fields don't have default values
-	if errs := validateRepeatedDefault(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate message/group fields don't have default values
-	if errs := validateMessageDefault(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate enum default values
-	if errs := validateEnumDefaultValues(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate proto3 constraints
-	if errs := validateProto3(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate features are only used under editions
-	if errs := validateFeaturesEditions(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-
-	// Validate feature targets (e.g., features that can't be set on services)
-	if errs := validateFeatureTargets(orderedFiles, parsed); len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	if len(valErrors) > 0 {
+		return fmt.Errorf("%s", strings.Join(valErrors, "\n"))
 	}
 
 	// Build ordered list of FileDescriptorProtos (stripped of source-retention options)
