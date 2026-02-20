@@ -1878,12 +1878,21 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 	var fieldNum int32
 	switch optName {
 	case "allow_alias":
+		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.EnumOptions.allow_alias\".", valTok.Line+1, valTok.Column+1)
+		}
 		e.Options.AllowAlias = proto.Bool(valTok.Value == "true")
 		fieldNum = 2
 	case "deprecated":
+		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.EnumOptions.deprecated\".", valTok.Line+1, valTok.Column+1)
+		}
 		e.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 3
 	case "deprecated_legacy_json_field_conflicts":
+		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.EnumOptions.deprecated_legacy_json_field_conflicts\".", valTok.Line+1, valTok.Column+1)
+		}
 		e.Options.DeprecatedLegacyJsonFieldConflicts = proto.Bool(valTok.Value == "true")
 		fieldNum = 6
 	default:
