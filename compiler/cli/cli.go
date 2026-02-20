@@ -210,6 +210,9 @@ func Run(args []string) error {
 	buildErrors = append(buildErrors, validateMapKeyTypes(orderedFiles, parsed)...)
 	dupNameErrs := validateDuplicateNames(orderedFiles, parsed)
 	buildErrors = append(buildErrors, dupNameErrs...)
+	if len(dupNameErrs) > 0 {
+		buildErrors = append(buildErrors, validateMapEntryConflicts(orderedFiles, parsed)...)
+	}
 	buildErrors = append(buildErrors, validatePositiveFieldNumbers(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateMaxFieldNumbers(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateReservedFieldNumbers(orderedFiles, parsed)...)
@@ -1973,14 +1976,16 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 			}
 		}
 
+		// C++ protoc registers children before parent (AddSymbol is called after
+		// building nested types/fields/etc. in BuildMessage/BuildEnum/BuildService).
 		for i, msg := range fd.GetMessageType() {
 			msgFQN := msg.GetName()
 			if pkg != "" {
 				msgFQN = pkg + "." + msgFQN
 			}
+			collectDupNamesInMsg(msg, msgFQN, []int32{4, int32(i)}, sci, check)
 			line, col := findLocationByPath([]int32{4, int32(i), 1}, sci)
 			check(msgFQN, msg.GetName(), pkg, line, col, "")
-			collectDupNamesInMsg(msg, msgFQN, []int32{4, int32(i)}, sci, check)
 		}
 
 		for i, enum := range fd.GetEnumType() {
@@ -1988,8 +1993,6 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 			if pkg != "" {
 				enumFQN = pkg + "." + enumFQN
 			}
-			line, col := findLocationByPath([]int32{5, int32(i), 1}, sci)
-			check(enumFQN, enum.GetName(), pkg, line, col, "")
 			for j, val := range enum.GetValue() {
 				valFQN := val.GetName()
 				if pkg != "" {
@@ -1998,6 +2001,8 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 				vl, vc := findLocationByPath([]int32{5, int32(i), 2, int32(j), 1}, sci)
 				check(valFQN, val.GetName(), pkg, vl, vc, enum.GetName())
 			}
+			line, col := findLocationByPath([]int32{5, int32(i), 1}, sci)
+			check(enumFQN, enum.GetName(), pkg, line, col, "")
 		}
 
 		for i, svc := range fd.GetService() {
@@ -2005,21 +2010,24 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 			if pkg != "" {
 				svcFQN = pkg + "." + svcFQN
 			}
-			line, col := findLocationByPath([]int32{6, int32(i), 1}, sci)
-			check(svcFQN, svc.GetName(), pkg, line, col, "")
 			for j, method := range svc.GetMethod() {
 				mFQN := svcFQN + "." + method.GetName()
 				ml, mc := findLocationByPath([]int32{6, int32(i), 2, int32(j), 1}, sci)
 				check(mFQN, method.GetName(), svcFQN, ml, mc, "")
 			}
+			line, col := findLocationByPath([]int32{6, int32(i), 1}, sci)
+			check(svcFQN, svc.GetName(), pkg, line, col, "")
 		}
 	}
 	return errs
 }
 
 func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, check func(fqn, shortName, scope string, line, col int, enumName string)) {
-	if msg.GetOptions().GetMapEntry() {
-		return
+	// C++ protoc BuildMessage order: oneofs, fields, enums, nested_types, then AddSymbol for self.
+	for _, oneof := range msg.GetOneofDecl() {
+		oFQN := msgFQN + "." + oneof.GetName()
+		// C++ protoc omits line:col for duplicate oneof names
+		check(oFQN, oneof.GetName(), msgFQN, 0, 0, "")
 	}
 	for i, field := range msg.GetField() {
 		fqn := msgFQN + "." + field.GetName()
@@ -2027,27 +2035,74 @@ func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgP
 		l, c := findLocationByPath(p, sci)
 		check(fqn, field.GetName(), msgFQN, l, c, "")
 	}
-	for i, nested := range msg.GetNestedType() {
-		nFQN := msgFQN + "." + nested.GetName()
-		np := append(append([]int32{}, msgPath...), 3, int32(i))
-		l, c := findLocationByPath(append(append([]int32{}, np...), 1), sci)
-		check(nFQN, nested.GetName(), msgFQN, l, c, "")
-		collectDupNamesInMsg(nested, nFQN, np, sci, check)
-	}
 	for i, enum := range msg.GetEnumType() {
 		eFQN := msgFQN + "." + enum.GetName()
-		l, c := findLocationByPath(append(append([]int32{}, msgPath...), 4, int32(i), 1), sci)
-		check(eFQN, enum.GetName(), msgFQN, l, c, "")
 		for j, val := range enum.GetValue() {
 			vFQN := msgFQN + "." + val.GetName()
 			vl, vc := findLocationByPath(append(append([]int32{}, msgPath...), 4, int32(i), 2, int32(j), 1), sci)
 			check(vFQN, val.GetName(), msgFQN, vl, vc, enum.GetName())
 		}
+		l, c := findLocationByPath(append(append([]int32{}, msgPath...), 4, int32(i), 1), sci)
+		check(eFQN, enum.GetName(), msgFQN, l, c, "")
 	}
-	for _, oneof := range msg.GetOneofDecl() {
-		oFQN := msgFQN + "." + oneof.GetName()
-		// C++ protoc omits line:col for duplicate oneof names
-		check(oFQN, oneof.GetName(), msgFQN, 0, 0, "")
+	for i, nested := range msg.GetNestedType() {
+		nFQN := msgFQN + "." + nested.GetName()
+		np := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectDupNamesInMsg(nested, nFQN, np, sci, check)
+		l, c := findLocationByPath(append(append([]int32{}, np...), 1), sci)
+		check(nFQN, nested.GetName(), msgFQN, l, c, "")
+	}
+}
+
+// validateMapEntryConflicts detects naming conflicts between expanded map entry
+// types and existing nested types (C++ DetectMapConflicts).
+func validateMapEntryConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			detectMapConflicts(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func detectMapConflicts(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	seenNames := make(map[string]bool)
+	for _, nested := range msg.GetNestedType() {
+		if seenNames[nested.GetName()] {
+			// Duplicate found — if either is a map entry, report conflict
+			isMapEntry := nested.GetOptions().GetMapEntry()
+			if !isMapEntry {
+				// Check if the previously-seen one is a map entry
+				for _, other := range msg.GetNestedType() {
+					if other.GetName() == nested.GetName() && other != nested && other.GetOptions().GetMapEntry() {
+						isMapEntry = true
+						break
+					}
+				}
+			}
+			if isMapEntry {
+				l, c := findLocationByPath(append(append([]int32{}, msgPath...), 1), sci)
+				if l > 0 && c > 0 {
+					*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Expanded map entry type %s conflicts with an existing nested message type.",
+						filename, l, c, nested.GetName()))
+				} else {
+					*errs = append(*errs, fmt.Sprintf("%s: Expanded map entry type %s conflicts with an existing nested message type.",
+						filename, nested.GetName()))
+				}
+				break
+			}
+		}
+		seenNames[nested.GetName()] = true
+	}
+	// Recurse into non-map-entry nested types
+	for i, nested := range msg.GetNestedType() {
+		if !nested.GetOptions().GetMapEntry() {
+			np := append(append([]int32{}, msgPath...), 3, int32(i))
+			detectMapConflicts(filename, nested, np, sci, errs)
+		}
 	}
 }
 
