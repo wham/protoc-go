@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package svccomment;
+
+message Request {
+  string query = 1;
+}
+
+message Response {
+  string result = 1;
+}
+
+// The search service handles all search queries.
+service SearchService {
+  rpc Search(Request) returns (Response);
+}

@@ -1662,9 +1662,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:2338-2416` — `parseOneof` function is missing two things: (1) it doesn't save `p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(oneofLocIdx, firstIdx)` after setting the oneof declaration span at line 2409. The fix: add `firstIdx := p.tok.CurrentIndex()` before line 2339, and call `p.attachComments(oneofLocIdx, firstIdx)` after line 2409.
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 174 — Comments on service declarations not attached (FAILED: 4/5 profiles)
+- **Test:** `180_service_comment` — proto3 file with a leading comment on a `service SearchService { ... }` declaration: `// The search service handles all search queries.\nservice SearchService { rpc Search(Request) returns (Response); }`
+- **Bug:** `parseService()` at lines 2017-2064 never calls `attachComments()`. C++ protoc attaches comments to service declarations just like any other entity. Binary descriptor sizes differ (492 vs 442 bytes for descriptor_set_src/full) because the leading comment text is missing from the service's SCI location.
+- **Root cause:** `parser.go:2017-2064` — `parseService` function creates `svcLocIdx` via `addLocationPlaceholder` at line 2033, but never calls `p.attachComments(svcLocIdx, firstIdx)` after setting the span at line 2062. Same bug pattern as map fields (Run 172) and oneof declarations (Run 173). The fix: save `firstIdx := p.tok.CurrentIndex()` at the start, and call `p.attachComments(svcLocIdx, firstIdx)` after line 2062.
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
 ### Known gaps still unexplored (updated):
-- **Comments on service declarations** — `parseService` at line 2033 calls `addLocationPlaceholder` but never `attachComments` — same bug as oneof
-- **Comments on method declarations** — `parseMethod` at line 2286 same pattern — no comment attachment
+- **Comments on service declarations** — TESTED in Run 174 (180_service_comment), confirmed broken
+- **Comments on method declarations** — `parseMethod` same pattern — no comment attachment
+- **Comments on enum declarations** — `parseEnum` at line 1616 calls `addLocationPlaceholder` but never `attachComments`
 - **Comments on enum value declarations** — no `attachComments` call for enum values
 - **Comments on extension range declarations** — no `attachComments` call
 - **Comments on reserved declarations** — no `attachComments` call
