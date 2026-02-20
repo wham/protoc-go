@@ -1588,9 +1588,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts duplicate enum reserved names and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:6: Enum value "DELETED" is reserved multiple times.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that each enum reserved name appears at most once within an enum. The Go `descriptor/pool.go` is an empty stub with no duplicate enum reserved name checking. The parser stores all enum reserved names without checking for duplicates. Same pattern as duplicate message reserved names (Run 164).
 
+### Run 166 — Unterminated string literal at EOF (FAILED: 5/5 profiles)
+- **Test:** `172_unterminated_string` — proto3 file ending with `option java_package = "hello` (no closing quote, no `;`, no newline at EOF)
+- **Bug:** Go protoc-go's tokenizer silently accepts the unterminated string — creates a TokenString("hello") with no error. The parser then gets this string token, stores `java_package = "hello"`, and expects `;` but gets EOF → single error: `Expected ";"`. C++ protoc's tokenizer detects the unterminated string and emits TWO errors: `Unexpected end of string.` AND `Expected ";"`. Go is missing the "Unexpected end of string." diagnostic entirely.
+- **Root cause:** `tokenizer.go:288` — `readString()` loop condition is `for t.pos < len(t.input) && t.input[t.pos] != quote`. When `t.pos >= len(t.input)` (EOF reached without finding the closing quote), the loop exits silently. No error is added to `t.Errors`. C++ protoc's `Tokenizer::ConsumeString()` in `tokenizer.cc` checks for `\0` (null/EOF) and calls `AddError("Unexpected end of string.")` before returning. The Go tokenizer needs to check `if t.pos >= len(t.input)` after the loop and add an error for the unterminated string.
+
 ### Known gaps still unexplored (updated):
 - **Duplicate reserved names across statements** — `reserved "a"; reserved "a";` — same bug, different syntax
-- **Duplicate enum reserved names** — TESTED in Run 165 (171_duplicate_enum_reserved_name), confirmed broken
 - **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ
@@ -1598,10 +1602,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error column positions** — many Go validation errors report wrong column
 - **`\u` with insufficient hex digits** — `\u00` (only 2 digits instead of 4) — Go may silently accept, C++ may error
 - **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
-- **Octal escape overflow** — `\777` exceeds byte range (255) — Go may wrap, C++ may error
+- **Octal escape overflow** — `\777` exceeds byte range (255) — both produce 0xFF but C++ adds an error warning, Go wraps silently. Tested: both produce identical descriptors; NOT a clean gap for binary output.
 - **Invalid escape in import path** — `import "test\eproto";` — same bug affects all string literals
 - **Invalid escape in default value** — `[default = "hel\elo"]` — same bug
 - **Unterminated line comment at EOF** — `// comment with no newline` — may or may not differ
-- **Unterminated string literal at EOF** — `option java_package = "hello` — Go may silently accept, C++ rejects
+- **Unterminated string literal at EOF** — TESTED in Run 166 (172_unterminated_string), confirmed broken (Go missing "Unexpected end of string." error)
 - **`\r` only line endings** — C++ treats `\r` as line break, Go doesn't (column counting would differ)
 - **Duplicate enum reserved numbers** — `reserved 1, 1;` inside enum — Go likely accepts, C++ rejects
+- **Unterminated single-quoted string** — same bug with `'hello` (single quote variant)

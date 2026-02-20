@@ -1,0 +1,5 @@
+syntax = "proto3";
+
+package unterminatedstr;
+
+option java_package = "hello
