@@ -2125,6 +2125,24 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 	endTok := p.tok.Next() // consume "}"
 	p.trackEnd(endTok)
 
+	// Validate allow_alias: if set to true, there must be at least one duplicate value
+	if e.GetOptions().GetAllowAlias() {
+		usedValues := make(map[int32]bool)
+		hasDuplicates := false
+		for _, v := range e.GetValue() {
+			if usedValues[v.GetNumber()] {
+				hasDuplicates = true
+				break
+			}
+			usedValues[v.GetNumber()] = true
+		}
+		if !hasDuplicates {
+			nextTok := p.tok.Peek()
+			return nil, fmt.Errorf("%d:%d: \"%s\" declares support for enum aliases but no enum values share field numbers. Please remove the unnecessary 'option allow_alias = true;' declaration.",
+				nextTok.Line+1, nextTok.Column+1, e.GetName())
+		}
+	}
+
 	// Update enum declaration span
 	p.locations[enumLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 
