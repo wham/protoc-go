@@ -1746,8 +1746,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `tokenizer.go:247-267` — `readBlockCommentText` returns the raw text between `/*` and `*/` without any post-processing. C++ protoc's tokenizer calls `StripLeadingWhitespaceAndStarFromBlockComment()` which strips the leading ` * ` (space-star-optional-space) from each line of a multiline block comment. This produces cleaner comment text matching Javadoc/JSDoc conventions. The Go tokenizer needs to implement the same stripping logic after reading the raw block comment content.
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 188 — Negative zero integer default (FAILED: 5/5 profiles)
+- **Test:** `194_negative_zero_default` — proto2 message with `optional int32 offset = 1 [default = -0];` and `optional int32 positive = 2 [default = 42];`
+- **Bug:** Go stores `default_value = "-0"` while C++ stores `default_value = "0"`. C++ parses `-0` as integer 0, then formats via `StrCat(0)` → `"0"`. Go concatenates strings: `"-" + "0"` → `"-0"`, then `normalizeIntDefault("-0")` returns `"-0"` because `len("0") < 2` triggers early return before any parsing. Binary CodeGeneratorRequest sizes differ (712 vs 710 bytes).
+- **Root cause:** `parser.go:2954-2956` — for integer defaults, `defVal` is formed by string concatenation (`"-" + valTok.Value`), then `normalizeIntDefault` is called. But `normalizeIntDefault` at line 3201 has `if len(v) < 2 || v[0] != '0'` which returns early for single-digit values. The value `"0"` has length 1, so it returns `"-0"` without converting through integer representation. Fix: after forming `defVal` for integer types, parse through integer and re-format, or special-case `-0` → `"0"`.
+
 ### Known gaps still unexplored (updated):
-- **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ
 - **String default value on bytes field** — C++ may treat differently than Go
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ

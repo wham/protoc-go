@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package negzero;
+
+message Config {
+  optional int32 offset = 1 [default = -0];
+  optional int32 positive = 2 [default = 42];
+}
