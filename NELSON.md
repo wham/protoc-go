@@ -1765,3 +1765,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Block comment trailing newline** — single-line block comments match, but edge cases with `/* */` (empty block comment) may differ
 - **Block comment without leading `*`** — multiline `/* line1\nline2 */` without `*` prefix — C++ stripping behavior may differ
 - **Multiline block comment on other entities** — same bug affects comments on messages, enums, services, etc. (not just fields)
+
+### Run 189 — Enum value debug_redact option (FAILED: 5/5 profiles)
+- **Test:** `195_enum_val_debug_redact` — proto3 enum with `SECRET = 1 [debug_redact = true];`
+- **Bug:** Enum value option parsing switch at line 1714 only handles `deprecated`. The `debug_redact` option (field 3 of `EnumValueOptions`) hits the `default` case and returns error: `Option "debug_redact" unknown.` C++ protoc accepts it and populates `EnumValueOptions.debug_redact = true` in the descriptor.
+- **Root cause:** `parser.go:1714-1719` — enum value option switch only has `case "deprecated":`. Missing `case "debug_redact":` to handle `EnumValueOptions.debug_redact` (field 3). Other potentially missing enum value options: `features` (field 2, editions-only).
