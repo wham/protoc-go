@@ -345,13 +345,13 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
-	// Validate feature targets (e.g., features that can't be set on services)
-	if errs := validateFeatureTargets(orderedFiles, parsed); len(errs) > 0 {
+	// Validate features are only used under editions
+	if errs := validateFeaturesEditions(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
-	// Validate features are only used under editions
-	if errs := validateFeaturesEditions(orderedFiles, parsed); len(errs) > 0 {
+	// Validate feature targets (e.g., features that can't be set on services)
+	if errs := validateFeatureTargets(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
@@ -1687,7 +1687,9 @@ func collectOneofFeatureErrors(filename string, msg *descriptorpb.DescriptorProt
 	for _, oneof := range msg.GetOneofDecl() {
 		if oneof.GetOptions() != nil && oneof.GetOptions().GetFeatures() != nil {
 			feat := oneof.GetOptions().GetFeatures()
-			// field_presence targets ONEOF, so it's allowed — skip it
+			if feat.FieldPresence != nil {
+				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `oneof`.", filename, featureProtoNames["field_presence"]))
+			}
 			if feat.EnumType != nil {
 				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `oneof`.", filename, featureProtoNames["enum_type"]))
 			}
