@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1063/1063 tests passing.
+ALL DONE — 1068/1068 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -364,6 +364,7 @@ ALL DONE — 1063/1063 tests passing.
 201. ✅ Trailing comma rejection in enum value options — reject `[deprecated = true,]` (trailing comma before `]`) with `Expected identifier.` error at `]` token position, matching field option trailing comma behavior
 202. ✅ Invalid optimize_for/idempotency_level enum value error messages — use `Enum type "google.protobuf.FileOptions.OptimizeMode" has no value named "X" for option "google.protobuf.FileOptions.optimize_for".` format (and matching format for `MethodOptions.IdempotencyLevel`) to match C++ protoc, replacing old ad-hoc error format
 209. ✅ Enum-valued field option identifier validation — reject string/integer/float values for enum-valued field options (jstype, ctype) with `Value must be identifier for enum-valued option "google.protobuf.FieldOptions.X".` error at value token position, check `valTok.Type != TokenIdent` before enum value switch
+210. ✅ Enum-valued method option identifier validation — reject string/integer/float values for `idempotency_level` method option with `Value must be identifier for enum-valued option "google.protobuf.MethodOptions.idempotency_level".` error at value token position, check `valTok.Type != TokenIdent` before enum value switch in `parseMethodOption`
 
 208. ✅ Boolean enum option validation — reject string/integer/float values for boolean enum options (allow_alias, deprecated, deprecated_legacy_json_field_conflicts) with `Value must be identifier for boolean option "google.protobuf.EnumOptions.X".` error at value token position, check `valTok.Type == TokenIdent && (value == "true" || value == "false")` in each boolean case of `parseEnumOption`
 - File option declaration comment tracking: `parseFileOption` captures `firstIdx` before consuming `option` token and calls `attachComments` on the `[8, fieldNum]` SCI location (the specific option entry, not the statement entry), same pattern as message/enum/service/field/method declarations.
