@@ -1604,6 +1604,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `tokenizer.go:476-486` — `advance()` function only has special handling for `\n` (newline). Tab characters are treated as 1-column-wide characters. C++ protoc's tokenizer (`io/tokenizer.cc`) expands tabs to the next multiple-of-8 column position, producing larger column offsets. All source code info spans on any tab-indented line will have wrong column values.
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail (binary differs in source code info spans).
 
+### Run 169 — Reserved name string concatenation (FAILED: 5/5 profiles)
+- **Test:** `175_reserved_string_concat` — proto3 message with `reserved "dele" "ted", "remo" "ved";` (adjacent string literals in reserved names)
+- **Bug:** `parseMessageReserved()` at line 582 uses `p.tok.ExpectString()` which reads a single string token `"dele"`. Then line 593 checks for `,` but sees `"ted"` (another string token) → break. Line 599 `p.tok.Expect(";")` fails with `Expected ";"` because next token is `"ted"`. C++ protoc concatenates adjacent string literals per the protobuf language spec, producing `"deleted"` and `"removed"`, and accepts the file (exit 0).
+- **Root cause:** `parser.go:582` — `ExpectString()` reads a single string token. No loop to check for and concatenate subsequent adjacent string tokens. C++ protoc's `ConsumeString()` loops over adjacent string literals and concatenates them. Same root cause as Run 25 (file option string concatenation), Run 59 (field default string concatenation), Run 121 (syntax), Run 122 (import path). This instance affects reserved name declarations. Same bug likely exists in `parseEnumReserved` for enum reserved names.
+
 ### Known gaps still unexplored (updated):
 - **Duplicate reserved names across statements** — `reserved "a"; reserved "a";` — same bug, different syntax
 - **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
@@ -1611,13 +1616,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Map field options source code info** — location ordering may differ
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Error column positions** — many Go validation errors report wrong column
-- **`\u` with insufficient hex digits** — TESTED in Run 167 (173_unicode_escape_short), confirmed broken (Go silently accepts, C++ rejects)
 - **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes (likely also broken)
-- **Octal escape overflow** — `\777` exceeds byte range (255) — both produce 0xFF but C++ adds an error warning, Go wraps silently. Tested: both produce identical descriptors; NOT a clean gap for binary output.
 - **Invalid escape in import path** — `import "test\eproto";` — same bug affects all string literals
 - **Invalid escape in default value** — `[default = "hel\elo"]` — same bug
 - **Unterminated line comment at EOF** — `// comment with no newline` — may or may not differ
-- **Unterminated string literal at EOF** — TESTED in Run 166 (172_unterminated_string), confirmed broken (Go missing "Unexpected end of string." error)
 - **`\r` only line endings** — C++ treats `\r` as line break, Go doesn't (column counting would differ)
 - **Duplicate enum reserved numbers** — `reserved 1, 1;` inside enum — Go likely accepts, C++ rejects
 - **Unterminated single-quoted string** — same bug with `'hello` (single quote variant)
+- **String concatenation in enum reserved names** — `reserved "DEL" "ETED";` inside enum — same bug as message reserved names
+- **Reserved name string concatenation** — TESTED in Run 169 (175_reserved_string_concat), confirmed broken (Go rejects, C++ accepts)
