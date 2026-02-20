@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1114/1114 tests passing.
+ALL DONE — 1119/1119 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -386,3 +386,5 @@ ALL DONE — 1114/1114 tests passing.
 216. ✅ Enum features option parsing — `option features.enum_type = CLOSED;` etc. inside enum bodies sets `EnumOptions.features` (field 7) FeatureSet sub-fields, SCI paths `[enumPath..., 3]` and `[enumPath..., 3, 7, subFieldNum]` with same span, dotted name parsed after `features` token, same pattern as file/message features options
 217. ✅ Service features option parsing and target validation — `option features.json_format = ALLOW;` etc. inside service bodies sets `ServiceOptions.features` (field 34) FeatureSet sub-fields, SCI paths `[svcPath..., 3]` and `[svcPath..., 3, 34, featFieldNum]`. Feature target validation in `validateFeatureTargets` (cli.go) rejects features not allowed on services with `Option google.protobuf.FeatureSet.X cannot be set on an entity of type \`service\`.` error (no line:col)
 218. ✅ Method features option parsing and target validation — `option features.json_format = ALLOW;` etc. inside method bodies sets `MethodOptions.features` (field 35) FeatureSet sub-fields, SCI paths `[methodPath..., 4]` and `[methodPath..., 4, 35, featFieldNum]`. Feature target validation in `validateFeatureTargets` (cli.go) rejects features not allowed on methods with `Option google.protobuf.FeatureSet.X cannot be set on an entity of type \`method\`.` error (no line:col)
+219. ✅ Field features option parsing — `[features.field_presence = EXPLICIT]` etc. on fields sets `FieldOptions.features` (field 21) FeatureSet sub-fields, SCI path `[fieldPath..., 8, 21, featFieldNum]`, dotted name parsed after `features` token in `parseFieldOptions`, same FeatureSet sub-field mapping as other features options
+- Field features option: `[features.X = Y]` on fields sets `FieldOptions.features` (field 21 of FieldOptions) sub-fields. Same FeatureSet sub-field mapping as file/message/enum/service/method features (field_presence=1, enum_type=2, repeated_field_encoding=3, utf8_validation=4, message_encoding=5, json_format=6). SCI: `[fieldPath..., 8, 21, subFieldNum]` for the specific feature. `seenFieldOpts` tracks full dotted name (e.g., `features.field_presence`) to allow multiple different features while rejecting duplicates.
