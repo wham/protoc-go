@@ -1458,3 +1458,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error column positions** — many Go validation errors report wrong column
 - **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
 - **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
+- **UTF-8 BOM** — TESTED in Run 149 (155_bom), confirmed broken (Go rejects BOM bytes, C++ skips them)
+
+### Run 149 — UTF-8 BOM (Byte Order Mark) (FAILED: 5/5 profiles)
+- **Test:** `155_bom` — proto3 file with UTF-8 BOM (`\xEF\xBB\xBF`) prepended before `syntax = "proto3";`
+- **Bug:** Go protoc-go rejects the file with: `test.proto:line 1:1: unexpected token "ï"` (exit 1). C++ protoc silently skips the BOM and parses the file normally, producing a valid descriptor (exit 0). The test harness detects exit code mismatch.
+- **Root cause:** `tokenizer.go` — the tokenizer has no BOM handling. The 3-byte UTF-8 BOM (`EF BB BF`) is decoded by Go's string handling as `ï` (U+00EF) + `»` (U+00BB) + `¿` (U+00BF). The first byte `ï` is not a valid identifier start character, so it falls to the default case in the tokenizer dispatch and is emitted as an unexpected symbol token. C++ protoc's `Tokenizer::Next()` in `tokenizer.cc` explicitly checks for and skips the UTF-8 BOM at the beginning of a file. The fix: check for the BOM bytes at `pos == 0` in `NewTokenizer` or at the start of `Next()`, and skip past them if present.
