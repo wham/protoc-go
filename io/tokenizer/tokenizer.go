@@ -379,8 +379,10 @@ func (t *Tokenizer) readString() {
 			t.advance()
 		}
 	}
-	if t.pos < len(t.input) {
+	if t.pos < len(t.input) && t.input[t.pos] == quote {
 		t.advance() // skip closing quote
+	} else if t.pos >= len(t.input) {
+		t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Unexpected end of string."})
 	}
 	t.tokens = append(t.tokens, Token{Type: TokenString, Value: sb.String(), Line: startLine, Column: startCol, RawLen: t.col - startCol})
 }
