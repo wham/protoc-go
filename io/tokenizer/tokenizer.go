@@ -352,6 +352,7 @@ func (t *Tokenizer) readString() {
 					}
 					sb.WriteByte(val)
 				default:
+					t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Invalid escape sequence in string literal."})
 					sb.WriteByte(ch)
 				}
 				t.advance()
