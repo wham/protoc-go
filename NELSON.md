@@ -1686,10 +1686,17 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:1625-1786` — the enum value parsing loop is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start of each enum value iteration (needed for comment attachment), and (2) it never calls `p.attachComments(valueLocIdx, firstIdx)` after adding the enum value's SCI location at line 1763. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), and method declarations (Run 176). The fix: add `firstIdx := p.tok.CurrentIndex()` at the top of the enum value loop iteration, save the SCI location index after `p.addLocationSpan(valuePath, ...)` at line 1763, and call `p.attachComments(locIdx, firstIdx)` after it.
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 178 — Comments on import declarations not attached (FAILED: 4/5 profiles)
+- **Test:** `184_import_comment` — proto3 file with `// Imports the base types for timestamps.\nimport "base.proto";` (leading comment on an import declaration)
+- **Bug:** `parseImport()` at lines 365-422 never calls `attachComments()`. It creates a SCI location at line 406 via `p.addLocationSpan([]int32{3, depIdx}, ...)` but never attaches leading/trailing/detached comments to it. C++ protoc attaches comments to import declarations just like any other entity. Binary CodeGeneratorRequest differs because the leading comment text is missing from the import's SCI location.
+- **Root cause:** `parser.go:365-422` — `parseImport` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the import's SCI location at line 406. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), and enum value declarations (Run 177).
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
 ### Known gaps still unexplored (updated):
-- **Comments on enum value declarations** — TESTED in Run 177 (183_enum_value_comment), confirmed broken
+- **Comments on import declarations** — TESTED in Run 178 (184_import_comment), confirmed broken
 - **Comments on extension range declarations** — no `attachComments` call
 - **Comments on reserved declarations** — no `attachComments` call
+- **Comments on package declarations** — no `attachComments` call (likely)
 - **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ
 - **String default value on bytes field** — C++ may treat differently than Go
 - **Type shadowing** — same nested type name in different parent messages

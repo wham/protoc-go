@@ -363,6 +363,7 @@ func (p *parser) parsePackage(fd *descriptorpb.FileDescriptorProto) error {
 }
 
 func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "import"
 
 	// Check for "public" or "weak"
@@ -404,6 +405,7 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 
 	// Source code info for the import statement: path [3, depIdx]
 	p.addLocationSpan([]int32{3, depIdx}, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.attachComments(len(p.locations)-1, firstIdx)
 
 	if isPublic {
 		pubIdx := int32(len(fd.PublicDependency))
