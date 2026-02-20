@@ -1786,6 +1786,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts the invalid ctype value and produces a valid descriptor with an empty non-nil `FieldOptions{}` (exit 0). C++ protoc rejects with: `test.proto:6:28: Enum type "google.protobuf.FieldOptions.CType" has no value named "INVALID_VALUE" for option "google.protobuf.FieldOptions.ctype".` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:3029-3041` — `case "ctype":` inner switch has `case "STRING":`, `case "CORD":`, `case "STRING_PIECE":` but NO `default:` case. When `INVALID_VALUE` doesn't match any case, it falls through silently. `field.Options = &descriptorpb.FieldOptions{}` is set (non-nil) but `Ctype` is never assigned. C++ protoc stores the option as an UninterpretedOption during parsing, then during linking resolves it against the `CType` enum type and rejects invalid values. Same bug affects `jstype` inner switch (no default case for invalid values like `JS_INVALID`) and any other enum-typed option with a fixed set of values in the switch.
 
+### Run 193 — Editions dotted file option (features.field_presence) (FAILED: 5/5 profiles)
+- **Test:** `199_editions_features` — edition 2023 file with `option features.field_presence = IMPLICIT;`
+- **Bug:** `parseFileOption()` at line 2655 does `p.tok.Expect("=")` immediately after reading the option name token `features`. But the next token is `.` (part of the dotted name `features.field_presence`), not `=`. Go errors with: `test.proto:5:16: Expected "=".` C++ protoc handles dotted option names (sub-message access) by reading the full dotted path before expecting `=`.
+- **Root cause:** `parser.go:2615-2660` — `parseFileOption` reads a single token for the option name and immediately expects `=`. No handling for dotted names like `features.field_presence` where `features` is a message-typed option and `.field_presence` accesses a sub-field. C++ protoc parses the full dotted path as part of the option name resolution. This affects all sub-message option access patterns, not just `features`.
+
 ### Known gaps still unexplored (updated):
 - **Invalid jstype value** — `[jstype = JS_INVALID]` — same inner switch without default case
 - **Invalid optimize_for value** — Go already rejects (line 2736), NOT a gap
@@ -1794,7 +1799,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Map field options source code info** — location ordering may differ
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Error column positions** — many Go validation errors report wrong column
-- **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
 - **Comments on group field declarations** — `parseGroupField` may miss comments
 - **Block comment edge cases** — empty block comment `/* */`, multiline without `*` prefix
-- **ctype on non-string/bytes field** — C++ rejects, Go likely accepts (no field type validation for ctype)
+- **ctype on non-string/bytes field** — both C++ and Go accept it (NOT a gap)
+- **Dotted option names on message/field/enum/service options** — same bug as file options, `features.X` pattern
+- **Editions features on fields** — `string name = 1 [features.field_presence = EXPLICIT];` likely also broken
+- **Editions features on messages/enums/services** — `option features.X = Y;` inside bodies
