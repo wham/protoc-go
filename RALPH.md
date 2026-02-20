@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1219/1219 tests passing.
+ALL DONE — 1224/1224 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -405,4 +405,5 @@ ALL DONE — 1219/1219 tests passing.
 233. ✅ Capitalized bool default value rejection — reject `True`/`False` (and any non-lowercase identifier) as default values for TYPE_BOOL fields with `Expected "true" or "false".` error, check `valTok.Type == TokenIdent && value in {"true","false"}` instead of only rejecting non-ident token types
 234. ✅ Type shadowing resolution
 235. ✅ Allow_alias without aliases validation — reject `allow_alias = true` when no enum values share field numbers with `"Name" declares support for enum aliases but no enum values share field numbers. Please remove the unnecessary 'option allow_alias = true;' declaration.` error at next-token position after `}`, validated in `parseEnum` (parser.go) matching C++ `ValidateEnum` in parser.cc — C++ protoc's `LookupSymbolNoPlaceholder` resolves compound names (e.g., `Outer.Inner`) by first resolving the first component in the innermost scope, then looking up the rest within that scope. If a closer scope has the first component (aggregate/message) but the full compound doesn't exist there, emit shadowing error instead of falling through to outer scopes. Error format: `"X" is resolved to "Y", which is not defined. The innermost scope is searched first in name resolution. Consider using a leading '.'(i.e., ".X") to start from the outermost scope.`
+236. ✅ Proto2 JSON name conflict non-fatal — skip JSON name conflict validation for proto2 files (C++ protoc treats these as warnings, not errors; only proto3/editions produce fatal errors)
 - Type shadowing resolution: C++ protoc's `LookupSymbolNoPlaceholder` uses first-component-first resolution for compound names. For `Outer.Inner` in scope `Container`: find `Outer` at innermost scope first → if found as TYPE_MESSAGE (aggregate), try full `Container.Outer.Inner` → if not found, stop and report shadowing error (don't fall through to outer scopes). `resolveTypeName` returns `(resolved, shadowCandidate)` where shadowCandidate is non-empty when shadowing fails. `shadowErrorMsg` formats the error. Callers in `ResolveTypes`, `resolveMessageFieldsWithErrorsPath`, `CheckUnresolvedTypes`, and `checkMsgUnresolved` all updated to emit shadowing error when shadowCandidate is set.
