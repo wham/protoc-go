@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package strboolfield;
+
+message Config {
+  string name = 1;
+  string email = 2 [deprecated = "true"];
+  int32 count = 3;
+}
