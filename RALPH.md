@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 818/818 tests passing.
+ALL DONE — 823/823 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -323,3 +323,4 @@ ALL DONE — 818/818 tests passing.
 - Message/group default value validation: C++ protoc rejects default values on message/group-typed fields with `Messages can't have default values.` at the default value SCI location (path `[msgPath..., 2, fieldIdx, 7]`). The C++ PARSER accepts any default value when `!field->has_type()` (named type reference, not yet resolved). The error comes from `descriptor.cc` during cross-linking when the resolved type is CPPTYPE_MESSAGE. Go implementation mirrors this: parser.go checks `field.Type == nil` and accepts default as-is; cli.go's `validateMessageDefault` checks after type resolution for TYPE_MESSAGE/TYPE_GROUP with DefaultValue set.
 - Unsigned negative default validation: C++ protoc rejects negative defaults on unsigned fields (uint32, uint64, fixed32, fixed64) in parser.cc via `TryConsume("-")` + `RecordError`. Error reported at the integer token position (after consuming `-`), not at the minus sign. Go implementation adds `isUnsignedType` check in `parseFieldOptions` (parser.go) using `p.errors` error recovery. Error format: `filename:line:col: Unsigned field can't have negative default value.`
 - Enum default identifier validation: C++ descriptor.cc checks `io::Tokenizer::IsIdentifier(proto.default_value())` before looking up the enum value name. If the default value is not a valid identifier (e.g., integer `0`, string `"HIGH"`), it reports `Default value for an enum field must be an identifier.` at the DEFAULT_VALUE location. Go implementation adds `isProtoIdentifier` check in `collectEnumDefaultErrors` (cli.go) before the value name lookup. `isProtoIdentifier` checks `[a-zA-Z_][a-zA-Z0-9_]*` pattern.
+167. ✅ Parenthesized custom file option parsing — handle `option (name) = value;` syntax with parenthesized (extension) option names, skip to end of statement and report `Option "(name)" unknown. Ensure that your proto definition file imports the proto which defines the option.` error at `(` token position, supports dotted names like `(pkg.name)`
