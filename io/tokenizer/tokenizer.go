@@ -335,11 +335,20 @@ func (t *Tokenizer) readString() {
 				case 'u':
 					// Unicode escape: \uNNNN (exactly 4 hex digits)
 					t.advance()
-					cp := t.readUnicodeHex(4)
+					cp, cnt := t.readUnicodeHex(4)
+					if cnt < 4 {
+						t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Expected four hex digits for \\u escape sequence."})
+						continue
+					}
 					if isHeadSurrogate(cp) && t.pos+1 < len(t.input) && t.input[t.pos] == '\\' && t.input[t.pos+1] == 'u' {
 						t.advance() // skip '\'
 						t.advance() // skip 'u'
-						trail := t.readUnicodeHex(4)
+						trail, trailCnt := t.readUnicodeHex(4)
+						if trailCnt < 4 {
+							t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Expected four hex digits for \\u escape sequence."})
+							appendUTF8(&sb, cp)
+							continue
+						}
 						if isTrailSurrogate(trail) {
 							cp = assembleUTF16(cp, trail)
 						} else {
@@ -353,7 +362,11 @@ func (t *Tokenizer) readString() {
 				case 'U':
 					// Unicode escape: \UNNNNNNNN (exactly 8 hex digits)
 					t.advance()
-					cp := t.readUnicodeHex(8)
+					cp, cnt := t.readUnicodeHex(8)
+					if cnt < 8 {
+						t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Expected eight hex digits for \\U escape sequence."})
+						continue
+					}
 					appendUTF8(&sb, cp)
 					continue
 				case '0', '1', '2', '3', '4', '5', '6', '7':
@@ -577,14 +590,16 @@ func ToJSONName(name string) string {
 	return result.String()
 }
 
-// readUnicodeHex reads exactly n hex digits and returns the code point value.
-func (t *Tokenizer) readUnicodeHex(n int) uint32 {
+// readUnicodeHex reads exactly n hex digits and returns the code point value and count read.
+func (t *Tokenizer) readUnicodeHex(n int) (uint32, int) {
 	var val uint32
+	count := 0
 	for i := 0; i < n && t.pos < len(t.input) && isHexDigit(t.input[t.pos]); i++ {
 		val = val*16 + uint32(hexVal(t.input[t.pos]))
 		t.advance()
+		count++
 	}
-	return val
+	return val, count
 }
 
 func isHeadSurrogate(cp uint32) bool { return cp >= 0xD800 && cp < 0xDC00 }
