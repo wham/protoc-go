@@ -2124,11 +2124,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go accepts the file (exit 0), resolving `Outer.Inner` to `.shadow.Outer.Inner` (the top-level Outer). C++ protoc rejects with: `"Outer.Inner" is resolved to "shadow.Container.Outer.Inner", which is not defined.` (exit 1). C++ resolves the first component `Outer` in the innermost scope (finding `Container.Outer` which shadows the top-level `Outer`), then fails to find `Inner` inside it.
 - **Root cause:** `parser.go:4667-4691` — `resolveTypeName` concatenates the FULL multi-part name at each scope level: tries `.shadow.Container.Outer.Inner` (not found), then `.shadow.Outer.Inner` (found, returned). C++ protoc uses "leftmost component first" resolution: finds `Outer` in scope `.shadow.Container` → `.shadow.Container.Outer`, then looks for `Inner` in it → not found → error. Go's approach bypasses type shadowing because it skips the intermediate scope that shadows the first component. This affects any multi-part type reference (e.g., `A.B.C`) where the first component is shadowed by a nested type in the current scope.
 
+### Run 238 — allow_alias without actual aliases (FAILED: 5/5 profiles)
+- **Test:** `243_allow_alias_no_dup` — proto3 enum with `option allow_alias = true;` but all values are unique (no actual aliases)
+- **Bug:** Go protoc-go accepts the file (exit 0), producing a valid descriptor with `allow_alias = true`. C++ protoc rejects with: `"Status" declares support for enum aliases but no enum values share field numbers. Please remove the unnecessary 'option allow_alias = true;' declaration.` (exit 1). Different exit codes across all 5 profiles.
+- **Root cause:** `cli.go:1278-1279` — `collectDuplicateEnumValueErrors` returns early when `allow_alias` is true, without checking whether any aliases actually exist. C++ protoc validates that if `allow_alias` is set, at least one duplicate value number must exist. Go has no such validation — it blindly trusts the `allow_alias` flag.
+
 ### Known gaps still unexplored (updated):
-- **Type shadowing** — TESTED in Run 237 (242_type_shadowing), confirmed broken (Go bypasses shadowed first component)
 - **Feature target validation on remaining scopes** — method, enum value
 - **Trailing comma in field options** — `[deprecated = true,]` — different error messages
 - **Error column positions** — many Go validation errors report wrong column
 - **packed on extension fields** — may produce different results
 - **Multiple errors from different validation passes** — many combinations possible
 - **debug_redact on non-string field** — may or may not be validated differently
+- **allow_alias on enum without aliases** — TESTED in Run 238 (243_allow_alias_no_dup), confirmed broken
