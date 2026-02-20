@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package custom_enum_val;
+
+enum Priority {
+  PRIORITY_UNSPECIFIED = 0;
+  PRIORITY_HIGH = 1 [(my_custom_opt) = "important"];
+}
