@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 893/893 tests passing.
+ALL DONE — 898/898 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -217,6 +217,8 @@ ALL DONE — 893/893 tests passing.
 177. ✅ Adjacent string concatenation in reserved name declarations (`reserved "dele" "ted", "remo" "ved";`) — concatenate adjacent string tokens in both message `parseMessageReserved` and enum `parseEnumReserved`, with correct SCI spans covering first through last concatenated token
 179. ✅ Oneof empty statement rejection — reject `;` inside oneof blocks with `Expected type name.` error at `;` position, matching C++ protoc behavior (empty statements not allowed in oneofs unlike messages/enums/services)
 180. ✅ Map field comment tracking — `parseMapField` now captures `firstIdx` before consuming `map` token and calls `attachComments` on the field's SCI location, matching `parseField` behavior for leading/trailing/detached comments
+
+181. ✅ Oneof declaration comment tracking — `parseOneof` now captures `firstIdx` before consuming `oneof` token and calls `attachComments` on the oneof's SCI location, matching `parseField`/`parseMapField` behavior for leading/trailing/detached comments
 
 ## Notes
 
