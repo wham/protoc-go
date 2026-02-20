@@ -2181,5 +2181,10 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Multiline reserved range** — `reserved 100\n  to 200;` may have similar span issues
 - **--error_format=msvs** — even if `--error_format` is parsed, MSVS formatting logic is likely not implemented
 - **--print_free_field_numbers** — TESTED in Run 245, confirmed broken (Go rejects flag, C++ accepts and prints field numbers)
-- **--deterministic_output** — documented in help, may not be implemented
+- **--deterministic_output** — TESTED in Run 246 (cli@deterministic_output), confirmed broken (Go says "Unknown flag", C++ says "Missing input file.")
 - **Map entry name collision** — TESTED in Run 244 (247_map_entry_conflict), confirmed broken (Go reports 1 error, C++ reports 4)
+
+### Run 246 — --deterministic_output CLI flag (FAILED: 1/1 CLI test)
+- **Test:** `cli@deterministic_output` — CLI test with `--deterministic_output` flag (no input file)
+- **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--deterministic_output`. The flag falls to the default unknown flag handler, returning "Unknown flag: --deterministic_output". C++ protoc accepts the flag and reports "Missing input file." (since no .proto file was provided).
+- **Root cause:** `cli.go:510-640` — `parseArgs` switch handles many flags but is missing `--deterministic_output`. The help text (lines 33-34) documents this flag, but it was never added to the parser.
