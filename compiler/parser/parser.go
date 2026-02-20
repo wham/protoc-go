@@ -2216,6 +2216,9 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 	var fieldNum int32
 	switch optName {
 	case "deprecated":
+		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.MethodOptions.deprecated\".", valTok.Line+1, valTok.Column+1)
+		}
 		method.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 33
 	case "idempotency_level":

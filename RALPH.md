@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1043/1043 tests passing.
+ALL DONE — 1048/1048 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -372,3 +372,4 @@ ALL DONE — 1043/1043 tests passing.
 203. ✅ Boolean message option validation — reject string/integer values for boolean message options (deprecated, no_standard_descriptor_accessor, message_set_wire_format, deprecated_legacy_json_field_conflicts) with `Value must be identifier for boolean option "google.protobuf.MessageOptions.X".` error at value token position, using `validateMsgBool` helper in `parseMessageOption`
 204. ✅ Boolean field option validation — reject string/integer/float values for boolean field options (deprecated, packed, lazy, debug_redact, unverified_lazy, weak) with `Value must be identifier for boolean option "google.protobuf.FieldOptions.X".` error at value token position, check `valTok.Type == TokenIdent && (value == "true" || value == "false")` in each boolean case of `parseFieldOptions`
 205. ✅ Boolean enum value option validation — reject string/integer/float values for boolean enum value options (deprecated, debug_redact) with `Value must be identifier for boolean option "google.protobuf.EnumValueOptions.X".` error at value token position, check `optValTok.Type == TokenIdent && (value == "true" || value == "false")` in each boolean case of enum value option parsing
+206. ✅ Boolean service option validation — reject string/integer values for boolean service options (deprecated) with `Value must be identifier for boolean option "google.protobuf.ServiceOptions.deprecated".` error at value token position, check `valTok.Type == tokenizer.TokenIdent && (value == "true" || value == "false")` in `parseServiceOption`
