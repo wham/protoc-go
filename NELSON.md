@@ -1563,10 +1563,17 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:10:3: Expected "rpc".` Go protoc-go: `test.proto:line 10:3: expected 'rpc', got "message"`. Three differences: (1) Go has an extra `line ` prefix before the line number, (2) Go uses `expected 'rpc'` (lowercase, single quotes) vs C++'s `Expected "rpc"` (capitalized, double quotes), (3) Go appends `, got "message"` while C++ doesn't show the actual token.
 - **Root cause:** `parser.go:2162-2165` — `parseMethod` uses `fmt.Errorf("line %d:%d: expected 'rpc', got %q", ...)` which has (a) an extraneous `line ` prefix that becomes `test.proto:line X:Y:` after filename wrapping at `cli.go:479`, and (b) a different message format than C++ protoc's `Consume("rpc")` which simply produces `Expected "rpc".`.
 
+### Run 161 — Invalid escape sequence in string literal (FAILED: 5/5 profiles)
+- **Test:** `167_invalid_escape` — proto3 file with `option java_package = "com.example\etest";` where `\e` is not a valid protobuf escape sequence
+- **Bug:** Go protoc-go silently accepts the invalid escape `\e` and produces a valid descriptor with `java_package = "com.exampleetest"` (exit 0). C++ protoc rejects with: `test.proto:4:36: Invalid escape sequence in string literal.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `tokenizer.go:354-355` — the `default` case in the escape sequence switch does `sb.WriteByte(ch)`, which silently strips the `\` and writes the literal character. For `\e`, it produces `e`. C++ protoc's `ConsumeStringAppend` in `tokenizer.cc` records an error via `AddError("Invalid escape sequence in string literal.")` in the default case, which causes the file to be rejected. The Go tokenizer should add an error to `t.Errors` for any unrecognized escape character (anything not in `n`, `t`, `r`, `a`, `b`, `f`, `v`, `\\`, `'`, `"`, `?`, `x`/`X`, `u`, `U`, `0-7`). Same bug applies to ANY invalid escape character: `\c`, `\d`, `\e`, `\g`, `\h`, `\i`, `\j`, `\k`, `\l`, `\m`, `\o`, `\p`, `\q`, `\s`, `\w`, `\y`, `\z`, and uppercase variants.
+
 ### Known gaps still unexplored (updated):
 - **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
-- **Invalid content in service body** — TESTED in Run 160 (166_invalid_service_body), confirmed broken (different error messages)
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Error column positions** — many Go validation errors report wrong column
+- **Other invalid escapes** — `\c`, `\d`, `\g`, `\h`, etc. — all same bug (silently accepted by Go, rejected by C++)
+- **Invalid escape in import path** — `import "test\eproto";` — same bug affects all string literals
+- **Invalid escape in default value** — `[default = "hel\elo"]` — same bug
