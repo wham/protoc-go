@@ -1520,6 +1520,29 @@ func validateFeatureTargets(orderedFiles []string, parsed map[string]*descriptor
 					errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `service`.", name, featureProtoNames["json_format"]))
 				}
 			}
+			for _, method := range svc.GetMethod() {
+				if method.GetOptions() != nil && method.GetOptions().GetFeatures() != nil {
+					feat := method.GetOptions().GetFeatures()
+					if feat.FieldPresence != nil {
+						errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `method`.", name, featureProtoNames["field_presence"]))
+					}
+					if feat.EnumType != nil {
+						errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `method`.", name, featureProtoNames["enum_type"]))
+					}
+					if feat.RepeatedFieldEncoding != nil {
+						errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `method`.", name, featureProtoNames["repeated_field_encoding"]))
+					}
+					if feat.Utf8Validation != nil {
+						errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `method`.", name, featureProtoNames["utf8_validation"]))
+					}
+					if feat.MessageEncoding != nil {
+						errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `method`.", name, featureProtoNames["message_encoding"]))
+					}
+					if feat.JsonFormat != nil {
+						errs = append(errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `method`.", name, featureProtoNames["json_format"]))
+					}
+				}
+			}
 		}
 	}
 	return errs
