@@ -1973,6 +1973,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseOneof()` at lines 2914-2917 unconditionally rejects ANY `option` keyword inside a oneof body. It consumes `option`, peeks at the next token, and returns an error: `Option "features" unknown. Ensure that your proto definition file imports the proto which defines the option.` C++ protoc parses the oneof option and rejects it at a higher semantic level: `Features are only valid under editions.` Both exit 1, but different error messages.
 - **Root cause:** `parser.go:2914-2917` — `parseOneof` has a hard-coded rejection of all options inside oneofs. It doesn't attempt to parse the option at all — just errors immediately. C++ protoc parses the option into OneofOptions, then validates it semantically. The error message format differs completely. This also means Go would reject valid oneof options in editions syntax where C++ protoc would accept them (e.g., `option features.field_presence = IMPLICIT;` in an editions file).
 
+### Run 221 — Map field with undefined value type (FAILED: 5/5 profiles)
+- **Test:** `226_map_undefined_value` — proto3 message with `map<string, NonExistent> items = 2;` where `NonExistent` is not defined anywhere
+- **Bug:** C++ protoc correctly rejects with `test.proto: "NonExistent" is not defined.` Go protoc-go silently accepts it and produces a descriptor with the unresolved type name. `resolveMessageFieldsWithErrorsPath` does iterate over synthetic map entry messages, but `findSCISpanStart` fails to find an SCI location for the synthetic entry's value field type name (path `[4, 0, 3, entryIdx, 2, 1, 6]`), so no error is appended. `checkMsgUnresolved` explicitly skips map entry messages (`if msg.GetOptions().GetMapEntry() { return }`).
+- **Root cause:** Two-part failure: (1) `parser.go:4659` — `checkMsgUnresolved` skips map entries entirely. (2) `resolveMessageFieldsWithErrorsPath` finds the unresolved type but can't report the error because no SCI location exists for synthetic entry fields. The net effect: undefined types in map values are silently accepted.
+
 ### Known gaps still unexplored (updated):
 - **Oneof options in editions** — Go rejects all oneof options; C++ accepts valid ones in editions
 - **Trailing comma in map field options** — same trailing comma issue
@@ -1985,3 +1990,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Custom option in method body** — same bug
 - **Custom option in enum body** — same bug
 - **Custom option on enum values** — same bug in inline loop
+- **Map field with undefined key type** — `map<NonExistent, string>` — same issue, key type unresolved
+- **Undefined type in extension field** — `extend Foo { optional NonExistent bar = 100; }` — may also silently accept
