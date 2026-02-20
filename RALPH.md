@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1251/1251 tests passing.
+ALL DONE — 1252/1252 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -415,4 +415,5 @@ ALL DONE — 1251/1251 tests passing.
 244. ✅ `--descriptor_set_in` flag parsing — accept `--descriptor_set_in=FILES` flag without error, value is currently ignored (only relevant for providing pre-compiled descriptors). C++ protoc accepts this flag and continues to normal validation.
 243. ✅ `--decode_raw` flag parsing — accept flag and exit immediately with no error (reads binary proto from stdin; with empty stdin exits 0). Skips input file and output directive validation.
 245. ✅ Extension field name duplicate validation — register extension field names in containing scope (message-level `msg.GetExtension()` in `collectDupNamesInMsg`, file-level `fd.GetExtension()` in `validateDuplicateNames`) so that extension fields with the same name as existing fields/types are rejected with `"X" is already defined in "Y".` error
+246. ✅ `--dependency_out=FILE` flag parsing — accept flag without error, value is currently ignored (only relevant for Make-style dependency tracking). C++ protoc accepts this flag but still requires an output directive. Must be checked before the generic `--X_out=` plugin pattern to avoid treating "dependency" as a plugin name.
 - Type shadowing resolution: C++ protoc's `LookupSymbolNoPlaceholder` uses first-component-first resolution for compound names. For `Outer.Inner` in scope `Container`: find `Outer` at innermost scope first → if found as TYPE_MESSAGE (aggregate), try full `Container.Outer.Inner` → if not found, stop and report shadowing error (don't fall through to outer scopes). `resolveTypeName` returns `(resolved, shadowCandidate)` where shadowCandidate is non-empty when shadowing fails. `shadowErrorMsg` formats the error. Callers in `ResolveTypes`, `resolveMessageFieldsWithErrorsPath`, `CheckUnresolvedTypes`, and `checkMsgUnresolved` all updated to emit shadowing error when shadowCandidate is set.
