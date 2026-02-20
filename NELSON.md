@@ -2050,8 +2050,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `collectOneofFeatureErrors()` at cli.go:1690 has a WRONG comment: "field_presence targets ONEOF, so it's allowed — skip it". In reality, `field_presence` targets only FILE and FIELD (not ONEOF). C++ protoc rejects with: "Option google.protobuf.FeatureSet.field_presence cannot be set on an entity of type `oneof`." Go accepts the file successfully. C++ `cpp_ok.txt` = false, Go `go_ok.txt` = true.
 - **Root cause:** `compiler/cli/cli.go:1690` — incorrect comment and missing validation. The `field_presence` check is intentionally skipped based on a wrong assumption about its target types. All other features (enum_type, repeated_field_encoding, utf8_validation, message_encoding, json_format) are correctly validated for oneof, but field_presence is the one that slipped through.
 
+### Run 229 — MessageSet with regular field (FAILED: 5/5 profiles)
+- **Test:** `234_message_set_with_field` — proto2 message with `option message_set_wire_format = true;`, `extensions 100 to max;`, AND `optional string name = 1;` (a regular field)
+- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with both the extension range and the field. C++ protoc rejects with: `test.proto:8:19: MessageSets cannot have fields, only extensions.` (exit 1). Different exit codes across all 5 profiles.
+- **Root cause:** Go has no validation in `cli.go` or `pool.go` that checks MessageSet constraints. C++ protoc validates in `descriptor.cc` that messages with `message_set_wire_format = true` must not have regular fields — only extensions are allowed. Go's validation layer (`cli.go`) doesn't have any `message_set_wire_format`-specific checks.
+
 ### Known gaps still unexplored (updated):
 - **Feature target validation on method/enum value scope** — may now be validated (service was fixed)
 - **Trailing comma in field options** — `[deprecated = true,]` — different error messages
 - **Type shadowing** — same nested type name in different parent messages
 - **Error column positions in validation errors** — Go often differs from C++
+- **MessageSet without extensions** — `message_set_wire_format = true` but no `extensions` range
+- **MessageSet with nested messages** — `message_set_wire_format = true` with nested message types
+- **MessageSet in proto3** — C++ may reject `message_set_wire_format` in proto3

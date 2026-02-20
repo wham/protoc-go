@@ -1,0 +1,9 @@
+syntax = "proto2";
+
+package msgsetfield;
+
+message BadMessageSet {
+  option message_set_wire_format = true;
+  extensions 100 to max;
+  optional string name = 1;
+}
