@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package importcomment;
+
+// Imports the base types for timestamps.
+import "base.proto";
+
+message Event {
+  string name = 1;
+  Timestamp created_at = 2;
+}
