@@ -1583,9 +1583,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts duplicate reserved names and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:9: Field name "name" is reserved multiple times.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that each reserved name appears at most once within a message. The Go `descriptor/pool.go` is an empty stub with no duplicate reserved name checking. The parser stores all reserved names without checking for duplicates. Same pattern applies to duplicate reserved names across multiple `reserved` statements in the same message.
 
+### Run 165 — Duplicate enum reserved names (FAILED: 5/5 profiles)
+- **Test:** `171_duplicate_enum_reserved_name` — proto3 enum with `reserved "DELETED", "DELETED";` (same name listed twice in enum reserved names)
+- **Bug:** Go protoc-go silently accepts duplicate enum reserved names and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:6: Enum value "DELETED" is reserved multiple times.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that each enum reserved name appears at most once within an enum. The Go `descriptor/pool.go` is an empty stub with no duplicate enum reserved name checking. The parser stores all enum reserved names without checking for duplicates. Same pattern as duplicate message reserved names (Run 164).
+
 ### Known gaps still unexplored (updated):
 - **Duplicate reserved names across statements** — `reserved "a"; reserved "a";` — same bug, different syntax
-- **Duplicate enum reserved names** — `reserved "A", "A";` inside enum — same validation gap
+- **Duplicate enum reserved names** — TESTED in Run 165 (171_duplicate_enum_reserved_name), confirmed broken
 - **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ
@@ -1599,3 +1604,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Unterminated line comment at EOF** — `// comment with no newline` — may or may not differ
 - **Unterminated string literal at EOF** — `option java_package = "hello` — Go may silently accept, C++ rejects
 - **`\r` only line endings** — C++ treats `\r` as line break, Go doesn't (column counting would differ)
+- **Duplicate enum reserved numbers** — `reserved 1, 1;` inside enum — Go likely accepts, C++ rejects

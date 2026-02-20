@@ -1200,7 +1200,7 @@ func findReservedRangeStartLocation(msgPath []int32, rangeIdx int, sci *descript
 	return 0, 0
 }
 
-// validateDuplicateReservedNames checks that no reserved name appears more than once in a message.
+// validateDuplicateReservedNames checks that no reserved name appears more than once in a message or enum.
 func validateDuplicateReservedNames(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
 	for _, name := range orderedFiles {
@@ -1208,6 +1208,9 @@ func validateDuplicateReservedNames(orderedFiles []string, parsed map[string]*de
 		sci := fd.GetSourceCodeInfo()
 		for i, msg := range fd.GetMessageType() {
 			collectDuplicateReservedNameErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		for i, enum := range fd.GetEnumType() {
+			collectDuplicateEnumReservedNameErrors(fd.GetName(), enum, []int32{5, int32(i)}, sci, &errs)
 		}
 	}
 	return errs
@@ -1230,6 +1233,23 @@ func collectDuplicateReservedNameErrors(filename string, msg *descriptorpb.Descr
 	for i, nested := range msg.GetNestedType() {
 		np := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectDuplicateReservedNameErrors(filename, nested, np, sci, errs)
+	}
+	for i, enum := range msg.GetEnumType() {
+		ep := append(append([]int32{}, msgPath...), 4, int32(i))
+		collectDuplicateEnumReservedNameErrors(filename, enum, ep, sci, errs)
+	}
+}
+
+func collectDuplicateEnumReservedNameErrors(filename string, enum *descriptorpb.EnumDescriptorProto, enumPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	seen := make(map[string]bool)
+	for _, rn := range enum.GetReservedName() {
+		if seen[rn] {
+			path := append(append([]int32{}, enumPath...), 1)
+			line, col := findLocationByPath(path, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Enum value \"%s\" is reserved multiple times.",
+				filename, line, col, rn))
+		}
+		seen[rn] = true
 	}
 }
 
