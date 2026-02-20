@@ -2040,8 +2040,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseMessageReserved()` at line 628-631 checks if the first token is `TokenString` (name reservation) or `TokenInt` (range reservation). When it's an identifier like `foo`, it falls to the integer branch, fails the `TokenInt` check, and emits: `Expected field name or number range.` C++ protoc recognizes the identifier and gives a more specific error: `Reserved names must be string literals. (Only editions supports identifiers.)`
 - **Root cause:** `parser.go:628-631` — `parseMessageReserved` doesn't check for `TokenIdent` between the string and integer branches. C++ protoc detects identifiers and explains that only editions syntax supports reserved identifiers (not string literals). Go's error message is generic and misleading.
 
+### Run 227 — Enum reserved with identifier name (FAILED: 5/5 profiles)
+- **Test:** `232_enum_reserved_ident` — proto3 enum with `reserved DELETED;` (bare identifier instead of string literal in enum reserved declaration)
+- **Bug:** `parseEnumReserved()` at line 2239 checks if the next token is `TokenString`. When it's an identifier like `DELETED`, it falls to the `else` branch (line 2279) which tries integer/range parsing. `ExpectInt()` at line 2291 fails because `DELETED` is an identifier, not an integer. Go error: `test.proto:8:12: Expected integer.` C++ protoc error: `test.proto:8:12: Reserved names must be string literals. (Only editions supports identifiers.)` Both reject (exit 1), but error messages differ completely.
+- **Root cause:** `parser.go:2239` — `parseEnumReserved` checks for `TokenString` (name reservation) or falls through to integer (range reservation). When a `TokenIdent` appears, it doesn't check for it between the two branches. C++ protoc detects identifiers and gives a specific error about requiring string literals (with an editions hint). Go's error is generic and misleading. Same pattern as Run 226 (message reserved identifier) but in the enum reserved code path.
+
 ### Known gaps still unexplored (updated):
-- **Enum reserved with identifier names** — `reserved FOO;` in enum body — likely same error message difference
 - **Feature target validation on method/enum value scope** — may now be validated (service was fixed)
 - **Trailing comma in field options** — `[deprecated = true,]` — different error messages
 - **Type shadowing** — same nested type name in different parent messages
