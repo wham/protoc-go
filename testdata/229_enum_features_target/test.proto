@@ -1,0 +1,14 @@
+edition = "2023";
+
+package enumfeattest;
+
+enum Priority {
+  option features.field_presence = IMPLICIT;
+  PRIORITY_UNKNOWN = 0;
+  PRIORITY_HIGH = 1;
+  PRIORITY_LOW = 2;
+}
+
+message Wrapper {
+  Priority p = 1;
+}

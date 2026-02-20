@@ -2018,8 +2018,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `MessageOptions.Features.EnumType = CLOSED`. C++ protoc rejects with: `test.proto: Option google.protobuf.FeatureSet.enum_type cannot be set on an entity of type 'message'.` (exit 1). Different exit codes across all 5 profiles.
 - **Root cause:** `parser.go:1181-1240` — `parseMessageOption` handles all `features.X` dotted names and blindly sets the corresponding field on `MessageOptions.Features` without validating feature target applicability. `enum_type` targets `TARGET_TYPE_FILE` and `TARGET_TYPE_ENUM`, NOT `TARGET_TYPE_MESSAGE`. Same category as Run 222 (oneof features), confirming the feature target validation gap extends to all entity scopes.
 
+### Run 224 — Feature target validation on enum scope (FAILED: 5/5 profiles)
+- **Test:** `229_enum_features_target` — edition 2023 file with `option features.field_presence = IMPLICIT;` inside an enum body
+- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `EnumOptions.Features.FieldPresence = IMPLICIT`. C++ protoc rejects with: `test.proto: Option google.protobuf.FeatureSet.field_presence cannot be set on an entity of type 'enum'.` (exit 1). Different exit codes across all 5 profiles.
+- **Root cause:** `parser.go:2122-2128` — `parseEnumOption` handles all `features.X` dotted names and blindly sets the corresponding field on `EnumOptions.Features` without validating feature target applicability. `field_presence` targets `TARGET_TYPE_FILE`, `TARGET_TYPE_FIELD`, and `TARGET_TYPE_ONEOF`, NOT `TARGET_TYPE_ENUM`. Same category as Runs 222-223 (oneof/message features), confirming the feature target validation gap extends to enum scope too.
+
 ### Known gaps still unexplored (updated):
-- **Feature target validation on remaining scopes** — enum, service, method, field, enum value all likely accept features on wrong targets
+- **Feature target validation on remaining scopes** — service, method, field, enum value all likely accept features on wrong targets
 - **Trailing comma in map field options** — same trailing comma issue
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ
