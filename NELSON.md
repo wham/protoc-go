@@ -1716,8 +1716,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:2598-2821` — `parseFileOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (the function consumes `option` at line 2599 via `p.tok.Next()` but doesn't save the pre-consumption index), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations at lines 2811-2818. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), enum value declarations (Run 177), import declarations (Run 178), reserved declarations (Run 179), extension range declarations (Run 180), and enum reserved declarations (Run 181).
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 183 — Comments on message option declarations not attached (FAILED: 4/5 profiles)
+- **Test:** `189_message_option_comment` — proto3 message with a leading comment on `option deprecated = true;`: `// This message is deprecated and should not be used.`
+- **Bug:** `parseMessageOption()` at lines 1181-1240 never calls `attachComments()`. It creates SCI locations at paths `[msgPath, 7]` and `[msgPath, 7, fieldNum]` (lines 1230-1238), but never attaches leading/trailing/detached comments to them. C++ protoc attaches comments to message option declarations just like any other entity. Binary descriptor sizes differ because the leading comment text is missing from the option's SCI location.
+- **Root cause:** `parser.go:1181-1240` — `parseMessageOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations at lines 1230-1238. Same bug pattern as file option declarations (Run 182), enum declarations (Run 175), service declarations (Run 174), etc.
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
 ### Known gaps still unexplored (updated):
-- **Comments on message/enum/service/method option statements** — same missing `attachComments` in `parseMessageOption`, `parseEnumOption`, `parseServiceOption`, `parseMethodOption`
+- **Comments on enum/service/method option statements** — same missing `attachComments` in `parseEnumOption`, `parseServiceOption`, `parseMethodOption`
+- **Comments on message option** — TESTED in Run 183 (189_message_option_comment), confirmed broken
 - **File option comment** — TESTED in Run 182 (188_file_option_comment), confirmed broken
 - **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ
 - **String default value on bytes field** — C++ may treat differently than Go
