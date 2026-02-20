@@ -1655,3 +1655,23 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseMapField()` at lines 2418-2570 never calls `attachComments()`. Regular fields in `parseField()` call `attachComments(fieldLocIdx, firstIdx)` at line 1344, attaching leading/trailing/detached comments to the field's SCI location. Map fields skip this entirely. C++ protoc attaches comments to map field declarations just like any other field. Result: descriptor_set_src 424 vs 381 bytes (43 bytes difference = the comment text). Binary CodeGeneratorRequest also differs for plugin profiles.
 - **Root cause:** `parser.go:2418-2570` — `parseMapField` function is missing two things: (1) it doesn't save `p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the field declaration SCI location. The fix: add `firstIdx := p.tok.CurrentIndex()` at the start, save the SCI location index after `p.addLocationSpan(fieldPath, ...)` at line 2559, and call `p.attachComments(locIdx, firstIdx)` after it.
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
+### Run 173 — Comments on oneof declarations not attached (FAILED: 4/5 profiles)
+- **Test:** `179_oneof_comment` — proto3 message with a leading comment on a `oneof payload { ... }` declaration: `// The payload can be text or a number.\noneof payload { string text = 2; int32 number = 3; }`
+- **Bug:** `parseOneof()` at lines 2338-2416 never calls `attachComments()`. Regular fields in `parseField()` call `attachComments(fieldLocIdx, firstIdx)` at line 1344, and map fields were recently fixed (Run 172). Oneof declarations skip comment attachment entirely. C++ protoc attaches comments to oneof declarations just like any other entity. Binary CodeGeneratorRequest differs because the leading comment text is missing from the oneof's SCI location.
+- **Root cause:** `parser.go:2338-2416` — `parseOneof` function is missing two things: (1) it doesn't save `p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(oneofLocIdx, firstIdx)` after setting the oneof declaration span at line 2409. The fix: add `firstIdx := p.tok.CurrentIndex()` before line 2339, and call `p.attachComments(oneofLocIdx, firstIdx)` after line 2409.
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
+### Known gaps still unexplored (updated):
+- **Comments on service declarations** — `parseService` at line 2033 calls `addLocationPlaceholder` but never `attachComments` — same bug as oneof
+- **Comments on method declarations** — `parseMethod` at line 2286 same pattern — no comment attachment
+- **Comments on enum value declarations** — no `attachComments` call for enum values
+- **Comments on extension range declarations** — no `attachComments` call
+- **Comments on reserved declarations** — no `attachComments` call
+- **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ
+- **String default value on bytes field** — C++ may treat differently than Go
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Error column positions** — many Go validation errors report wrong column
+- **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
