@@ -1180,12 +1180,24 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 
 func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath []int32, seenOptions map[string]bool) error {
 	firstIdx := p.tok.CurrentIndex()
+	_ = firstIdx
 	startTok := p.tok.Next() // consume "option"
 	p.trackEnd(startTok)
 
 	nameTok := p.tok.Next()
 	p.trackEnd(nameTok)
 	optName := nameTok.Value
+
+	if optName == "(" {
+		fullName, err := p.parseParenthesizedOptionName(nameTok)
+		if err != nil {
+			return err
+		}
+		if err := p.skipStatement(); err != nil {
+			return err
+		}
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, fullName)
+	}
 
 	if seenOptions[optName] {
 		return fmt.Errorf("%d:%d: Option \"%s\" was already set.", nameTok.Line+1, nameTok.Column+1, optName)
@@ -1846,12 +1858,24 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 
 func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath []int32, seenOptions map[string]bool) error {
 	firstIdx := p.tok.CurrentIndex()
+	_ = firstIdx
 	startTok := p.tok.Next() // consume "option"
 	p.trackEnd(startTok)
 
 	nameTok := p.tok.Next()
 	p.trackEnd(nameTok)
 	optName := nameTok.Value
+
+	if optName == "(" {
+		fullName, err := p.parseParenthesizedOptionName(nameTok)
+		if err != nil {
+			return err
+		}
+		if err := p.skipStatement(); err != nil {
+			return err
+		}
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, fullName)
+	}
 
 	if seenOptions[optName] {
 		return fmt.Errorf("%d:%d: Option \"%s\" was already set.", nameTok.Line+1, nameTok.Column+1, optName)
@@ -2135,12 +2159,24 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 
 func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, svcPath []int32, seenServiceOptions map[string]bool) error {
 	firstIdx := p.tok.CurrentIndex()
+	_ = firstIdx
 	startTok := p.tok.Next() // consume "option"
 	p.trackEnd(startTok)
 
 	nameTok := p.tok.Next()
 	p.trackEnd(nameTok)
 	optName := nameTok.Value
+
+	if optName == "(" {
+		fullName, err := p.parseParenthesizedOptionName(nameTok)
+		if err != nil {
+			return err
+		}
+		if err := p.skipStatement(); err != nil {
+			return err
+		}
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, fullName)
+	}
 
 	if seenServiceOptions[optName] {
 		return fmt.Errorf("%d:%d: Option \"%s\" was already set.", nameTok.Line+1, nameTok.Column+1, optName)
@@ -2193,12 +2229,24 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 
 func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, methodPath []int32, seenMethodOptions map[string]bool) error {
 	firstIdx := p.tok.CurrentIndex()
+	_ = firstIdx
 	startTok := p.tok.Next() // consume "option"
 	p.trackEnd(startTok)
 
 	nameTok := p.tok.Next()
 	p.trackEnd(nameTok)
 	optName := nameTok.Value
+
+	if optName == "(" {
+		fullName, err := p.parseParenthesizedOptionName(nameTok)
+		if err != nil {
+			return err
+		}
+		if err := p.skipStatement(); err != nil {
+			return err
+		}
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, fullName)
+	}
 
 	if seenMethodOptions[optName] {
 		return fmt.Errorf("%d:%d: Option \"%s\" was already set.", nameTok.Line+1, nameTok.Column+1, optName)
@@ -2670,23 +2718,10 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 
 	// Handle parenthesized custom option names: option (name) = value;
 	if optName == "(" {
-		innerTok := p.tok.Next()
-		p.trackEnd(innerTok)
-		fullName := "(" + innerTok.Value
-		// Handle dotted names like (pkg.name)
-		for p.tok.Peek().Value == "." {
-			dotTok := p.tok.Next()
-			p.trackEnd(dotTok)
-			partTok := p.tok.Next()
-			p.trackEnd(partTok)
-			fullName += "." + partTok.Value
-		}
-		closeTok, err := p.tok.Expect(")")
+		fullName, err := p.parseParenthesizedOptionName(nameTok)
 		if err != nil {
 			return err
 		}
-		p.trackEnd(closeTok)
-		fullName += ")"
 		// Skip to end of statement to consume `= value ;`
 		if err := p.skipStatement(); err != nil {
 			return err
@@ -2960,6 +2995,26 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 	p.attachComments(len(p.locations)-1, firstIdx)
 
 	return nil
+}
+
+func (p *parser) parseParenthesizedOptionName(openTok tokenizer.Token) (string, error) {
+	innerTok := p.tok.Next()
+	p.trackEnd(innerTok)
+	fullName := "(" + innerTok.Value
+	for p.tok.Peek().Value == "." {
+		dotTok := p.tok.Next()
+		p.trackEnd(dotTok)
+		partTok := p.tok.Next()
+		p.trackEnd(partTok)
+		fullName += "." + partTok.Value
+	}
+	closeTok, err := p.tok.Expect(")")
+	if err != nil {
+		return "", err
+	}
+	p.trackEnd(closeTok)
+	fullName += ")"
+	return fullName, nil
 }
 
 func (p *parser) skipStatement() error {
