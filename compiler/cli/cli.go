@@ -1317,6 +1317,10 @@ func validateJsonNameConflicts(orderedFiles []string, parsed map[string]*descrip
 	var errs []string
 	for _, name := range orderedFiles {
 		fd := parsed[name]
+		// C++ protoc only treats JSON name conflicts as errors in proto3/editions, not proto2
+		if fd.GetSyntax() != "proto3" && fd.GetSyntax() != "editions" {
+			continue
+		}
 		for i, msg := range fd.GetMessageType() {
 			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, false, &errs)
 			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, true, &errs)
