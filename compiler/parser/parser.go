@@ -3025,6 +3025,8 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				field.Options.Jstype = descriptorpb.FieldOptions_JS_STRING.Enum()
 			case "JS_NUMBER":
 				field.Options.Jstype = descriptorpb.FieldOptions_JS_NUMBER.Enum()
+			default:
+				return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FieldOptions.JSType\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.jstype\".", valTok.Line+1, valTok.Column+1, valTok.Value)
 			}
 		case "ctype":
 			if field.Options == nil {
@@ -3037,6 +3039,8 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				field.Options.Ctype = descriptorpb.FieldOptions_CORD.Enum()
 			case "STRING_PIECE":
 				field.Options.Ctype = descriptorpb.FieldOptions_STRING_PIECE.Enum()
+			default:
+				return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FieldOptions.CType\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.ctype\".", valTok.Line+1, valTok.Column+1, valTok.Value)
 			}
 		case "debug_redact":
 			if field.Options == nil {
