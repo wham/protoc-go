@@ -1915,3 +1915,18 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `218_custom_enum_val_option` — proto3 enum value with `PRIORITY_HIGH = 1 [(my_custom_opt) = "important"];`
 - **Bug:** Enum value option parser at line 1727-1729 reads `optNameTok := p.tok.Next()` which reads `(` as the option name. No check for `optName == "("` to handle parenthesized custom option syntax. Then `Expect("=")` at line 1736 reads `my_custom_opt` instead of `=` → error: `Expected "=".` at column 23. C++ protoc parses the full `(my_custom_opt)` name and produces: `Option "(my_custom_opt)" unknown. Ensure that your proto definition file imports the proto which defines the option.` Both reject, but different error messages and column numbers.
 - **Root cause:** `parser.go:1727-1729` — enum value option parsing lacks the `if optName == "(" { ... }` block that other option parsers (parseFileOption, parseMessageOption, parseEnumOption, parseServiceOption, parseFieldOptions) now have. The enum value option code path is a separate inline loop inside `parseEnum()`, not a standalone function, so it was missed when parenthesized option handling was added to the other parsers.
+
+### Run 214 — Dotted option name on message option in editions (FAILED: 5/5 profiles)
+- **Test:** `219_msg_features_option` — edition 2023 message with `option features.json_format = ALLOW;` inside message body
+- **Bug:** `parseMessageOption()` at line 1187-1207 reads `features` as a single option name token, then calls `Expect("=")` which encounters `.` instead of `=` → error: `test.proto:6:18: Expected "=".` C++ protoc parses the full dotted path `features.json_format` and accepts the option, producing a valid descriptor (exit 0). Go fails with exit 1.
+- **Root cause:** `parser.go:1187-1207` — `parseMessageOption` reads only a single token for the option name and has no handling for dotted names like `features.json_format`. The file-level option parser (`parseFileOption`) has the dotted name handling at line 2756 (`if optName == "features" && p.tok.Peek().Value == "." { ... }`), but `parseMessageOption` lacks it. Same bug likely affects `parseEnumOption`, `parseServiceOption`, and `parseMethodOption` — none of them handle dotted option names.
+
+### Known gaps still unexplored (updated):
+- **Dotted option names on enum/service/method options** — same bug as message-level, `features.X` pattern
+- **Dotted option names on field options** — `features.field_presence` in editions inside `[...]`
+- **Trailing comma in map field options** — same trailing comma issue
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ
+- **Error column positions** — many Go validation errors report wrong column
+- **FieldOptions.feature_support** (field 49) — likely missing from parser switch
+- **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
