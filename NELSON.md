@@ -1879,14 +1879,19 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts a string literal for the enum-valued field option `retention` and sets it correctly (exit 0). C++ protoc rejects with: `test.proto:7:32: Value must be identifier for enum-valued option "google.protobuf.FieldOptions.retention".` (exit 1).
 - **Root cause:** `parser.go:3207-3220` — `case "retention"` does `switch valTok.Value` without checking `valTok.Type`. A TokenString `"RETENTION_SOURCE"` has decoded `valTok.Value = "RETENTION_SOURCE"`, matching the case. No `valTok.Type == tokenizer.TokenIdent` guard. C++ uses `ConsumeIdentifier`. Same category as Runs 85, 206, 207.
 
+### Run 209 — FieldOptions.targets missing from parser (FAILED: 5/5 profiles)
+- **Test:** `215_field_targets_option` — proto3 message with `string name = 1 [targets = TARGET_TYPE_FIELD];` (built-in FieldOptions.targets field 19)
+- **Bug:** Go protoc-go rejects with: `test.proto:6:20: Option "targets" unknown.` (exit 1). C++ protoc accepts the option, strips it (RETENTION_SOURCE), and produces a valid descriptor (exit 0). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:3224` — `parseFieldOptions` switch handles 12 field options (default, json_name, deprecated, packed, lazy, jstype, ctype, debug_redact, unverified_lazy, weak, retention) but NOT `targets` (field 19). The `default:` case returns "Option unknown" error. C++ protoc accepts `targets` as a known FieldOptions field (repeated OptionTargetType), stores it, and then strips it from plugin output due to `retention = RETENTION_SOURCE`. The Go parser needs a new `case "targets":` that parses the OptionTargetType enum value and stores it on FieldOptions.Targets.
+
 ### Known gaps still unexplored (updated):
-- **String literal for ctype** — `[ctype = "CORD"]` — same bug at line 3164, but check if TokenIdent guard was added
-- **String literal for allow_alias** — `option allow_alias = "true";` — same bug at line 1881
-- **String literal for message_set_wire_format** — same bug pattern
-- **String literal for no_standard_descriptor_accessor** — same bug pattern
+- **String literal for ctype** — `[ctype = "CORD"]` — FIXED (TokenIdent guard added at line 3167)
+- **String literal for allow_alias** — `option allow_alias = "true";` — FIXED (TokenIdent guard at line 1881)
 - **Trailing comma in map field options** — same trailing comma issue
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ
 - **Error column positions** — many Go validation errors report wrong column
 - **Dotted option names on message/field/enum/service options** — same bug as file options, `features.X` pattern
-- **FieldOptions.targets** (field 19) — likely also missing from parser switch
+- **FieldOptions.feature_support** (field 49) — likely missing from parser switch
+- **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
+- **Empty method body `{ }`** — tested, NOT a gap (C++ also creates empty MethodOptions)
