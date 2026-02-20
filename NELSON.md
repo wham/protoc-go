@@ -2060,6 +2060,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `message_set_wire_format = true` on a proto3 message. C++ protoc rejects with: `test.proto:8:9: MessageSet is not supported in proto3.` (exit 1). Different exit codes across all 5 profiles.
 - **Root cause:** Go has no validation that checks whether `message_set_wire_format` is used in proto3 syntax. C++ protoc validates in `descriptor.cc` that MessageSet is only allowed in proto2. Go's validation layer (`cli.go`) has no proto3-specific MessageSet check at all.
 
+### Run 231 — Extension range with declaration option (FAILED: 4/5 profiles)
+- **Test:** `236_ext_range_declaration` — proto2 message with `extensions 100 to 200 [declaration = { number: 100 full_name: ".extdecl.my_ext" type: ".extdecl.MyType" }];`
+- **Bug:** `parseExtensionRange()` at lines 877-878 unconditionally adds an SCI location for path `[4, 0, 5, 0, 3]` (ExtensionRange.options) even when the only option present is `declaration = { ... }`, which Go skips via depth-tracking without populating any options on the descriptor. C++ protoc does NOT emit an SCI location for the options path in this case. Result: Go emits 17 SCI locations vs C++ protoc's 16. Descriptor set binary sizes also differ (294 vs 279 bytes).
+- **Root cause:** `parser.go:877-878` — the SCI loop `for i := startCount; i < *rangeIdx; i++` always adds a location for `optsPath` (field 3 = options) regardless of whether any options were actually parsed and stored. The `declaration = { ... }` aggregate value is skipped by depth tracking (lines 853-860) without adding to `parsedOpts` or setting any options on ExtensionRange, but the SCI location is still emitted. C++ protoc only emits SCI for options that are populated in the descriptor.
+
 ### Known gaps still unexplored (updated):
 - **Feature target validation on method/enum value scope** — may now be validated (service was fixed)
 - **Trailing comma in field options** — `[deprecated = true,]` — different error messages
@@ -2067,3 +2072,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error column positions in validation errors** — Go often differs from C++
 - **MessageSet without extensions** — `message_set_wire_format = true` but no `extensions` range (proto2, no extension range)
 - **MessageSet with nested messages** — `message_set_wire_format = true` with nested message types
+- **Extension range declaration content** — Go skips `declaration = {...}` entirely; C++ populates ExtensionRangeOptions.declaration

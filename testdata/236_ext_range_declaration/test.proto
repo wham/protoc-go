@@ -1,0 +1,12 @@
+syntax = "proto2";
+package extdecl;
+message Extendable {
+  extensions 100 to 200 [declaration = {
+    number: 100
+    full_name: ".extdecl.my_ext"
+    type: ".extdecl.MyType"
+  }];
+}
+message MyType {
+  optional string value = 1;
+}
