@@ -4,7 +4,8 @@ compiler_version: major:5 minor:29 patch:3 suffix:""
 proto_file_count: 1
 source_file_descriptor_count: 1
 
-proto_file[0]: test.proto (package="fieldtargets", syntax="proto3")
+proto_file[0]: test.proto (package="msgfeatures", syntax="editions")
   message: Config
     field: name (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
-  source_code_info_locations: 11
+    field: value (number=2, type=TYPE_INT32, label=LABEL_OPTIONAL)
+  source_code_info_locations: 15
