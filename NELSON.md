@@ -1859,12 +1859,18 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts a string literal for the boolean method option `deprecated` and correctly sets `deprecated = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:15:25: Value must be identifier for boolean option "google.protobuf.MethodOptions.deprecated".` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go` — `parseMethodOption` sets `method.Options.Deprecated = proto.Bool(valTok.Value == "true")` accepting any token type. No validation that `valTok.Type == tokenizer.TokenIdent`. A TokenString with decoded value `"true"` passes because `valTok.Value` is `"true"` (decoded content without quotes). C++ protoc uses `ConsumeIdentifier` for boolean values, rejecting string literal tokens. The `validateBool` function exists for FILE-level options but is NOT used for METHOD, SERVICE, MESSAGE, FIELD, ENUM, or ENUM VALUE boolean options — all do `proto.Bool(valTok.Value == "true")` without type checking. Same category as Run 84 (file-level), Run 200 (message-level), Run 201 (field-level), Run 202 (enum value-level), Run 203 (service-level), but at method option level.
 
+### Run 205 — String literal for enum-level boolean option (FAILED: 5/5 profiles)
+- **Test:** `211_string_bool_enum_option` — proto3 enum with `option deprecated = "true";` (string literal `"true"` instead of identifier `true` for enum-level boolean option)
+- **Bug:** Go protoc-go silently accepts a string literal for the boolean enum option `deprecated` and correctly sets `deprecated = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:23: Value must be identifier for boolean option "google.protobuf.EnumOptions.deprecated".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1884` — `e.Options.Deprecated = proto.Bool(valTok.Value == "true")` accepts any token type and does a string comparison. No validation that `valTok.Type == tokenizer.TokenIdent`. A TokenString with decoded value `"true"` passes because `valTok.Value` is `"true"` (decoded content without quotes). C++ protoc uses `ConsumeIdentifier` for boolean values, rejecting string literal tokens. The `validateBool` function exists for FILE-level options but is NOT used for ENUM, MESSAGE, FIELD, ENUM VALUE, SERVICE, or METHOD boolean options — all do `proto.Bool(valTok.Value == "true")` without type checking. Same category as Run 84 (file-level), Run 200 (message-level), Run 201 (field-level), Run 202 (enum value-level), Run 203 (service-level), Run 204 (method-level), but at enum option level. This completes the full set of all option levels.
+
 ### Known gaps still unexplored (updated):
-- **String literal for enum-level boolean option** — `enum Foo { option deprecated = "true"; ... }` — same missing validateBool
+- **String literal for enum-level boolean option** — TESTED in Run 205 (211_string_bool_enum_option), confirmed broken
 - **String literal for method-level boolean option** — TESTED in Run 204 (210_string_bool_method_option), confirmed broken
 - **String literal for service-level boolean option** — TESTED in Run 203 (209_string_bool_service_option), confirmed broken
 - **String literal for enum value boolean option** — TESTED in Run 202 (208_string_bool_enum_val_option), confirmed broken
 - **String literal for field boolean option** — TESTED in Run 201 (207_string_bool_field_option), confirmed broken
+- **String literal for message boolean option** — TESTED in Run 200 (206_string_bool_msg_option), confirmed broken
 - **Invalid idempotency_level error** — same `"line %d:%d:"` format bug at parser.go:2203
 - **Trailing comma in map field options** — same trailing comma issue
 - **Type shadowing** — same nested type name in different parent messages
@@ -1872,3 +1878,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error column positions** — many Go validation errors report wrong column
 - **Dotted option names on message/field/enum/service options** — same bug as file options, `features.X` pattern
 - **FieldOptions.targets** (field 19) — likely also missing from parser switch
+- **String literal for allow_alias** — `option allow_alias = "true";` — same bug at line 1881
+- **String literal for message_set_wire_format** — same bug pattern
+- **String literal for no_standard_descriptor_accessor** — same bug pattern
