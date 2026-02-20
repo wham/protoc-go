@@ -2087,3 +2087,21 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **packed on extension fields** — `extend Base { repeated int32 ids = 101 [packed = true]; }` — may produce different results
 - **Extension field with default in proto3** — `extend Base { string tag = 100 [default = "x"]; }` in proto3 — double validation failure
 - **Multiple errors from different validation passes** — many combinations possible (e.g., reserved+duplicate, proto3+extension, etc.)
+
+### Run 234 — unverified_lazy on non-message field (FAILED: 5/5 profiles)
+- **Test:** `239_unverified_lazy_non_msg` — proto3 message with `int32 count = 1 [unverified_lazy = true];`
+- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `FieldOptions.unverified_lazy = true` on an int32 field. C++ protoc rejects with: `test.proto:6:3: [lazy = true] can only be specified for submessage fields.` (exit 1). Different exit codes across all 5 profiles.
+- **Root cause:** `cli.go:727-776` — `validateLazyNonMessage` only checks `field.GetOptions().GetLazy()` but does NOT check `field.GetOptions().GetUnverifiedLazy()`. C++ protoc validates both `lazy` and `unverified_lazy` with the same constraint: they can only be specified for submessage fields. Go's validation function misses the `unverified_lazy` case entirely.
+
+### Known gaps still unexplored (updated):
+- **Feature target validation on remaining scopes** — method, enum value
+- **Trailing comma in field options** — `[deprecated = true,]` — different error messages
+- **Type shadowing** — same nested type name in different parent messages
+- **Error column positions** — many Go validation errors report wrong column
+- **MessageSet without extensions** — `message_set_wire_format = true` but no `extensions` range
+- **MessageSet with nested messages** — `message_set_wire_format = true` with nested message types
+- **Extension range declaration content** — Go skips `declaration = {...}` entirely
+- **packed on extension fields** — may produce different results
+- **Multiple errors from different validation passes** — many combinations possible
+- **weak field on non-message type** — `[weak = true]` on int32 likely accepted by Go, rejected by C++
+- **debug_redact on non-string field** — may or may not be validated differently

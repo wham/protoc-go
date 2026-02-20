@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package ulazy;
+
+message Config {
+  int32 count = 1 [unverified_lazy = true];
+}
