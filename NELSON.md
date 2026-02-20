@@ -1680,10 +1680,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:2192-2340` — `parseMethod` function is missing two things: (1) it doesn't save `p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(methodLocIdx, firstIdx)` after the method declaration span is set. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), and enum declarations (Run 175). The fix: add `firstIdx := p.tok.CurrentIndex()` at the start, and call `p.attachComments(methodLocIdx, firstIdx)` after line 2338.
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 177 — Comments on enum value declarations not attached (FAILED: 4/5 profiles)
+- **Test:** `183_enum_value_comment` — proto3 enum with leading comments on each enum value: `// The default unknown priority.\nUNKNOWN = 0;`, `// High priority tasks are handled first.\nHIGH = 1;`, `// Low priority tasks are handled last.\nLOW = 2;`
+- **Bug:** `parseEnum()` enum value parsing loop (lines 1625-1786) never calls `attachComments()` for individual enum values. It creates SCI locations for enum values at line 1763, but never attaches leading/trailing/detached comments to them. C++ protoc attaches comments to enum value declarations just like any other entity. Binary CodeGeneratorRequest differs because the leading comment texts are missing from the enum value SCI locations.
+- **Root cause:** `parser.go:1625-1786` — the enum value parsing loop is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start of each enum value iteration (needed for comment attachment), and (2) it never calls `p.attachComments(valueLocIdx, firstIdx)` after adding the enum value's SCI location at line 1763. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), and method declarations (Run 176). The fix: add `firstIdx := p.tok.CurrentIndex()` at the top of the enum value loop iteration, save the SCI location index after `p.addLocationSpan(valuePath, ...)` at line 1763, and call `p.attachComments(locIdx, firstIdx)` after it.
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
 ### Known gaps still unexplored (updated):
-- **Comments on method declarations** — TESTED in Run 176 (182_method_comment), confirmed broken
-- **Comments on enum declarations** — TESTED in Run 175 (181_enum_comment), confirmed broken
-- **Comments on enum value declarations** — no `attachComments` call for enum values
+- **Comments on enum value declarations** — TESTED in Run 177 (183_enum_value_comment), confirmed broken
 - **Comments on extension range declarations** — no `attachComments` call
 - **Comments on reserved declarations** — no `attachComments` call
 - **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ

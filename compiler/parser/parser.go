@@ -1639,6 +1639,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 			continue
 		}
 
+		valFirstIdx := p.tok.CurrentIndex()
 		valNameTok, err := p.tok.ExpectIdent()
 		if err != nil {
 			return nil, err
@@ -1760,7 +1761,9 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 
 		// Source code info for enum value
 		valuePath := append(copyPath(path), 2, valueIdx)
-		p.addLocationSpan(valuePath, valNameTok.Line, valNameTok.Column, endValTok.Line, endValTok.Column+1)
+		valueLocIdx := p.addLocationPlaceholder(valuePath)
+		p.locations[valueLocIdx].Span = multiSpan(valNameTok.Line, valNameTok.Column, endValTok.Line, endValTok.Column+1)
+		p.attachComments(valueLocIdx, valFirstIdx)
 		// Value name - path [1]
 		p.addLocationSpan(append(copyPath(valuePath), 1),
 			valNameTok.Line, valNameTok.Column, valNameTok.Line, valNameTok.Column+len(valNameTok.Value))
