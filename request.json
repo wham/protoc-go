@@ -5,17 +5,22 @@
   "protoFile": [
     {
       "name": "test.proto",
-      "package": "editionsci",
+      "package": "fieldtargets",
       "messageType": [
         {
-          "name": "Simple",
+          "name": "Config",
           "field": [
             {
               "name": "name",
               "number": 1,
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
-              "jsonName": "name"
+              "jsonName": "name",
+              "options": {
+                "targets": [
+                  "TARGET_TYPE_FIELD"
+                ]
+              }
             }
           ]
         }
@@ -37,7 +42,7 @@
             "span": [
               0,
               0,
-              17
+              18
             ]
           },
           {
@@ -47,7 +52,7 @@
             "span": [
               2,
               0,
-              19
+              21
             ]
           },
           {
@@ -84,7 +89,7 @@
             "span": [
               5,
               2,
-              18
+              48
             ]
           },
           {
@@ -128,27 +133,61 @@
               16,
               17
             ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              8
+            ],
+            "span": [
+              5,
+              18,
+              47
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              8,
+              19,
+              0
+            ],
+            "span": [
+              5,
+              19,
+              46
+            ]
           }
         ]
       },
-      "syntax": "editions",
-      "edition": "EDITION_2023"
+      "syntax": "proto3"
     }
   ],
   "sourceFileDescriptors": [
     {
       "name": "test.proto",
-      "package": "editionsci",
+      "package": "fieldtargets",
       "messageType": [
         {
-          "name": "Simple",
+          "name": "Config",
           "field": [
             {
               "name": "name",
               "number": 1,
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
-              "jsonName": "name"
+              "jsonName": "name",
+              "options": {
+                "targets": [
+                  "TARGET_TYPE_FIELD"
+                ]
+              }
             }
           ]
         }
@@ -170,7 +209,7 @@
             "span": [
               0,
               0,
-              17
+              18
             ]
           },
           {
@@ -180,7 +219,7 @@
             "span": [
               2,
               0,
-              19
+              21
             ]
           },
           {
@@ -217,7 +256,7 @@
             "span": [
               5,
               2,
-              18
+              48
             ]
           },
           {
@@ -261,11 +300,40 @@
               16,
               17
             ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              8
+            ],
+            "span": [
+              5,
+              18,
+              47
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              8,
+              19,
+              0
+            ],
+            "span": [
+              5,
+              19,
+              46
+            ]
           }
         ]
       },
-      "syntax": "editions",
-      "edition": "EDITION_2023"
+      "syntax": "proto3"
     }
   ],
   "compilerVersion": {

@@ -2990,6 +2990,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 	bracketTok := p.tok.Next() // consume "["
 	var optLocs []*descriptorpb.SourceCodeInfo_Location
 	seenFieldOpts := map[string]bool{}
+	targetsCount := int32(0)
 
 	addLoc := func(path []int32, startLine, startCol, endLine, endCol int) {
 		optLocs = append(optLocs, &descriptorpb.SourceCodeInfo_Location{
@@ -3002,7 +3003,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		optNameTok := p.tok.Next()
 		optName := optNameTok.Value
 
-		if seenFieldOpts[optName] {
+		if optName != "targets" && seenFieldOpts[optName] {
 			return nil, fmt.Errorf("%d:%d: Option \"%s\" was already set.", optNameTok.Line+1, optNameTok.Column+1, optName)
 		}
 		seenFieldOpts[optName] = true
@@ -3221,6 +3222,39 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			default:
 				return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FieldOptions.OptionRetention\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.retention\".", valTok.Line+1, valTok.Column+1, valTok.Value)
 			}
+		case "targets":
+			if valTok.Type != tokenizer.TokenIdent {
+				return nil, fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.FieldOptions.targets\".", valTok.Line+1, valTok.Column+1)
+			}
+			if field.Options == nil {
+				field.Options = &descriptorpb.FieldOptions{}
+			}
+			var targetVal descriptorpb.FieldOptions_OptionTargetType
+			switch valTok.Value {
+			case "TARGET_TYPE_UNKNOWN":
+				targetVal = descriptorpb.FieldOptions_TARGET_TYPE_UNKNOWN
+			case "TARGET_TYPE_FILE":
+				targetVal = descriptorpb.FieldOptions_TARGET_TYPE_FILE
+			case "TARGET_TYPE_EXTENSION_RANGE":
+				targetVal = descriptorpb.FieldOptions_TARGET_TYPE_EXTENSION_RANGE
+			case "TARGET_TYPE_MESSAGE":
+				targetVal = descriptorpb.FieldOptions_TARGET_TYPE_MESSAGE
+			case "TARGET_TYPE_FIELD":
+				targetVal = descriptorpb.FieldOptions_TARGET_TYPE_FIELD
+			case "TARGET_TYPE_ONEOF":
+				targetVal = descriptorpb.FieldOptions_TARGET_TYPE_ONEOF
+			case "TARGET_TYPE_ENUM":
+				targetVal = descriptorpb.FieldOptions_TARGET_TYPE_ENUM
+			case "TARGET_TYPE_ENUM_ENTRY":
+				targetVal = descriptorpb.FieldOptions_TARGET_TYPE_ENUM_ENTRY
+			case "TARGET_TYPE_SERVICE":
+				targetVal = descriptorpb.FieldOptions_TARGET_TYPE_SERVICE
+			case "TARGET_TYPE_METHOD":
+				targetVal = descriptorpb.FieldOptions_TARGET_TYPE_METHOD
+			default:
+				return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FieldOptions.OptionTargetType\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.targets\".", valTok.Line+1, valTok.Column+1, valTok.Value)
+			}
+			field.Options.Targets = append(field.Options.Targets, targetVal)
 		default:
 			return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", optNameTok.Line+1, optNameTok.Column+1, optName)
 		}
@@ -3268,6 +3302,10 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		case "retention":
 			addLoc(append(copyPath(fieldPath), 8, 17),
 				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+		case "targets":
+			addLoc(append(copyPath(fieldPath), 8, 19, targetsCount),
+				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+			targetsCount++
 		}
 
 		// Check for comma (more options) or closing bracket
