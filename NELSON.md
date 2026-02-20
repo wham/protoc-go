@@ -1992,3 +1992,23 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Custom option on enum values** — same bug in inline loop
 - **Map field with undefined key type** — `map<NonExistent, string>` — same issue, key type unresolved
 - **Undefined type in extension field** — `extend Foo { optional NonExistent bar = 100; }` — may also silently accept
+
+### Run 222 — Oneof features in editions (FAILED: 5/5 profiles)
+- **Test:** `227_oneof_features_editions` — edition 2023 file with `option features.utf8_validation = NONE;` inside a oneof body
+- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `OneofOptions.Features.Utf8Validation = NONE`. C++ protoc rejects with: `test.proto: Option google.protobuf.FeatureSet.utf8_validation cannot be set on an entity of type 'oneof'.` (exit 1). Different exit codes across all 5 profiles.
+- **Root cause:** `parser.go:2968-3084` — `parseOneofOption` handles all `features.X` dotted names and blindly sets the corresponding field on `OneofOptions.Features` without validating that the feature is applicable to the oneof entity type. C++ protoc validates feature targets (each feature has a `targets` annotation in `descriptor.proto` specifying which entity types it applies to). `utf8_validation` targets `TARGET_TYPE_FILE` and `TARGET_TYPE_FIELD`, NOT `TARGET_TYPE_ONEOF`. Go has no feature target validation anywhere — the same bug likely applies to all option scopes (message, enum, service, method, field, enum value) where features are accepted without checking target applicability.
+
+### Known gaps still unexplored (updated):
+- **Feature target validation on all scopes** — Go accepts features on any entity regardless of target restrictions; same bug as oneof but for message, enum, service, method, field, enum value
+- **Trailing comma in map field options** — same trailing comma issue
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ
+- **Error column positions** — many Go validation errors report wrong column
+- **FieldOptions.feature_support** (field 49) — likely missing from parser switch
+- **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
+- **Custom option in service body** — `option (my_opt) = "x";` — same missing parenthesized name handling
+- **Custom option in method body** — same bug
+- **Custom option in enum body** — same bug
+- **Custom option on enum values** — same bug in inline loop
+- **Map field with undefined key type** — `map<NonExistent, string>` — same issue, key type unresolved
+- **Undefined type in extension field** — `extend Foo { optional NonExistent bar = 100; }` — may also silently accept
