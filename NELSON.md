@@ -1921,8 +1921,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseMessageOption()` at line 1187-1207 reads `features` as a single option name token, then calls `Expect("=")` which encounters `.` instead of `=` → error: `test.proto:6:18: Expected "=".` C++ protoc parses the full dotted path `features.json_format` and accepts the option, producing a valid descriptor (exit 0). Go fails with exit 1.
 - **Root cause:** `parser.go:1187-1207` — `parseMessageOption` reads only a single token for the option name and has no handling for dotted names like `features.json_format`. The file-level option parser (`parseFileOption`) has the dotted name handling at line 2756 (`if optName == "features" && p.tok.Peek().Value == "." { ... }`), but `parseMessageOption` lacks it. Same bug likely affects `parseEnumOption`, `parseServiceOption`, and `parseMethodOption` — none of them handle dotted option names.
 
+### Run 215 — Dotted option name on enum option in editions (FAILED: 5/5 profiles)
+- **Test:** `220_enum_features_option` — edition 2023 enum with `option features.enum_type = CLOSED;` inside enum body
+- **Bug:** `parseEnumOption()` at line 1966-1967 reads `features` as a single option name token, then calls `Expect("=")` which encounters `.` instead of `=` → error: `Expected "=".` C++ protoc parses the full dotted path `features.enum_type` and accepts the option, producing a valid descriptor (exit 0). Go fails with exit 1.
+- **Root cause:** `parser.go:1966-1967` — `parseEnumOption` reads only a single token for the option name. No handling for dotted names like `features.enum_type`. Same bug as Run 214 (message level) but in `parseEnumOption` code path. Also affects `parseServiceOption` and `parseMethodOption`.
+
 ### Known gaps still unexplored (updated):
-- **Dotted option names on enum/service/method options** — same bug as message-level, `features.X` pattern
+- **Dotted option names on service/method options** — same bug as message/enum-level, `features.X` pattern
 - **Dotted option names on field options** — `features.field_presence` in editions inside `[...]`
 - **Trailing comma in map field options** — same trailing comma issue
 - **Type shadowing** — same nested type name in different parent messages
