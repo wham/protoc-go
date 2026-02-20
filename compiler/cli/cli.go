@@ -1643,11 +1643,40 @@ func validateFeatureTargets(orderedFiles []string, parsed map[string]*descriptor
 			collectEnumEntryFeatureErrors(name, e, &errs)
 		}
 		for _, msg := range fd.GetMessageType() {
+			collectMessageFeatureErrors(name, msg, &errs)
 			collectEnumEntryFeatureErrorsInMsg(name, msg, &errs)
 			collectOneofFeatureErrorsInMsg(name, msg, &errs)
 		}
 	}
 	return errs
+}
+
+func collectMessageFeatureErrors(filename string, msg *descriptorpb.DescriptorProto, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	if msg.GetOptions() != nil && msg.GetOptions().GetFeatures() != nil {
+		feat := msg.GetOptions().GetFeatures()
+		if feat.FieldPresence != nil {
+			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `message`.", filename, featureProtoNames["field_presence"]))
+		}
+		if feat.EnumType != nil {
+			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `message`.", filename, featureProtoNames["enum_type"]))
+		}
+		if feat.RepeatedFieldEncoding != nil {
+			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `message`.", filename, featureProtoNames["repeated_field_encoding"]))
+		}
+		if feat.Utf8Validation != nil {
+			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `message`.", filename, featureProtoNames["utf8_validation"]))
+		}
+		if feat.MessageEncoding != nil {
+			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `message`.", filename, featureProtoNames["message_encoding"]))
+		}
+		// json_format targets MESSAGE, so it's allowed — skip it
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectMessageFeatureErrors(filename, nested, errs)
+	}
 }
 
 func collectOneofFeatureErrors(filename string, msg *descriptorpb.DescriptorProto, errs *[]string) {
