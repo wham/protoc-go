@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package extconflict;
+
+message Target {
+  optional string id = 1;
+  extensions 100 to 200;
+}
+
+message Container {
+  optional string tag = 1;
+  extend Target {
+    optional string tag = 100;
+  }
+}
