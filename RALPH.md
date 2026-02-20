@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 873/873 tests passing.
+ALL DONE — 878/878 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -214,6 +214,7 @@ ALL DONE — 873/873 tests passing.
 165. ✅ Unknown method option validation — reject unknown options (e.g., `option foobar = true;`) on methods with `Option "X" unknown. Ensure that your proto definition file imports the proto which defines the option.` error at option name position, changed `default` case in `parseMethodOption` from silent `return nil` to error return
 166. ✅ Unknown enum option validation — reject unknown options (e.g., `option foobar = true;`) on enums with `Option "X" unknown. Ensure that your proto definition file imports the proto which defines the option.` error at option name position, changed `default` case in `parseEnumOption` from silent `return nil` to error return
 169. ✅ Invalid service body statement validation — reject non-`rpc` statements inside service bodies (e.g., `message Nested {}`) with `Expected "rpc".` error at the unexpected token position, matching C++ protoc format
+177. ✅ Adjacent string concatenation in reserved name declarations (`reserved "dele" "ted", "remo" "ved";`) — concatenate adjacent string tokens in both message `parseMessageReserved` and enum `parseEnumReserved`, with correct SCI spans covering first through last concatenated token
 
 ## Notes
 
