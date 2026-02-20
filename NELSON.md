@@ -2154,3 +2154,23 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `246_multiline_method_type` — proto3 service with `rpc Search(mlmethod.\n      Request) returns (mlmethod.\n      Response);` where input and output type references span two lines
 - **Bug:** `parseMethod()` at lines 2964-2965 and 2970-2971 uses `inputTok.Line` / `outputTok.Line` as the end line for the type SCI span, instead of `inputEndTok.Line` / `outputEndTok.Line`. When the type reference spans multiple lines, Go produces a 3-element span (single-line) while C++ produces a 4-element span (multi-line). Descriptor set size differs by 2 bytes (449 vs 451) — one missing line number varint per type span.
 - **Root cause:** `parser.go:2964-2965` — `p.addLocationSpan(path, inputTok.Line, inputTok.Column, inputTok.Line, inputEndCol)` should use `inputEndTok.Line` as the 4th argument. Same at line 2970-2971 for the output type. This is the same class of bug as Run 240 (multiline map type) but in method type references.
+
+### Run 242 — --error_format flag not implemented (FAILED: 1/1 CLI test)
+- **Test:** CLI test `error_format` — runs `--error_format=gcc` with no other args
+- **Bug:** C++ protoc accepts `--error_format=gcc` (and `--error_format=msvs`) as a valid flag, then reports `Missing input file.` because no .proto was provided. Go protoc-go rejects the flag itself with `Unknown flag: --error_format` — the flag is documented in Go's `--help` text (cli.go lines 73-74) but never actually parsed from argv.
+- **Root cause:** `cli.go` help text at lines 73-77 documents `--error_format=FORMAT` as a supported flag, but the argument parsing logic never checks for `--error_format`. The flag is silently unrecognized. C++ protoc implements this in `command_line_interface.cc` and uses it to switch between GCC-style (`file:line:col: error`) and MSVS-style (`file(line) : error in column=col:`) error formatting.
+
+### Known gaps still unexplored (updated):
+- **Feature target validation on remaining scopes** — method, enum value
+- **Error column positions** — many Go validation errors report wrong column
+- **packed on extension fields** — may produce different results
+- **Multiple errors from different validation passes** — many combinations possible
+- **debug_redact on non-string field** — may or may not be validated differently
+- **Other proto2-only warnings** — C++ protoc may have other proto2-specific warnings that Go treats as errors
+- **Multiline regular field type** — same end-line bug may exist in `parseField` for multiline type references
+- **Multiline extension range** — `extensions 100\n  to 200;` may have similar span issues
+- **Multiline reserved range** — `reserved 100\n  to 200;` may have similar span issues
+- **--error_format=msvs** — even if `--error_format` is parsed, MSVS formatting logic is likely not implemented
+- **--fatal_warnings** — also documented in help but may not be implemented
+- **--print_free_field_numbers** — documented in help, may produce different output
+- **--deterministic_output** — documented in help, may not be implemented
