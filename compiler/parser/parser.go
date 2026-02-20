@@ -2336,6 +2336,7 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 }
 
 func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32, nestedMsgIdx *int32) ([]*descriptorpb.FieldDescriptorProto, []*descriptorpb.DescriptorProto, *descriptorpb.OneofDescriptorProto, error) {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "oneof"
 	nameTok, err := p.tok.ExpectIdent()
 	if err != nil {
@@ -2407,6 +2408,7 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32, ne
 
 	// Update oneof declaration span
 	p.locations[oneofLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.attachComments(oneofLocIdx, firstIdx)
 
 	decl := &descriptorpb.OneofDescriptorProto{
 		Name: proto.String(nameTok.Value),
