@@ -320,6 +320,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate json_name not used on extension fields
+	if errs := validateExtensionJsonName(orderedFiles, parsed, explicitJsonNames); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate MessageSet messages don't have regular fields
 	if errs := validateMessageSetFields(orderedFiles, parsed); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -2491,6 +2496,47 @@ func collectRequiredExtensionErrors(filename string, msg *descriptorpb.Descripto
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectRequiredExtensionErrors(filename, nested, nestedPath, sci, fqn, errs)
+	}
+}
+
+// validateExtensionJsonName checks that no extension field has an explicit json_name option.
+func validateExtensionJsonName(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		// File-level extensions
+		for i, ext := range fd.GetExtension() {
+			if explicitJsonNames[ext] {
+				path := []int32{7, int32(i), 10}
+				line, col := findLocationByPath(path, sci)
+				errs = append(errs, fmt.Sprintf("%s:%d:%d: option json_name is not allowed on extension fields.",
+					fd.GetName(), line, col))
+			}
+		}
+		// Message-level extensions
+		for i, msg := range fd.GetMessageType() {
+			collectExtensionJsonNameErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, explicitJsonNames, &errs)
+		}
+	}
+	return errs
+}
+
+func collectExtensionJsonNameErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, errs *[]string) {
+	for i, ext := range msg.GetExtension() {
+		if explicitJsonNames[ext] {
+			path := append(append([]int32{}, msgPath...), 6, int32(i), 10)
+			line, col := findLocationByPath(path, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: option json_name is not allowed on extension fields.",
+				filename, line, col))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectExtensionJsonNameErrors(filename, nested, nestedPath, sci, explicitJsonNames, errs)
 	}
 }
 
