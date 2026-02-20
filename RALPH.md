@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1258/1258 tests passing.
+ALL DONE — 1263/1263 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -418,4 +418,5 @@ ALL DONE — 1258/1258 tests passing.
 246. ✅ `--dependency_out=FILE` flag parsing — accept flag without error, value is currently ignored (only relevant for Make-style dependency tracking). C++ protoc accepts this flag but still requires an output directive. Must be checked before the generic `--X_out=` plugin pattern to avoid treating "dependency" as a plugin name.
 247. ✅ `--encode=MESSAGE_TYPE` and `--decode=MESSAGE_TYPE` flag parsing — accept flags without error, values are currently ignored (only relevant for text↔binary proto conversion). C++ protoc accepts these flags and continues to normal validation (e.g., `Missing input file.`). Must be checked before the generic `--X_out=` plugin pattern.
 248. ✅ Message_set_wire_format extension range max fix — when `extensions N to max;` appears before `option message_set_wire_format = true;`, post-process extension ranges after message body parsing to update 536870912 → 2147483647 (INT32_MAX), matching C++ protoc's post-hoc resolution
+249. ✅ Multiline extendee name spans — track `extNameEndLine` from `extNameEndTok.Line` so extend blocks with multiline type names (e.g., `extend Outer.\n  Inner`) produce correct 4-element SCI spans `[startLine, startCol, endLine, endCol]` instead of 3-element single-line spans, fixed in `parseExtend`, `parseNestedExtend`, and `parseGroupFieldInExtend`
 - Type shadowing resolution: C++ protoc's `LookupSymbolNoPlaceholder` uses first-component-first resolution for compound names. For `Outer.Inner` in scope `Container`: find `Outer` at innermost scope first → if found as TYPE_MESSAGE (aggregate), try full `Container.Outer.Inner` → if not found, stop and report shadowing error (don't fall through to outer scopes). `resolveTypeName` returns `(resolved, shadowCandidate)` where shadowCandidate is non-empty when shadowing fails. `shadowErrorMsg` formats the error. Callers in `ResolveTypes`, `resolveMessageFieldsWithErrorsPath`, `CheckUnresolvedTypes`, and `checkMsgUnresolved` all updated to emit shadowing error when shadowCandidate is set.
