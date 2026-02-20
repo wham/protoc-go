@@ -1796,6 +1796,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:7:38: Expected identifier.` (correctly identifies the trailing comma as an error since `]` follows instead of another option name). Go protoc-go: `test.proto:7:38: Option "]" unknown. Ensure that your proto definition file imports the proto which defines the option.` (reads `]` as an option name token, then treats it as an unknown option). The test harness detects error message mismatch.
 - **Root cause:** `parser.go` — `parseFieldOptions` loop: after consuming `,`, it continues the loop and reads the next token as an option name. When a trailing comma precedes `]`, the `]` token is consumed as `optNameTok.Value = "]"`. This falls through the option name switch and hits the unknown option error. C++ protoc's parser checks for `]` after consuming `,` and produces "Expected identifier" because it expects another option name after a comma, not the closing bracket. The Go parser should check if the token after `,` is `]` and either error with "Expected identifier" or allow trailing commas.
 
+### Run 195 — Empty import path (FAILED: 5/5 profiles)
+- **Test:** `201_empty_import` — proto3 file with `import "";` (empty string import path)
+- **Bug:** Both C++ and Go reject the file, but with different error messages. C++ protoc: two lines — `: File not found.` and `test.proto:3:1: Import "" was not found or had errors.` Go protoc-go: one line — `file not found: `. C++ reports the import location with line/column and the import path in the message; Go reports a generic "file not found" without location info.
+- **Root cause:** Go importer error handling returns a bare "file not found" message without including the import path or the source location. C++ protoc reports two errors: one from the file system layer (`: File not found.`) and one from the parser/importer layer with full source location context.
+
 ### Known gaps still unexplored (updated):
 - **Trailing comma in enum value options** — `HIGH = 1 [deprecated = true,];` — same issue
 - **Trailing comma in map field options** — same issue
