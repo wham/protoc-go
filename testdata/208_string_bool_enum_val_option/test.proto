@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package strboolevopt;
+
+enum Priority {
+  UNKNOWN = 0;
+  HIGH = 1 [deprecated = "true"];
+  LOW = 2;
+}
+
+message Task {
+  string name = 1;
+  Priority level = 2;
+}
