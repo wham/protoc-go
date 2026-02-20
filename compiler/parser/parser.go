@@ -823,7 +823,7 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 		}
 	}
 
-	// Parse extension range options [verification = UNVERIFIED, ...]
+	// Parse extension range options [verification = UNVERIFIED, declaration = { ... }, ...]
 	if p.tok.Peek().Value == "[" {
 		openTok := p.tok.Next() // consume "["
 		type extRangeOpt struct {
@@ -831,23 +831,38 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 			nameTok  tokenizer.Token
 			valTok   tokenizer.Token
 		}
+		type declSCI struct {
+			nameTok      tokenizer.Token
+			closeBraceTok tokenizer.Token
+		}
 		var parsedOpts []extRangeOpt
+		var declarations []*descriptorpb.ExtensionRangeOptions_Declaration
+		var declSCIs []declSCI
 		for {
 			nameTok := p.tok.Next()
 			if _, err := p.tok.Expect("="); err != nil {
 				return err
 			}
 			if p.tok.Peek().Value == "{" {
-				// Skip message literal (e.g., declaration = { ... })
-				p.tok.Next()
-				depth := 1
-				for depth > 0 {
-					t := p.tok.Next()
-					if t.Value == "{" {
-						depth++
-					} else if t.Value == "}" {
-						depth--
+				openBrace := p.tok.Next()
+				if nameTok.Value == "declaration" {
+					decl := &descriptorpb.ExtensionRangeOptions_Declaration{}
+					closeBrace := p.parseDeclarationLiteral(decl, openBrace)
+					declarations = append(declarations, decl)
+					declSCIs = append(declSCIs, declSCI{nameTok, closeBrace})
+				} else {
+					// Skip unknown message literal
+					depth := 1
+					var lastTok tokenizer.Token
+					for depth > 0 {
+						lastTok = p.tok.Next()
+						if lastTok.Value == "{" {
+							depth++
+						} else if lastTok.Value == "}" {
+							depth--
+						}
 					}
+					_ = lastTok
 				}
 			} else {
 				valTok := p.tok.Next()
@@ -878,6 +893,15 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 		if err != nil {
 			return err
 		}
+		// Set declarations on each range
+		if len(declarations) > 0 {
+			for i := startCount; i < *rangeIdx; i++ {
+				if msg.ExtensionRange[i].Options == nil {
+					msg.ExtensionRange[i].Options = &descriptorpb.ExtensionRangeOptions{}
+				}
+				msg.ExtensionRange[i].Options.Declaration = declarations
+			}
+		}
 		// Add SCI for each range's options
 		for i := startCount; i < *rangeIdx; i++ {
 			rangePath := append(copyPath(stmtPath), i)
@@ -886,6 +910,11 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 			for _, opt := range parsedOpts {
 				optPath := append(copyPath(optsPath), opt.fieldNum)
 				p.addLocationSpan(optPath, opt.nameTok.Line, opt.nameTok.Column, opt.valTok.Line, opt.valTok.Column+len(opt.valTok.Value))
+			}
+			// SCI for declaration entries (field 2 = declaration in ExtensionRangeOptions)
+			for j, ds := range declSCIs {
+				declPath := append(copyPath(optsPath), 2, int32(j)) // field 2 = declaration, index j
+				p.addLocationSpan(declPath, ds.nameTok.Line, ds.nameTok.Column, ds.closeBraceTok.Line, ds.closeBraceTok.Column+1)
 			}
 		}
 	}
@@ -902,6 +931,40 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 	p.attachComments(locsBefore, firstIdx)
 
 	return nil
+}
+
+// parseDeclarationLiteral parses the body of a declaration message literal
+// (after the opening `{`) and returns the closing `}` token.
+func (p *parser) parseDeclarationLiteral(decl *descriptorpb.ExtensionRangeOptions_Declaration, openBrace tokenizer.Token) tokenizer.Token {
+	for p.tok.Peek().Value != "}" {
+		fieldName := p.tok.Next()
+		p.tok.Next() // consume ":"
+		switch fieldName.Value {
+		case "number":
+			valTok := p.tok.Next()
+			num, _ := strconv.ParseInt(valTok.Value, 0, 32)
+			decl.Number = proto.Int32(int32(num))
+		case "full_name":
+			valTok := p.tok.Next()
+			decl.FullName = proto.String(valTok.Value)
+		case "type":
+			valTok := p.tok.Next()
+			decl.Type = proto.String(valTok.Value)
+		case "reserved":
+			valTok := p.tok.Next()
+			decl.Reserved = proto.Bool(valTok.Value == "true")
+		case "repeated":
+			valTok := p.tok.Next()
+			decl.Repeated = proto.Bool(valTok.Value == "true")
+		default:
+			p.tok.Next() // skip unknown field value
+		}
+		// consume optional comma or semicolon separator
+		if p.tok.Peek().Value == "," || p.tok.Peek().Value == ";" {
+			p.tok.Next()
+		}
+	}
+	return p.tok.Next() // consume "}"
 }
 
 func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {

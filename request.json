@@ -1,60 +1,30 @@
 {
   "fileToGenerate": [
-    "test.proto"
+    "test_neg_zero_float.proto"
   ],
   "protoFile": [
     {
-      "name": "test.proto",
-      "package": "maporder",
+      "name": "test_neg_zero_float.proto",
+      "package": "negzerof",
       "messageType": [
         {
           "name": "Config",
           "field": [
             {
-              "name": "name",
+              "name": "ratio",
               "number": 1,
               "label": "LABEL_OPTIONAL",
-              "type": "TYPE_STRING",
-              "jsonName": "name"
+              "type": "TYPE_DOUBLE",
+              "defaultValue": "-0",
+              "jsonName": "ratio"
             },
             {
-              "name": "settings",
+              "name": "normal",
               "number": 2,
-              "label": "LABEL_REPEATED",
-              "type": "TYPE_MESSAGE",
-              "typeName": ".maporder.Config.SettingsEntry",
-              "jsonName": "settings"
-            },
-            {
-              "name": "version",
-              "number": 3,
               "label": "LABEL_OPTIONAL",
-              "type": "TYPE_INT32",
-              "jsonName": "version"
-            }
-          ],
-          "nestedType": [
-            {
-              "name": "SettingsEntry",
-              "field": [
-                {
-                  "name": "key",
-                  "number": 1,
-                  "label": "LABEL_OPTIONAL",
-                  "type": "TYPE_STRING",
-                  "jsonName": "key"
-                },
-                {
-                  "name": "value",
-                  "number": 2,
-                  "label": "LABEL_OPTIONAL",
-                  "type": "TYPE_INT32",
-                  "jsonName": "value"
-                }
-              ],
-              "options": {
-                "mapEntry": true
-              }
+              "type": "TYPE_DOUBLE",
+              "defaultValue": "1.5",
+              "jsonName": "normal"
             }
           ]
         }
@@ -65,7 +35,7 @@
             "span": [
               0,
               0,
-              8,
+              5,
               1
             ]
           },
@@ -84,7 +54,7 @@
               2
             ],
             "span": [
-              2,
+              1,
               0,
               17
             ]
@@ -95,9 +65,9 @@
               0
             ],
             "span": [
-              4,
+              2,
               0,
-              8,
+              5,
               1
             ]
           },
@@ -108,7 +78,7 @@
               1
             ],
             "span": [
-              4,
+              2,
               8,
               14
             ]
@@ -121,9 +91,23 @@
               0
             ],
             "span": [
-              5,
+              3,
               2,
-              18
+              45
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              4
+            ],
+            "span": [
+              3,
+              2,
+              10
             ]
           },
           {
@@ -135,36 +119,8 @@
               5
             ],
             "span": [
-              5,
-              2,
-              8
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              1
-            ],
-            "span": [
-              5,
-              9,
-              13
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              3
-            ],
-            "span": [
-              5,
-              16,
+              3,
+              11,
               17
             ]
           },
@@ -173,12 +129,13 @@
               4,
               0,
               2,
+              0,
               1
             ],
             "span": [
-              6,
-              2,
-              34
+              3,
+              18,
+              23
             ]
           },
           {
@@ -186,41 +143,13 @@
               4,
               0,
               2,
-              1,
-              6
-            ],
-            "span": [
-              6,
-              2,
-              20
-            ]
-          },
-          {
-            "path": [
-              4,
               0,
-              2,
-              1,
-              1
-            ],
-            "span": [
-              6,
-              21,
-              29
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
               3
             ],
             "span": [
-              6,
-              32,
-              33
+              3,
+              26,
+              27
             ]
           },
           {
@@ -228,12 +157,13 @@
               4,
               0,
               2,
-              2
+              0,
+              8
             ],
             "span": [
-              7,
-              2,
-              20
+              3,
+              28,
+              44
             ]
           },
           {
@@ -241,13 +171,54 @@
               4,
               0,
               2,
+              0,
+              7
+            ],
+            "span": [
+              3,
+              39,
+              43
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
               2,
+              1
+            ],
+            "span": [
+              4,
+              2,
+              45
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              4
+            ],
+            "span": [
+              4,
+              2,
+              10
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
               5
             ],
             "span": [
-              7,
-              2,
-              7
+              4,
+              11,
+              17
             ]
           },
           {
@@ -255,13 +226,13 @@
               4,
               0,
               2,
-              2,
+              1,
               1
             ],
             "span": [
-              7,
-              8,
-              15
+              4,
+              18,
+              24
             ]
           },
           {
@@ -269,73 +240,70 @@
               4,
               0,
               2,
-              2,
+              1,
               3
             ],
             "span": [
-              7,
-              18,
-              19
+              4,
+              27,
+              28
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              8
+            ],
+            "span": [
+              4,
+              29,
+              44
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              7
+            ],
+            "span": [
+              4,
+              40,
+              43
             ]
           }
         ]
-      },
-      "syntax": "proto3"
+      }
     }
   ],
   "sourceFileDescriptors": [
     {
-      "name": "test.proto",
-      "package": "maporder",
+      "name": "test_neg_zero_float.proto",
+      "package": "negzerof",
       "messageType": [
         {
           "name": "Config",
           "field": [
             {
-              "name": "name",
+              "name": "ratio",
               "number": 1,
               "label": "LABEL_OPTIONAL",
-              "type": "TYPE_STRING",
-              "jsonName": "name"
+              "type": "TYPE_DOUBLE",
+              "defaultValue": "-0",
+              "jsonName": "ratio"
             },
             {
-              "name": "settings",
+              "name": "normal",
               "number": 2,
-              "label": "LABEL_REPEATED",
-              "type": "TYPE_MESSAGE",
-              "typeName": ".maporder.Config.SettingsEntry",
-              "jsonName": "settings"
-            },
-            {
-              "name": "version",
-              "number": 3,
               "label": "LABEL_OPTIONAL",
-              "type": "TYPE_INT32",
-              "jsonName": "version"
-            }
-          ],
-          "nestedType": [
-            {
-              "name": "SettingsEntry",
-              "field": [
-                {
-                  "name": "key",
-                  "number": 1,
-                  "label": "LABEL_OPTIONAL",
-                  "type": "TYPE_STRING",
-                  "jsonName": "key"
-                },
-                {
-                  "name": "value",
-                  "number": 2,
-                  "label": "LABEL_OPTIONAL",
-                  "type": "TYPE_INT32",
-                  "jsonName": "value"
-                }
-              ],
-              "options": {
-                "mapEntry": true
-              }
+              "type": "TYPE_DOUBLE",
+              "defaultValue": "1.5",
+              "jsonName": "normal"
             }
           ]
         }
@@ -346,7 +314,7 @@
             "span": [
               0,
               0,
-              8,
+              5,
               1
             ]
           },
@@ -365,7 +333,7 @@
               2
             ],
             "span": [
-              2,
+              1,
               0,
               17
             ]
@@ -376,9 +344,9 @@
               0
             ],
             "span": [
-              4,
+              2,
               0,
-              8,
+              5,
               1
             ]
           },
@@ -389,7 +357,7 @@
               1
             ],
             "span": [
-              4,
+              2,
               8,
               14
             ]
@@ -402,9 +370,23 @@
               0
             ],
             "span": [
-              5,
+              3,
               2,
-              18
+              45
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              4
+            ],
+            "span": [
+              3,
+              2,
+              10
             ]
           },
           {
@@ -416,36 +398,8 @@
               5
             ],
             "span": [
-              5,
-              2,
-              8
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              1
-            ],
-            "span": [
-              5,
-              9,
-              13
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              3
-            ],
-            "span": [
-              5,
-              16,
+              3,
+              11,
               17
             ]
           },
@@ -454,12 +408,13 @@
               4,
               0,
               2,
+              0,
               1
             ],
             "span": [
-              6,
-              2,
-              34
+              3,
+              18,
+              23
             ]
           },
           {
@@ -467,41 +422,13 @@
               4,
               0,
               2,
-              1,
-              6
-            ],
-            "span": [
-              6,
-              2,
-              20
-            ]
-          },
-          {
-            "path": [
-              4,
               0,
-              2,
-              1,
-              1
-            ],
-            "span": [
-              6,
-              21,
-              29
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
               3
             ],
             "span": [
-              6,
-              32,
-              33
+              3,
+              26,
+              27
             ]
           },
           {
@@ -509,12 +436,13 @@
               4,
               0,
               2,
-              2
+              0,
+              8
             ],
             "span": [
-              7,
-              2,
-              20
+              3,
+              28,
+              44
             ]
           },
           {
@@ -522,13 +450,54 @@
               4,
               0,
               2,
+              0,
+              7
+            ],
+            "span": [
+              3,
+              39,
+              43
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
               2,
+              1
+            ],
+            "span": [
+              4,
+              2,
+              45
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              4
+            ],
+            "span": [
+              4,
+              2,
+              10
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
               5
             ],
             "span": [
-              7,
-              2,
-              7
+              4,
+              11,
+              17
             ]
           },
           {
@@ -536,13 +505,13 @@
               4,
               0,
               2,
-              2,
+              1,
               1
             ],
             "span": [
-              7,
-              8,
-              15
+              4,
+              18,
+              24
             ]
           },
           {
@@ -550,18 +519,45 @@
               4,
               0,
               2,
-              2,
+              1,
               3
             ],
             "span": [
-              7,
-              18,
-              19
+              4,
+              27,
+              28
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              8
+            ],
+            "span": [
+              4,
+              29,
+              44
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              7
+            ],
+            "span": [
+              4,
+              40,
+              43
             ]
           }
         ]
-      },
-      "syntax": "proto3"
+      }
     }
   ],
   "compilerVersion": {
