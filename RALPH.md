@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 833/833 tests passing.
+ALL DONE — 838/838 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -326,3 +326,4 @@ ALL DONE — 833/833 tests passing.
 - Enum default identifier validation: C++ descriptor.cc checks `io::Tokenizer::IsIdentifier(proto.default_value())` before looking up the enum value name. If the default value is not a valid identifier (e.g., integer `0`, string `"HIGH"`), it reports `Default value for an enum field must be an identifier.` at the DEFAULT_VALUE location. Go implementation adds `isProtoIdentifier` check in `collectEnumDefaultErrors` (cli.go) before the value name lookup. `isProtoIdentifier` checks `[a-zA-Z_][a-zA-Z0-9_]*` pattern.
 167. ✅ Parenthesized custom file option parsing — handle `option (name) = value;` syntax with parenthesized (extension) option names, skip to end of statement and report `Option "(name)" unknown. Ensure that your proto definition file imports the proto which defines the option.` error at `(` token position, supports dotted names like `(pkg.name)`
 168. ✅ Negative message reserved range rejection — reject negative numbers in message `reserved` declarations (e.g., `reserved -5 to -1;`) with `Expected field name or number range.` error at `-` token position, using error recovery to continue parsing and report errors for all invalid reserved declarations
+169. ✅ Invalid escape sequence validation — reject unknown escape sequences (e.g., `\e`) in string literals with `Invalid escape sequence in string literal.` error at the escape character position (after backslash), tokenizer records `TokenError` which gets merged with parser errors
