@@ -2158,6 +2158,9 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 	var fieldNum int32
 	switch optName {
 	case "deprecated":
+		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.ServiceOptions.deprecated\".", valTok.Line+1, valTok.Column+1)
+		}
 		svc.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 33
 	default:
