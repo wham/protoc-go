@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 918/918 tests passing.
+ALL DONE — 923/923 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -222,6 +222,7 @@ ALL DONE — 918/918 tests passing.
 
 183. ✅ Enum declaration comment tracking — `parseEnum` now captures `firstIdx` before consuming `enum` token and calls `attachComments` on the enum's SCI location, matching `parseMessage`/`parseService`/`parseOneof`/`parseMapField` behavior for leading/trailing/detached comments
 184. ✅ Method declaration comment tracking — `parseMethod` now captures `firstIdx` before consuming `rpc` token and calls `attachComments` on the method's SCI location, matching other declaration parsers for leading/trailing/detached comments
+185. ✅ Import declaration comment tracking — `parseImport` now captures `firstIdx` before consuming `import` token and calls `attachComments` on the import's SCI location (path `[3, depIdx]`), matching other declaration parsers for leading/trailing/detached comments
 
 ## Notes
 
@@ -343,3 +344,4 @@ ALL DONE — 918/918 tests passing.
 174. ✅ Unterminated string at EOF detection — tokenizer detects EOF inside string literal (no closing quote) and reports `Unexpected end of string.` error at EOF position, merged with parser errors to produce both `Unexpected end of string.` and `Expected ";".` matching C++ protoc
 175. ✅ Short unicode escape validation — `\u` requires exactly 4 hex digits, `\U` requires exactly 8 hex digits; fewer digits produces `Expected four hex digits for \u escape sequence.` or `Expected eight hex digits for \U escape sequence.` error at position after last consumed digit
 178. ✅ Bytes default value C-escaping — C++ protoc calls `absl::CEscape()` on bytes default values before storing in `default_value` field, converting non-printable bytes to octal (`\NNN`) and special chars to escape sequences (`\n`, `\t`, etc.); Go `cEscape` function in parser.go matches this behavior
+- Import declaration comment tracking: `parseImport` captures `firstIdx` before consuming `import` token and calls `attachComments` on the import SCI location (path `[3, depIdx]`), same pattern as message/enum/service/oneof/field/map/method declarations.
