@@ -3099,16 +3099,25 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			field.JsonName = proto.String(valTok.Value)
 			p.explicitJsonNames[field] = true
 		case "deprecated":
+			if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+				return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FieldOptions.deprecated\".", valTok.Line+1, valTok.Column+1)
+			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}
 			field.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		case "packed":
+			if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+				return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FieldOptions.packed\".", valTok.Line+1, valTok.Column+1)
+			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}
 			field.Options.Packed = proto.Bool(valTok.Value == "true")
 		case "lazy":
+			if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+				return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FieldOptions.lazy\".", valTok.Line+1, valTok.Column+1)
+			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}
@@ -3142,16 +3151,25 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FieldOptions.CType\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.ctype\".", valTok.Line+1, valTok.Column+1, valTok.Value)
 			}
 		case "debug_redact":
+			if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+				return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FieldOptions.debug_redact\".", valTok.Line+1, valTok.Column+1)
+			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}
 			field.Options.DebugRedact = proto.Bool(valTok.Value == "true")
 		case "unverified_lazy":
+			if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+				return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FieldOptions.unverified_lazy\".", valTok.Line+1, valTok.Column+1)
+			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}
 			field.Options.UnverifiedLazy = proto.Bool(valTok.Value == "true")
 		case "weak":
+			if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+				return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FieldOptions.weak\".", valTok.Line+1, valTok.Column+1)
+			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}
