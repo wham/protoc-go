@@ -1481,8 +1481,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts the unknown message option and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:10: Option "foobar" unknown. Ensure that your proto definition file imports the proto which defines the option.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:1193-1194` — `parseMessageOption` switch handles `deprecated` (field 3), `no_standard_descriptor_accessor` (field 2), `message_set_wire_format` (field 1), and `map_entry` (field 7, rejected). The `default` case at line 1193-1194 does `return nil`, silently accepting any unknown option name. C++ protoc stores all options as `UninterpretedOption` during parsing, then during linking in `descriptor.cc`, resolves each option name against the relevant options message fields. Unknown names are rejected. Go's parser should return an error for unknown option names: `return fmt.Errorf(... "Option \"%s\" unknown. ...")`. Same bug exists in `parseEnumOption` (line 1809), `parseServiceOption` (line 2067), and `parseMethodOption` (line 2134) — all silently drop unknown option names.
 
+### Run 153 — Unknown field option silently accepted (FAILED: 5/5 profiles)
+- **Test:** `159_unknown_field_option` — proto3 message with `string name = 1 [foobar = true];` (completely unknown option name, not a standard FieldOptions field)
+- **Bug:** Go protoc-go silently accepts the unknown field option and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:20: Option "foobar" unknown. Ensure that your proto definition file imports the proto which defines the option.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:2801-2938` — `parseFieldOptions` switch handles `default`, `json_name`, `deprecated`, `packed`, `lazy`, `jstype`, `ctype`, `debug_redact`, `unverified_lazy` but has NO `default` case. Unknown option names silently fall through the switch without any action or error. C++ protoc stores all options as `UninterpretedOption` during parsing, then during linking validates them. Go's parser should add a `default:` case that returns an error for unknown option names. Same pattern as `parseMessageOption` (Run 152), `parseEnumOption`, `parseServiceOption`, `parseMethodOption` — all silently drop unknown option names.
+
 ### Known gaps still unexplored (updated):
 - **Unknown enum/service/method options** — same `return nil` default case as message options (lines 1809, 2067, 2134)
+- **Unknown field options** — TESTED in Run 153 (159_unknown_field_option), confirmed broken (Go accepts, C++ rejects)
 - **Invalid content in service body** — `service Foo { string x = 1; }` — Go treats as rpc, C++ rejects differently
 - **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
 - **Type shadowing** — same nested type name in different parent messages
@@ -1492,4 +1498,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error column positions** — many Go validation errors report wrong column
 - **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
 - **Custom option syntax** — `option (custom_opt) = "foo";` — Go can't parse parenthesized option names
-- **Unknown field options** — `string name = 1 [foobar = true];` — Go likely silently drops unknown field options too
+- **Unknown enum value options** — `HIGH = 1 [foobar = true];` — same pattern, likely silently dropped
