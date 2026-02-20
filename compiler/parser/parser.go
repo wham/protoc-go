@@ -715,6 +715,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 }
 
 func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath []int32, rangeIdx *int32) error {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "extensions"
 	stmtPath := append(copyPath(msgPath), 5) // field 5 = extension_range
 	startCount := *rangeIdx
@@ -863,6 +864,7 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 	stmtLoc := p.locations[len(p.locations)-1]
 	copy(p.locations[locsBefore+1:], p.locations[locsBefore:len(p.locations)-1])
 	p.locations[locsBefore] = stmtLoc
+	p.attachComments(locsBefore, firstIdx)
 
 	return nil
 }

@@ -1698,8 +1698,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:576-712` — `parseMessageReserved` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the statement-level SCI location. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), enum value declarations (Run 177), and import declarations (Run 178).
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 180 — Comments on extension range declarations not attached (FAILED: 4/5 profiles)
+- **Test:** `186_extension_range_comment` — proto2 message with a leading comment on an `extensions 100 to 199;` statement: `// These extension ranges are reserved for third-party plugins.\nextensions 100 to 199;`
+- **Bug:** `parseExtensionRange()` at lines 717-900+ never calls `attachComments()`. It creates SCI locations for individual extension ranges and the container, but never attaches leading/trailing/detached comments to any of them. C++ protoc attaches comments to extension range declarations just like any other entity. Binary descriptor sizes differ because the leading comment text is missing from the extension range statement's SCI location.
+- **Root cause:** `parser.go:717+` — `parseExtensionRange` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the statement-level SCI location. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), enum value declarations (Run 177), import declarations (Run 178), and reserved declarations (Run 179).
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
 ### Known gaps still unexplored (updated):
-- **Comments on extension range declarations** — no `attachComments` call in `parseExtensionRange`
 - **Comments on option statements** — no `attachComments` call in `parseMessageOption`, `parseFileOption`, etc.
 - **Comments on enum reserved declarations** — no `attachComments` call in `parseEnumReserved`
 - **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ
@@ -1709,4 +1714,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Error column positions** — many Go validation errors report wrong column
 - **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
-- **Comments on reserved declarations** — TESTED in Run 179 (185_reserved_comment), confirmed broken
+- **Comments on extension range declarations** — TESTED in Run 180 (186_extension_range_comment), confirmed broken
