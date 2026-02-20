@@ -1740,9 +1740,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:2144-2208` — `parseMethodOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations at lines 2199-2206. Same bug pattern as file option declarations (Run 182), message option declarations (Run 183), enum option declarations (Run 184), and service option declarations (Run 185).
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 187 — Multiline block comment formatting (FAILED: 4/5 profiles)
+- **Test:** `193_block_comment` — proto3 message with a Javadoc-style multiline block comment on a field: `/*\n   * The name of the\n   * configuration entry.\n   */\nstring name = 2;`
+- **Bug:** Go's `readBlockCommentText()` returns raw content between `/*` and `*/`: `"\n   * The name of the\n   * configuration entry.\n   "`. C++ protoc strips leading ` * ` prefixes from each line (via `StripLeadingWhitespaceAndStarFromBlockComment()`), producing: `"\n The name of the\n configuration entry.\n"`. Binary CodeGeneratorRequest differs because the `leading_comments` field has different text content.
+- **Root cause:** `tokenizer.go:247-267` — `readBlockCommentText` returns the raw text between `/*` and `*/` without any post-processing. C++ protoc's tokenizer calls `StripLeadingWhitespaceAndStarFromBlockComment()` which strips the leading ` * ` (space-star-optional-space) from each line of a multiline block comment. This produces cleaner comment text matching Javadoc/JSDoc conventions. The Go tokenizer needs to implement the same stripping logic after reading the raw block comment content.
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
 ### Known gaps still unexplored (updated):
-- **Comments on method option statements** — TESTED in Run 186 (192_method_option_comment), confirmed broken
-- **Comments on service option** — TESTED in Run 185 (191_service_option_comment), confirmed broken
 - **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ
 - **String default value on bytes field** — C++ may treat differently than Go
 - **Type shadowing** — same nested type name in different parent messages
@@ -1750,8 +1754,10 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Error column positions** — many Go validation errors report wrong column
 - **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
-- **Comments on extend block declarations** — already fixed (attachComments added at lines 910, 1122)
 - **Comments on group field declarations** — `parseGroupField`/`parseGroupFieldInOneof`/`parseGroupFieldInExtend` may miss comments
 - **Comments on nested extend field declarations** — fields inside nested extend may miss comments
 - **Comments on oneof fields** — individual fields within oneof parsed via `parseField` which has `attachComments`, but verify
 - **Comments on field option declarations** — e.g., comment on `[deprecated = true]` inside `[...]` bracket list
+- **Block comment trailing newline** — single-line block comments match, but edge cases with `/* */` (empty block comment) may differ
+- **Block comment without leading `*`** — multiline `/* line1\nline2 */` without `*` prefix — C++ stripping behavior may differ
+- **Multiline block comment on other entities** — same bug affects comments on messages, enums, services, etc. (not just fields)

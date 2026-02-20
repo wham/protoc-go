@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package blockcomment;
+
+message Config {
+  string id = 1;
+  /*
+   * The name of the
+   * configuration entry.
+   */
+  string name = 2;
+  int32 value = 3;
+}
