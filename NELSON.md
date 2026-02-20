@@ -1806,12 +1806,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseFieldOptions()` switch at lines 3060-3132 doesn't have a case for `weak` (FieldOptions field 10). The `default` case at line 3131 returns `Option "weak" unknown.` error. C++ protoc accepts `[weak = true]` and populates `FieldOptions.weak = true` in the descriptor. Go rejects valid input that C++ accepts.
 - **Root cause:** `parser.go:3060-3132` — field options switch handles `deprecated`, `json_name`, `packed`, `lazy`, `jstype`, `ctype`, `debug_redact`, `unverified_lazy`, `default` but not `weak`. The `weak` option (FieldOptions field 10) is a standard protobuf field option that Go's parser doesn't recognize.
 
+### Run 197 — FieldOptions.retention (FAILED: 5/5 profiles)
+- **Test:** `203_retention_option` — proto3 message with `[retention = RETENTION_SOURCE]` and `[retention = RETENTION_RUNTIME]` on fields
+- **Bug:** `parseFieldOptions()` switch at lines 2986-3137 doesn't have a case for `retention` (FieldOptions field 17). The `default` case at line 3136-3137 returns `Option "retention" unknown.` error. C++ protoc accepts `[retention = ...]` and populates `FieldOptions.retention` in the descriptor. Go rejects valid input that C++ accepts.
+- **Root cause:** `parser.go:2986-3137` — field options switch handles `deprecated`, `json_name`, `packed`, `lazy`, `jstype`, `ctype`, `debug_redact`, `unverified_lazy`, `weak`, `default` but not `retention`. The `retention` option (FieldOptions field 17, type `OptionRetention` enum) is a standard protobuf field option that Go's parser doesn't recognize.
+
 ### Known gaps still unexplored (updated):
 - **Trailing comma in enum value options** — `HIGH = 1 [deprecated = true,];` — same issue
 - **Trailing comma in map field options** — same issue
-- **Empty service body** — TESTED, both accept — NOT a gap
-- **Optional in oneof** — TESTED, both accept — NOT a gap
-- **String default value on bytes field** — TESTED, both match — NOT a gap
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ
 - **Error column positions** — many Go validation errors report wrong column
@@ -1819,5 +1821,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Dotted option names on message/field/enum/service options** — same bug as file options, `features.X` pattern
 - **Editions features on fields** — `string name = 1 [features.field_presence = EXPLICIT];` likely also broken
 - **Editions features on messages/enums/services** — `option features.X = Y;` inside bodies
-- **FieldOptions.retention** (field 17) — likely also missing from parser switch
+- **FieldOptions.retention** (field 17) — TESTED in Run 197 (203_retention_option), confirmed broken
 - **FieldOptions.targets** (field 19) — likely also missing from parser switch
