@@ -2267,8 +2267,15 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 	var endTok tokenizer.Token
 	if p.tok.Peek().Value == "{" {
 		p.tok.Next()
+		if method.Options == nil {
+			method.Options = &descriptorpb.MethodOptions{}
+		}
 		seenMethodOptions := map[string]bool{}
 		for p.tok.Peek().Value != "}" {
+			if p.tok.Peek().Value == ";" {
+				p.tok.Next()
+				continue
+			}
 			if p.tok.Peek().Value == "option" {
 				if err := p.parseMethodOption(method, path, seenMethodOptions); err != nil {
 					return nil, err

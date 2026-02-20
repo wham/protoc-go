@@ -5,31 +5,52 @@
   "protoFile": [
     {
       "name": "test.proto",
-      "package": "deprecated_opt",
+      "package": "methodstmt",
       "messageType": [
         {
-          "name": "Simple",
+          "name": "Request",
           "field": [
             {
-              "name": "name",
+              "name": "query",
               "number": 1,
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
-              "jsonName": "name"
+              "jsonName": "query"
+            }
+          ]
+        },
+        {
+          "name": "Response",
+          "field": [
+            {
+              "name": "result",
+              "number": 1,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_STRING",
+              "jsonName": "result"
             }
           ]
         }
       ],
-      "options": {
-        "javaGenerateEqualsAndHash": true
-      },
+      "service": [
+        {
+          "name": "SearchService",
+          "method": [
+            {
+              "name": "Search",
+              "inputType": ".methodstmt.Request",
+              "outputType": ".methodstmt.Response"
+            }
+          ]
+        }
+      ],
       "sourceCodeInfo": {
         "location": [
           {
             "span": [
               0,
               0,
-              8,
+              16,
               1
             ]
           },
@@ -50,28 +71,7 @@
             "span": [
               2,
               0,
-              23
-            ]
-          },
-          {
-            "path": [
-              8
-            ],
-            "span": [
-              4,
-              0,
-              44
-            ]
-          },
-          {
-            "path": [
-              8,
-              20
-            ],
-            "span": [
-              4,
-              0,
-              44
+              19
             ]
           },
           {
@@ -80,9 +80,9 @@
               0
             ],
             "span": [
-              6,
+              4,
               0,
-              8,
+              6,
               1
             ]
           },
@@ -93,9 +93,9 @@
               1
             ],
             "span": [
-              6,
+              4,
               8,
-              14
+              15
             ]
           },
           {
@@ -106,9 +106,9 @@
               0
             ],
             "span": [
-              7,
+              5,
               2,
-              18
+              19
             ]
           },
           {
@@ -120,7 +120,7 @@
               5
             ],
             "span": [
-              7,
+              5,
               2,
               8
             ]
@@ -134,9 +134,9 @@
               1
             ],
             "span": [
-              7,
+              5,
               9,
-              13
+              14
             ]
           },
           {
@@ -148,9 +148,168 @@
               3
             ],
             "span": [
-              7,
+              5,
+              17,
+              18
+            ]
+          },
+          {
+            "path": [
+              4,
+              1
+            ],
+            "span": [
+              8,
+              0,
+              10,
+              1
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              1
+            ],
+            "span": [
+              8,
+              8,
+              16
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0
+            ],
+            "span": [
+              9,
+              2,
+              20
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0,
+              5
+            ],
+            "span": [
+              9,
+              2,
+              8
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              9,
+              9,
+              15
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              9,
+              18,
+              19
+            ]
+          },
+          {
+            "path": [
+              6,
+              0
+            ],
+            "span": [
+              12,
+              0,
               16,
-              17
+              1
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              1
+            ],
+            "span": [
+              12,
+              8,
+              21
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0
+            ],
+            "span": [
+              13,
+              2,
+              15,
+              3
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              13,
+              6,
+              12
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0,
+              2
+            ],
+            "span": [
+              13,
+              13,
+              20
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              13,
+              31,
+              39
             ]
           }
         ]
@@ -161,31 +320,52 @@
   "sourceFileDescriptors": [
     {
       "name": "test.proto",
-      "package": "deprecated_opt",
+      "package": "methodstmt",
       "messageType": [
         {
-          "name": "Simple",
+          "name": "Request",
           "field": [
             {
-              "name": "name",
+              "name": "query",
               "number": 1,
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
-              "jsonName": "name"
+              "jsonName": "query"
+            }
+          ]
+        },
+        {
+          "name": "Response",
+          "field": [
+            {
+              "name": "result",
+              "number": 1,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_STRING",
+              "jsonName": "result"
             }
           ]
         }
       ],
-      "options": {
-        "javaGenerateEqualsAndHash": true
-      },
+      "service": [
+        {
+          "name": "SearchService",
+          "method": [
+            {
+              "name": "Search",
+              "inputType": ".methodstmt.Request",
+              "outputType": ".methodstmt.Response"
+            }
+          ]
+        }
+      ],
       "sourceCodeInfo": {
         "location": [
           {
             "span": [
               0,
               0,
-              8,
+              16,
               1
             ]
           },
@@ -206,28 +386,7 @@
             "span": [
               2,
               0,
-              23
-            ]
-          },
-          {
-            "path": [
-              8
-            ],
-            "span": [
-              4,
-              0,
-              44
-            ]
-          },
-          {
-            "path": [
-              8,
-              20
-            ],
-            "span": [
-              4,
-              0,
-              44
+              19
             ]
           },
           {
@@ -236,9 +395,9 @@
               0
             ],
             "span": [
-              6,
+              4,
               0,
-              8,
+              6,
               1
             ]
           },
@@ -249,9 +408,9 @@
               1
             ],
             "span": [
-              6,
+              4,
               8,
-              14
+              15
             ]
           },
           {
@@ -262,9 +421,9 @@
               0
             ],
             "span": [
-              7,
+              5,
               2,
-              18
+              19
             ]
           },
           {
@@ -276,7 +435,7 @@
               5
             ],
             "span": [
-              7,
+              5,
               2,
               8
             ]
@@ -290,9 +449,9 @@
               1
             ],
             "span": [
-              7,
+              5,
               9,
-              13
+              14
             ]
           },
           {
@@ -304,9 +463,168 @@
               3
             ],
             "span": [
-              7,
+              5,
+              17,
+              18
+            ]
+          },
+          {
+            "path": [
+              4,
+              1
+            ],
+            "span": [
+              8,
+              0,
+              10,
+              1
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              1
+            ],
+            "span": [
+              8,
+              8,
+              16
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0
+            ],
+            "span": [
+              9,
+              2,
+              20
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0,
+              5
+            ],
+            "span": [
+              9,
+              2,
+              8
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              9,
+              9,
+              15
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              9,
+              18,
+              19
+            ]
+          },
+          {
+            "path": [
+              6,
+              0
+            ],
+            "span": [
+              12,
+              0,
               16,
-              17
+              1
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              1
+            ],
+            "span": [
+              12,
+              8,
+              21
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0
+            ],
+            "span": [
+              13,
+              2,
+              15,
+              3
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              13,
+              6,
+              12
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0,
+              2
+            ],
+            "span": [
+              13,
+              13,
+              20
+            ]
+          },
+          {
+            "path": [
+              6,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              13,
+              31,
+              39
             ]
           }
         ]
