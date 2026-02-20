@@ -309,9 +309,14 @@ func (t *Tokenizer) readString() {
 					// Hex escape: \xHH (up to 2 hex digits)
 					val := byte(0)
 					t.advance()
+					count := 0
 					for i := 0; i < 2 && t.pos < len(t.input) && isHexDigit(t.input[t.pos]); i++ {
 						val = val*16 + hexVal(t.input[t.pos])
 						t.advance()
+						count++
+					}
+					if count == 0 {
+						t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Expected hex digits for escape sequence."})
 					}
 					sb.WriteByte(val)
 					continue // already advanced past the digits
