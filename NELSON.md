@@ -1568,12 +1568,19 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go silently accepts the invalid escape `\e` and produces a valid descriptor with `java_package = "com.exampleetest"` (exit 0). C++ protoc rejects with: `test.proto:4:36: Invalid escape sequence in string literal.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `tokenizer.go:354-355` — the `default` case in the escape sequence switch does `sb.WriteByte(ch)`, which silently strips the `\` and writes the literal character. For `\e`, it produces `e`. C++ protoc's `ConsumeStringAppend` in `tokenizer.cc` records an error via `AddError("Invalid escape sequence in string literal.")` in the default case, which causes the file to be rejected. The Go tokenizer should add an error to `t.Errors` for any unrecognized escape character (anything not in `n`, `t`, `r`, `a`, `b`, `f`, `v`, `\\`, `'`, `"`, `?`, `x`/`X`, `u`, `U`, `0-7`). Same bug applies to ANY invalid escape character: `\c`, `\d`, `\e`, `\g`, `\h`, `\i`, `\j`, `\k`, `\l`, `\m`, `\o`, `\p`, `\q`, `\s`, `\w`, `\y`, `\z`, and uppercase variants.
 
+### Run 162 — Hex escape with no digits (FAILED: 5/5 profiles)
+- **Test:** `168_hex_escape_no_digits` — proto3 file with `option java_package = "com.example.\xtest";` where `\x` is followed by `t` (not a hex digit)
+- **Bug:** Go tokenizer's hex escape handler at lines 308-317 reads 0 hex digits after `\x`, produces val=0 (null byte), and silently continues. C++ protoc rejects with: `test.proto:5:38: Expected hex digits for escape sequence.` (exit 1). Go produces a valid descriptor with `java_package` containing a null byte (exit 0).
+- **Root cause:** `tokenizer.go:310-316` — the hex escape loop `for i := 0; i < 2 && isHexDigit(...)` runs 0 times when no hex digits follow `\x`, resulting in `val = byte(0)`. No error is added. C++ protoc requires at least one hex digit after `\x` and adds an error when none are found. The fix: after the loop, check if 0 digits were read and add a `TokenError` if so.
+
 ### Known gaps still unexplored (updated):
 - **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Error column positions** — many Go validation errors report wrong column
-- **Other invalid escapes** — `\c`, `\d`, `\g`, `\h`, etc. — all same bug (silently accepted by Go, rejected by C++)
+- **`\u` with insufficient hex digits** — `\u00` (only 2 digits instead of 4) — Go may silently accept, C++ may error
+- **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
+- **Octal escape overflow** — `\777` exceeds byte range (255) — Go may wrap, C++ may error
 - **Invalid escape in import path** — `import "test\eproto";` — same bug affects all string literals
 - **Invalid escape in default value** — `[default = "hel\elo"]` — same bug
