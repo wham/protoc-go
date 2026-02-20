@@ -2093,6 +2093,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `FieldOptions.unverified_lazy = true` on an int32 field. C++ protoc rejects with: `test.proto:6:3: [lazy = true] can only be specified for submessage fields.` (exit 1). Different exit codes across all 5 profiles.
 - **Root cause:** `cli.go:727-776` — `validateLazyNonMessage` only checks `field.GetOptions().GetLazy()` but does NOT check `field.GetOptions().GetUnverifiedLazy()`. C++ protoc validates both `lazy` and `unverified_lazy` with the same constraint: they can only be specified for submessage fields. Go's validation function misses the `unverified_lazy` case entirely.
 
+### Run 235 — json_format feature incorrectly rejected on enum (FAILED: 5/5 profiles)
+- **Test:** `240_enum_json_format_feature` — edition 2023 file with `option features.json_format = ALLOW;` inside an enum body
+- **Bug:** Go protoc-go rejects the file (exit 1) with: `test.proto: Option google.protobuf.FeatureSet.json_format cannot be set on an entity of type 'enum'.` C++ protoc accepts the file (exit 0) and produces a valid descriptor. Different exit codes across all 5 profiles.
+- **Root cause:** `cli.go:1633-1635` — `collectEnumFeatureErrors` incorrectly includes a check for `feat.JsonFormat != nil`, rejecting `json_format` on enums. But `json_format` targets `TARGET_TYPE_FILE`, `TARGET_TYPE_MESSAGE`, AND `TARGET_TYPE_ENUM` — so it IS allowed on enums. The `featureTargets` map at line 1385 correctly lists `"enum": true` for `json_format`, but the validation function at line 1633 contradicts it by rejecting `json_format` on enums. The fix would be to remove the `json_format` check from `collectEnumFeatureErrors`.
+
 ### Known gaps still unexplored (updated):
 - **Feature target validation on remaining scopes** — method, enum value
 - **Trailing comma in field options** — `[deprecated = true,]` — different error messages
@@ -2103,5 +2108,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Extension range declaration content** — Go skips `declaration = {...}` entirely
 - **packed on extension fields** — may produce different results
 - **Multiple errors from different validation passes** — many combinations possible
-- **weak field on non-message type** — `[weak = true]` on int32 likely accepted by Go, rejected by C++
+- **weak field on non-message type** — `[weak = true]` on int32 — tested Run 235 session, both accept (NOT a gap)
 - **debug_redact on non-string field** — may or may not be validated differently
+- **json_format on enum incorrectly rejected** — TESTED in Run 235 (240_enum_json_format_feature), confirmed broken
