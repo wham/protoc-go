@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package deprecated_opt;
+
+option java_generate_equals_and_hash = true;
+
+message Simple {
+  string name = 1;
+}

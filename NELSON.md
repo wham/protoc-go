@@ -1459,8 +1459,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
 - **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
 - **UTF-8 BOM** — TESTED in Run 149 (155_bom), confirmed broken (Go rejects BOM bytes, C++ skips them)
+- **Deprecated file option `java_generate_equals_and_hash`** — TESTED in Run 150 (156_deprecated_file_option), confirmed broken (Go rejects, C++ accepts)
 
 ### Run 149 — UTF-8 BOM (Byte Order Mark) (FAILED: 5/5 profiles)
 - **Test:** `155_bom` — proto3 file with UTF-8 BOM (`\xEF\xBB\xBF`) prepended before `syntax = "proto3";`
 - **Bug:** Go protoc-go rejects the file with: `test.proto:line 1:1: unexpected token "ï"` (exit 1). C++ protoc silently skips the BOM and parses the file normally, producing a valid descriptor (exit 0). The test harness detects exit code mismatch.
 - **Root cause:** `tokenizer.go` — the tokenizer has no BOM handling. The 3-byte UTF-8 BOM (`EF BB BF`) is decoded by Go's string handling as `ï` (U+00EF) + `»` (U+00BB) + `¿` (U+00BF). The first byte `ï` is not a valid identifier start character, so it falls to the default case in the tokenizer dispatch and is emitted as an unexpected symbol token. C++ protoc's `Tokenizer::Next()` in `tokenizer.cc` explicitly checks for and skips the UTF-8 BOM at the beginning of a file. The fix: check for the BOM bytes at `pos == 0` in `NewTokenizer` or at the start of `Next()`, and skip past them if present.
+
+### Run 150 — Deprecated file option java_generate_equals_and_hash (FAILED: 5/5 profiles)
+- **Test:** `156_deprecated_file_option` — proto3 file with `option java_generate_equals_and_hash = true;`
+- **Bug:** `parseFileOption()` switch at lines 2584-2704 doesn't have a case for `java_generate_equals_and_hash` (FileOptions field 20, deprecated). The `default` case at line 2702-2703 returns an error: `Option "java_generate_equals_and_hash" unknown`. C++ protoc v29.3 accepts this deprecated option and stores `FileOptions.java_generate_equals_and_hash = true` in the descriptor (exit 0). Go exits 1.
+- **Root cause:** `parser.go:2584-2704` — `parseFileOption` switch handles 18 standard options but is missing the deprecated `java_generate_equals_and_hash` (field 20). The Go proto library's `descriptorpb.FileOptions` struct has the field (`JavaGenerateEqualsAndHash *bool`), so it CAN be stored — the parser just doesn't parse it. C++ protoc's parser handles all FileOptions fields including deprecated ones for backwards compatibility.
