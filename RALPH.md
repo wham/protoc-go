@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1184/1184 tests passing.
+ALL DONE — 1189/1189 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -400,3 +400,4 @@ ALL DONE — 1184/1184 tests passing.
 228. ✅ Reserved identifier name validation — reject unquoted identifiers in `reserved` declarations in proto2/proto3 with `Reserved names must be string literals. (Only editions supports identifiers.)` error at identifier position, editions allows bare identifiers as reserved names with full SCI support
 229. ✅ MessageSet field validation — reject regular fields in messages with `message_set_wire_format = true` with `MessageSets cannot have fields, only extensions.` error at field name location (SCI path `[msgPath..., 2, fieldIdx, 1]`), recurses into nested messages, skips map entry types
 230. ✅ Proto3 MessageSet validation — reject `message_set_wire_format = true` in proto3 messages with `MessageSet is not supported in proto3.` error at message name location (SCI path `[msgPath..., 1]`), checked first in `collectProto3MessageErrors` before extension range/group/required checks
+231. ✅ Extension json_name validation — reject `json_name` option on extension fields with `option json_name is not allowed on extension fields.` error at json_name SCI location (path `[7, extIdx, 10]` for file-level, `[msgPath..., 6, extIdx, 10]` for message-level), validated in `validateExtensionJsonName` (cli.go) using `explicitJsonNames` map, recurses into nested messages
