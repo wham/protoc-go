@@ -1557,3 +1557,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Package with dots** — `package foo.bar.baz;` — should work, likely not a gap
 - **Empty message** — `message Foo {}` — should work, likely not a gap
 - **Deeply nested messages (5+ levels)** — source code info path correctness at depth
+
+### Run 160 — Invalid content in service body (FAILED: 5/5 profiles)
+- **Test:** `166_invalid_service_body` — proto3 service with `message Nested {}` inside the service body (invalid — only rpc, option, and ; are valid in service bodies)
+- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:10:3: Expected "rpc".` Go protoc-go: `test.proto:line 10:3: expected 'rpc', got "message"`. Three differences: (1) Go has an extra `line ` prefix before the line number, (2) Go uses `expected 'rpc'` (lowercase, single quotes) vs C++'s `Expected "rpc"` (capitalized, double quotes), (3) Go appends `, got "message"` while C++ doesn't show the actual token.
+- **Root cause:** `parser.go:2162-2165` — `parseMethod` uses `fmt.Errorf("line %d:%d: expected 'rpc', got %q", ...)` which has (a) an extraneous `line ` prefix that becomes `test.proto:line X:Y:` after filename wrapping at `cli.go:479`, and (b) a different message format than C++ protoc's `Consume("rpc")` which simply produces `Expected "rpc".`.
+
+### Known gaps still unexplored (updated):
+- **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
+- **Invalid content in service body** — TESTED in Run 160 (166_invalid_service_body), confirmed broken (different error messages)
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Error column positions** — many Go validation errors report wrong column
