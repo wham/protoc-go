@@ -1640,10 +1640,12 @@ func validateFeatureTargets(orderedFiles []string, parsed map[string]*descriptor
 			}
 		}
 		for _, e := range fd.GetEnumType() {
+			collectEnumFeatureErrors(name, e, &errs)
 			collectEnumEntryFeatureErrors(name, e, &errs)
 		}
 		for _, msg := range fd.GetMessageType() {
 			collectMessageFeatureErrors(name, msg, &errs)
+			collectEnumFeatureErrorsInMsg(name, msg, &errs)
 			collectEnumEntryFeatureErrorsInMsg(name, msg, &errs)
 			collectOneofFeatureErrorsInMsg(name, msg, &errs)
 		}
@@ -1710,6 +1712,39 @@ func collectOneofFeatureErrorsInMsg(filename string, msg *descriptorpb.Descripto
 			continue
 		}
 		collectOneofFeatureErrorsInMsg(filename, nested, errs)
+	}
+}
+
+func collectEnumFeatureErrors(filename string, e *descriptorpb.EnumDescriptorProto, errs *[]string) {
+	if e.GetOptions() != nil && e.GetOptions().GetFeatures() != nil {
+		feat := e.GetOptions().GetFeatures()
+		if feat.FieldPresence != nil {
+			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum`.", filename, featureProtoNames["field_presence"]))
+		}
+		if feat.RepeatedFieldEncoding != nil {
+			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum`.", filename, featureProtoNames["repeated_field_encoding"]))
+		}
+		if feat.Utf8Validation != nil {
+			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum`.", filename, featureProtoNames["utf8_validation"]))
+		}
+		if feat.MessageEncoding != nil {
+			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum`.", filename, featureProtoNames["message_encoding"]))
+		}
+		if feat.JsonFormat != nil {
+			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum`.", filename, featureProtoNames["json_format"]))
+		}
+	}
+}
+
+func collectEnumFeatureErrorsInMsg(filename string, msg *descriptorpb.DescriptorProto, errs *[]string) {
+	for _, e := range msg.GetEnumType() {
+		collectEnumFeatureErrors(filename, e, errs)
+	}
+	for _, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		collectEnumFeatureErrorsInMsg(filename, nested, errs)
 	}
 }
 

@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1134/1134 tests passing.
+ALL DONE — 1144/1144 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -394,3 +394,4 @@ ALL DONE — 1134/1134 tests passing.
 222. ✅ Features editions-only validation — reject features on any entity (file, message, field, enum, service, method, oneof, extension, enum value) in non-editions files with `filename: Features are only valid under editions.` error (no line:col), validated in `validateFeaturesEditions` (cli.go) after feature target validation
 224. ✅ Oneof feature target validation — reject non-allowed FeatureSet fields (enum_type, repeated_field_encoding, utf8_validation, message_encoding, json_format) on oneofs with `Option google.protobuf.FeatureSet.X cannot be set on an entity of type \`oneof\`.` error (no line:col), only `field_presence` targets ONEOF so it's allowed, validated in `collectOneofFeatureErrors`/`collectOneofFeatureErrorsInMsg` (cli.go) called from `validateFeatureTargets`
 223. ✅ Map entry undefined value type error — when map value type is undefined (e.g., `map<string, NonExistent>`), report `"NonExistent" is not defined.` error even without SCI location (synthetic map entry fields have no SCI), using `filename: "X" is not defined.` format (no line:col) matching C++ protoc
+225. ✅ Message feature target validation — reject FeatureSet fields not targeting MESSAGE (field_presence, enum_type, repeated_field_encoding, utf8_validation, message_encoding) with `Option google.protobuf.FeatureSet.X cannot be set on an entity of type \`message\`.` error (no line:col), json_format IS allowed on messages (targets MESSAGE), validated in `collectMessageFeatureErrors` (cli.go) recursing into nested messages, skips map entry types
