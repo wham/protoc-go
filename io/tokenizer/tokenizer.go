@@ -473,11 +473,15 @@ func (t *Tokenizer) readIdent() {
 	t.tokens = append(t.tokens, Token{Type: TokenIdent, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
 }
 
+const tabWidth = 8
+
 func (t *Tokenizer) advance() {
 	if t.pos < len(t.input) {
 		if t.input[t.pos] == '\n' {
 			t.line++
 			t.col = 0
+		} else if t.input[t.pos] == '\t' {
+			t.col += tabWidth - t.col%tabWidth
 		} else {
 			t.col++
 		}
