@@ -1932,7 +1932,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:2346-2348` — `parseServiceOption` reads only a single token for the option name. No handling for dotted names like `features.json_format`. Same bug as Runs 214-215 (message/enum level) but in `parseServiceOption` code path. Also affects `parseMethodOption`.
 
 ### Known gaps still unexplored (updated):
-- **Dotted option names on method options** — same bug as message/enum/service-level, `features.X` pattern
+- **Dotted option names on method options** — TESTED in Run 217 (222_method_features_option), confirmed broken (expects `=` at `.`)
 - **Dotted option names on field options** — `features.field_presence` in editions inside `[...]`
 - **Trailing comma in map field options** — same trailing comma issue
 - **Type shadowing** — same nested type name in different parent messages
@@ -1940,3 +1940,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Error column positions** — many Go validation errors report wrong column
 - **FieldOptions.feature_support** (field 49) — likely missing from parser switch
 - **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
+
+### Run 217 — Dotted option name on method option in editions (FAILED: 5/5 profiles)
+- **Test:** `222_method_features_option` — edition 2023 service method with `option features.json_format = ALLOW;` inside method body `{ }`
+- **Bug:** `parseMethodOption()` at line 2494 reads `features` as a single option name token, then calls `Expect("=")` at line 2514 which encounters `.` instead of `=` → error: `test.proto:15:20: Expected "=".` C++ protoc parses the full dotted path `features.json_format` and rejects it at a higher level: `Option google.protobuf.FeatureSet.json_format cannot be set on an entity of type 'method'.` Both reject, but different error messages.
+- **Root cause:** `parser.go:2494` — `parseMethodOption` reads only a single token for the option name. No handling for dotted names like `features.json_format`. Same bug as Runs 214-216 (message/enum/service level) but in `parseMethodOption` code path. Completes the set of all option-level dotted name bugs.
