@@ -2129,11 +2129,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go accepts the file (exit 0), producing a valid descriptor with `allow_alias = true`. C++ protoc rejects with: `"Status" declares support for enum aliases but no enum values share field numbers. Please remove the unnecessary 'option allow_alias = true;' declaration.` (exit 1). Different exit codes across all 5 profiles.
 - **Root cause:** `cli.go:1278-1279` — `collectDuplicateEnumValueErrors` returns early when `allow_alias` is true, without checking whether any aliases actually exist. C++ protoc validates that if `allow_alias` is set, at least one duplicate value number must exist. Go has no such validation — it blindly trusts the `allow_alias` flag.
 
+### Run 239 — Proto2 JSON name collision treated as error instead of warning (FAILED: 5/5 profiles)
+- **Test:** `244_proto2_json_warning` — proto2 message with `optional string foo_bar = 1;` and `optional string fooBar = 2;` (JSON name collision)
+- **Bug:** C++ protoc treats proto2 JSON name collisions as **warnings** (prints `warning:` prefix, exits 0, produces output). Go protoc-go treats them as **errors** (no `warning:` prefix, exits 1, produces no output). Two differences: (1) Go's error message lacks the `warning: ` prefix, (2) Go exits 1 instead of 0, blocking output generation.
+- **Root cause:** `cli.go` — `validateJSONNames` (or equivalent) treats JSON name collisions uniformly as errors regardless of syntax version. C++ protoc differentiates: proto3 → error (exit 1), proto2 → warning (exit 0, output still generated). Go has no concept of warnings — all diagnostics are fatal errors.
+
 ### Known gaps still unexplored (updated):
 - **Feature target validation on remaining scopes** — method, enum value
-- **Trailing comma in field options** — `[deprecated = true,]` — different error messages
 - **Error column positions** — many Go validation errors report wrong column
 - **packed on extension fields** — may produce different results
 - **Multiple errors from different validation passes** — many combinations possible
 - **debug_redact on non-string field** — may or may not be validated differently
-- **allow_alias on enum without aliases** — TESTED in Run 238 (243_allow_alias_no_dup), confirmed broken
+- **Proto2 JSON name collision** — TESTED in Run 239 (244_proto2_json_warning), confirmed broken (warning vs error)
+- **Other proto2-only warnings** — C++ protoc may have other proto2-specific warnings that Go treats as errors
