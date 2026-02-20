@@ -1,0 +1,8 @@
+edition = "2023";
+
+package fieldft;
+
+message Config {
+  string name = 1 [features.enum_type = CLOSED];
+  int32 version = 2;
+}
