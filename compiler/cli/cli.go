@@ -320,6 +320,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate MessageSet messages don't have regular fields
+	if errs := validateMessageSetFields(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Validate JSON name conflicts
 	if errs := validateJsonNameConflicts(orderedFiles, parsed, explicitJsonNames); len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
@@ -2477,6 +2482,37 @@ func collectRequiredExtensionErrors(filename string, msg *descriptorpb.Descripto
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectRequiredExtensionErrors(filename, nested, nestedPath, sci, fqn, errs)
+	}
+}
+
+// validateMessageSetFields checks that messages with message_set_wire_format don't have regular fields.
+func validateMessageSetFields(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectMessageSetFieldErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectMessageSetFieldErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMessageSetWireFormat() {
+		for i := range msg.GetField() {
+			namePath := append(append([]int32{}, msgPath...), 2, int32(i), 1)
+			line, col := findLocationByPath(namePath, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: MessageSets cannot have fields, only extensions.",
+				filename, line, col))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectMessageSetFieldErrors(filename, nested, nestedPath, sci, errs)
 	}
 }
 
