@@ -570,6 +570,16 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 	// Update message declaration span
 	p.locations[msgLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 
+	// Fix extension range max when message_set_wire_format is set but extensions
+	// were parsed before the option (C++ protoc resolves max post-hoc).
+	if msg.GetOptions().GetMessageSetWireFormat() {
+		for _, er := range msg.ExtensionRange {
+			if er.GetEnd() == 536870912 {
+				er.End = proto.Int32(2147483647)
+			}
+		}
+	}
+
 	return msg, nil
 }
 
