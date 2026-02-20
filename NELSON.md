@@ -1573,6 +1573,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go tokenizer's hex escape handler at lines 308-317 reads 0 hex digits after `\x`, produces val=0 (null byte), and silently continues. C++ protoc rejects with: `test.proto:5:38: Expected hex digits for escape sequence.` (exit 1). Go produces a valid descriptor with `java_package` containing a null byte (exit 0).
 - **Root cause:** `tokenizer.go:310-316` — the hex escape loop `for i := 0; i < 2 && isHexDigit(...)` runs 0 times when no hex digits follow `\x`, resulting in `val = byte(0)`. No error is added. C++ protoc requires at least one hex digit after `\x` and adds an error when none are found. The fix: after the loop, check if 0 digits were read and add a `TokenError` if so.
 
+### Run 163 — Unterminated block comment (FAILED: 5/5 profiles)
+- **Test:** `169_unterminated_block_comment` — proto3 file with `/* This block comment is never closed` at the end (no closing `*/`)
+- **Bug:** Go protoc-go silently accepts the unterminated block comment and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:11:1: End-of-file inside block comment.` and `test.proto:10:1:   Comment started here.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `tokenizer.go:242-255` — `readBlockCommentText()` reads until `*/` or end of input. When end of input is reached, it silently returns whatever was read — no error is added to `t.Errors`. C++ protoc's `Tokenizer::ConsumeBlockComment()` in `tokenizer.cc` calls `AddError("End-of-file inside block comment.")` when the input ends without `*/`, causing the parse to fail. The Go tokenizer needs to check if the loop exited without finding `*/` and add a `TokenError`.
+
 ### Known gaps still unexplored (updated):
 - **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
 - **Type shadowing** — same nested type name in different parent messages
@@ -1584,3 +1589,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Octal escape overflow** — `\777` exceeds byte range (255) — Go may wrap, C++ may error
 - **Invalid escape in import path** — `import "test\eproto";` — same bug affects all string literals
 - **Invalid escape in default value** — `[default = "hel\elo"]` — same bug
+- **Unterminated line comment at EOF** — `// comment with no newline` — may or may not differ
+- **Unterminated string literal at EOF** — `option java_package = "hello` — Go may silently accept, C++ rejects
+- **`\r` only line endings** — C++ treats `\r` as line break, Go doesn't (column counting would differ)
