@@ -1,0 +1,12 @@
+syntax = "proto2";
+
+package extcomment;
+
+message Extendable {
+  optional string name = 1;
+
+  // These extension ranges are reserved for third-party plugins.
+  extensions 100 to 199;
+
+  optional int32 id = 2;
+}
