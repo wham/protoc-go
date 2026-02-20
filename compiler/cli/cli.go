@@ -1630,9 +1630,7 @@ func collectEnumFeatureErrors(filename string, e *descriptorpb.EnumDescriptorPro
 		if feat.MessageEncoding != nil {
 			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum`.", filename, featureProtoNames["message_encoding"]))
 		}
-		if feat.JsonFormat != nil {
-			*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `enum`.", filename, featureProtoNames["json_format"]))
-		}
+		// json_format targets ENUM, so it's allowed — skip it
 	}
 }
 
