@@ -2176,13 +2176,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `compiler/cli/cli.go:492-615` — `parseArgs` switch handles `--help`, `--version`, `--proto_path`, `-I`, `--plugin`, `--descriptor_set_out`, `--include_imports`, `--include_source_info`, `--error_format`, `--fatal_warnings`, `--X_out`, `--X_opt`. Missing: `--print_free_field_numbers`, `--deterministic_output`, `--encode`, `--decode`, `--decode_raw`, `--dependency_out`, `--descriptor_set_in`. Any undocumented flags would also be rejected.
 
 ### Known gaps still unexplored (updated):
-- **`--deterministic_output`** — documented in help, likely not parsed
 - **Multiline extension range** — `extensions 100\n  to 200;` may have similar span issues
 - **Multiline reserved range** — `reserved 100\n  to 200;` may have similar span issues
 - **--error_format=msvs** — even if `--error_format` is parsed, MSVS formatting logic is likely not implemented
 - **--print_free_field_numbers** — TESTED in Run 245, confirmed broken (Go rejects flag, C++ accepts and prints field numbers)
 - **--deterministic_output** — TESTED in Run 246 (cli@deterministic_output), confirmed broken (Go says "Unknown flag", C++ says "Missing input file.")
 - **Map entry name collision** — TESTED in Run 244 (247_map_entry_conflict), confirmed broken (Go reports 1 error, C++ reports 4)
+- **--dependency_out** — TESTED in Run 251, confirmed broken (Go treats as plugin, C++ recognizes as built-in flag)
 
 ### Run 246 — --deterministic_output CLI flag (FAILED: 1/1 CLI test)
 - **Test:** `cli@deterministic_output` — CLI test with `--deterministic_output` flag (no input file)
@@ -2208,3 +2208,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `248_ext_name_conflict` — proto2 file with `message Container { optional string tag = 1; extend Target { optional string tag = 100; } }` (regular field and extension field sharing the same name "tag" within Container)
 - **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with both the regular field and the extension field. C++ protoc rejects with: `test.proto:13:21: "tag" is already defined in "extconflict.Container".` (exit 1). Different exit codes across all 5 profiles.
 - **Root cause:** `cli.go:2071-2104` — `collectDupNamesInMsg` iterates over `msg.GetOneofDecl()`, `msg.GetField()`, `msg.GetEnumType()`, and `msg.GetNestedType()`, but does NOT iterate over `msg.GetExtension()`. Extension fields defined inside a message (via `extend Foo { ... }`) are registered as children of the containing message in C++ protoc's symbol table. Go's duplicate name check completely ignores extension fields, so any name collision between a regular field/nested type and an extension field goes undetected.
+
+### Run 251 — --dependency_out CLI flag (FAILED: 1/1 CLI test)
+- **Test:** `cli@dependency_out` — CLI test with `--dependency_out=/tmp/deps.txt -I testdata/01_basic_message testdata/01_basic_message/basic.proto`
+- **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--dependency_out`. The `--dependency_out=FILE` flag matches the generic `--X_out=` plugin pattern at line 617, extracting "dependency" as the plugin name. Go tries to run `protoc-gen-dependency` (fails: exec not found). C++ protoc recognizes `--dependency_out` as a built-in flag and says "Missing output directives." (since dependency_out alone is not a code output).
+- **Root cause:** `cli.go:617-619` — the generic `--X_out=` pattern greedily matches `--dependency_out` as a plugin output for a plugin named "dependency". Unlike `--descriptor_set_out` which has explicit handling at line 571, `--dependency_out` has no special case. C++ protoc treats it as a built-in flag that writes Make-rule-format dependency info to a file alongside other outputs.
