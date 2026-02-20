@@ -2280,6 +2280,16 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 		// reserved 2, 3, 10 to 20;
 		stmtPath := append(copyPath(enumPath), 4) // field 4 = reserved_range
 		startCount := *rangeIdx
+
+		// Check if the first token is an unquoted identifier (not allowed in proto2/proto3)
+		if pk := p.tok.Peek(); pk.Type == tokenizer.TokenIdent && pk.Value != "max" && pk.Value != "-" {
+			if p.syntax != "editions" {
+				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Reserved names must be string literals. (Only editions supports identifiers.)", p.filename, pk.Line+1, pk.Column+1))
+				p.skipToToken(";")
+				return nil
+			}
+		}
+
 		for {
 			// Handle negative numbers in enum reserved ranges
 			startNeg := false
