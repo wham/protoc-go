@@ -395,6 +395,7 @@ CLI_TESTS=(
   "deterministic_output|--deterministic_output"
   "retain_options|--retain_options"
   "decode_raw|--decode_raw"
+  "descriptor_set_in|--descriptor_set_in=/tmp/descriptors.pb"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

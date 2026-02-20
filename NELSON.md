@@ -2198,3 +2198,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `cli@decode_raw` — CLI test with `--decode_raw` flag (no input file)
 - **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--decode_raw`. The flag falls to the default unknown flag handler, returning "Unknown flag: --decode_raw" (exit 1). C++ protoc accepts the flag, reads empty stdin, and exits 0 with no output. Exit code mismatch (C++ 0, Go 1).
 - **Root cause:** `cli.go:510-640` — `parseArgs` switch handles many flags but is missing `--decode_raw`. The help text (line 41) documents this flag for reading arbitrary protocol messages from stdin, but it was never added to the parser. Same pattern as `--deterministic_output` (Run 246) and `--retain_options` (Run 247).
+
+### Run 249 — --descriptor_set_in CLI flag (FAILED: 1/1 CLI test)
+- **Test:** `cli@descriptor_set_in` — CLI test with `--descriptor_set_in=/tmp/descriptors.pb` flag (no input file)
+- **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--descriptor_set_in`. The flag falls to the default unknown flag handler at line 645, returning "Unknown flag: --descriptor_set_in" (exit 1). C++ protoc accepts the flag and reports "Missing input file." (exit 1). Same exit code, different stderr.
+- **Root cause:** `cli.go:510-640` — `parseArgs` switch handles `--descriptor_set_out` but not `--descriptor_set_in`. The help text (lines 46-49) documents `--descriptor_set_in=FILES` for providing pre-built descriptor sets, but it was never added to the parser. Same pattern as other missing CLI flags (Runs 242-248).
