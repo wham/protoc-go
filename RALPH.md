@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1023/1023 tests passing.
+ALL DONE — 1028/1028 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -362,6 +362,7 @@ ALL DONE — 1023/1023 tests passing.
 197. ✅ Trailing comma rejection in field options — reject `[deprecated = true,]` (trailing comma before `]`) with `Expected identifier.` error at `]` token position, matching C++ protoc behavior
 200. ✅ `retention` field option (field 17 of FieldOptions, enum `OptionRetention`: RETENTION_UNKNOWN=0, RETENTION_RUNTIME=1, RETENTION_SOURCE=2) with source code info at path `[..., 8, 17]`
 201. ✅ Trailing comma rejection in enum value options — reject `[deprecated = true,]` (trailing comma before `]`) with `Expected identifier.` error at `]` token position, matching field option trailing comma behavior
+202. ✅ Invalid optimize_for/idempotency_level enum value error messages — use `Enum type "google.protobuf.FileOptions.OptimizeMode" has no value named "X" for option "google.protobuf.FileOptions.optimize_for".` format (and matching format for `MethodOptions.IdempotencyLevel`) to match C++ protoc, replacing old ad-hoc error format
 
 - Import declaration comment tracking: `parseImport` captures `firstIdx` before consuming `import` token and calls `attachComments` on the import SCI location (path `[3, depIdx]`), same pattern as message/enum/service/oneof/field/map/method declarations.
 - File option declaration comment tracking: `parseFileOption` captures `firstIdx` before consuming `option` token and calls `attachComments` on the `[8, fieldNum]` SCI location (the specific option entry, not the statement entry), same pattern as message/enum/service/field/method declarations.
