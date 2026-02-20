@@ -1801,6 +1801,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Both C++ and Go reject the file, but with different error messages. C++ protoc: two lines — `: File not found.` and `test.proto:3:1: Import "" was not found or had errors.` Go protoc-go: one line — `file not found: `. C++ reports the import location with line/column and the import path in the message; Go reports a generic "file not found" without location info.
 - **Root cause:** Go importer error handling returns a bare "file not found" message without including the import path or the source location. C++ protoc reports two errors: one from the file system layer (`: File not found.`) and one from the parser/importer layer with full source location context.
 
+### Run 196 — FieldOptions.weak missing (FAILED: 5/5 profiles)
+- **Test:** `202_weak_field_option` — proto3 message with `Dep ref = 2 [weak = true];`
+- **Bug:** `parseFieldOptions()` switch at lines 3060-3132 doesn't have a case for `weak` (FieldOptions field 10). The `default` case at line 3131 returns `Option "weak" unknown.` error. C++ protoc accepts `[weak = true]` and populates `FieldOptions.weak = true` in the descriptor. Go rejects valid input that C++ accepts.
+- **Root cause:** `parser.go:3060-3132` — field options switch handles `deprecated`, `json_name`, `packed`, `lazy`, `jstype`, `ctype`, `debug_redact`, `unverified_lazy`, `default` but not `weak`. The `weak` option (FieldOptions field 10) is a standard protobuf field option that Go's parser doesn't recognize.
+
 ### Known gaps still unexplored (updated):
 - **Trailing comma in enum value options** — `HIGH = 1 [deprecated = true,];` — same issue
 - **Trailing comma in map field options** — same issue
@@ -1814,3 +1819,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Dotted option names on message/field/enum/service options** — same bug as file options, `features.X` pattern
 - **Editions features on fields** — `string name = 1 [features.field_presence = EXPLICIT];` likely also broken
 - **Editions features on messages/enums/services** — `option features.X = Y;` inside bodies
+- **FieldOptions.retention** (field 17) — likely also missing from parser switch
+- **FieldOptions.targets** (field 19) — likely also missing from parser switch
