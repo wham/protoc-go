@@ -3205,6 +3205,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			}
 			field.Options.Weak = proto.Bool(valTok.Value == "true")
 		case "retention":
+			if valTok.Type != tokenizer.TokenIdent {
+				return nil, fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.FieldOptions.retention\".", valTok.Line+1, valTok.Column+1)
+			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}
