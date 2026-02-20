@@ -1957,6 +1957,14 @@ func findFieldTypeLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.Sour
 	return 0, 0
 }
 
+func collectProto3MessageSetErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMessageSetWireFormat() {
+		namePath := append(append([]int32{}, msgPath...), 1)
+		line, col := findLocationByPath(namePath, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: MessageSet is not supported in proto3.", filename, line, col))
+	}
+}
+
 func collectProto3ExtensionRangeErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
 	for i := range msg.GetExtensionRange() {
 		path := append(append([]int32{}, msgPath...), 5, int32(i), 1)
@@ -1975,6 +1983,7 @@ func collectProto3GroupErrors(filename string, msg *descriptorpb.DescriptorProto
 }
 
 func collectProto3MessageErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	collectProto3MessageSetErrors(filename, msg, msgPath, sci, errs)
 	collectProto3ExtensionRangeErrors(filename, msg, msgPath, sci, errs)
 	collectProto3ExtendErrors(filename, msg.GetExtension(), append(append([]int32{}, msgPath...), 6), sci, errs)
 	collectProto3GroupErrors(filename, msg, msgPath, sci, errs)
