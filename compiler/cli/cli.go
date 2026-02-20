@@ -350,6 +350,11 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(errs, "\n"))
 	}
 
+	// Validate features are only used under editions
+	if errs := validateFeaturesEditions(orderedFiles, parsed); len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+	}
+
 	// Build ordered list of FileDescriptorProtos (stripped of source-retention options)
 	var protoFiles []*descriptorpb.FileDescriptorProto
 	strippedMap := make(map[string]*descriptorpb.FileDescriptorProto)
@@ -1492,6 +1497,96 @@ var featureProtoNames = map[string]string{
 	"utf8_validation":        "google.protobuf.FeatureSet.utf8_validation",
 	"message_encoding":       "google.protobuf.FeatureSet.message_encoding",
 	"json_format":            "google.protobuf.FeatureSet.json_format",
+}
+
+func validateFeaturesEditions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() == "editions" {
+			continue
+		}
+		if hasAnyFeatures(fd) {
+			errs = append(errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
+		}
+	}
+	return errs
+}
+
+func hasAnyFeatures(fd *descriptorpb.FileDescriptorProto) bool {
+	if fd.GetOptions() != nil && fd.GetOptions().GetFeatures() != nil {
+		return true
+	}
+	for _, msg := range fd.GetMessageType() {
+		if hasAnyFeaturesInMsg(msg) {
+			return true
+		}
+	}
+	for _, e := range fd.GetEnumType() {
+		if hasAnyFeaturesInEnum(e) {
+			return true
+		}
+	}
+	for _, svc := range fd.GetService() {
+		if svc.GetOptions() != nil && svc.GetOptions().GetFeatures() != nil {
+			return true
+		}
+		for _, m := range svc.GetMethod() {
+			if m.GetOptions() != nil && m.GetOptions().GetFeatures() != nil {
+				return true
+			}
+		}
+	}
+	for _, ext := range fd.GetExtension() {
+		if ext.GetOptions() != nil && ext.GetOptions().GetFeatures() != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyFeaturesInMsg(msg *descriptorpb.DescriptorProto) bool {
+	if msg.GetOptions() != nil && msg.GetOptions().GetFeatures() != nil {
+		return true
+	}
+	for _, f := range msg.GetField() {
+		if f.GetOptions() != nil && f.GetOptions().GetFeatures() != nil {
+			return true
+		}
+	}
+	for _, o := range msg.GetOneofDecl() {
+		if o.GetOptions() != nil && o.GetOptions().GetFeatures() != nil {
+			return true
+		}
+	}
+	for _, e := range msg.GetEnumType() {
+		if hasAnyFeaturesInEnum(e) {
+			return true
+		}
+	}
+	for _, ext := range msg.GetExtension() {
+		if ext.GetOptions() != nil && ext.GetOptions().GetFeatures() != nil {
+			return true
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		if hasAnyFeaturesInMsg(nested) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAnyFeaturesInEnum(e *descriptorpb.EnumDescriptorProto) bool {
+	if e.GetOptions() != nil && e.GetOptions().GetFeatures() != nil {
+		return true
+	}
+	for _, v := range e.GetValue() {
+		if v.GetOptions() != nil && v.GetOptions().GetFeatures() != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func validateFeatureTargets(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
