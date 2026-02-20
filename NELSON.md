@@ -1668,10 +1668,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:2017-2064` — `parseService` function creates `svcLocIdx` via `addLocationPlaceholder` at line 2033, but never calls `p.attachComments(svcLocIdx, firstIdx)` after setting the span at line 2062. Same bug pattern as map fields (Run 172) and oneof declarations (Run 173). The fix: save `firstIdx := p.tok.CurrentIndex()` at the start, and call `p.attachComments(svcLocIdx, firstIdx)` after line 2062.
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 175 — Comments on enum declarations not attached (FAILED: 4/5 profiles)
+- **Test:** `181_enum_comment` — proto3 file with a leading comment on an `enum Status { ... }` declaration: `// The status of a task in the system.\nenum Status { UNKNOWN = 0; ACTIVE = 1; INACTIVE = 2; }`
+- **Bug:** `parseEnum()` at lines 1600-1700 never calls `attachComments()`. It creates `enumLocIdx` via `addLocationPlaceholder` at line 1616, but never calls `p.attachComments(enumLocIdx, firstIdx)` after setting the enum declaration span. C++ protoc attaches comments to enum declarations just like any other entity. Binary descriptor sizes differ because the leading comment text is missing from the enum's SCI location.
+- **Root cause:** `parser.go:1600-1700` — `parseEnum` function is missing two things: (1) it doesn't save `p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(enumLocIdx, firstIdx)` after the enum declaration span is set. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), and service declarations (Run 174). The fix: add `firstIdx := p.tok.CurrentIndex()` at the start, and call `p.attachComments(enumLocIdx, firstIdx)` after the enum span is finalized.
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
 ### Known gaps still unexplored (updated):
-- **Comments on service declarations** — TESTED in Run 174 (180_service_comment), confirmed broken
 - **Comments on method declarations** — `parseMethod` same pattern — no comment attachment
-- **Comments on enum declarations** — `parseEnum` at line 1616 calls `addLocationPlaceholder` but never `attachComments`
+- **Comments on enum declarations** — TESTED in Run 175 (181_enum_comment), confirmed broken
 - **Comments on enum value declarations** — no `attachComments` call for enum values
 - **Comments on extension range declarations** — no `attachComments` call
 - **Comments on reserved declarations** — no `attachComments` call
