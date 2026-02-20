@@ -734,7 +734,7 @@ func validateLazyNonMessage(orderedFiles []string, parsed map[string]*descriptor
 		}
 		// Check file-level extensions
 		for i, ext := range fd.GetExtension() {
-			if ext.GetOptions().GetLazy() {
+			if ext.GetOptions().GetLazy() || ext.GetOptions().GetUnverifiedLazy() {
 				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					path := []int32{7, int32(i), 5}
 					line, col := findLocationByPath(path, sci)
@@ -748,7 +748,7 @@ func validateLazyNonMessage(orderedFiles []string, parsed map[string]*descriptor
 
 func collectLazyErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
 	for i, field := range msg.GetField() {
-		if field.GetOptions().GetLazy() {
+		if field.GetOptions().GetLazy() || field.GetOptions().GetUnverifiedLazy() {
 			if field.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && field.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 				fieldPath := append(append([]int32{}, msgPath...), 2, int32(i), 5)
 				line, col := findLocationByPath(fieldPath, sci)
@@ -758,7 +758,7 @@ func collectLazyErrors(filename string, msg *descriptorpb.DescriptorProto, msgPa
 	}
 	// Check message-level extensions
 	for i, ext := range msg.GetExtension() {
-		if ext.GetOptions().GetLazy() {
+		if ext.GetOptions().GetLazy() || ext.GetOptions().GetUnverifiedLazy() {
 			if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 				extPath := append(append([]int32{}, msgPath...), 6, int32(i), 5)
 				line, col := findLocationByPath(extPath, sci)
