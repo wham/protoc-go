@@ -3199,6 +3199,10 @@ func normalizeIntDefault(s string) string {
 		v = v[1:]
 	}
 	if len(v) < 2 || v[0] != '0' {
+		// Handle -0 → 0
+		if neg && v == "0" {
+			return "0"
+		}
 		return s
 	}
 	var n uint64
@@ -3213,6 +3217,9 @@ func normalizeIntDefault(s string) string {
 	}
 	dec := strconv.FormatUint(n, 10)
 	if neg {
+		if n == 0 {
+			return "0"
+		}
 		return "-" + dec
 	}
 	return dec
