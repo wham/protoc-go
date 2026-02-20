@@ -604,6 +604,14 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 		// reserved 2, 15, 9 to 11;
 		stmtPath := append(copyPath(msgPath), 9) // field 9 = reserved_range
 		startCount := *rangeIdx
+
+		// Check if the first token is valid for a number range
+		if pk := p.tok.Peek(); pk.Type != tokenizer.TokenInt {
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected field name or number range.", p.filename, pk.Line+1, pk.Column+1))
+			p.skipToToken(";")
+			return nil
+		}
+
 		for {
 			numTok, err := p.tok.ExpectInt()
 			if err != nil {
