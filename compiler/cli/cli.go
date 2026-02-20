@@ -1644,9 +1644,44 @@ func validateFeatureTargets(orderedFiles []string, parsed map[string]*descriptor
 		}
 		for _, msg := range fd.GetMessageType() {
 			collectEnumEntryFeatureErrorsInMsg(name, msg, &errs)
+			collectOneofFeatureErrorsInMsg(name, msg, &errs)
 		}
 	}
 	return errs
+}
+
+func collectOneofFeatureErrors(filename string, msg *descriptorpb.DescriptorProto, errs *[]string) {
+	for _, oneof := range msg.GetOneofDecl() {
+		if oneof.GetOptions() != nil && oneof.GetOptions().GetFeatures() != nil {
+			feat := oneof.GetOptions().GetFeatures()
+			// field_presence targets ONEOF, so it's allowed — skip it
+			if feat.EnumType != nil {
+				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `oneof`.", filename, featureProtoNames["enum_type"]))
+			}
+			if feat.RepeatedFieldEncoding != nil {
+				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `oneof`.", filename, featureProtoNames["repeated_field_encoding"]))
+			}
+			if feat.Utf8Validation != nil {
+				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `oneof`.", filename, featureProtoNames["utf8_validation"]))
+			}
+			if feat.MessageEncoding != nil {
+				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `oneof`.", filename, featureProtoNames["message_encoding"]))
+			}
+			if feat.JsonFormat != nil {
+				*errs = append(*errs, fmt.Sprintf("%s: Option %s cannot be set on an entity of type `oneof`.", filename, featureProtoNames["json_format"]))
+			}
+		}
+	}
+}
+
+func collectOneofFeatureErrorsInMsg(filename string, msg *descriptorpb.DescriptorProto, errs *[]string) {
+	collectOneofFeatureErrors(filename, msg, errs)
+	for _, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		collectOneofFeatureErrorsInMsg(filename, nested, errs)
+	}
 }
 
 func collectEnumEntryFeatureErrors(filename string, e *descriptorpb.EnumDescriptorProto, errs *[]string) {

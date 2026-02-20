@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1129/1129 tests passing.
+ALL DONE — 1134/1134 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -392,3 +392,4 @@ ALL DONE — 1129/1129 tests passing.
 - Enum value features option: `[features.X = Y]` on enum values sets `EnumValueOptions.features` (field 2 of EnumValueOptions) sub-fields. Same FeatureSet sub-field mapping as all other features. SCI: `[valuePath..., 3, 2, subFieldNum]` for the specific feature. `seenEnumValOpts` tracks full dotted name. Feature target validation: none of the standard FeatureSet fields target ENUM_ENTRY, so all are rejected with `Option google.protobuf.FeatureSet.X cannot be set on an entity of type \`enum entry\`.` error (no line:col). Validation in `collectEnumEntryFeatureErrors` (cli.go) checks top-level enums and enums nested in messages.
 221. ✅ Oneof features option parsing — `option features.field_presence = IMPLICIT;` etc. inside oneof blocks sets `OneofOptions.features` (field 1) FeatureSet sub-fields, SCI paths `[oneofPath..., 2]` and `[oneofPath..., 2, 1, featFieldNum]`, `parseOneofOption` handles features/unknown/parenthesized options
 222. ✅ Features editions-only validation — reject features on any entity (file, message, field, enum, service, method, oneof, extension, enum value) in non-editions files with `filename: Features are only valid under editions.` error (no line:col), validated in `validateFeaturesEditions` (cli.go) after feature target validation
+223. ✅ Map entry undefined value type error — when map value type is undefined (e.g., `map<string, NonExistent>`), report `"NonExistent" is not defined.` error even without SCI location (synthetic map entry fields have no SCI), using `filename: "X" is not defined.` format (no line:col) matching C++ protoc
