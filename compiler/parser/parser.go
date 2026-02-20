@@ -2939,6 +2939,10 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if isIntegerType(field.GetType()) {
 				defVal = normalizeIntDefault(defVal)
 			}
+			// C++ protoc calls CEscape on bytes default values
+			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
+				defVal = cEscape(defVal)
+			}
 			field.DefaultValue = proto.String(defVal)
 			} // end else (field.Type != nil)
 		case "json_name":
@@ -3173,6 +3177,38 @@ func normalizeIntDefault(s string) string {
 		return "-" + dec
 	}
 	return dec
+}
+
+// cEscape converts raw bytes to C-escaped string, matching absl::CEscape.
+func cEscape(s string) string {
+	var buf []byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case '\n':
+			buf = append(buf, '\\', 'n')
+		case '\r':
+			buf = append(buf, '\\', 'r')
+		case '\t':
+			buf = append(buf, '\\', 't')
+		case '"':
+			buf = append(buf, '\\', '"')
+		case '\'':
+			buf = append(buf, '\\', '\'')
+		case '\\':
+			buf = append(buf, '\\', '\\')
+		default:
+			if c >= 0x20 && c <= 0x7e {
+				buf = append(buf, c)
+			} else {
+				buf = append(buf, '\\')
+				buf = append(buf, '0'+(c>>6)&3)
+				buf = append(buf, '0'+(c>>3)&7)
+				buf = append(buf, '0'+c&7)
+			}
+		}
+	}
+	return string(buf)
 }
 
 // skipToToken consumes tokens until the target token is found and consumed.
