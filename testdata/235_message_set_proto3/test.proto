@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package proto3_mswf;
+
+// MessageSet wire format in proto3 — should be rejected.
+// C++ protoc rejects message_set_wire_format in proto3 because
+// MessageSets require extension ranges which proto3 does not support.
+message MySet {
+  option message_set_wire_format = true;
+}

@@ -2055,11 +2055,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with both the extension range and the field. C++ protoc rejects with: `test.proto:8:19: MessageSets cannot have fields, only extensions.` (exit 1). Different exit codes across all 5 profiles.
 - **Root cause:** Go has no validation in `cli.go` or `pool.go` that checks MessageSet constraints. C++ protoc validates in `descriptor.cc` that messages with `message_set_wire_format = true` must not have regular fields — only extensions are allowed. Go's validation layer (`cli.go`) doesn't have any `message_set_wire_format`-specific checks.
 
+### Run 230 — MessageSet in proto3 (FAILED: 5/5 profiles)
+- **Test:** `235_message_set_proto3` — proto3 message with `option message_set_wire_format = true;`
+- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `message_set_wire_format = true` on a proto3 message. C++ protoc rejects with: `test.proto:8:9: MessageSet is not supported in proto3.` (exit 1). Different exit codes across all 5 profiles.
+- **Root cause:** Go has no validation that checks whether `message_set_wire_format` is used in proto3 syntax. C++ protoc validates in `descriptor.cc` that MessageSet is only allowed in proto2. Go's validation layer (`cli.go`) has no proto3-specific MessageSet check at all.
+
 ### Known gaps still unexplored (updated):
 - **Feature target validation on method/enum value scope** — may now be validated (service was fixed)
 - **Trailing comma in field options** — `[deprecated = true,]` — different error messages
 - **Type shadowing** — same nested type name in different parent messages
 - **Error column positions in validation errors** — Go often differs from C++
-- **MessageSet without extensions** — `message_set_wire_format = true` but no `extensions` range
+- **MessageSet without extensions** — `message_set_wire_format = true` but no `extensions` range (proto2, no extension range)
 - **MessageSet with nested messages** — `message_set_wire_format = true` with nested message types
-- **MessageSet in proto3** — C++ may reject `message_set_wire_format` in proto3
