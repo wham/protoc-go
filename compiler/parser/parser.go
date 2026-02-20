@@ -3355,7 +3355,7 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 	fieldLocIdx := len(p.locations) - 1
 	p.attachComments(fieldLocIdx, firstIdx)
 	p.addLocationSpan(append(copyPath(fieldPath), 6),
-		startLine, startCol, mapTok.Line, typeNameEndCol)
+		startLine, startCol, gtTok.Line, typeNameEndCol)
 	p.addLocationSpan(append(copyPath(fieldPath), 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 	p.addLocationSpan(append(copyPath(fieldPath), 3),
