@@ -1810,6 +1810,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 }
 
 func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath []int32, seenOptions map[string]bool) error {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "option"
 	p.trackEnd(startTok)
 
@@ -1862,6 +1863,7 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		Path: append(copyPath(optPath), fieldNum),
 		Span: span,
 	})
+	p.attachComments(len(p.locations)-1, firstIdx)
 
 	return nil
 }
