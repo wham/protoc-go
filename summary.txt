@@ -4,8 +4,7 @@ compiler_version: major:5 minor:29 patch:3 suffix:""
 proto_file_count: 1
 source_file_descriptor_count: 1
 
-proto_file[0]: test.proto (package="negfloat", syntax="")
-  message: Msg
-    field: temperature (number=1, type=TYPE_DOUBLE, label=LABEL_OPTIONAL)
-    field: pressure (number=2, type=TYPE_DOUBLE, label=LABEL_OPTIONAL)
-  source_code_info_locations: 19
+proto_file[0]: test.proto (package="mapupper", syntax="proto3")
+  message: Config
+    field: FOO_BAR (number=1, type=TYPE_MESSAGE, label=LABEL_REPEATED)
+  source_code_info_locations: 9

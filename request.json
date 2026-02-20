@@ -5,26 +5,42 @@
   "protoFile": [
     {
       "name": "test.proto",
-      "package": "negfloat",
+      "package": "mapupper",
       "messageType": [
         {
-          "name": "Msg",
+          "name": "Config",
           "field": [
             {
-              "name": "temperature",
+              "name": "FOO_BAR",
               "number": 1,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_DOUBLE",
-              "defaultValue": "-1.5",
-              "jsonName": "temperature"
-            },
+              "label": "LABEL_REPEATED",
+              "type": "TYPE_MESSAGE",
+              "typeName": ".mapupper.Config.FOOBAREntry",
+              "jsonName": "FOOBAR"
+            }
+          ],
+          "nestedType": [
             {
-              "name": "pressure",
-              "number": 2,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_DOUBLE",
-              "defaultValue": "2.5",
-              "jsonName": "pressure"
+              "name": "FOOBAREntry",
+              "field": [
+                {
+                  "name": "key",
+                  "number": 1,
+                  "label": "LABEL_OPTIONAL",
+                  "type": "TYPE_STRING",
+                  "jsonName": "key"
+                },
+                {
+                  "name": "value",
+                  "number": 2,
+                  "label": "LABEL_OPTIONAL",
+                  "type": "TYPE_STRING",
+                  "jsonName": "value"
+                }
+              ],
+              "options": {
+                "mapEntry": true
+              }
             }
           ]
         }
@@ -35,7 +51,7 @@
             "span": [
               0,
               0,
-              5,
+              6,
               1
             ]
           },
@@ -54,7 +70,7 @@
               2
             ],
             "span": [
-              1,
+              2,
               0,
               17
             ]
@@ -65,9 +81,9 @@
               0
             ],
             "span": [
-              2,
+              4,
               0,
-              5,
+              6,
               1
             ]
           },
@@ -78,9 +94,9 @@
               1
             ],
             "span": [
-              2,
+              4,
               8,
-              11
+              14
             ]
           },
           {
@@ -91,9 +107,9 @@
               0
             ],
             "span": [
-              3,
+              5,
               2,
-              51
+              34
             ]
           },
           {
@@ -102,26 +118,12 @@
               0,
               2,
               0,
-              4
+              6
             ],
             "span": [
-              3,
+              5,
               2,
-              10
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              5
-            ],
-            "span": [
-              3,
-              11,
-              17
+              21
             ]
           },
           {
@@ -133,8 +135,8 @@
               1
             ],
             "span": [
-              3,
-              18,
+              5,
+              22,
               29
             ]
           },
@@ -147,163 +149,55 @@
               3
             ],
             "span": [
-              3,
+              5,
               32,
               33
             ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              8
-            ],
-            "span": [
-              3,
-              34,
-              50
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              7
-            ],
-            "span": [
-              3,
-              45,
-              49
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1
-            ],
-            "span": [
-              4,
-              2,
-              47
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              4
-            ],
-            "span": [
-              4,
-              2,
-              10
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              5
-            ],
-            "span": [
-              4,
-              11,
-              17
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              1
-            ],
-            "span": [
-              4,
-              18,
-              26
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              3
-            ],
-            "span": [
-              4,
-              29,
-              30
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              8
-            ],
-            "span": [
-              4,
-              31,
-              46
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              7
-            ],
-            "span": [
-              4,
-              42,
-              45
-            ]
           }
         ]
-      }
+      },
+      "syntax": "proto3"
     }
   ],
   "sourceFileDescriptors": [
     {
       "name": "test.proto",
-      "package": "negfloat",
+      "package": "mapupper",
       "messageType": [
         {
-          "name": "Msg",
+          "name": "Config",
           "field": [
             {
-              "name": "temperature",
+              "name": "FOO_BAR",
               "number": 1,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_DOUBLE",
-              "defaultValue": "-1.5",
-              "jsonName": "temperature"
-            },
+              "label": "LABEL_REPEATED",
+              "type": "TYPE_MESSAGE",
+              "typeName": ".mapupper.Config.FOOBAREntry",
+              "jsonName": "FOOBAR"
+            }
+          ],
+          "nestedType": [
             {
-              "name": "pressure",
-              "number": 2,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_DOUBLE",
-              "defaultValue": "2.5",
-              "jsonName": "pressure"
+              "name": "FOOBAREntry",
+              "field": [
+                {
+                  "name": "key",
+                  "number": 1,
+                  "label": "LABEL_OPTIONAL",
+                  "type": "TYPE_STRING",
+                  "jsonName": "key"
+                },
+                {
+                  "name": "value",
+                  "number": 2,
+                  "label": "LABEL_OPTIONAL",
+                  "type": "TYPE_STRING",
+                  "jsonName": "value"
+                }
+              ],
+              "options": {
+                "mapEntry": true
+              }
             }
           ]
         }
@@ -314,7 +208,7 @@
             "span": [
               0,
               0,
-              5,
+              6,
               1
             ]
           },
@@ -333,7 +227,7 @@
               2
             ],
             "span": [
-              1,
+              2,
               0,
               17
             ]
@@ -344,9 +238,9 @@
               0
             ],
             "span": [
-              2,
+              4,
               0,
-              5,
+              6,
               1
             ]
           },
@@ -357,9 +251,9 @@
               1
             ],
             "span": [
-              2,
+              4,
               8,
-              11
+              14
             ]
           },
           {
@@ -370,9 +264,9 @@
               0
             ],
             "span": [
-              3,
+              5,
               2,
-              51
+              34
             ]
           },
           {
@@ -381,26 +275,12 @@
               0,
               2,
               0,
-              4
+              6
             ],
             "span": [
-              3,
+              5,
               2,
-              10
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              5
-            ],
-            "span": [
-              3,
-              11,
-              17
+              21
             ]
           },
           {
@@ -412,8 +292,8 @@
               1
             ],
             "span": [
-              3,
-              18,
+              5,
+              22,
               29
             ]
           },
@@ -426,138 +306,14 @@
               3
             ],
             "span": [
-              3,
+              5,
               32,
               33
             ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              8
-            ],
-            "span": [
-              3,
-              34,
-              50
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              7
-            ],
-            "span": [
-              3,
-              45,
-              49
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1
-            ],
-            "span": [
-              4,
-              2,
-              47
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              4
-            ],
-            "span": [
-              4,
-              2,
-              10
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              5
-            ],
-            "span": [
-              4,
-              11,
-              17
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              1
-            ],
-            "span": [
-              4,
-              18,
-              26
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              3
-            ],
-            "span": [
-              4,
-              29,
-              30
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              8
-            ],
-            "span": [
-              4,
-              31,
-              46
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              7
-            ],
-            "span": [
-              4,
-              42,
-              45
-            ]
           }
         ]
-      }
+      },
+      "syntax": "proto3"
     }
   ],
   "compilerVersion": {

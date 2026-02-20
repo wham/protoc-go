@@ -997,6 +997,7 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 		extendeeName += "." + part.Value
 		extNameEndTok = part
 	}
+	extNameEndLine := extNameEndTok.Line
 	extNameEndCol := extNameEndTok.Column + len(extNameEndTok.Value)
 
 	if _, err := p.tok.Expect("{"); err != nil {
@@ -1033,7 +1034,7 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 		// Check if this is a group field in extend block
 		if isGroupField(peek.Value, p.tok.PeekAt(1).Value) {
 			nestedMsgIdx := int32(len(fd.MessageType))
-			field, nested, err := p.parseGroupFieldInExtend(fieldPath, []int32{4, nestedMsgIdx}, extendeeName, extNameStartLine, extNameStartCol, extNameEndCol)
+			field, nested, err := p.parseGroupFieldInExtend(fieldPath, []int32{4, nestedMsgIdx}, extendeeName, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
 			if err != nil {
 				return err
 			}
@@ -1055,7 +1056,7 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 		// to match C++ ordering: field, extendee, label, type, name, number
 		extendeeLoc := &descriptorpb.SourceCodeInfo_Location{
 			Path: append(copyPath(fieldPath), 2),
-			Span: multiSpan(extNameStartLine, extNameStartCol, extNameStartLine, extNameEndCol),
+			Span: multiSpan(extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol),
 		}
 		insertIdx := locCountBefore + 1
 		p.locations = append(p.locations, nil)
@@ -1076,7 +1077,7 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 
 // parseGroupFieldInExtend parses a group field inside an extend block.
 // The extension field goes to fd.Extension, the nested message to fd.MessageType (or msg.NestedType).
-func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendeeName string, extNameStartLine, extNameStartCol, extNameEndCol int) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
+func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendeeName string, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol int) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
 	firstIdx := p.tok.CurrentIndex()
 	field := &descriptorpb.FieldDescriptorProto{}
 
@@ -1135,7 +1136,7 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 
 	// SCI: extendee (right after field span)
 	p.addLocationSpan(append(copyPath(fieldPath), 2),
-		extNameStartLine, extNameStartCol, extNameStartLine, extNameEndCol)
+		extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
 
 	// SCI: label
 	p.addLocationSpan(append(copyPath(fieldPath), 4),
@@ -1209,6 +1210,7 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 		extendeeName += "." + part.Value
 		extNameEndTok = part
 	}
+	extNameEndLine := extNameEndTok.Line
 	extNameEndCol := extNameEndTok.Column + len(extNameEndTok.Value)
 
 	if _, err := p.tok.Expect("{"); err != nil {
@@ -1244,7 +1246,7 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 		// Check if this is a group field in extend block
 		if isGroupField(peek.Value, p.tok.PeekAt(1).Value) {
 			nestedPath := append(copyPath(msgPath), 3, *nestedMsgIdx)
-			field, nested, err := p.parseGroupFieldInExtend(fieldPath, nestedPath, extendeeName, extNameStartLine, extNameStartCol, extNameEndCol)
+			field, nested, err := p.parseGroupFieldInExtend(fieldPath, nestedPath, extendeeName, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
 			if err != nil {
 				return err
 			}
@@ -1266,7 +1268,7 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 		// Insert extendee source code info right after field declaration span
 		extendeeLoc := &descriptorpb.SourceCodeInfo_Location{
 			Path: append(copyPath(fieldPath), 2),
-			Span: multiSpan(extNameStartLine, extNameStartCol, extNameStartLine, extNameEndCol),
+			Span: multiSpan(extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol),
 		}
 		insertIdx := locCountBefore + 1
 		p.locations = append(p.locations, nil)
