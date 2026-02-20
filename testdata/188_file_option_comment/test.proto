@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package fileoptioncmt;
+
+// This option configures the Java package name.
+option java_package = "com.example.test";
+
+message Config {
+  string name = 1;
+}

@@ -1710,9 +1710,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Root cause:** `parser.go:1867+` — `parseEnumReserved` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the statement-level SCI location. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), enum value declarations (Run 177), import declarations (Run 178), reserved declarations (Run 179), and extension range declarations (Run 180).
 - **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
 
+### Run 182 — Comments on file option declarations not attached (FAILED: 4/5 profiles)
+- **Test:** `188_file_option_comment` — proto3 file with a leading comment on `option java_package = "com.example.test";`: `// This option configures the Java package name.`
+- **Bug:** `parseFileOption()` at lines 2598-2821 never calls `attachComments()`. It creates SCI locations at paths `[8]` and `[8, fieldNum]` (lines 2811-2818), but never attaches leading/trailing/detached comments to them. C++ protoc attaches comments to option statement declarations just like any other entity. Binary descriptor sizes differ because the leading comment text is missing from the option's SCI location.
+- **Root cause:** `parser.go:2598-2821` — `parseFileOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (the function consumes `option` at line 2599 via `p.tok.Next()` but doesn't save the pre-consumption index), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations at lines 2811-2818. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), enum value declarations (Run 177), import declarations (Run 178), reserved declarations (Run 179), extension range declarations (Run 180), and enum reserved declarations (Run 181).
+- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
+
 ### Known gaps still unexplored (updated):
-- **Comments on option statements** — no `attachComments` call in `parseMessageOption`, `parseFileOption`, etc.
-- **Comments on enum reserved declarations** — TESTED in Run 181 (187_enum_reserved_comment), confirmed broken
+- **Comments on message/enum/service/method option statements** — same missing `attachComments` in `parseMessageOption`, `parseEnumOption`, `parseServiceOption`, `parseMethodOption`
+- **File option comment** — TESTED in Run 182 (188_file_option_comment), confirmed broken
 - **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ
 - **String default value on bytes field** — C++ may treat differently than Go
 - **Type shadowing** — same nested type name in different parent messages
@@ -1720,5 +1726,4 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Error column positions** — many Go validation errors report wrong column
 - **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
-- **Comments on extension range declarations** — TESTED in Run 180 (186_extension_range_comment), confirmed broken
-- **Comments on extend block declarations** — no `attachComments` call in `parseExtend`/`parseNestedExtend`
+- **Comments on extend block declarations** — already fixed (attachComments added at lines 910, 1122)
