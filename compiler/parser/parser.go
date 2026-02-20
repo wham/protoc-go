@@ -1809,7 +1809,7 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		e.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 3
 	default:
-		return nil
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
 	// Source code info: [enumPath..., 3] for options, [enumPath..., 3, fieldNum] for specific option
