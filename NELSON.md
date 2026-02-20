@@ -1791,17 +1791,21 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `parseFileOption()` at line 2655 does `p.tok.Expect("=")` immediately after reading the option name token `features`. But the next token is `.` (part of the dotted name `features.field_presence`), not `=`. Go errors with: `test.proto:5:16: Expected "=".` C++ protoc handles dotted option names (sub-message access) by reading the full dotted path before expecting `=`.
 - **Root cause:** `parser.go:2615-2660` — `parseFileOption` reads a single token for the option name and immediately expects `=`. No handling for dotted names like `features.field_presence` where `features` is a message-typed option and `.field_presence` accesses a sub-field. C++ protoc parses the full dotted path as part of the option name resolution. This affects all sub-message option access patterns, not just `features`.
 
+### Run 194 — Trailing comma in field options (FAILED: 5/5 profiles)
+- **Test:** `200_trailing_comma_options` — proto3 message with `int32 count = 2 [deprecated = true,];` (trailing comma after the last option in the bracket list)
+- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:7:38: Expected identifier.` (correctly identifies the trailing comma as an error since `]` follows instead of another option name). Go protoc-go: `test.proto:7:38: Option "]" unknown. Ensure that your proto definition file imports the proto which defines the option.` (reads `]` as an option name token, then treats it as an unknown option). The test harness detects error message mismatch.
+- **Root cause:** `parser.go` — `parseFieldOptions` loop: after consuming `,`, it continues the loop and reads the next token as an option name. When a trailing comma precedes `]`, the `]` token is consumed as `optNameTok.Value = "]"`. This falls through the option name switch and hits the unknown option error. C++ protoc's parser checks for `]` after consuming `,` and produces "Expected identifier" because it expects another option name after a comma, not the closing bracket. The Go parser should check if the token after `,` is `]` and either error with "Expected identifier" or allow trailing commas.
+
 ### Known gaps still unexplored (updated):
-- **Invalid jstype value** — `[jstype = JS_INVALID]` — same inner switch without default case
-- **Invalid optimize_for value** — Go already rejects (line 2736), NOT a gap
-- **String default value on bytes field** — C++ may treat differently than Go
+- **Trailing comma in enum value options** — `HIGH = 1 [deprecated = true,];` — same issue
+- **Trailing comma in map field options** — same issue
+- **Empty service body** — TESTED, both accept — NOT a gap
+- **Optional in oneof** — TESTED, both accept — NOT a gap
+- **String default value on bytes field** — TESTED, both match — NOT a gap
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
 - **Error column positions** — many Go validation errors report wrong column
-- **Comments on group field declarations** — `parseGroupField` may miss comments
 - **Block comment edge cases** — empty block comment `/* */`, multiline without `*` prefix
-- **ctype on non-string/bytes field** — both C++ and Go accept it (NOT a gap)
 - **Dotted option names on message/field/enum/service options** — same bug as file options, `features.X` pattern
 - **Editions features on fields** — `string name = 1 [features.field_presence = EXPLICIT];` likely also broken
 - **Editions features on messages/enums/services** — `option features.X = Y;` inside bodies
