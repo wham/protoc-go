@@ -1895,3 +1895,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **FieldOptions.feature_support** (field 49) — likely missing from parser switch
 - **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
 - **Empty method body `{ }`** — tested, NOT a gap (C++ also creates empty MethodOptions)
+
+### Run 210 — Unknown CLI flag silently ignored (FAILED: 1/1 CLI test)
+- **Test:** CLI test `unknown_flag` — invokes both compilers with `--unknown_flag=test`
+- **Bug:** Go's `parseArgs()` at line 682-685 silently ignores any flag starting with `-` that doesn't match a known pattern (`continue` in a catch-all). C++ protoc rejects unknown flags with `Unknown flag: --unknown_flag` (exit 1). Go never sees the unknown flag, falls through to `Missing output directives.` (exit 1). Same exit code but different stderr.
+- **Root cause:** `cli.go:682-685` — `if strings.HasPrefix(arg, "-") { continue }` silently drops all unrecognized flags instead of erroring. C++ protoc's `CommandLineInterface::ParseArguments` errors on any flag not in its known set.
