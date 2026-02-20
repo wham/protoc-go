@@ -2188,3 +2188,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `cli@deterministic_output` — CLI test with `--deterministic_output` flag (no input file)
 - **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--deterministic_output`. The flag falls to the default unknown flag handler, returning "Unknown flag: --deterministic_output". C++ protoc accepts the flag and reports "Missing input file." (since no .proto file was provided).
 - **Root cause:** `cli.go:510-640` — `parseArgs` switch handles many flags but is missing `--deterministic_output`. The help text (lines 33-34) documents this flag, but it was never added to the parser.
+
+### Run 247 — --retain_options CLI flag (FAILED: 1/1 CLI test)
+- **Test:** `cli@retain_options` — CLI test with `--retain_options` flag (no input file)
+- **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--retain_options`. The flag falls to the default unknown flag handler at line 631-637, returning "Unknown flag: --retain_options". C++ protoc accepts the flag and reports "Missing input file." (since no .proto file was provided).
+- **Root cause:** `cli.go:510-640` — `parseArgs` switch handles many flags but is missing `--retain_options`. The help text (lines 65-70) documents this flag for use with `--descriptor_set_out`, but it was never added to the parser.

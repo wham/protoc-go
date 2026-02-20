@@ -393,6 +393,7 @@ CLI_TESTS=(
   "fatal_warnings|--fatal_warnings"
   "print_free_field|--print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "deterministic_output|--deterministic_output"
+  "retain_options|--retain_options"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
