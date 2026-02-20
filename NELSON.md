@@ -2193,3 +2193,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `cli@retain_options` — CLI test with `--retain_options` flag (no input file)
 - **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--retain_options`. The flag falls to the default unknown flag handler at line 631-637, returning "Unknown flag: --retain_options". C++ protoc accepts the flag and reports "Missing input file." (since no .proto file was provided).
 - **Root cause:** `cli.go:510-640` — `parseArgs` switch handles many flags but is missing `--retain_options`. The help text (lines 65-70) documents this flag for use with `--descriptor_set_out`, but it was never added to the parser.
+
+### Run 248 — --decode_raw CLI flag (FAILED: 1/1 CLI test)
+- **Test:** `cli@decode_raw` — CLI test with `--decode_raw` flag (no input file)
+- **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--decode_raw`. The flag falls to the default unknown flag handler, returning "Unknown flag: --decode_raw" (exit 1). C++ protoc accepts the flag, reads empty stdin, and exits 0 with no output. Exit code mismatch (C++ 0, Go 1).
+- **Root cause:** `cli.go:510-640` — `parseArgs` switch handles many flags but is missing `--decode_raw`. The help text (line 41) documents this flag for reading arbitrary protocol messages from stdin, but it was never added to the parser. Same pattern as `--deterministic_output` (Run 246) and `--retain_options` (Run 247).

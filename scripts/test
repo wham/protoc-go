@@ -394,6 +394,7 @@ CLI_TESTS=(
   "print_free_field|--print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "deterministic_output|--deterministic_output"
   "retain_options|--retain_options"
+  "decode_raw|--decode_raw"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
