@@ -1508,3 +1508,21 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `161_unknown_service_option` — proto3 service with `option foobar = true;` (completely unknown option name, not a standard ServiceOptions field)
 - **Bug:** Go protoc-go silently accepts the unknown service option and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:14:10: Option "foobar" unknown. Ensure that your proto definition file imports the proto which defines the option.` (exit 1). The test harness detects exit code mismatch.
 - **Root cause:** `parser.go:2069-2070` — `parseServiceOption` switch only handles `deprecated` (field 33). The `default` case at line 2069-2070 does `return nil`, silently accepting any unknown option name. C++ protoc stores all options as `UninterpretedOption` during parsing, then during linking validates them against the `ServiceOptions` message. Same bug pattern as `parseMessageOption` (Run 152), `parseFieldOptions` (Run 153), `parseEnumOption`, and `parseMethodOption`.
+
+### Run 156 — Unknown method option silently accepted (FAILED: 5/5 profiles)
+- **Test:** `162_unknown_method_option` — proto3 service with `option foobar = true;` inside a method body (completely unknown option name, not a standard MethodOptions field)
+- **Bug:** Go protoc-go silently accepts the unknown method option and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:15:12: Option "foobar" unknown. Ensure that your proto definition file imports the proto which defines the option.` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:2136-2137` — `parseMethodOption` switch handles `deprecated` (field 33) and `idempotency_level` (field 34). The `default` case at line 2136-2137 does `return nil`, silently accepting any unknown option name. C++ protoc stores all options as `UninterpretedOption` during parsing, then during linking validates them against the `MethodOptions` message. Same bug pattern as `parseMessageOption` (Run 152), `parseFieldOptions` (Run 153), `parseEnumOption` (Run 154), and `parseServiceOption` (Run 155).
+
+### Known gaps still unexplored (updated):
+- **Unknown enum option** — `option foobar = true;` on an enum — same `return nil` default case at line 1809
+- **Invalid content in service body** — `service Foo { string x = 1; }` — Go treats as rpc, C++ rejects differently
+- **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ from C++ protoc
+- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Error column positions** — many Go validation errors report wrong column
+- **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
+- **Custom option syntax** — `option (custom_opt) = "foo";` — Go can't parse parenthesized option names
+- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
