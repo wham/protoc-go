@@ -1625,3 +1625,21 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Unterminated single-quoted string** — same bug with `'hello` (single quote variant)
 - **String concatenation in enum reserved names** — `reserved "DEL" "ETED";` inside enum — same bug as message reserved names
 - **Reserved name string concatenation** — TESTED in Run 169 (175_reserved_string_concat), confirmed broken (Go rejects, C++ accepts)
+
+### Run 170 — Bytes default value escape representation (FAILED: 5/5 profiles)
+- **Test:** `176_bytes_default_escape` — proto2 message with `optional bytes data = 1 [default = "\x00\xff\x42"];` plus empty and text defaults
+- **Bug:** Go protoc-go stores the decoded raw bytes as the `default_value` field: actual bytes `\x00\xff\x42` (3 bytes). C++ protoc stores the C-style escape representation: `\000\377B` (9 ASCII chars). The `default_value` field in `FieldDescriptorProto` is a string, and C++ uses C-style escaping for non-printable bytes (`\NNN` octal for non-ASCII, printable ASCII as-is). Go stores the binary-decoded bytes directly. This causes descriptor set size differences (130 vs 124 bytes) and binary CodeGeneratorRequest mismatches across all profiles.
+- **Root cause:** `parser.go` — when a `bytes` field default value is parsed, the string is decoded by the tokenizer (handling `\x` escapes correctly) and stored as raw bytes. But C++ protoc's `FieldDescriptorProto::set_default_value()` stores a C-escaped string representation of the bytes, not the raw bytes. The Go parser should re-encode the decoded bytes using C-style escaping: printable ASCII chars as-is, non-printable bytes as `\NNN` (3-digit octal). The function `CEscape` in C++ protobuf (`stubs/strutil.cc`) handles this conversion.
+- **Tried and discarded:** Duplicate enum reserved numbers (`reserved 1, 1;`) — both C++ and Go reject identically, already validated. Enum reserved string concatenation — fixed in recent Go parser changes. Hash comments — C++ v29.3 also rejects. CR-only line endings — both produce identical output. Single-quoted strings — both handle correctly. `+` prefix on defaults — both reject. json_name edge cases (double underscores, uppercase) — both produce identical output. Keyword field names (`to`, `max`, `stream`, `returns`, etc.) — both handle correctly.
+
+### Known gaps still unexplored (updated):
+- **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ (stored as decoded byte vs `\t`/`\n`/`\r`)
+- **String default value on bytes field** — C++ may treat differently than Go
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ
+- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
+- **Error column positions** — many Go validation errors report wrong column
+- **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
+- **Unterminated line comment at EOF** — `// comment with no newline` — may or may not differ
+- **Duplicate enum reserved numbers** — TESTED, both reject identically — NOT a gap
+- **String concatenation in enum reserved names** — TESTED, fixed in recent changes — NOT a gap
