@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 863/863 tests passing.
+ALL DONE — 868/868 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -332,3 +332,4 @@ ALL DONE — 863/863 tests passing.
 172. ✅ Duplicate reserved name validation — reject reserved names that appear more than once within a message with `Field name "X" is reserved multiple times.` error at message name location (SCI path `[4, msgIdx, 1]`), recurses into nested messages, skips map entry types
 173. ✅ Duplicate enum reserved name validation — reject enum reserved names that appear more than once with `Enum value "X" is reserved multiple times.` error at enum name location (SCI path `[enumPath..., 1]`), handles top-level enums and enums nested in messages
 174. ✅ Unterminated string at EOF detection — tokenizer detects EOF inside string literal (no closing quote) and reports `Unexpected end of string.` error at EOF position, merged with parser errors to produce both `Unexpected end of string.` and `Expected ";".` matching C++ protoc
+175. ✅ Short unicode escape validation — `\u` requires exactly 4 hex digits, `\U` requires exactly 8 hex digits; fewer digits produces `Expected four hex digits for \u escape sequence.` or `Expected eight hex digits for \U escape sequence.` error at position after last consumed digit
