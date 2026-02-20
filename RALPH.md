@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 838/838 tests passing.
+ALL DONE — 843/843 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -327,3 +327,4 @@ ALL DONE — 838/838 tests passing.
 167. ✅ Parenthesized custom file option parsing — handle `option (name) = value;` syntax with parenthesized (extension) option names, skip to end of statement and report `Option "(name)" unknown. Ensure that your proto definition file imports the proto which defines the option.` error at `(` token position, supports dotted names like `(pkg.name)`
 168. ✅ Negative message reserved range rejection — reject negative numbers in message `reserved` declarations (e.g., `reserved -5 to -1;`) with `Expected field name or number range.` error at `-` token position, using error recovery to continue parsing and report errors for all invalid reserved declarations
 169. ✅ Invalid escape sequence validation — reject unknown escape sequences (e.g., `\e`) in string literals with `Invalid escape sequence in string literal.` error at the escape character position (after backslash), tokenizer records `TokenError` which gets merged with parser errors
+170. ✅ Hex escape no-digits validation — reject `\x` not followed by any hex digits with `Expected hex digits for escape sequence.` error at the position after `\x`, tokenizer tracks hex digit count and reports error when count is 0
