@@ -1865,6 +1865,7 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 }
 
 func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath []int32, rangeIdx, nameIdx *int32) error {
+	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "reserved"
 
 	if p.tok.Peek().Type == tokenizer.TokenString {
@@ -1906,6 +1907,7 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 		stmtLoc := p.locations[len(p.locations)-1]
 		copy(p.locations[len(p.locations)-int(*nameIdx):], p.locations[len(p.locations)-int(*nameIdx)-1:len(p.locations)-1])
 		p.locations[len(p.locations)-int(*nameIdx)-1] = stmtLoc
+		p.attachComments(len(p.locations)-int(*nameIdx)-1, firstIdx)
 	} else {
 		// reserved 2, 3, 10 to 20;
 		stmtPath := append(copyPath(enumPath), 4) // field 4 = reserved_range
@@ -2023,6 +2025,7 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 		stmtLoc := p.locations[len(p.locations)-1]
 		copy(p.locations[len(p.locations)-count*3:], p.locations[len(p.locations)-count*3-1:len(p.locations)-1])
 		p.locations[len(p.locations)-count*3-1] = stmtLoc
+		p.attachComments(len(p.locations)-count*3-1, firstIdx)
 	}
 	return nil
 }
