@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1089/1089 tests passing.
+ALL DONE — 1094/1094 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -380,3 +380,4 @@ ALL DONE — 1089/1089 tests passing.
 212. ✅ Unknown CLI flag rejection — reject unrecognized flags (e.g., `--unknown_flag=test`) with `Unknown flag: --unknown_flag` error, extracting flag name before `=` sign, matching C++ protoc behavior
 213. ✅ Parenthesized custom option names in message/enum/service/method — handle `option (name) = value;` syntax with parenthesized (extension) option names using shared `parseParenthesizedOptionName` helper, skip to end of statement and report `Option "(name)" unknown.` error at `(` position
 214. ✅ Parenthesized custom field option names — handle `[(name) = value]` syntax in field option brackets, parse full name with `parseParenthesizedOptionName`, skip to `]`/`,`, report `Option "(name)" unknown.` error at `(` position
+215. ✅ Parenthesized custom enum value option names — handle `[(name) = value]` syntax in enum value option brackets (e.g., `PRIORITY_HIGH = 1 [(my_custom_opt) = "important"]`), parse full name with `parseParenthesizedOptionName`, skip to `]`/`,`, report `Option "(name)" unknown.` error at `(` position
