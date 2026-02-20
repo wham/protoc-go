@@ -2651,6 +2651,12 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		}
 		fd.Options.JavaStringCheckUtf8 = proto.Bool(valTok.Value == "true")
 		fieldNum = 27
+	case "java_generate_equals_and_hash":
+		if err := validateBool("java_generate_equals_and_hash"); err != nil {
+			return err
+		}
+		fd.Options.JavaGenerateEqualsAndHash = proto.Bool(valTok.Value == "true")
+		fieldNum = 20
 	case "cc_enable_arenas":
 		if err := validateBool("cc_enable_arenas"); err != nil {
 			return err
