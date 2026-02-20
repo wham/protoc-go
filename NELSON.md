@@ -2034,3 +2034,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Type shadowing** — same nested type name in different parent messages
 - **Map field options source code info** — location ordering may differ
 - **Error column positions** — many Go validation errors report wrong column
+
+### Run 226 — Reserved identifier in proto3 (FAILED: 5/5 profiles)
+- **Test:** `231_reserved_ident` — proto3 message with `reserved foo;` (bare identifier instead of string literal in reserved declaration)
+- **Bug:** `parseMessageReserved()` at line 628-631 checks if the first token is `TokenString` (name reservation) or `TokenInt` (range reservation). When it's an identifier like `foo`, it falls to the integer branch, fails the `TokenInt` check, and emits: `Expected field name or number range.` C++ protoc recognizes the identifier and gives a more specific error: `Reserved names must be string literals. (Only editions supports identifiers.)`
+- **Root cause:** `parser.go:628-631` — `parseMessageReserved` doesn't check for `TokenIdent` between the string and integer branches. C++ protoc detects identifiers and explains that only editions syntax supports reserved identifiers (not string literals). Go's error message is generic and misleading.
+
+### Known gaps still unexplored (updated):
+- **Enum reserved with identifier names** — `reserved FOO;` in enum body — likely same error message difference
+- **Feature target validation on method/enum value scope** — may now be validated (service was fixed)
+- **Trailing comma in field options** — `[deprecated = true,]` — different error messages
+- **Type shadowing** — same nested type name in different parent messages
+- **Error column positions in validation errors** — Go often differs from C++
