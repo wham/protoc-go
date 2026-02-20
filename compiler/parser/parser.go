@@ -2162,7 +2162,7 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto, error) {
 	startTok := p.tok.Next() // consume "rpc"
 	if startTok.Value != "rpc" {
-		return nil, fmt.Errorf("line %d:%d: expected 'rpc', got %q", startTok.Line+1, startTok.Column+1, startTok.Value)
+		return nil, fmt.Errorf("%d:%d: Expected \"rpc\".", startTok.Line+1, startTok.Column+1)
 	}
 
 	nameTok, err := p.tok.ExpectIdent()
