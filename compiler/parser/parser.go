@@ -3175,6 +3175,11 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		next := p.tok.Peek()
 		if next.Value == "," {
 			p.tok.Next()
+			// Trailing comma — next token should be an identifier, not "]"
+			if p.tok.Peek().Value == "]" {
+				tok := p.tok.Peek()
+				return nil, fmt.Errorf("%d:%d: Expected identifier.", tok.Line+1, tok.Column+1)
+			}
 		} else if next.Value == "]" {
 			break
 		} else {
