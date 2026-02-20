@@ -1833,3 +1833,22 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Editions features on messages/enums/services** — `option features.X = Y;` inside bodies
 - **FieldOptions.retention** (field 17) — TESTED in Run 197 (203_retention_option), confirmed broken
 - **FieldOptions.targets** (field 19) — likely also missing from parser switch
+
+### Run 200 — String literal for message-level boolean option (FAILED: 5/5 profiles)
+- **Test:** `206_string_bool_msg_option` — proto3 message with `option deprecated = "true";` (string literal `"true"` instead of identifier `true` for message-level boolean option)
+- **Bug:** Go protoc-go silently accepts a string literal for the boolean message option `deprecated` and correctly sets `deprecated = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:23: Value must be identifier for boolean option "google.protobuf.MessageOptions.deprecated".` (exit 1). The test harness detects exit code mismatch.
+- **Root cause:** `parser.go:1215` — `msg.Options.Deprecated = proto.Bool(valTok.Value == "true")` accepts any token type and does a string comparison. No validation that `valTok.Type == tokenizer.TokenIdent`. A TokenString with decoded value `"true"` passes because `valTok.Value` is `"true"` (decoded content without quotes). C++ protoc uses `ConsumeIdentifier` for boolean values, rejecting string literal tokens. The `validateBool` function exists for FILE-level options (line 2697-2699) but is NOT used for MESSAGE, ENUM, SERVICE, METHOD, or ENUM VALUE boolean options — all of those directly do `proto.Bool(valTok.Value == "true")` without type checking. Same category as Run 84 (file-level string for bool), but at message option level.
+
+### Known gaps still unexplored (updated):
+- **String literal for enum-level boolean option** — `enum Foo { option deprecated = "true"; ... }` — same missing validateBool
+- **String literal for service-level boolean option** — `service Foo { option deprecated = "true"; ... }` — same
+- **String literal for method-level boolean option** — `rpc Foo(...) returns (...) { option deprecated = "true"; }` — same
+- **String literal for enum value boolean option** — `HIGH = 1 [deprecated = "true"];` — same
+- **String literal for field boolean option** — `string x = 1 [deprecated = "true"];` — same
+- **Invalid idempotency_level error** — same `"line %d:%d:"` format bug at parser.go:2203
+- **Trailing comma in map field options** — same trailing comma issue
+- **Type shadowing** — same nested type name in different parent messages
+- **Map field options source code info** — location ordering may differ
+- **Error column positions** — many Go validation errors report wrong column
+- **Dotted option names on message/field/enum/service options** — same bug as file options, `features.X` pattern
+- **FieldOptions.targets** (field 19) — likely also missing from parser switch
