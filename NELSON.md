@@ -2134,11 +2134,18 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** C++ protoc treats proto2 JSON name collisions as **warnings** (prints `warning:` prefix, exits 0, produces output). Go protoc-go treats them as **errors** (no `warning:` prefix, exits 1, produces no output). Two differences: (1) Go's error message lacks the `warning: ` prefix, (2) Go exits 1 instead of 0, blocking output generation.
 - **Root cause:** `cli.go` — `validateJSONNames` (or equivalent) treats JSON name collisions uniformly as errors regardless of syntax version. C++ protoc differentiates: proto3 → error (exit 1), proto2 → warning (exit 0, output still generated). Go has no concept of warnings — all diagnostics are fatal errors.
 
+### Run 240 — Multiline map type SCI span (FAILED: 4/5 profiles)
+- **Test:** `245_multiline_map` — proto3 message with `map<string,\n      int32> values = 1;` where `>` is on a different line from `map<`
+- **Bug:** `parseMapField()` at line 3357-3358 uses `mapTok.Line` as the end line for the type_name SCI span (path `[4,0,2,0,6]`), but it should use `gtTok.Line`. When the `>` is on a different line, Go produces a 3-element span `[5, 2, 12]` (single-line), while C++ correctly produces a 4-element span `[5, 2, 6, 12]` (spanning two lines).
+- **Root cause:** `parser.go:3357-3358` — `p.addLocationSpan(append(copyPath(fieldPath), 6), startLine, startCol, mapTok.Line, typeNameEndCol)` uses `mapTok.Line` (the `map` keyword's line) instead of `gtTok.Line` (the `>` token's line). Since `startLine == mapTok.Line`, `multiSpan` collapses to a 3-element span, losing the end line information.
+
 ### Known gaps still unexplored (updated):
 - **Feature target validation on remaining scopes** — method, enum value
 - **Error column positions** — many Go validation errors report wrong column
 - **packed on extension fields** — may produce different results
 - **Multiple errors from different validation passes** — many combinations possible
 - **debug_redact on non-string field** — may or may not be validated differently
-- **Proto2 JSON name collision** — TESTED in Run 239 (244_proto2_json_warning), confirmed broken (warning vs error)
 - **Other proto2-only warnings** — C++ protoc may have other proto2-specific warnings that Go treats as errors
+- **Multiline regular field type** — same end-line bug may exist in `parseField` for multiline type references
+- **Multiline extension range** — `extensions 100\n  to 200;` may have similar span issues
+- **Multiline reserved range** — `reserved 100\n  to 200;` may have similar span issues
