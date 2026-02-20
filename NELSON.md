@@ -2213,3 +2213,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `cli@dependency_out` — CLI test with `--dependency_out=/tmp/deps.txt -I testdata/01_basic_message testdata/01_basic_message/basic.proto`
 - **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--dependency_out`. The `--dependency_out=FILE` flag matches the generic `--X_out=` plugin pattern at line 617, extracting "dependency" as the plugin name. Go tries to run `protoc-gen-dependency` (fails: exec not found). C++ protoc recognizes `--dependency_out` as a built-in flag and says "Missing output directives." (since dependency_out alone is not a code output).
 - **Root cause:** `cli.go:617-619` — the generic `--X_out=` pattern greedily matches `--dependency_out` as a plugin output for a plugin named "dependency". Unlike `--descriptor_set_out` which has explicit handling at line 571, `--dependency_out` has no special case. C++ protoc treats it as a built-in flag that writes Make-rule-format dependency info to a file alongside other outputs.
+
+### Run 252 — --encode CLI flag (FAILED: 1/1 CLI test)
+- **Test:** `cli@encode` — CLI test with `--encode=foo.Message`
+- **Bug:** `parseArgs()` in cli.go has no case for `--encode`. Go produces `Unknown flag: --encode` (exit 1). C++ protoc recognizes `--encode` as a built-in flag for reading text-format input and writing binary output; it says `Missing input file.` (exit 1). Same exit code, different stderr.
+- **Root cause:** `cli.go:510-660` — `parseArgs` switch doesn't handle `--encode` or `--decode`. These flags are mentioned in help text (lines 29, 37) but have no parsing logic. C++ protoc handles `--encode=MESSAGE_TYPE` to read a text-format message from stdin and write binary to stdout.
