@@ -1191,7 +1191,7 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 	case "map_entry":
 		return fmt.Errorf("%d:%d: map_entry should not be set explicitly. Use map<KeyType, ValueType> instead.", nameTok.Line+1, nameTok.Column+1)
 	default:
-		return nil
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
 	// Source code info: [msgPath..., 7] for options, [msgPath..., 7, fieldNum] for specific option
