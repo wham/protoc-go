@@ -3133,6 +3133,20 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				field.Options = &descriptorpb.FieldOptions{}
 			}
 			field.Options.Weak = proto.Bool(valTok.Value == "true")
+		case "retention":
+			if field.Options == nil {
+				field.Options = &descriptorpb.FieldOptions{}
+			}
+			switch valTok.Value {
+			case "RETENTION_UNKNOWN":
+				field.Options.Retention = descriptorpb.FieldOptions_RETENTION_UNKNOWN.Enum()
+			case "RETENTION_RUNTIME":
+				field.Options.Retention = descriptorpb.FieldOptions_RETENTION_RUNTIME.Enum()
+			case "RETENTION_SOURCE":
+				field.Options.Retention = descriptorpb.FieldOptions_RETENTION_SOURCE.Enum()
+			default:
+				return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FieldOptions.OptionRetention\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.retention\".", valTok.Line+1, valTok.Column+1, valTok.Value)
+			}
 		default:
 			return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", optNameTok.Line+1, optNameTok.Column+1, optName)
 		}
@@ -3176,6 +3190,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
 		case "weak":
 			addLoc(append(copyPath(fieldPath), 8, 10),
+				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+		case "retention":
+			addLoc(append(copyPath(fieldPath), 8, 17),
 				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
 		}
 

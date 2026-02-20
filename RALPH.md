@@ -228,6 +228,7 @@ ALL DONE — 1008/1008 tests passing.
 187. ✅ Extension range declaration comment tracking — `parseExtensionRange` now captures `firstIdx` before consuming `extensions` token and calls `attachComments` on the statement-level SCI location, matching other declaration parsers for leading/trailing/detached comments
 
 198. ✅ Empty import file-not-found handling — when `srcTree.Open(filename)` fails for a dependency and `collectErrors` is active, add `<filename>: File not found.` to collectErrors and return `(false, nil)` instead of propagating error, so parent also emits `Import "" was not found or had errors.` follow-up error matching C++ protoc's two-line output
+199. ✅ `weak` field option (field 10 of FieldOptions, boolean) with source code info — `[weak = true]` sets `FieldOptions.Weak`, SCI path `[..., 8, 10]`
 
 ## Notes
 
@@ -359,6 +360,7 @@ ALL DONE — 1008/1008 tests passing.
 195. ✅ Invalid ctype/jstype enum value validation — reject unknown enum values for `ctype` and `jstype` field options with `Enum type "google.protobuf.FieldOptions.CType/JSType" has no value named "X" for option "google.protobuf.FieldOptions.ctype/jstype".` error at value token position
 196. ✅ Edition features file option parsing — `option features.field_presence = IMPLICIT;` etc. sets `FileOptions.features` (field 50) FeatureSet sub-fields (field_presence=1, enum_type=2, repeated_field_encoding=3, utf8_validation=4, message_encoding=5, json_format=6), SCI paths `[8]` and `[8, 50, subFieldNum]` with same span, dotted name parsed after `features` token
 197. ✅ Trailing comma rejection in field options — reject `[deprecated = true,]` (trailing comma before `]`) with `Expected identifier.` error at `]` token position, matching C++ protoc behavior
+200. ✅ `retention` field option (field 17 of FieldOptions, enum `OptionRetention`: RETENTION_UNKNOWN=0, RETENTION_RUNTIME=1, RETENTION_SOURCE=2) with source code info at path `[..., 8, 17]`
 
 - Import declaration comment tracking: `parseImport` captures `firstIdx` before consuming `import` token and calls `attachComments` on the import SCI location (path `[3, depIdx]`), same pattern as message/enum/service/oneof/field/map/method declarations.
 - File option declaration comment tracking: `parseFileOption` captures `firstIdx` before consuming `option` token and calls `attachComments` on the `[8, fieldNum]` SCI location (the specific option entry, not the statement entry), same pattern as message/enum/service/field/method declarations.
