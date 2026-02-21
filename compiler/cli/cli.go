@@ -1661,88 +1661,79 @@ func validateFeaturesEditions(orderedFiles []string, parsed map[string]*descript
 		if fd.GetSyntax() == "editions" {
 			continue
 		}
-		if hasAnyFeatures(fd) {
-			errs = append(errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
+		// File-level features: report with line:col from syntax declaration
+		if fd.GetOptions() != nil && fd.GetOptions().GetFeatures() != nil {
+			line, col := findLocationByPath([]int32{12}, fd.GetSourceCodeInfo())
+			errs = append(errs, fmt.Sprintf("%s:%d:%d: Features are only valid under editions.", name, line, col))
 		}
+		// Sub-entity features: report without line:col
+		collectFeaturesEditionsErrors(name, fd, &errs)
 	}
 	return errs
 }
 
-func hasAnyFeatures(fd *descriptorpb.FileDescriptorProto) bool {
-	if fd.GetOptions() != nil && fd.GetOptions().GetFeatures() != nil {
-		return true
-	}
+func collectFeaturesEditionsErrors(name string, fd *descriptorpb.FileDescriptorProto, errs *[]string) {
 	for _, msg := range fd.GetMessageType() {
-		if hasAnyFeaturesInMsg(msg) {
-			return true
-		}
+		collectFeaturesEditionsInMsg(name, msg, errs)
 	}
 	for _, e := range fd.GetEnumType() {
-		if hasAnyFeaturesInEnum(e) {
-			return true
-		}
+		collectFeaturesEditionsInEnum(name, e, errs)
 	}
 	for _, svc := range fd.GetService() {
 		if svc.GetOptions() != nil && svc.GetOptions().GetFeatures() != nil {
-			return true
+			*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
 		}
 		for _, m := range svc.GetMethod() {
 			if m.GetOptions() != nil && m.GetOptions().GetFeatures() != nil {
-				return true
+				*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
 			}
 		}
 	}
 	for _, ext := range fd.GetExtension() {
 		if ext.GetOptions() != nil && ext.GetOptions().GetFeatures() != nil {
-			return true
+			*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
 		}
 	}
-	return false
 }
 
-func hasAnyFeaturesInMsg(msg *descriptorpb.DescriptorProto) bool {
+func collectFeaturesEditionsInMsg(name string, msg *descriptorpb.DescriptorProto, errs *[]string) {
 	if msg.GetOptions() != nil && msg.GetOptions().GetFeatures() != nil {
-		return true
+		*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
 	}
 	for _, f := range msg.GetField() {
 		if f.GetOptions() != nil && f.GetOptions().GetFeatures() != nil {
-			return true
+			*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
 		}
 	}
 	for _, o := range msg.GetOneofDecl() {
 		if o.GetOptions() != nil && o.GetOptions().GetFeatures() != nil {
-			return true
+			*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
 		}
 	}
 	for _, e := range msg.GetEnumType() {
-		if hasAnyFeaturesInEnum(e) {
-			return true
-		}
+		collectFeaturesEditionsInEnum(name, e, errs)
 	}
 	for _, ext := range msg.GetExtension() {
 		if ext.GetOptions() != nil && ext.GetOptions().GetFeatures() != nil {
-			return true
+			*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
 		}
 	}
 	for _, nested := range msg.GetNestedType() {
-		if hasAnyFeaturesInMsg(nested) {
-			return true
-		}
+		collectFeaturesEditionsInMsg(name, nested, errs)
 	}
-	return false
 }
 
-func hasAnyFeaturesInEnum(e *descriptorpb.EnumDescriptorProto) bool {
+func collectFeaturesEditionsInEnum(name string, e *descriptorpb.EnumDescriptorProto, errs *[]string) {
 	if e.GetOptions() != nil && e.GetOptions().GetFeatures() != nil {
-		return true
+		*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
 	}
 	for _, v := range e.GetValue() {
 		if v.GetOptions() != nil && v.GetOptions().GetFeatures() != nil {
-			return true
+			*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
 		}
 	}
-	return false
 }
+
 
 func validateFeatureTargets(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
