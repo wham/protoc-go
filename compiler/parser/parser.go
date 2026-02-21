@@ -4587,9 +4587,19 @@ func (p *parser) consumeAggregate() []AggregateField {
 				p.trackEnd(valTok)
 			}
 
+			val := valTok.Value
+			// Adjacent string concatenation
+			if valTok.Type == tokenizer.TokenString {
+				for p.tok.Peek().Type == tokenizer.TokenString {
+					nextTok := p.tok.Next()
+					p.trackEnd(nextTok)
+					val += nextTok.Value
+				}
+			}
+
 			fields = append(fields, AggregateField{
 				Name:        fieldName,
-				Value:       valTok.Value,
+				Value:       val,
 				ValueType:   valTok.Type,
 				Negative:    negative,
 				IsExtension: isExtension,
@@ -4674,9 +4684,19 @@ func (p *parser) consumeAggregateAngle() []AggregateField {
 				p.trackEnd(valTok)
 			}
 
+			val := valTok.Value
+			// Adjacent string concatenation
+			if valTok.Type == tokenizer.TokenString {
+				for p.tok.Peek().Type == tokenizer.TokenString {
+					nextTok := p.tok.Next()
+					p.trackEnd(nextTok)
+					val += nextTok.Value
+				}
+			}
+
 			fields = append(fields, AggregateField{
 				Name:        fieldName,
-				Value:       valTok.Value,
+				Value:       val,
 				ValueType:   valTok.Type,
 				Negative:    negative,
 				IsExtension: isExtension,
