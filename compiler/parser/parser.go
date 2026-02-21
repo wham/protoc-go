@@ -119,6 +119,7 @@ type CustomFieldOption struct {
 type CustomMessageOption struct {
 	ParenName       string                              // e.g., "(my_msg_label)"
 	InnerName       string                              // e.g., "my_msg_label"
+	SubFieldPath    []string                            // e.g., ["label"] for option (my_opt).label = ...
 	Value           string                              // the option value
 	ValueType       tokenizer.TokenType                 // token type of value
 	Message         *descriptorpb.DescriptorProto       // the message this option is on
@@ -1487,6 +1488,16 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 			inner = inner[1 : len(inner)-1]
 		}
 
+		// Handle sub-field path: option (name).sub1.sub2... = value;
+		var subFieldPath []string
+		for p.tok.Peek().Value == "." {
+			dotTok := p.tok.Next()
+			p.trackEnd(dotTok)
+			subTok := p.tok.Next()
+			p.trackEnd(subTok)
+			subFieldPath = append(subFieldPath, subTok.Value)
+		}
+
 		// Consume "="
 		if _, err := p.tok.Expect("="); err != nil {
 			return err
@@ -1495,6 +1506,7 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		var custOpt CustomMessageOption
 		custOpt.ParenName = fullName
 		custOpt.InnerName = inner
+		custOpt.SubFieldPath = subFieldPath
 		custOpt.NameTok = nameTok
 		custOpt.Message = msg
 
@@ -1549,15 +1561,21 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 			msg.Options = &descriptorpb.MessageOptions{}
 		}
 
-		// SCI: [msgPath..., 7] for options statement, [msgPath..., 7, 0] placeholder
+		// SCI: [msgPath..., 7] for options statement, [msgPath..., 7, 0, ...] placeholder
 		optPath := append(copyPath(msgPath), 7)
 		span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
 			Span: span,
 		})
+		sciPath := append(copyPath(optPath), 0)
+		if len(subFieldPath) > 0 {
+			sciPath = make([]int32, len(optPath)+1+len(subFieldPath))
+			copy(sciPath, optPath)
+			// remaining elements will be resolved post-parse
+		}
 		sciLoc := &descriptorpb.SourceCodeInfo_Location{
-			Path: append(copyPath(optPath), 0), // placeholder field num
+			Path: sciPath,
 			Span: span,
 		}
 		p.locations = append(p.locations, sciLoc)
