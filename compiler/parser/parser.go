@@ -132,6 +132,7 @@ type CustomMessageOption struct {
 type CustomServiceOption struct {
 	ParenName       string
 	InnerName       string
+	SubFieldPath    []string
 	Value           string
 	ValueType       tokenizer.TokenType
 	Service         *descriptorpb.ServiceDescriptorProto
@@ -3151,6 +3152,16 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 			inner = inner[1 : len(inner)-1]
 		}
 
+		// Handle sub-field path: option (name).sub1.sub2... = value;
+		var subFieldPath []string
+		for p.tok.Peek().Value == "." {
+			dotTok := p.tok.Next()
+			p.trackEnd(dotTok)
+			subTok := p.tok.Next()
+			p.trackEnd(subTok)
+			subFieldPath = append(subFieldPath, subTok.Value)
+		}
+
 		if _, err := p.tok.Expect("="); err != nil {
 			return err
 		}
@@ -3158,6 +3169,7 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 		var custOpt CustomServiceOption
 		custOpt.ParenName = fullName
 		custOpt.InnerName = inner
+		custOpt.SubFieldPath = subFieldPath
 		custOpt.NameTok = nameTok
 		custOpt.Service = svc
 
@@ -3210,8 +3222,14 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 			Path: optPath,
 			Span: span,
 		})
+		sciPath := append(copyPath(optPath), 0)
+		if len(subFieldPath) > 0 {
+			sciPath = make([]int32, len(optPath)+1+len(subFieldPath))
+			copy(sciPath, optPath)
+			// remaining elements will be resolved post-parse
+		}
 		sciLoc := &descriptorpb.SourceCodeInfo_Location{
-			Path: append(copyPath(optPath), 0),
+			Path: sciPath,
 			Span: span,
 		}
 		p.locations = append(p.locations, sciLoc)
