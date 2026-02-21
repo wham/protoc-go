@@ -1,0 +1,17 @@
+syntax = "proto2";
+
+package custoneofext;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.OneofOptions {
+  optional string oneof_label = 50001;
+}
+
+message Container {
+  oneof payload {
+    option (oneof_label) = "primary";
+    string text = 1;
+    int32 number = 2;
+  }
+}
