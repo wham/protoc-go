@@ -373,6 +373,11 @@ func Run(args []string) error {
 		if relFileSet[name] {
 			fd = stripSourceRetention(fd)
 		}
+		// If the file has sub-field custom options, clone and merge unknown fields
+		// so proto_file has merged entries (matching C++ protoc's linked descriptors)
+		if pr := parseResults[name]; pr != nil && hasSubFieldCustomOpts(pr) {
+			fd = cloneWithMergedExtUnknowns(fd)
+		}
 		protoFiles = append(protoFiles, fd)
 		strippedMap[name] = fd
 	}
@@ -3077,6 +3082,101 @@ func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, 
 	return 0, 0
 }
 
+func hasSubFieldCustomOpts(pr *parser.ParseResult) bool {
+	for _, opt := range pr.CustomFileOptions {
+		if opt.SubField != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// cloneWithMergedExtUnknowns clones fd and merges multiple unknown field entries
+// with the same tag (length-delimited) in FileOptions into single entries.
+func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto) *descriptorpb.FileDescriptorProto {
+	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
+	if fdCopy.Options == nil {
+		return fdCopy
+	}
+	raw := fdCopy.Options.ProtoReflect().GetUnknown()
+	if len(raw) == 0 {
+		return fdCopy
+	}
+
+	// Parse entries
+	type entry struct {
+		num     protowire.Number
+		wtyp    protowire.Type
+		payload []byte // only for BytesType
+		raw     []byte // full raw bytes for non-BytesType entries
+	}
+	var entries []entry
+	buf := raw
+	for len(buf) > 0 {
+		entryStart := buf
+		num, wtyp, n := protowire.ConsumeTag(buf)
+		if n < 0 {
+			break
+		}
+		buf = buf[n:]
+		var payload []byte
+		switch wtyp {
+		case protowire.BytesType:
+			v, vn := protowire.ConsumeBytes(buf)
+			if vn < 0 {
+				return fdCopy
+			}
+			payload = v
+			buf = buf[vn:]
+		case protowire.VarintType:
+			_, vn := protowire.ConsumeVarint(buf)
+			if vn < 0 {
+				return fdCopy
+			}
+			buf = buf[vn:]
+		case protowire.Fixed32Type:
+			_, vn := protowire.ConsumeFixed32(buf)
+			if vn < 0 {
+				return fdCopy
+			}
+			buf = buf[vn:]
+		case protowire.Fixed64Type:
+			_, vn := protowire.ConsumeFixed64(buf)
+			if vn < 0 {
+				return fdCopy
+			}
+			buf = buf[vn:]
+		default:
+			return fdCopy
+		}
+		entries = append(entries, entry{num: num, wtyp: wtyp, payload: payload, raw: entryStart[:len(entryStart)-len(buf)]})
+	}
+
+	// Group BytesType entries by field number and merge payloads
+	merged := make(map[protowire.Number][]byte)
+	for _, e := range entries {
+		if e.wtyp == protowire.BytesType {
+			merged[e.num] = append(merged[e.num], e.payload...)
+		}
+	}
+	// Reconstruct in order of first appearance
+	emitted := make(map[protowire.Number]bool)
+	var result []byte
+	for _, e := range entries {
+		if e.wtyp == protowire.BytesType {
+			if !emitted[e.num] {
+				emitted[e.num] = true
+				result = protowire.AppendTag(result, e.num, protowire.BytesType)
+				result = protowire.AppendBytes(result, merged[e.num])
+			}
+		} else {
+			result = append(result, e.raw...)
+		}
+	}
+	fdCopy.Options.ProtoReflect().SetUnknown(result)
+	return fdCopy
+}
+
 // stripSourceRetention returns a copy of fd with source-retention-only options removed.
 // If the descriptor has no such options, returns the original to avoid cloning.
 func stripSourceRetention(fd *descriptorpb.FileDescriptorProto) *descriptorpb.FileDescriptorProto {
@@ -3503,27 +3603,72 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 				continue
 			}
 
-			// Update SCI path with actual field number
-			if opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
-				fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = []int32{8, ext.GetNumber()}
-			}
+			if opt.SubField != "" {
+				// Sub-field option: option (ext).subfield = value;
+				typeName := ext.GetTypeName()
+				if strings.HasPrefix(typeName, ".") {
+					typeName = typeName[1:]
+				}
+				fields, ok := msgFieldMap[typeName]
+				if !ok {
+					errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, ext.GetTypeName(), opt.InnerName))
+					continue
+				}
+				subFieldDesc, ok := fields[opt.SubField]
+				if !ok {
+					errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, opt.SubField, ext.GetTypeName()))
+					continue
+				}
 
-			// Encode the extension value as protowire bytes
-			var rawBytes []byte
-			var err error
-			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+				// Update SCI path with actual field numbers
+				if opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
+					fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = []int32{8, ext.GetNumber(), subFieldDesc.GetNumber()}
+				}
+
+				// Encode the sub-field value
+				value := opt.Value
+				if opt.Negative {
+					value = "-" + value
+				}
+				subBytes, err := encodeCustomOptionValue(subFieldDesc, value, opt.ValueType, enumValueNumbers)
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+					continue
+				}
+
+				// Wrap in the extension's length-delimited tag
+				var rawBytes []byte
+				rawBytes = protowire.AppendTag(rawBytes, protowire.Number(ext.GetNumber()), protowire.BytesType)
+				rawBytes = protowire.AppendBytes(rawBytes, subBytes)
+
+				fd.Options.ProtoReflect().SetUnknown(
+					append(fd.Options.ProtoReflect().GetUnknown(), rawBytes...))
 			} else {
-				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
-			}
-			if err != nil {
-				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
-				continue
-			}
+				// Update SCI path with actual field number
+				if opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
+					fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = []int32{8, ext.GetNumber()}
+				}
 
-			// Add to FileOptions unknown fields
-			fd.Options.ProtoReflect().SetUnknown(
-				append(fd.Options.ProtoReflect().GetUnknown(), rawBytes...))
+				// Encode the extension value as protowire bytes
+				var rawBytes []byte
+				var err error
+				if opt.AggregateFields != nil {
+					rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+				} else {
+					value := opt.Value
+					if opt.Negative {
+						value = "-" + value
+					}
+					rawBytes, err = encodeCustomOptionValue(ext, value, opt.ValueType, enumValueNumbers)
+				}
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+					continue
+				}
+
+				fd.Options.ProtoReflect().SetUnknown(
+					append(fd.Options.ProtoReflect().GetUnknown(), rawBytes...))
+			}
 		}
 	}
 	return errs

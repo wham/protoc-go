@@ -78,8 +78,10 @@ type parser struct {
 type CustomFileOption struct {
 	ParenName string          // e.g., "(my_file_option)"
 	InnerName string          // e.g., "my_file_option"
+	SubField  string          // e.g., "name" for option (my_opt).name = ...
 	Value     string          // the option value (scalar)
 	ValueType tokenizer.TokenType // token type of value
+	Negative  bool            // true if value was preceded by '-'
 	SCIIndex  int             // index in SCI locations for [8, fieldNum] entry
 	NameTok   tokenizer.Token // position of "(" for error reporting
 	AggregateFields []AggregateField // non-nil for aggregate (message literal) values
@@ -4055,6 +4057,16 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		// Extract inner name (strip parens)
 		innerName := fullName[1 : len(fullName)-1]
 
+		// Handle sub-field path: option (name).subfield = value;
+		var subField string
+		if p.tok.Peek().Value == "." {
+			dotTok := p.tok.Next()
+			p.trackEnd(dotTok)
+			subTok := p.tok.Next()
+			p.trackEnd(subTok)
+			subField = subTok.Value
+		}
+
 		if _, err := p.tok.Expect("="); err != nil {
 			return err
 		}
@@ -4067,6 +4079,13 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		}
 
 		var aggregateFields []AggregateField
+		negative := false
+
+		if valTok.Value == "-" {
+			negative = true
+			valTok = p.tok.Next()
+			p.trackEnd(valTok)
+		}
 
 		if valTok.Value == "{" {
 			// Aggregate (message literal) value
@@ -4102,8 +4121,12 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 			Span: span,
 		})
 		sciIdx := len(p.locations)
+		sciPath := []int32{8, 0}
+		if subField != "" {
+			sciPath = []int32{8, 0, 0} // [8, extNum, subFieldNum] resolved later
+		}
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
-			Path: []int32{8, 0}, // placeholder field num, updated during resolution
+			Path: sciPath,
 			Span: span,
 		})
 		p.attachComments(len(p.locations)-1, firstIdx)
@@ -4111,8 +4134,10 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		p.customFileOptions = append(p.customFileOptions, CustomFileOption{
 			ParenName:       fullName,
 			InnerName:       innerName,
+			SubField:        subField,
 			Value:           valTok.Value,
 			ValueType:       valTok.Type,
+			Negative:        negative,
 			SCIIndex:        sciIdx,
 			NameTok:         nameTok,
 			AggregateFields: aggregateFields,
