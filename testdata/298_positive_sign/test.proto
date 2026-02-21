@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package postest;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional int32 my_count = 50001;
+}
+
+option (my_count) = +42;
+
+message Item {
+  optional int32 id = 1;
+}

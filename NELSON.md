@@ -2544,3 +2544,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `297_aggregate_bool_shorthand` — proto2 file with custom option `(my_settings) = { enabled: t  verbose: f };` using single-character bool shorthand
 - **Bug:** `encodeCustomOptionValue()` at line 4415 checks `strings.EqualFold(value, "true") || value == "1"` to determine true. `"t"` doesn't match `"true"` via EqualFold (different lengths), and `"t" != "1"`. So `t` encodes as false (varint 0). C++ protoc's text format parser accepts `t`/`T` as true and `f`/`F`/`0` as false. Same-size descriptors (226 bytes) but different bool values encoded.
 - **Root cause:** `cli.go:4415` — bool parsing doesn't accept C++'s shorthand forms `t`/`T`/`f`/`F`. C++ `Tokenizer::ParseBoolean` recognizes: `true`/`True`/`TRUE`/`t`/`T`/`1` as true; everything else as false.
+
+### Run 303 — Positive sign `+` in custom option value (FAILED: 5/5 profiles)
+- **Test:** `298_positive_sign` — proto2 file with `option (my_count) = +42;` — uses `+` prefix on integer option value
+- **Bug:** Both C++ and Go reject `+42`, but with different error messages and column positions. C++: `test.proto:11:21: Expected option value.` (column 21 = `+` sign). Go: `test.proto:11:22: Expected ";"` (column 22 = `42`). C++ rejects `+` because it's not a valid option value start. Go reads `+` as the value token, then fails because `42` is not `;`.
+- **Root cause:** `parser.go:4155-4170` — custom option value parsing reads one token as value. `+` is consumed as the value, then `Expect(";")` gets `42`. C++ protoc's parser recognizes `+` is invalid at the option value position and reports "Expected option value" pointing at `+`. Go's error is weaker and points at the wrong column.
