@@ -1129,6 +1129,16 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 	}
 	field.Number = proto.Int32(int32(num))
 
+	// Optional field options [deprecated = true, etc.]
+	var optionLocs []*descriptorpb.SourceCodeInfo_Location
+	if p.tok.Peek().Value == "[" {
+		var err error
+		optionLocs, err = p.parseFieldOptions(field, fieldPath)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	if _, err := p.tok.Expect("{"); err != nil {
 		return nil, nil, err
 	}
@@ -1156,6 +1166,9 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 	// SCI: number
 	p.addLocationSpan(append(copyPath(fieldPath), 3),
 		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+
+	// Append deferred option SCI locations after number span
+	p.locations = append(p.locations, optionLocs...)
 
 	// SCI: nested message placeholder
 	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
@@ -1661,6 +1674,16 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	}
 	field.Number = proto.Int32(int32(num))
 
+	// Optional field options [deprecated = true, etc.]
+	var optionLocs []*descriptorpb.SourceCodeInfo_Location
+	if p.tok.Peek().Value == "[" {
+		var err error
+		optionLocs, err = p.parseFieldOptions(field, fieldPath)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	if _, err := p.tok.Expect("{"); err != nil {
 		return nil, nil, err
 	}
@@ -1682,6 +1705,9 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	// Number span — path [3] = number
 	p.addLocationSpan(append(copyPath(fieldPath), 3),
 		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+
+	// Append deferred option SCI locations after number span
+	p.locations = append(p.locations, optionLocs...)
 
 	// Nested message type placeholder
 	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
@@ -1772,6 +1798,16 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 	}
 	field.Number = proto.Int32(int32(num))
 
+	// Optional field options [deprecated = true, etc.]
+	var optionLocs []*descriptorpb.SourceCodeInfo_Location
+	if p.tok.Peek().Value == "[" {
+		var err error
+		optionLocs, err = p.parseFieldOptions(field, fieldPath)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	if _, err := p.tok.Expect("{"); err != nil {
 		return nil, nil, err
 	}
@@ -1795,6 +1831,9 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 	// Number span — path [3] = number
 	p.addLocationSpan(append(copyPath(fieldPath), 3),
 		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+
+	// Append deferred option SCI locations after number span
+	p.locations = append(p.locations, optionLocs...)
 
 	// Nested message type placeholder
 	nestedLocIdx := p.addLocationPlaceholder(nestedPath)

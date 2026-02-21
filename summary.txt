@@ -1,6 +1,10 @@
-files_to_generate: []
+files_to_generate: [test.proto]
 parameter: ""
-compiler_version: <nil>
-proto_file_count: 0
-source_file_descriptor_count: 0
+compiler_version: major:5 minor:29 patch:3 suffix:""
+proto_file_count: 1
+source_file_descriptor_count: 1
 
+proto_file[0]: test.proto (package="groupopts", syntax="")
+  message: Msg
+    field: mygroup (number=1, type=TYPE_GROUP, label=LABEL_REPEATED)
+  source_code_info_locations: 20
