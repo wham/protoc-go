@@ -2524,6 +2524,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `encodeCustomOptionValue` at `cli.go:4415` checks `value == "true" || value == "1"` for TYPE_BOOL. `True` (capitalized) does NOT match either, so Go encodes it as `false` (varint 0). C++ protoc's text format parser accepts `True`, `TRUE`, `true`, `t`, `T`, `1` as truthy. Binary diff: C++ has `0801` (enabled = true), Go has `0800` (enabled = false). Descriptor set sizes differ (144 vs 77 bytes at plugin level).
 - **Root cause:** `cli.go:4415` — `value == "true" || value == "1"` is case-sensitive. C++ protoc's `Tokenizer::ParseBoolean()` in the text format parser does case-insensitive comparison and accepts many variants. The fix: use `strings.EqualFold(value, "true") || value == "1"` or add all accepted variants.
 
+### Run 301 — List syntax in aggregate option value (FAILED: 5/5 profiles)
+- **Test:** `296_aggregate_list` — proto2 file with `message MyFileOpt { repeated int32 values = 1; optional string label = 2; }`, extends `FileOptions`, uses `option (my_file_opt) = { values: [1, 2, 3] label: "test" };` (list syntax `[1, 2, 3]` for repeated field in aggregate)
+- **Bug:** `consumeAggregate()` at parser.go:4558-4607 has no handling for list values delimited by `[...]`. When `[` follows `:`, it falls to the scalar value branch and stores `[` as the AggregateField value. Then `encodeCustomOptionValue` tries to parse `[` as an integer and fails: `invalid integer value: [`. C++ protoc stores the aggregate text and parses it with `TextFormat::Parser`, which supports list syntax `[1, 2, 3]` for repeated fields.
+- **Root cause:** `parser.go:4558-4607` — the value-reading section of `consumeAggregate` checks for `{` (nested message) and `<` (angle bracket message) but not `[` (list of values). When `[` appears, it's treated as a plain scalar token. The fix: detect `[` at the value position, loop reading comma-separated values until `]`, and produce multiple AggregateField entries with the same field name (one per list element). Same issue exists in `consumeAggregateAngle`.
+
 ### Known gaps still unexplored (updated):
 - **Mixed `{` and `<` at top level** — `< info { ... } >` untested
 - **Repeated message fields with `<>`** — `{ items < name: "a" > items < name: "b" > }` same root cause
@@ -2532,3 +2537,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Other CLI flag validation gaps** — more flags Go silently ignores or accepts invalid values for
 - **Bool option with `FALSE`/`t`/`f` in aggregate** — same bug, other case variants not yet tested
 - **Integer value for bool in other scopes** — same bug likely exists in `resolveCustomMessageOptions`, `resolveCustomServiceOptions`, etc. (all call `encodeCustomOptionValue`)
+- **List syntax in `consumeAggregateAngle`** — same `[...]` bug as Run 301 but with `<>` delimiters
+- **Nested list values** — `values: [[1, 2], [3, 4]]` for repeated message with repeated int fields
