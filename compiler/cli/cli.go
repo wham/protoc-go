@@ -1592,6 +1592,7 @@ type jsonNameEntry struct {
 }
 
 func collectJsonNameConflictErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, useCustom bool, errs *[]string) {
+	if !msg.GetOptions().GetDeprecatedLegacyJsonFieldConflicts() {
 	seen := make(map[string]jsonNameEntry)
 	for i, field := range msg.GetField() {
 		defaultJsonName := tokenizer.ToJSONName(field.GetName())
@@ -1625,6 +1626,7 @@ func collectJsonNameConflictErrors(filename string, msg *descriptorpb.Descriptor
 		} else {
 			seen[jsonName] = jsonNameEntry{fieldName: field.GetName(), jsonName: jsonName, isCustom: isCustom}
 		}
+	}
 	}
 	for i, nested := range msg.GetNestedType() {
 		if nested.GetOptions().GetMapEntry() {
