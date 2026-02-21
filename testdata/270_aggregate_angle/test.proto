@@ -1,0 +1,23 @@
+syntax = "proto2";
+
+package aggangle;
+
+import "google/protobuf/descriptor.proto";
+
+message MyInfo {
+  optional string label = 1;
+  optional int32 count = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyInfo my_info = 50002;
+}
+
+option (my_info) = <
+  label: "test"
+  count: 7
+>;
+
+message Bar {
+  optional string name = 1;
+}

@@ -2356,4 +2356,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Edition `optional` label error message** — same class of bug, Go's wording likely differs from C++ for `optional` in editions too
 - **Edition `repeated` label error message** — same class of bug for `repeated` label in editions
 - **Aggregate custom option on message/field/enum/service/method** — same bug as Run 274 but in other option contexts
-- **Aggregate custom option with `< >` delimiters** — C++ also supports `option (x) = < key: value >;` angle-bracket syntax
+- **Aggregate custom option with `< >` delimiters** — TESTED in Run 275 (270_aggregate_angle), confirmed broken (different error messages)
+
+### Run 275 — Aggregate option with angle bracket delimiters (FAILED: 5/5 profiles)
+- **Test:** `270_aggregate_angle` — proto2 file with `option (my_info) = < label: "test" count: 7 >;` using `< >` instead of `{ }` for aggregate value
+- **Bug:** Both compilers reject `< >` delimiters for aggregate option values, but with different error messages. C++ protoc: `test.proto:16:20: Expected option value.` (points at `<` on line 16, col 20). Go protoc-go: `test.proto:17:3: Expected ";"` (points at `label` on line 17, col 3). Go's parser reads `<` as a scalar value token, then fails when it expects `;` but finds the next key token. C++ rejects `<` immediately as not a valid option value.
+- **Root cause:** `parser.go:3506` — custom option value parsing only checks for `{` to start aggregate mode. When `<` is encountered, it falls through to the scalar value path (line 3501: `valTok := p.tok.Next()` reads `<`), then line 3524 `p.tok.Expect(";")` fails because the next token is `label` not `;`. C++ protoc's option value parser doesn't accept `<` either, but its error message is more accurate ("Expected option value") since it validates the token type before consuming it.
