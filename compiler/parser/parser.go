@@ -4531,12 +4531,85 @@ func (p *parser) consumeAggregate() []AggregateField {
 			p.trackEnd(colonTok)
 		}
 
-		// Read value — may be nested message literal { ... } or scalar
+		// Read value — may be nested message literal { ... } or < ... > or scalar
 		if p.tok.Peek().Value == "{" {
 			brTok := p.tok.Next() // consume '{'
 			p.trackEnd(brTok)
 			subFields := p.consumeAggregate()
 			closeTok := p.tok.Next() // consume '}'
+			p.trackEnd(closeTok)
+			fields = append(fields, AggregateField{
+				Name:      fieldName,
+				SubFields: subFields,
+			})
+		} else if p.tok.Peek().Value == "<" {
+			brTok := p.tok.Next() // consume '<'
+			p.trackEnd(brTok)
+			subFields := p.consumeAggregateAngle()
+			closeTok := p.tok.Next() // consume '>'
+			p.trackEnd(closeTok)
+			fields = append(fields, AggregateField{
+				Name:      fieldName,
+				SubFields: subFields,
+			})
+		} else {
+			negative := false
+			valTok := p.tok.Next()
+			p.trackEnd(valTok)
+			if valTok.Value == "-" {
+				negative = true
+				valTok = p.tok.Next()
+				p.trackEnd(valTok)
+			}
+
+			fields = append(fields, AggregateField{
+				Name:      fieldName,
+				Value:     valTok.Value,
+				ValueType: valTok.Type,
+				Negative:  negative,
+			})
+		}
+
+		// Optional separator (';' or ',')
+		if p.tok.Peek().Value == ";" || p.tok.Peek().Value == "," {
+			sepTok := p.tok.Next()
+			p.trackEnd(sepTok)
+		}
+	}
+	return fields
+}
+
+// consumeAggregateAngle reads key:value pairs inside a message literal < ... >.
+// Called after consuming '<'. Stops before '>'.
+func (p *parser) consumeAggregateAngle() []AggregateField {
+	var fields []AggregateField
+	for p.tok.Peek().Value != ">" && p.tok.Peek().Type != tokenizer.TokenEOF {
+		keyTok := p.tok.Next()
+		p.trackEnd(keyTok)
+		fieldName := keyTok.Value
+
+		// Expect ':' separator
+		if p.tok.Peek().Value == ":" {
+			colonTok := p.tok.Next()
+			p.trackEnd(colonTok)
+		}
+
+		// Read value — may be nested message literal { ... } or < ... > or scalar
+		if p.tok.Peek().Value == "{" {
+			brTok := p.tok.Next() // consume '{'
+			p.trackEnd(brTok)
+			subFields := p.consumeAggregate()
+			closeTok := p.tok.Next() // consume '}'
+			p.trackEnd(closeTok)
+			fields = append(fields, AggregateField{
+				Name:      fieldName,
+				SubFields: subFields,
+			})
+		} else if p.tok.Peek().Value == "<" {
+			brTok := p.tok.Next() // consume '<'
+			p.trackEnd(brTok)
+			subFields := p.consumeAggregateAngle()
+			closeTok := p.tok.Next() // consume '>'
 			p.trackEnd(closeTok)
 			fields = append(fields, AggregateField{
 				Name:      fieldName,
