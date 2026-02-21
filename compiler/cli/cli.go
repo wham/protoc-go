@@ -273,6 +273,14 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customEnumOptErrors, "\n"))
 	}
 
+	customEnumValOptErrors := resolveCustomEnumValueOptions(orderedFiles, parsed, parseResults)
+	if len(customEnumValOptErrors) > 0 {
+		if cfg.errorFormat == "msvs" {
+			customEnumValOptErrors = formatErrorsMSVS(customEnumValOptErrors, srcTree)
+		}
+		return fmt.Errorf("%s", strings.Join(customEnumValOptErrors, "\n"))
+	}
+
 	// Phase 1: Build/cross-link validation — accumulate errors (C++ protoc collects all)
 	var buildErrors []string
 	fieldHints := make(map[*descriptorpb.DescriptorProto]*messageHint)
@@ -4021,6 +4029,87 @@ func collectEnumOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN s
 	}
 	for _, nested := range msg.GetNestedType() {
 		collectEnumOptionsExtensions(nested, msgFQN, exts)
+	}
+}
+
+// resolveCustomEnumValueOptions resolves parenthesized custom options on enum values
+// (e.g., HIGH = 1 [(display_name) = "High Priority"]) against extension definitions for EnumValueOptions.
+func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+	var allExts []fileOptExtInfo
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, ext := range fd.GetExtension() {
+			if ext.GetExtendee() == ".google.protobuf.EnumValueOptions" {
+				allExts = append(allExts, fileOptExtInfo{field: ext, pkg: fd.GetPackage()})
+			}
+		}
+		for _, msg := range fd.GetMessageType() {
+			collectEnumValueOptionsExtensions(msg, fd.GetPackage(), &allExts)
+		}
+	}
+
+	enumValueNumbers := map[string]map[string]int32{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		prefix := fd.GetPackage()
+		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
+		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
+	}
+
+	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
+	for _, n := range orderedFiles {
+		fd := parsed[n]
+		prefix := fd.GetPackage()
+		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
+	}
+
+	var errs []string
+	for _, name := range orderedFiles {
+		result := parseResults[name]
+		if result == nil {
+			continue
+		}
+		fd := parsed[name]
+		for _, opt := range result.CustomEnumValueOptions {
+			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			if ext == nil {
+				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.",
+					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+				continue
+			}
+
+			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
+				opt.SCILoc.Path[len(opt.SCILoc.Path)-1] = ext.GetNumber()
+			}
+
+			var rawBytes []byte
+			var err error
+			if opt.AggregateFields != nil {
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+			} else {
+				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
+			}
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+				continue
+			}
+
+			opt.EnumValue.Options.ProtoReflect().SetUnknown(
+				append(opt.EnumValue.Options.ProtoReflect().GetUnknown(), rawBytes...))
+		}
+	}
+	return errs
+}
+
+func collectEnumValueOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
+	msgFQN := parentFQN + "." + msg.GetName()
+	for _, ext := range msg.GetExtension() {
+		if ext.GetExtendee() == ".google.protobuf.EnumValueOptions" {
+			*exts = append(*exts, fileOptExtInfo{field: ext, pkg: msgFQN})
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectEnumValueOptionsExtensions(nested, msgFQN, exts)
 	}
 }
 
