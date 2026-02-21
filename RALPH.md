@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1351/1351 tests passing.
+ALL DONE — 1356/1356 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -425,7 +425,7 @@ ALL DONE — 1351/1351 tests passing.
 249. ✅ Multiline extendee name spans — track `extNameEndLine` from `extNameEndTok.Line` so extend blocks with multiline type names (e.g., `extend Outer.\n  Inner`) produce correct 4-element SCI spans `[startLine, startCol, endLine, endCol]` instead of 3-element single-line spans, fixed in `parseExtend`, `parseNestedExtend`, and `parseGroupFieldInExtend`
 250. ✅ Edition 2024 max-supported-edition validation — reject `edition = "2024"` with `Edition 2024 is later than the maximum supported edition 2023` error at `edition` keyword position (1:1), matching C++ protoc v29.3 which only supports up to edition 2023
 258. ✅ Multiline negative enum value number spans — when `-` and number are on different lines (e.g., `= -\n  1`), use minus token's line for span start to produce correct 4-element multiline SCI spans instead of broken 3-element single-line spans
-259. ✅ Edition label validation — reject `optional` and `required` labels in editions files with `Label "optional" is not supported in editions. By default, all singular fields have presence unless features.field_presence is set.` and `Label "required" is not supported in editions. Use features.field_presence to control field presence, and the feature "features.field_presence = LEGACY_REQUIRED" to require that a field is always set.` errors at label token position, `repeated` is still allowed in editions
+259. ✅ Edition label validation — reject `optional` and `required` labels in editions files with `Label "optional" is not supported in editions. By default, all singular fields have presence unless features.field_presence is set.` and `Label "required" is not supported in editions, use features.field_presence = LEGACY_REQUIRED.` errors at label token position, `repeated` is still allowed in editions
 260. ✅ Edition group syntax validation — reject `group` fields in editions files with `Group syntax is no longer supported in editions. To get group behavior you can specify features.message_encoding = DELIMITED on a message field.` error at group keyword location, validated in `validateEditionGroups`/`collectEditionGroupErrors` (cli.go), recurses into nested messages, skips map entry types
 251. ✅ Missing-value vs unknown flag error messages — `--flag` without `=` that doesn't match a known valueless flag produces `Missing value for flag: --flag` error (not "Unknown flag"), while `--flag=value` that doesn't match produces `Unknown flag: --flag`, matching C++ protoc behavior
 - Type shadowing resolution: C++ protoc's `LookupSymbolNoPlaceholder` uses first-component-first resolution for compound names. For `Outer.Inner` in scope `Container`: find `Outer` at innermost scope first → if found as TYPE_MESSAGE (aggregate), try full `Container.Outer.Inner` → if not found, stop and report shadowing error (don't fall through to outer scopes). `resolveTypeName` returns `(resolved, shadowCandidate)` where shadowCandidate is non-empty when shadowing fails. `shadowErrorMsg` formats the error. Callers in `ResolveTypes`, `resolveMessageFieldsWithErrorsPath`, `CheckUnresolvedTypes`, and `checkMsgUnresolved` all updated to emit shadowing error when shadowCandidate is set.
