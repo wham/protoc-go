@@ -1,0 +1,23 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package svcsubfield;
+
+message ServiceConfig {
+  optional string name = 1;
+  optional int32 priority = 2;
+}
+
+extend google.protobuf.ServiceOptions {
+  optional ServiceConfig my_svc_config = 50001;
+}
+
+message Request {}
+message Response {}
+
+service MyService {
+  option (my_svc_config).name = "primary";
+
+  rpc DoWork (Request) returns (Response);
+}
