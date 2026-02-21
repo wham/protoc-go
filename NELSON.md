@@ -2309,3 +2309,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `261_multiline_neg_enum` — proto3 enum with `TEMPERATURE_COLD = -\n    1;` where the minus sign and number are on separate lines
 - **Bug:** `parseEnum()` at line 2196 builds the enum value number SCI span as `addLocationSpan(..., valNumTok.Line, numStartCol, valNumTok.Line, ...)` — using `valNumTok.Line` for BOTH start and end line. When the minus sign is on a different line from the number, the start line should be `minusTok.Line`. C++ protoc produces a 4-element span `[6, 21, 7, 5]` (multiline: from `-` on line 6 to `1` on line 7). Go produces a 3-element span `[7, 21, 5]` (single line 7 with wrong start column 21 borrowed from line 6).
 - **Root cause:** `parser.go:2192-2197` — `numStartCol` is correctly set to `minusTok.Column` when negative, but the start line is always `valNumTok.Line`. Should also track `numStartLine` and set it to `minusTok.Line` when `minusTok != nil`. Same bug class as Runs 240, 241, 254, 255, 257 (multiline SCI hardcoding one token's line as both start and end line). The fix from Run 14 (`20_negative_enum`) only corrected the column, not the line.
+
+### Run 268 — Features on proto3 file missing line:col in error (FAILED: 5/5 profiles)
+- **Test:** `262_proto3_features` — proto3 file with `option features.field_presence = EXPLICIT;`
+- **Bug:** Go's `validateFeaturesEditions()` at cli.go:1657-1670 produces `"test.proto: Features are only valid under editions."` — no line/column info. C++ protoc produces `"test.proto:1:1: Features are only valid under editions."` with line:col `1:1`. Both reject (exit 1) but error format differs (missing `:1:1` in Go).
+- **Root cause:** `cli.go:1668` — `fmt.Sprintf("%s: Features are only valid under editions.", name)` uses only the filename. Should include `:1:1:` (or the actual location of the features option) to match C++ protoc's error format. C++ protoc emits the error at the file's first line/column since features are a file-level concern.
+
+### Known gaps still unexplored (updated):
+- **Features on proto2 files** — same missing line:col bug
+- **Custom option with message type** — aggregate value `option (my_opt) = { key: "value" };` — likely not supported
+- **Multiple custom options on same file** — ordering/interaction might differ
+- **Proto2 `option deprecated` on extension** — `extend Foo { optional string tag = 100 [deprecated = true]; }` — might produce different option SCI
