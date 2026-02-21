@@ -3406,6 +3406,14 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
 	}
 
+	// Build message field map: message FQN → (field name → field descriptor)
+	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
+	for _, n := range orderedFiles {
+		fd := parsed[n]
+		prefix := fd.GetPackage()
+		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
+	}
+
 	var errs []string
 	for _, name := range orderedFiles {
 		result := parseResults[name]
@@ -3427,7 +3435,13 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 			}
 
 			// Encode the extension value as protowire bytes
-			rawBytes, err := encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
+			var rawBytes []byte
+			var err error
+			if opt.AggregateFields != nil {
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+			} else {
+				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
+			}
 			if err != nil {
 				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 				continue
@@ -3622,6 +3636,60 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		return nil, fmt.Errorf("unsupported custom option type: %v", ext.GetType())
 	}
 
+	return b, nil
+}
+
+// collectMsgFields builds a map of message FQN → (field name → field descriptor).
+func collectMsgFields(msgs []*descriptorpb.DescriptorProto, prefix string, out map[string]map[string]*descriptorpb.FieldDescriptorProto) {
+	for _, msg := range msgs {
+		fqn := msg.GetName()
+		if prefix != "" {
+			fqn = prefix + "." + msg.GetName()
+		}
+		fields := map[string]*descriptorpb.FieldDescriptorProto{}
+		for _, f := range msg.GetField() {
+			fields[f.GetName()] = f
+		}
+		out[fqn] = fields
+		collectMsgFields(msg.GetNestedType(), fqn, out)
+	}
+}
+
+// encodeAggregateOption encodes an aggregate (message literal) custom option value.
+func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []parser.AggregateField, msgFieldMap map[string]map[string]*descriptorpb.FieldDescriptorProto, enumValueNumbers map[string]map[string]int32) ([]byte, error) {
+	typeName := ext.GetTypeName()
+	if strings.HasPrefix(typeName, ".") {
+		typeName = typeName[1:]
+	}
+
+	msgFields, ok := msgFieldMap[typeName]
+	if !ok {
+		return nil, fmt.Errorf("unknown message type %s for aggregate option", ext.GetTypeName())
+	}
+
+	// Encode each field of the aggregate
+	var inner []byte
+	for _, af := range aggFields {
+		subField, ok := msgFields[af.Name]
+		if !ok {
+			return nil, fmt.Errorf("unknown field %q in message %s", af.Name, typeName)
+		}
+		val := af.Value
+		if af.Negative {
+			val = "-" + val
+		}
+		encoded, err := encodeCustomOptionValue(subField, val, af.ValueType, enumValueNumbers)
+		if err != nil {
+			return nil, fmt.Errorf("field %s: %w", af.Name, err)
+		}
+		inner = append(inner, encoded...)
+	}
+
+	// Wrap in length-delimited tag
+	fieldNum := protowire.Number(ext.GetNumber())
+	var b []byte
+	b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
+	b = protowire.AppendBytes(b, inner)
 	return b, nil
 }
 
