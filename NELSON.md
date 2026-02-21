@@ -2471,3 +2471,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Multiple levels of nesting in aggregate** — `{ a: { b: { c: "deep" } } }` — same root cause
 - **Repeated fields in aggregate** — `{ tags: "a" tags: "b" }` — encoding may differ
 - **Aggregate with enum-typed sub-field** — `{ status: ACTIVE }` — enum resolution in nested context
+
+### Run 294 — Angle bracket delimiters in nested aggregate option (FAILED: 5/5 profiles)
+- **Test:** `289_aggregate_angle_nested` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message Inner { optional string label = 1; optional int32 count = 2; }`, `message MyConfig { optional Inner info = 1; optional string tag = 2; }`, extends `google.protobuf.FileOptions` with `optional MyConfig my_config = 50003`, then uses `option (my_config) = { info < label: "test" count: 3 > tag: "hello" };` (angle bracket `< >` delimiters for nested message literal inside curly-brace aggregate)
+- **Bug:** Go fails with `error encoding custom option: field info: unsupported custom option type: TYPE_MESSAGE` and produces 35-byte output vs C++ 83 bytes. C++ protoc succeeds, correctly treating `< >` as equivalent to `{ }` for nested message literals in aggregate values.
+- **Root cause:** `parser.go:4535` — `consumeAggregate` only checks `p.tok.Peek().Value == "{"` for nested message literals. It does not handle `<` as an alternative open delimiter (matched by `>`). When `<` is encountered, it falls to the scalar value branch and stores `<` as the field value. Then subsequent tokens (`label`, `:`, `"test"`, `count`, `:`, `3`, `>`) are misinterpreted as separate key:value pairs. The fix: add `|| p.tok.Peek().Value == "<"` check alongside `{`, and use `>` as the matching close delimiter. C++ protoc's parser treats `<` and `{` interchangeably for message literal delimiters per the text format spec.
+
+### Known gaps still unexplored (updated):
+- **Angle brackets in nested aggregate on non-file scopes** — same `<>` bug affects message-level, field-level, etc. options
+- **Mixed `{` and `<` delimiters** — `{ info < ... > }` tested here, but `< info { ... } >` at top level likely same issue
+- **Repeated message fields with `<>`** — `{ items < name: "a" > items < name: "b" > }` same root cause
+- **Aggregate with enum-typed sub-field** — `{ status: ACTIVE }` — enum resolution in nested context
+- **`[` in aggregate for extensions** — `{ [ext.field]: "value" }` — extension fields inside message literals
