@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1446/1446 tests passing.
+ALL DONE — 1451/1451 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -452,3 +452,4 @@ ALL DONE — 1446/1446 tests passing.
 274. ✅ Sfixed32/sfixed64 negative custom option values — separated sfixed32/sfixed64 from fixed32/fixed64 in `encodeCustomOptionValue` (cli.go) to use `strconv.ParseInt` instead of `strconv.ParseUint`, then cast to `uint32(int32(v))` / `uint64(v)` for protowire encoding, allowing negative values like `[(min_value) = -40]`
 275. ✅ Sub-field custom file option support — `option (my_file_opt).name = "hello";` syntax with dotted sub-field path after parenthesized name, parser consumes `.subfield` token, resolver looks up sub-field in extension's message type via `msgFieldMap`, encodes as separate per-sub-field unknown field entries (matching C++ source_file_descriptors), `cloneWithMergedExtUnknowns` merges entries for proto_file, SCI path `[8, extNum, subFieldNum]`
 276. ✅ Custom oneof option support — `option (oneof_label) = "primary";` where the option is an extension to `google.protobuf.OneofOptions`, parsed as `CustomOneofOption` in parser, resolved post-parse in `resolveCustomOneofOptions` via `protowire` encoding on `OneofOptions` unknown fields, SCI entries at `[oneofPath..., 2]` and `[oneofPath..., 2, extNum]` with placeholder field number 0 resolved post-parse via `SCILoc` pointer
+277. ✅ Repeated custom file option SCI paths — for repeated extension fields (e.g., `repeated string tags = 50001`), each `option (tags) = ...;` gets SCI path `[8, fieldNum, index]` (with repeated index) instead of `[8, fieldNum]`, matching C++ protoc behavior. Track `repeatedIdx` map per file in `resolveCustomFileOptions`.
