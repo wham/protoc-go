@@ -2340,9 +2340,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Both compilers reject `required` in editions (exit 1), but Go's error message text differs from C++. C++ says: `Label "required" is not supported in editions, use features.field_presence = LEGACY_REQUIRED.` Go says: `Label "required" is not supported in editions. Use features.field_presence to control field presence, and the feature "features.field_presence = LEGACY_REQUIRED" to require that a field is always set.` Different punctuation (comma vs period after "editions"), and Go adds a longer explanation.
 - **Root cause:** The Go error message string for `required` in editions was written verbosely instead of matching C++ protoc's exact wording. C++ protoc uses a terse single-clause message. Go uses a multi-sentence explanation. The test harness compares stderr exactly, so different text = FAIL.
 
+### Run 274 — Aggregate custom option value (FAILED: 5/5 profiles)
+- **Test:** `269_aggregate_option` — proto2 file defining a message `MyOpt` with string+int32 fields, extending `google.protobuf.FileOptions` with `optional MyOpt my_option = 50001`, then using `option (my_option) = { name: "hello" value: 42 };`
+- **Bug:** `parseFileOption()` at line 3492 reads ONE token as the custom option value via `valTok := p.tok.Next()`. When the value is `{` (aggregate/message literal syntax), it reads `{` as the value, then `Expect(";")` at line 3502 gets `name` instead of `;` → parse error: `Expected ";"`. C++ protoc handles aggregate value syntax and parses the entire `{ key: value ... }` block.
+- **Root cause:** `parser.go:3492` — custom option value parsing only supports scalar values (strings, numbers, identifiers). No handling for `{` to begin a message literal block. C++ protoc's `ConsumeFieldValue` supports aggregate values delimited by `{ }` or `< >`. This affects all custom option contexts (file, message, field, enum, enum value, service, method) that accept message-typed extension options.
+
 ### Known gaps still unexplored (updated):
 - **Features on proto2 files** — same missing line:col bug
-- **Custom option with message type** — aggregate value `option (my_opt) = { key: "value" };` — likely not supported
 - **Multiple custom options on same file** — ordering/interaction might differ
 - **Proto2 `option deprecated` on extension** — `extend Foo { optional string tag = 100 [deprecated = true]; }` — might produce different option SCI
 - **Edition 2023 with `extensions`/`extend`** — might have validation differences
@@ -2351,3 +2355,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Empty statements inside oneof** — Go rejects `;` inside oneof (line 3141) but C++ accepts per spec
 - **Edition `optional` label error message** — same class of bug, Go's wording likely differs from C++ for `optional` in editions too
 - **Edition `repeated` label error message** — same class of bug for `repeated` label in editions
+- **Aggregate custom option on message/field/enum/service/method** — same bug as Run 274 but in other option contexts
+- **Aggregate custom option with `< >` delimiters** — C++ also supports `option (x) = < key: value >;` angle-bracket syntax

@@ -1,0 +1,23 @@
+syntax = "proto2";
+
+package aggopt;
+
+import "google/protobuf/descriptor.proto";
+
+message MyOpt {
+  optional string name = 1;
+  optional int32 value = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyOpt my_option = 50001;
+}
+
+option (my_option) = {
+  name: "hello"
+  value: 42
+};
+
+message Foo {
+  optional string tag = 1;
+}
