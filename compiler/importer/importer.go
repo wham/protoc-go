@@ -36,6 +36,17 @@ func (st *SourceTree) Exists(filename string) bool {
 	return false
 }
 
+// VirtualFileToDiskFile maps a virtual filename to the disk path.
+func (st *SourceTree) VirtualFileToDiskFile(filename string) (string, bool) {
+	for _, root := range st.Roots {
+		path := filepath.Join(root, filename)
+		if _, err := os.Stat(path); err == nil {
+			return path, true
+		}
+	}
+	return "", false
+}
+
 // ValidateRoots checks that all root directories exist and returns warnings.
 func (st *SourceTree) ValidateRoots() []string {
 	var warnings []string

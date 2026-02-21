@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/wham/protoc-go/compiler/importer"
@@ -130,6 +131,7 @@ type config struct {
 	includeSourceInfo     bool
 	printFreeFieldNumbers bool
 	decodeRaw             bool
+	errorFormat           string // "gcc" (default) or "msvs"
 	protoFiles            []string
 }
 
@@ -201,6 +203,9 @@ func Run(args []string) error {
 	}
 
 	if len(collectErrors) > 0 {
+		if cfg.errorFormat == "msvs" {
+			collectErrors = formatErrorsMSVS(collectErrors, srcTree)
+		}
 		return fmt.Errorf("%s", strings.Join(collectErrors, "\n"))
 	}
 
@@ -210,6 +215,9 @@ func Run(args []string) error {
 		resolveErrors = append(resolveErrors, parser.ResolveTypes(parsed[name], parsed)...)
 	}
 	if len(resolveErrors) > 0 {
+		if cfg.errorFormat == "msvs" {
+			resolveErrors = formatErrorsMSVS(resolveErrors, srcTree)
+		}
 		return fmt.Errorf("%s", strings.Join(resolveErrors, "\n"))
 	}
 
@@ -246,6 +254,9 @@ func Run(args []string) error {
 	buildErrors = append(buildErrors, validateExtensionJsonName(orderedFiles, parsed, explicitJsonNames)...)
 	buildErrors = append(buildErrors, validateMessageSetFields(orderedFiles, parsed)...)
 	if len(buildErrors) > 0 {
+		if cfg.errorFormat == "msvs" {
+			buildErrors = formatErrorsMSVS(buildErrors, srcTree)
+		}
 		return fmt.Errorf("%s", strings.Join(buildErrors, "\n"))
 	}
 
@@ -267,6 +278,9 @@ func Run(args []string) error {
 		valErrors = append(valErrors, validateFeatureTargets(orderedFiles, parsed)...)
 	}
 	if len(valErrors) > 0 {
+		if cfg.errorFormat == "msvs" {
+			valErrors = formatErrorsMSVS(valErrors, srcTree)
+		}
 		return fmt.Errorf("%s", strings.Join(valErrors, "\n"))
 	}
 
@@ -587,6 +601,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--error_format=") {
+			cfg.errorFormat = strings.TrimPrefix(arg, "--error_format=")
 			continue
 		}
 
@@ -3214,5 +3229,71 @@ func printFreeFieldNumbers(fullName string, msg *descriptorpb.DescriptorProto) {
 		output += fmt.Sprintf(" %d-INF", nextFree)
 	}
 	fmt.Println(output)
+}
+
+// formatErrorsMSVS transforms error lines from GCC format to MSVS format.
+// GCC: "file:line:col: message" → MSVS: "file(line) : error in column=col: message"
+// GCC: "file: message" → MSVS: "file: message" (filename resolved to disk path)
+func formatErrorsMSVS(errors []string, srcTree *importer.SourceTree) []string {
+	result := make([]string, len(errors))
+	for i, e := range errors {
+		result[i] = formatErrorLineMSVS(e, srcTree)
+	}
+	return result
+}
+
+func formatErrorLineMSVS(line string, srcTree *importer.SourceTree) string {
+	// Try to parse "filename:line:col: message"
+	// Find first ":" then check if followed by "digits:digits: "
+	colon1 := strings.Index(line, ":")
+	if colon1 < 0 {
+		return line
+	}
+	rest := line[colon1+1:]
+	colon2 := strings.Index(rest, ":")
+	if colon2 < 0 {
+		// "filename: message" — resolve filename
+		filename := line[:colon1]
+		if srcTree != nil {
+			if diskPath, ok := srcTree.VirtualFileToDiskFile(filename); ok {
+				return diskPath + line[colon1:]
+			}
+		}
+		return line
+	}
+
+	lineStr := rest[:colon2]
+	lineNum, err1 := strconv.Atoi(lineStr)
+	if err1 != nil {
+		// Not a line number — treat as "filename: message"
+		filename := line[:colon1]
+		if srcTree != nil {
+			if diskPath, ok := srcTree.VirtualFileToDiskFile(filename); ok {
+				return diskPath + line[colon1:]
+			}
+		}
+		return line
+	}
+
+	rest2 := rest[colon2+1:]
+	colon3 := strings.Index(rest2, ":")
+	if colon3 < 0 {
+		return line
+	}
+
+	colStr := rest2[:colon3]
+	colNum, err2 := strconv.Atoi(colStr)
+	if err2 != nil {
+		return line
+	}
+
+	message := rest2[colon3+1:] // includes leading space
+	filename := line[:colon1]
+	if srcTree != nil {
+		if diskPath, ok := srcTree.VirtualFileToDiskFile(filename); ok {
+			filename = diskPath
+		}
+	}
+	return fmt.Sprintf("%s(%d) : error in column=%d:%s", filename, lineNum, colNum, message)
 }
 
