@@ -1,0 +1,21 @@
+syntax = "proto2";
+
+package subfieldopt;
+
+import "google/protobuf/descriptor.proto";
+
+message MyOption {
+  optional string name = 1;
+  optional int32 level = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyOption my_file_opt = 50001;
+}
+
+option (my_file_opt).name = "hello";
+option (my_file_opt).level = 42;
+
+message Placeholder {
+  optional string data = 1;
+}
