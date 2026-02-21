@@ -2260,3 +2260,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Group fields with multiple options** (`[deprecated = true, packed = true]`) — same root cause
 - **Group field with json_name option** — `[json_name = "my_group"]` would also fail
 - **Proto2 default values on group fields** — groups can't have defaults but the error path may differ
+
+### Run 260 — --enable_codegen_trace CLI flag with value (FAILED: 1/1 CLI test)
+- **Test:** `cli@enable_codegen_trace` — CLI test with `--enable_codegen_trace=true` (flag with value, no input file)
+- **Bug:** `parseArgs()` in cli.go has no case for `--enable_codegen_trace`. Go returns "Unknown flag: --enable_codegen_trace" (exit 1). C++ protoc 29.3 recognizes this flag (it's documented in help text at lines 83-85), accepts the value, then says "Missing input file." (exit 1). Same exit code, completely different stderr messages.
+- **Root cause:** `cli.go:510-660` — `parseArgs` switch doesn't handle `--enable_codegen_trace` even though the help text documents it. The flag is a recognized C++ protoc option that enables tracing for codegen plugins. Go's catch-all at line 658-663 for flags with `=` returns "Unknown flag" instead of accepting it. This is a feature gap, not just an error message format issue like Runs 242-258.
