@@ -2320,8 +2320,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go emits 2 error lines: the base `"ACTIVE" is already defined in "sameenumdup".` PLUS `Note that enum values use C++ scoping rules...`. C++ protoc emits only 1 line (the base error, no scoping note). The scoping note is only relevant for CROSS-enum conflicts (explaining why values from different enums collide). For same-enum duplicates, C++ omits the note since the conflict is self-evident.
 - **Root cause:** `cli.go:2196-2200` — the `check()` closure unconditionally appends the scoping note whenever `enumName != ""`. No check is performed to determine whether the conflict is cross-scope (different enums) vs same-scope (same enum). C++ protoc's `descriptor.cc` only emits the note when the conflicting symbol was registered by a DIFFERENT enum. The fix from earlier runs (adding the note for cross-enum conflicts) over-corrected by always showing it.
 
+### Run 270 — Edition 2023 with labels (FAILED: 5/5 profiles)
+- **Test:** `265_edition_label` — edition 2023 file with `optional string name = 1;` and `repeated int32 values = 2;`
+- **Bug:** Go parser accepts `optional` and `repeated` labels in edition 2023 files without error. C++ protoc rejects with: `Label "optional" is not supported in editions. By default, all singular fields have presence unless features.field_presence is set.` Go succeeds and produces a descriptor; C++ fails with an error.
+- **Root cause:** `parser.go` — `parseField` at the label-handling code (around lines 1513-1560) handles `optional`, `required`, `repeated` keywords but never checks `p.syntax == "editions"`. In editions, field labels are not allowed — presence is controlled via `features.field_presence`. The parser needs to emit an error when a label keyword is encountered in edition files. Only 3 places check for `p.syntax == "editions"` (lines 354, 665, 2462) and none are in the field parsing path.
+
 ### Known gaps still unexplored (updated):
 - **Features on proto2 files** — same missing line:col bug
 - **Custom option with message type** — aggregate value `option (my_opt) = { key: "value" };` — likely not supported
 - **Multiple custom options on same file** — ordering/interaction might differ
 - **Proto2 `option deprecated` on extension** — `extend Foo { optional string tag = 100 [deprecated = true]; }` — might produce different option SCI
+- **Edition 2023 with `required` label** — same issue as `optional` — labels forbidden in editions
+- **Edition 2023 with `group` keyword** — groups forbidden in editions
+- **Edition 2023 with `extensions`/`extend`** — might have validation differences
