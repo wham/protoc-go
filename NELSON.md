@@ -2477,9 +2477,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go fails with `error encoding custom option: field info: unsupported custom option type: TYPE_MESSAGE` and produces 35-byte output vs C++ 83 bytes. C++ protoc succeeds, correctly treating `< >` as equivalent to `{ }` for nested message literals in aggregate values.
 - **Root cause:** `parser.go:4535` — `consumeAggregate` only checks `p.tok.Peek().Value == "{"` for nested message literals. It does not handle `<` as an alternative open delimiter (matched by `>`). When `<` is encountered, it falls to the scalar value branch and stores `<` as the field value. Then subsequent tokens (`label`, `:`, `"test"`, `count`, `:`, `3`, `>`) are misinterpreted as separate key:value pairs. The fix: add `|| p.tok.Peek().Value == "<"` check alongside `{`, and use `>` as the matching close delimiter. C++ protoc's parser treats `<` and `{` interchangeably for message literal delimiters per the text format spec.
 
+### Run 295 — Extension field in aggregate option value (FAILED: 5/5 profiles)
+- **Test:** `290_aggregate_extension_field` — proto2 file with `message Color { extensions 100 to 200; }`, `extend Color { optional string color_name = 100; }`, `message MyFileOpt { optional Color primary = 1; }`, extends `google.protobuf.FileOptions` with `optional MyFileOpt my_file_opt = 50001`, uses `option (my_file_opt) = { primary { r: 255 g: 0 b: 0 [aggext.color_name]: "red" } };` (extension field reference inside aggregate)
+- **Bug:** Go fails with `error encoding custom option: field primary: unknown field "[" in message aggext.Color`. C++ protoc succeeds, correctly parsing `[aggext.color_name]` as an extension field reference inside the message literal.
+- **Root cause:** `parser.go:4519` — `consumeAggregate()` reads the key token as `p.tok.Next()` and uses `keyTok.Value` as the field name. When the key starts with `[` (extension field syntax), `keyTok.Value` is `"["`. The function has no handling for bracketed extension field names (`[qualified.name]`). It should detect `[` as the start of an extension field reference, read tokens until `]`, and use the full `[qualified.name]` as the field key. C++ protoc's text format parser handles this syntax natively since extension fields in message literals use `[FullyQualifiedExtensionName]` as the key.
+
 ### Known gaps still unexplored (updated):
 - **Angle brackets in nested aggregate on non-file scopes** — same `<>` bug affects message-level, field-level, etc. options
 - **Mixed `{` and `<` delimiters** — `{ info < ... > }` tested here, but `< info { ... } >` at top level likely same issue
 - **Repeated message fields with `<>`** — `{ items < name: "a" > items < name: "b" > }` same root cause
-- **Aggregate with enum-typed sub-field** — `{ status: ACTIVE }` — enum resolution in nested context
-- **`[` in aggregate for extensions** — `{ [ext.field]: "value" }` — extension fields inside message literals
+- **Aggregate with enum-typed sub-field** — tested in Run 295 candidate (PASSED — enum resolution works correctly)
+- **Extension field encoding in aggregate** — even if `consumeAggregate` is fixed to read `[ext.name]` keys, `encodeAggregateOption` would need to resolve the extension field descriptor to encode the value correctly
+- **`Any` type / message set wire format** — very obscure proto2 features, untested
+- **`toCamelCase` edge cases** — tested digits in field names, produces same result as C++ (both use same rules)
