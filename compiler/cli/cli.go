@@ -3095,7 +3095,7 @@ func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, 
 
 func hasSubFieldCustomOpts(pr *parser.ParseResult) bool {
 	for _, opt := range pr.CustomFileOptions {
-		if opt.SubField != "" {
+		if len(opt.SubFieldPath) > 0 {
 			return true
 		}
 	}
@@ -3619,43 +3619,92 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 
 			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
 
-			if opt.SubField != "" {
-				// Sub-field option: option (ext).subfield = value;
-				typeName := ext.GetTypeName()
-				if strings.HasPrefix(typeName, ".") {
-					typeName = typeName[1:]
+			if len(opt.SubFieldPath) > 0 {
+				// Sub-field option: option (ext).sub1.sub2... = value;
+				// Walk through the message type hierarchy for each path segment
+				currentTypeName := ext.GetTypeName()
+				if strings.HasPrefix(currentTypeName, ".") {
+					currentTypeName = currentTypeName[1:]
 				}
-				fields, ok := msgFieldMap[typeName]
-				if !ok {
-					errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, ext.GetTypeName(), opt.InnerName))
-					continue
+
+				sciPath := []int32{8, ext.GetNumber()}
+				var leafFieldDesc *descriptorpb.FieldDescriptorProto
+				valid := true
+				for i, seg := range opt.SubFieldPath {
+					fields, ok := msgFieldMap[currentTypeName]
+					if !ok {
+						errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, currentTypeName, opt.InnerName))
+						valid = false
+						break
+					}
+					subFieldDesc, ok := fields[seg]
+					if !ok {
+						errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, seg, currentTypeName))
+						valid = false
+						break
+					}
+					sciPath = append(sciPath, subFieldDesc.GetNumber())
+					if i == len(opt.SubFieldPath)-1 {
+						leafFieldDesc = subFieldDesc
+					} else {
+						// Navigate into the sub-field's message type
+						nextType := subFieldDesc.GetTypeName()
+						if strings.HasPrefix(nextType, ".") {
+							nextType = nextType[1:]
+						}
+						currentTypeName = nextType
+					}
 				}
-				subFieldDesc, ok := fields[opt.SubField]
-				if !ok {
-					errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, opt.SubField, ext.GetTypeName()))
+				if !valid {
 					continue
 				}
 
 				// Update SCI path with actual field numbers
 				if opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
-					fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = []int32{8, ext.GetNumber(), subFieldDesc.GetNumber()}
+					fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = sciPath
 				}
 
-				// Encode the sub-field value
+				// Encode the leaf sub-field value
 				value := opt.Value
 				if opt.Negative {
 					value = "-" + value
 				}
-				subBytes, err := encodeCustomOptionValue(subFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
 				}
 
+				// Wrap in nested length-delimited tags from innermost to outermost
+				// Walk the path segments in reverse to build nested encoding
+				encoded := leafBytes
+				for i := len(opt.SubFieldPath) - 2; i >= 0; i-- {
+					// Look up the field number at this level
+					parentTypeName := ext.GetTypeName()
+					if strings.HasPrefix(parentTypeName, ".") {
+						parentTypeName = parentTypeName[1:]
+					}
+					for j := 0; j < i; j++ {
+						parentFields := msgFieldMap[parentTypeName]
+						parentField := parentFields[opt.SubFieldPath[j]]
+						nextType := parentField.GetTypeName()
+						if strings.HasPrefix(nextType, ".") {
+							nextType = nextType[1:]
+						}
+						parentTypeName = nextType
+					}
+					parentFields := msgFieldMap[parentTypeName]
+					parentField := parentFields[opt.SubFieldPath[i]]
+					var wrapper []byte
+					wrapper = protowire.AppendTag(wrapper, protowire.Number(parentField.GetNumber()), protowire.BytesType)
+					wrapper = protowire.AppendBytes(wrapper, encoded)
+					encoded = wrapper
+				}
+
 				// Wrap in the extension's length-delimited tag
 				var rawBytes []byte
 				rawBytes = protowire.AppendTag(rawBytes, protowire.Number(ext.GetNumber()), protowire.BytesType)
-				rawBytes = protowire.AppendBytes(rawBytes, subBytes)
+				rawBytes = protowire.AppendBytes(rawBytes, encoded)
 
 				fd.Options.ProtoReflect().SetUnknown(
 					append(fd.Options.ProtoReflect().GetUnknown(), rawBytes...))

@@ -79,7 +79,7 @@ type parser struct {
 type CustomFileOption struct {
 	ParenName string          // e.g., "(my_file_option)"
 	InnerName string          // e.g., "my_file_option"
-	SubField  string          // e.g., "name" for option (my_opt).name = ...
+	SubFieldPath []string     // e.g., ["inner", "name"] for option (my_opt).inner.name = ...
 	Value     string          // the option value (scalar)
 	ValueType tokenizer.TokenType // token type of value
 	Negative  bool            // true if value was preceded by '-'
@@ -4139,14 +4139,14 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		// Extract inner name (strip parens)
 		innerName := fullName[1 : len(fullName)-1]
 
-		// Handle sub-field path: option (name).subfield = value;
-		var subField string
-		if p.tok.Peek().Value == "." {
+		// Handle sub-field path: option (name).sub1.sub2... = value;
+		var subFieldPath []string
+		for p.tok.Peek().Value == "." {
 			dotTok := p.tok.Next()
 			p.trackEnd(dotTok)
 			subTok := p.tok.Next()
 			p.trackEnd(subTok)
-			subField = subTok.Value
+			subFieldPath = append(subFieldPath, subTok.Value)
 		}
 
 		if _, err := p.tok.Expect("="); err != nil {
@@ -4204,8 +4204,10 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		})
 		sciIdx := len(p.locations)
 		sciPath := []int32{8, 0}
-		if subField != "" {
-			sciPath = []int32{8, 0, 0} // [8, extNum, subFieldNum] resolved later
+		if len(subFieldPath) > 0 {
+			sciPath = make([]int32, 2+len(subFieldPath))
+			sciPath[0] = 8
+			// remaining elements will be resolved later
 		}
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: sciPath,
@@ -4216,7 +4218,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		p.customFileOptions = append(p.customFileOptions, CustomFileOption{
 			ParenName:       fullName,
 			InnerName:       innerName,
-			SubField:        subField,
+			SubFieldPath:    subFieldPath,
 			Value:           valTok.Value,
 			ValueType:       valTok.Type,
 			Negative:        negative,
