@@ -2487,7 +2487,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go's `parseArgs()` at `cli.go:685-687` stores the error_format value without validation. Any unknown value (not `gcc` or `msvs`) is silently accepted and the Go CLI proceeds to the next validation step, which reports `"Missing input file."`. C++ protoc validates the error_format value immediately and rejects unknown values with `"Unknown error format: unknown"`.
 - **Root cause:** `cli.go:685-687` — `cfg.errorFormat = strings.TrimPrefix(arg, "--error_format=")` stores the value without checking it against the valid set `{"gcc", "msvs"}`. C++ protoc validates the format string right after parsing it and produces a specific error before reaching input file validation.
 
+### Run 297 — String concatenation inside aggregate option value (FAILED: 5/5 profiles)
+- **Test:** `292_aggregate_string_concat` — proto2 file with `option (my_opt) = { label: "hello" "world" };` where adjacent string literals should be concatenated
+- **Bug:** `consumeAggregate()` at parser.go:4580-4596 reads only ONE token as the field value. When the value consists of adjacent string literals (`"hello" "world"`), it reads `"hello"` as the value, then treats `"world"` as the next field name. This consumes the closing `}` as a value token, causing `Expect("}")` at line 4174 to fail with `expected "}", got ";"`. C++ protoc stores aggregate option text as raw tokens and interprets them with the text format parser, which supports string concatenation.
+- **Root cause:** `parser.go:4580-4596` — the scalar value branch in `consumeAggregate` uses a single `p.tok.Next()` call. No loop to check if the next token is also a string and concatenate. Same issue exists in `consumeAggregateAngle`. C++ protoc's text format parser uses `ConsumeString()` which loops over adjacent string tokens.
+
 ### Known gaps still unexplored (updated):
+- **String concatenation in consumeAggregateAngle** — same bug as Run 297 but with `< >` delimiters
 - **Angle brackets in nested aggregate on non-file scopes** — same `<>` bug affects message-level, field-level, etc. options
 - **Mixed `{` and `<` delimiters** — `{ info < ... > }` tested here, but `< info { ... } >` at top level likely same issue
 - **Repeated message fields with `<>`** — `{ items < name: "a" > items < name: "b" > }` same root cause

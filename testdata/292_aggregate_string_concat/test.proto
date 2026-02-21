@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package aggstrcat;
+
+import "google/protobuf/descriptor.proto";
+
+message MyOpt {
+  optional string label = 1;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyOpt my_opt = 50001;
+}
+
+option (my_opt) = { label: "hello" "world" };
+
+message Config {
+  required string name = 1;
+}
