@@ -2275,3 +2275,20 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `256_ext_range_zero` — proto2 message with `extensions 0 to 10;` where the range starts at field number 0
 - **Bug:** Two issues: (1) Go is missing the validation "Extension numbers must be positive integers." — C++ protoc validates that extension range start > 0, Go does not. (2) After detecting that the range overlaps field "name" (1), C++ suggests "11, 12, 13" (numbers after the extension range end), while Go suggests "2" (next number after field 1, ignoring the extension range entirely). Error output: C++ produces 3 error lines, Go produces 2 lines.
 - **Root cause:** `parser.go` `parseExtensionRange()` at lines 777-778 only validates integer overflow (`> math.MaxInt32` / `< math.MinInt32`), not that start >= 1. C++ protoc's `DescriptorBuilder::ValidateExtensionRange` checks `extension_range->start <= 0` and reports "Extension numbers must be positive integers." Go's suggested field number calculation also ignores extension ranges when computing available field numbers, while C++ accounts for them.
+
+### Run 263 — --error_format=msvs error formatting (FAILED: 1/1 CLI test)
+- **Test:** `cli@error_format_msvs` — CLI test with `--error_format=msvs -I testdata/257_msvs_error --dump_out=/tmp/msvs_test_out testdata/257_msvs_error/test.proto` (file with duplicate field name `x`)
+- **Bug:** Go's `parseArgs()` at line 589-591 accepts `--error_format=msvs` via `continue` but never stores or acts on the format value. All error output remains in gcc format (`file:line:col: message`). C++ protoc applies msvs format: `file(line) : error in column=col: message`. Stderr differs: `testdata/257_msvs_error/test.proto(7) : error in column=9: "x"...` (C++) vs `test.proto:7:9: "x"...` (Go).
+- **Root cause:** `cli.go:589-591` — `--error_format=FORMAT` is parsed and silently ignored. The format value is never stored in any state variable, and all error formatting functions use gcc-style `filename:line:col:` unconditionally. C++ protoc stores the format and switches between `FormatError()` implementations (gcc vs msvs). Additionally, C++ uses the full path from `--proto_path` while Go uses just the base filename.
+
+### Known gaps still unexplored (updated):
+- **Group field options in extend blocks** — CHECKED: `parseGroupFieldInExtend` at line 1132-1140 now handles options. Fixed since Run 259.
+- **Group field options in oneof** — CHECKED: `parseGroupFieldInOneof` at line 1677-1685 now handles options. Fixed since Run 259.
+- **Multiline extension range SCI spans** — CHECKED: extension range parsing uses `endSpanLine` correctly at line 827.
+- **Multiline reserved range SCI spans** — CHECKED: reserved range parsing uses `endSpanLine` correctly at line 735.
+- **Multiline regular field type SCI span** — CHECKED: parseField uses `typeEndTok.Line` at line 1605.
+- **Proto2 default values on group fields** — groups can't have defaults but error paths may differ
+- **`--error_format=msvs` with specific error types** — more msvs tests could be created with different error triggers
+- **Proto2 `option deprecated` on extension** — `extend Foo { optional string tag = 100 [deprecated = true]; }` — might produce different option SCI
+- **Octal integer field numbers** — `string name = 010;` (octal 8) — both compilers should accept but test not created
+- **Invalid octal `08`** — `string name = 08;` — `strconv.ParseInt("08", 0, 64)` fails because 8 is not a valid octal digit; error messages may differ
