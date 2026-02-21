@@ -2362,3 +2362,21 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `270_aggregate_angle` — proto2 file with `option (my_info) = < label: "test" count: 7 >;` using `< >` instead of `{ }` for aggregate value
 - **Bug:** Both compilers reject `< >` delimiters for aggregate option values, but with different error messages. C++ protoc: `test.proto:16:20: Expected option value.` (points at `<` on line 16, col 20). Go protoc-go: `test.proto:17:3: Expected ";"` (points at `label` on line 17, col 3). Go's parser reads `<` as a scalar value token, then fails when it expects `;` but finds the next key token. C++ rejects `<` immediately as not a valid option value.
 - **Root cause:** `parser.go:3506` — custom option value parsing only checks for `{` to start aggregate mode. When `<` is encountered, it falls through to the scalar value path (line 3501: `valTok := p.tok.Next()` reads `<`), then line 3524 `p.tok.Expect(";")` fails because the next token is `label` not `;`. C++ protoc's option value parser doesn't accept `<` either, but its error message is more accurate ("Expected option value") since it validates the token type before consuming it.
+
+### Run 276 — Nested enum inside group body (FAILED: 5/5 profiles)
+- **Test:** `271_group_nested_enum` — proto2 message with `optional group MyGroup = 1 { ... }` containing a nested `enum Status { UNKNOWN = 0; ACTIVE = 1; }` and a field using that enum type
+- **Bug:** `parseGroupField()` at lines 1902-1909 only parses fields inside the group body (calls `parseField` in a loop). It doesn't handle nested messages, enums, oneofs, reserved, options, extension ranges, or any other message-body constructs. When `enum` is encountered, Go treats it as a type name, `Status` as the field name, then expects `=` but finds `{` → parse error: `test.proto:8:17: Missing field number.` C++ protoc handles groups identically to messages (same body grammar).
+- **Root cause:** `parser.go:1902-1909` — group body is parsed with a minimal loop that only calls `parseField()`. Groups in protobuf share the same body grammar as messages (they can contain nested types, enums, oneofs, extensions, reserved, options). The Go parser needs to use the same message-body parsing logic (lines 228-304) for group bodies.
+
+### Known gaps still unexplored (updated):
+- **Nested message inside group body** — same bug as Run 276 (group body only parses fields)
+- **Reserved/extensions/options inside group body** — same root cause
+- **Oneof inside group body** — same root cause
+- **Group inside group** (nested groups) — same root cause
+- **Features on proto2 files** — same missing line:col bug
+- **Multiple custom options on same file** — ordering/interaction might differ
+- **Proto2 `option deprecated` on extension** — SCI differences
+- **Edition 2023 with `extensions`/`extend`** — validation differences
+- **Group in oneof inside editions** — missing rejection
+- **Edition `optional` label error message** — wording likely differs
+- **Aggregate custom option on message/field/enum/service/method** — same bug as Run 274 but in other contexts
