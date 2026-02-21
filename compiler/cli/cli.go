@@ -257,6 +257,14 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customSvcOptErrors, "\n"))
 	}
 
+	customMethodOptErrors := resolveCustomMethodOptions(orderedFiles, parsed, parseResults)
+	if len(customMethodOptErrors) > 0 {
+		if cfg.errorFormat == "msvs" {
+			customMethodOptErrors = formatErrorsMSVS(customMethodOptErrors, srcTree)
+		}
+		return fmt.Errorf("%s", strings.Join(customMethodOptErrors, "\n"))
+	}
+
 	// Phase 1: Build/cross-link validation — accumulate errors (C++ protoc collects all)
 	var buildErrors []string
 	fieldHints := make(map[*descriptorpb.DescriptorProto]*messageHint)
@@ -3843,6 +3851,87 @@ func collectServiceOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQ
 	}
 	for _, nested := range msg.GetNestedType() {
 		collectServiceOptionsExtensions(nested, msgFQN, exts)
+	}
+}
+
+// resolveCustomMethodOptions resolves parenthesized custom options on methods
+// (e.g., option (auth_role) = "admin";) against extensions of MethodOptions.
+func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+	var allExts []fileOptExtInfo
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, ext := range fd.GetExtension() {
+			if ext.GetExtendee() == ".google.protobuf.MethodOptions" {
+				allExts = append(allExts, fileOptExtInfo{field: ext, pkg: fd.GetPackage()})
+			}
+		}
+		for _, msg := range fd.GetMessageType() {
+			collectMethodOptionsExtensions(msg, fd.GetPackage(), &allExts)
+		}
+	}
+
+	enumValueNumbers := map[string]map[string]int32{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		prefix := fd.GetPackage()
+		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
+		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
+	}
+
+	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
+	for _, n := range orderedFiles {
+		fd := parsed[n]
+		prefix := fd.GetPackage()
+		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
+	}
+
+	var errs []string
+	for _, name := range orderedFiles {
+		result := parseResults[name]
+		if result == nil {
+			continue
+		}
+		fd := parsed[name]
+		for _, opt := range result.CustomMethodOptions {
+			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			if ext == nil {
+				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.",
+					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+				continue
+			}
+
+			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
+				opt.SCILoc.Path[len(opt.SCILoc.Path)-1] = ext.GetNumber()
+			}
+
+			var rawBytes []byte
+			var err error
+			if opt.AggregateFields != nil {
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+			} else {
+				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
+			}
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+				continue
+			}
+
+			opt.Method.Options.ProtoReflect().SetUnknown(
+				append(opt.Method.Options.ProtoReflect().GetUnknown(), rawBytes...))
+		}
+	}
+	return errs
+}
+
+func collectMethodOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
+	msgFQN := parentFQN + "." + msg.GetName()
+	for _, ext := range msg.GetExtension() {
+		if ext.GetExtendee() == ".google.protobuf.MethodOptions" {
+			*exts = append(*exts, fileOptExtInfo{field: ext, pkg: msgFQN})
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectMethodOptionsExtensions(nested, msgFQN, exts)
 	}
 }
 
