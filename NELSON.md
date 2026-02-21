@@ -2335,6 +2335,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go parser stores default value as `"-nan"` (4 bytes). C++ protoc normalizes it to `"nan"` (3 bytes) because NaN has no sign. Descriptor set sizes differ by 1 byte (92 vs 93, 342 vs 343). Plugin profiles: summary matches but binary differs.
 - **Root cause:** `parser.go:3969-3971` prepends `-` to the default value string. Then at line 4024, `strings.ToLower("-nan")` produces `"-nan"` which doesn't match the `"nan"` case. Falls to `strconv.ParseFloat("-nan", 64)` which returns an error (Go doesn't accept `-nan`). So `defVal` stays as `"-nan"` instead of being normalized to `"nan"`. C++ protoc's `SimpleDtoa` always outputs `"nan"` for any NaN regardless of sign bit.
 
+### Run 273 — Edition 2023 with `required` label error message (FAILED: 5/5 profiles)
+- **Test:** `268_edition_required` — edition 2023 file with `required string name = 1;` and `required int32 id = 2;`
+- **Bug:** Both compilers reject `required` in editions (exit 1), but Go's error message text differs from C++. C++ says: `Label "required" is not supported in editions, use features.field_presence = LEGACY_REQUIRED.` Go says: `Label "required" is not supported in editions. Use features.field_presence to control field presence, and the feature "features.field_presence = LEGACY_REQUIRED" to require that a field is always set.` Different punctuation (comma vs period after "editions"), and Go adds a longer explanation.
+- **Root cause:** The Go error message string for `required` in editions was written verbosely instead of matching C++ protoc's exact wording. C++ protoc uses a terse single-clause message. Go uses a multi-sentence explanation. The test harness compares stderr exactly, so different text = FAIL.
+
 ### Known gaps still unexplored (updated):
 - **Features on proto2 files** — same missing line:col bug
 - **Custom option with message type** — aggregate value `option (my_opt) = { key: "value" };` — likely not supported
@@ -2344,3 +2349,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Group in oneof inside editions** — same missing rejection
 - **`-infinity` default normalization** — similar issue, Go may produce `-infinity` instead of `-inf`
 - **Empty statements inside oneof** — Go rejects `;` inside oneof (line 3141) but C++ accepts per spec
+- **Edition `optional` label error message** — same class of bug, Go's wording likely differs from C++ for `optional` in editions too
+- **Edition `repeated` label error message** — same class of bug for `repeated` label in editions
