@@ -2281,14 +2281,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go's `parseArgs()` at line 589-591 accepts `--error_format=msvs` via `continue` but never stores or acts on the format value. All error output remains in gcc format (`file:line:col: message`). C++ protoc applies msvs format: `file(line) : error in column=col: message`. Stderr differs: `testdata/257_msvs_error/test.proto(7) : error in column=9: "x"...` (C++) vs `test.proto:7:9: "x"...` (Go).
 - **Root cause:** `cli.go:589-591` — `--error_format=FORMAT` is parsed and silently ignored. The format value is never stored in any state variable, and all error formatting functions use gcc-style `filename:line:col:` unconditionally. C++ protoc stores the format and switches between `FormatError()` implementations (gcc vs msvs). Additionally, C++ uses the full path from `--proto_path` while Go uses just the base filename.
 
+### Run 265 — Enum-typed custom file option (FAILED: 5/5 profiles)
+- **Test:** `259_custom_enum_option` — proto2 file importing `google/protobuf/descriptor.proto`, defining `enum Severity { LOW=0; MEDIUM=1; HIGH=2; }`, `extend google.protobuf.FileOptions { optional Severity my_severity = 50001; }`, then using `option (my_severity) = HIGH;`
+- **Bug:** Go's `encodeCustomOptionValue()` at the TYPE_ENUM case tries `strconv.ParseInt("HIGH", 0, 32)` which fails, producing error: `error encoding custom option: enum value resolution not yet implemented for: HIGH`. C++ protoc resolves `HIGH` to its enum number (2) and succeeds.
+- **Root cause:** `cli.go` `encodeCustomOptionValue` TYPE_ENUM case at the bottom of the function — it only tries to parse the value as an integer literal. Enum value name-to-number resolution is explicitly not implemented (comment says "For now, try parsing as integer"). C++ protoc's option interpreter resolves enum value names via the DescriptorPool. Any custom option with an enum type that uses a value name (not a raw number) will fail in Go.
+
 ### Known gaps still unexplored (updated):
-- **Group field options in extend blocks** — CHECKED: `parseGroupFieldInExtend` at line 1132-1140 now handles options. Fixed since Run 259.
-- **Group field options in oneof** — CHECKED: `parseGroupFieldInOneof` at line 1677-1685 now handles options. Fixed since Run 259.
-- **Multiline extension range SCI spans** — CHECKED: extension range parsing uses `endSpanLine` correctly at line 827.
-- **Multiline reserved range SCI spans** — CHECKED: reserved range parsing uses `endSpanLine` correctly at line 735.
-- **Multiline regular field type SCI span** — CHECKED: parseField uses `typeEndTok.Line` at line 1605.
-- **Proto2 default values on group fields** — groups can't have defaults but error paths may differ
-- **`--error_format=msvs` with specific error types** — more msvs tests could be created with different error triggers
+- **Custom option with bool type** — `extend FileOptions { optional bool my_flag = 50002; }` then `option (my_flag) = true;` — might work or have encoding differences
+- **Custom option with int type** — numeric custom options should work since `strconv.ParseInt` handles integers
+- **Custom option with message type** — aggregate value `option (my_opt) = { key: "value" };` — likely not supported
+- **Multiple custom options on same file** — ordering/interaction might differ
 - **Proto2 `option deprecated` on extension** — `extend Foo { optional string tag = 100 [deprecated = true]; }` — might produce different option SCI
 - **Octal integer field numbers** — `string name = 010;` (octal 8) — both compilers should accept but test not created
 - **Invalid octal `08`** — `string name = 08;` — `strconv.ParseInt("08", 0, 64)` fails because 8 is not a valid octal digit; error messages may differ
