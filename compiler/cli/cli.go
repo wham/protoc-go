@@ -3625,16 +3625,8 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 			}
 
 			// Update SCI path with actual field number
-			sci := fd.GetSourceCodeInfo().GetLocation()
-			// Find the deferred SCI entries (they were stored as indices into optLocs,
-			// which get appended to the main SCI). Search for the placeholder path.
-			for i, loc := range sci {
-				_ = i
-				if len(loc.Path) >= 2 && loc.Path[len(loc.Path)-2] == 8 && loc.Path[len(loc.Path)-1] == 0 {
-					// Check if this is our placeholder by matching against opt's field
-					// Simple approach: update all [... 8, 0] entries (only custom opts have 0)
-					loc.Path[len(loc.Path)-1] = ext.GetNumber()
-				}
+			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
+				opt.SCILoc.Path[len(opt.SCILoc.Path)-1] = ext.GetNumber()
 			}
 
 			// Encode the extension value as protowire bytes

@@ -99,6 +99,7 @@ type CustomFieldOption struct {
 	NameTok         tokenizer.Token                     // position of "(" for error reporting
 	AggregateFields []AggregateField                    // non-nil for aggregate values
 	Negative        bool                                // value preceded by '-'
+	SCILoc          *descriptorpb.SourceCodeInfo_Location // SCI entry to update with resolved field number
 }
 
 type ParseResult struct {
@@ -4115,8 +4116,12 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			optEndCol := endTok.Column // don't include ]/,
 
 			// Add SCI: option span [fieldPath..., 8, 0] (placeholder; field number resolved later)
-			addLoc(append(copyPath(fieldPath), 8, 0),
-				optNameTok.Line, optNameTok.Column, optEndLine, optEndCol)
+			sciLoc := &descriptorpb.SourceCodeInfo_Location{
+				Path: append(copyPath(fieldPath), 8, 0),
+				Span: multiSpan(optNameTok.Line, optNameTok.Column, optEndLine, optEndCol),
+			}
+			optLocs = append(optLocs, sciLoc)
+			custOpt.SCILoc = sciLoc
 
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
