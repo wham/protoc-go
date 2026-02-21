@@ -37,13 +37,26 @@ type parser struct {
 	filename     string
 	errors       []string
 	inOneof      bool
-	explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool
+	explicitJsonNames   map[*descriptorpb.FieldDescriptorProto]bool
+	customFileOptions   []CustomFileOption
 }
 
 // ParseResult holds the result of parsing a .proto file.
+// CustomFileOption represents a parenthesized custom file option that needs
+// post-parse resolution against extension definitions.
+type CustomFileOption struct {
+	ParenName string          // e.g., "(my_file_option)"
+	InnerName string          // e.g., "my_file_option"
+	Value     string          // the option value
+	ValueType tokenizer.TokenType // token type of value
+	SCIIndex  int             // index in SCI locations for [8, fieldNum] entry
+	NameTok   tokenizer.Token // position of "(" for error reporting
+}
+
 type ParseResult struct {
 	FD                *descriptorpb.FileDescriptorProto
 	ExplicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool
+	CustomFileOptions []CustomFileOption
 }
 
 // ParseFile parses a .proto file and returns a ParseResult.
@@ -207,7 +220,7 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 		return nil, &MultiError{Errors: p.errors}
 	}
 
-	return &ParseResult{FD: fd, ExplicitJsonNames: p.explicitJsonNames}, nil
+	return &ParseResult{FD: fd, ExplicitJsonNames: p.explicitJsonNames, CustomFileOptions: p.customFileOptions}, nil
 }
 
 // parseErrorPos extracts 0-based line/col from an error string formatted as "line:col: message"
@@ -3442,11 +3455,53 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		if err != nil {
 			return err
 		}
-		// Skip to end of statement to consume `= value ;`
-		if err := p.skipStatement(); err != nil {
+		// Extract inner name (strip parens)
+		innerName := fullName[1 : len(fullName)-1]
+
+		if _, err := p.tok.Expect("="); err != nil {
 			return err
 		}
-		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, fullName)
+		valTok := p.tok.Next()
+		p.trackEnd(valTok)
+		// Handle string concatenation
+		if valTok.Type == tokenizer.TokenString {
+			for p.tok.Peek().Type == tokenizer.TokenString {
+				next := p.tok.Next()
+				p.trackEnd(next)
+				valTok.Value += next.Value
+			}
+		}
+		endTok, err := p.tok.Expect(";")
+		if err != nil {
+			return err
+		}
+		p.trackEnd(endTok)
+
+		if fd.Options == nil {
+			fd.Options = &descriptorpb.FileOptions{}
+		}
+
+		span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+			Path: []int32{8},
+			Span: span,
+		})
+		sciIdx := len(p.locations)
+		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+			Path: []int32{8, 0}, // placeholder field num, updated during resolution
+			Span: span,
+		})
+		p.attachComments(len(p.locations)-1, firstIdx)
+
+		p.customFileOptions = append(p.customFileOptions, CustomFileOption{
+			ParenName: fullName,
+			InnerName: innerName,
+			Value:     valTok.Value,
+			ValueType: valTok.Type,
+			SCIIndex:  sciIdx,
+			NameTok:   nameTok,
+		})
+		return nil
 	}
 
 	// Handle dotted option names like features.field_presence
@@ -3811,13 +3866,49 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			optName = "features." + featSubField
 		}
 
-		if optName != "targets" && seenFieldOpts[optName] {
+		if optName != "targets" && optName != "edition_defaults" && seenFieldOpts[optName] {
 			return nil, fmt.Errorf("%d:%d: Option \"%s\" was already set.", optNameTok.Line+1, optNameTok.Column+1, optName)
 		}
 		seenFieldOpts[optName] = true
 
 		// Consume "="
 		p.tok.Next()
+
+		// Handle message-literal options: edition_defaults = { ... }, feature_support = { ... }
+		if (optName == "edition_defaults" || optName == "feature_support") && p.tok.Peek().Value == "{" {
+			if field.Options == nil {
+				field.Options = &descriptorpb.FieldOptions{}
+			}
+			msgLitStartTok := optNameTok
+			msgLitEndTok, err := p.parseMessageLiteralFieldOption(optName, field)
+			if err != nil {
+				return nil, err
+			}
+			valEnd := msgLitEndTok.Column + len(msgLitEndTok.Value)
+			valEndLine := msgLitEndTok.Line
+			switch optName {
+			case "edition_defaults":
+				addLoc(append(copyPath(fieldPath), 8, 20, int32(len(field.Options.EditionDefaults)-1)),
+					msgLitStartTok.Line, msgLitStartTok.Column, valEndLine, valEnd)
+			case "feature_support":
+				addLoc(append(copyPath(fieldPath), 8, 22),
+					msgLitStartTok.Line, msgLitStartTok.Column, valEndLine, valEnd)
+			}
+			// Check for comma (more options) or closing bracket
+			next := p.tok.Peek()
+			if next.Value == "," {
+				p.tok.Next()
+				if p.tok.Peek().Value == "]" {
+					tok := p.tok.Peek()
+					return nil, fmt.Errorf("%d:%d: Expected identifier.", tok.Line+1, tok.Column+1)
+				}
+			} else if next.Value == "]" {
+				break
+			} else {
+				break
+			}
+			continue
+		}
 
 		// Handle negative values for default
 		negative := false
@@ -4211,6 +4302,85 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 	result = append(result, optLocs...)
 
 	return result, nil
+}
+
+// parseMessageLiteralFieldOption parses a message literal value for edition_defaults
+// or feature_support field options: { key: value [, key: value] ... }
+// Returns the closing '}' token.
+func (p *parser) parseMessageLiteralFieldOption(optName string, field *descriptorpb.FieldDescriptorProto) (tokenizer.Token, error) {
+	openTok := p.tok.Next() // consume "{"
+	_ = openTok
+
+	switch optName {
+	case "edition_defaults":
+		ed := &descriptorpb.FieldOptions_EditionDefault{}
+		for p.tok.Peek().Value != "}" {
+			keyTok := p.tok.Next()
+			key := keyTok.Value
+			p.tok.Next() // consume ":"
+			valTok := p.tok.Next()
+			switch key {
+			case "edition":
+				if v, ok := descriptorpb.Edition_value[valTok.Value]; ok {
+					ed.Edition = descriptorpb.Edition(v).Enum()
+				}
+			case "value":
+				ed.Value = proto.String(valTok.Value)
+			}
+			// consume optional comma/semicolon
+			if p.tok.Peek().Value == "," || p.tok.Peek().Value == ";" {
+				p.tok.Next()
+			}
+		}
+		closeTok := p.tok.Next() // consume "}"
+		field.Options.EditionDefaults = append(field.Options.EditionDefaults, ed)
+		return closeTok, nil
+
+	case "feature_support":
+		fs := &descriptorpb.FieldOptions_FeatureSupport{}
+		for p.tok.Peek().Value != "}" {
+			keyTok := p.tok.Next()
+			key := keyTok.Value
+			p.tok.Next() // consume ":"
+			valTok := p.tok.Next()
+			switch key {
+			case "edition_introduced":
+				if v, ok := descriptorpb.Edition_value[valTok.Value]; ok {
+					fs.EditionIntroduced = descriptorpb.Edition(v).Enum()
+				}
+			case "edition_deprecated":
+				if v, ok := descriptorpb.Edition_value[valTok.Value]; ok {
+					fs.EditionDeprecated = descriptorpb.Edition(v).Enum()
+				}
+			case "deprecation_warning":
+				fs.DeprecationWarning = proto.String(valTok.Value)
+			case "edition_removed":
+				if v, ok := descriptorpb.Edition_value[valTok.Value]; ok {
+					fs.EditionRemoved = descriptorpb.Edition(v).Enum()
+				}
+			}
+			// consume optional comma/semicolon
+			if p.tok.Peek().Value == "," || p.tok.Peek().Value == ";" {
+				p.tok.Next()
+			}
+		}
+		closeTok := p.tok.Next() // consume "}"
+		field.Options.FeatureSupport = fs
+		return closeTok, nil
+	}
+
+	// Should not reach here, but skip the message literal
+	depth := 1
+	var lastTok tokenizer.Token
+	for depth > 0 {
+		lastTok = p.tok.Next()
+		if lastTok.Value == "{" {
+			depth++
+		} else if lastTok.Value == "}" {
+			depth--
+		}
+	}
+	return lastTok, nil
 }
 
 func unquoteString(s string) string {

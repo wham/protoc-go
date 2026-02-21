@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"github.com/wham/protoc-go/compiler/parser"
 	"github.com/wham/protoc-go/compiler/plugin"
 	"github.com/wham/protoc-go/io/tokenizer"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 )
@@ -191,11 +193,12 @@ func Run(args []string) error {
 	// Parse all proto files
 	parsed := make(map[string]*descriptorpb.FileDescriptorProto)
 	explicitJsonNames := make(map[*descriptorpb.FieldDescriptorProto]bool)
+	parseResults := make(map[string]*parser.ParseResult)
 	var orderedFiles []string
 	var collectErrors []string
 
 	for _, f := range relFiles {
-		ok, err := parseRecursive(f, srcTree, parsed, explicitJsonNames, &orderedFiles, nil, &collectErrors)
+		ok, err := parseRecursive(f, srcTree, parsed, explicitJsonNames, parseResults, &orderedFiles, nil, &collectErrors)
 		if err != nil {
 			return err
 		}
@@ -219,6 +222,15 @@ func Run(args []string) error {
 			resolveErrors = formatErrorsMSVS(resolveErrors, srcTree)
 		}
 		return fmt.Errorf("%s", strings.Join(resolveErrors, "\n"))
+	}
+
+	// Resolve custom options (parenthesized extension options)
+	customOptErrors := resolveCustomFileOptions(orderedFiles, parsed, parseResults)
+	if len(customOptErrors) > 0 {
+		if cfg.errorFormat == "msvs" {
+			customOptErrors = formatErrorsMSVS(customOptErrors, srcTree)
+		}
+		return fmt.Errorf("%s", strings.Join(customOptErrors, "\n"))
 	}
 
 	// Phase 1: Build/cross-link validation — accumulate errors (C++ protoc collects all)
@@ -300,20 +312,31 @@ func Run(args []string) error {
 		return nil
 	}
 
-	// Build ordered list of FileDescriptorProtos (stripped of source-retention options)
+	// Build ordered list of FileDescriptorProtos (strip source-retention options only for source files)
+	relFileSet := make(map[string]bool)
+	for _, name := range relFiles {
+		relFileSet[name] = true
+	}
 	var protoFiles []*descriptorpb.FileDescriptorProto
 	strippedMap := make(map[string]*descriptorpb.FileDescriptorProto)
 	for _, name := range orderedFiles {
-		stripped := stripSourceRetention(parsed[name])
-		protoFiles = append(protoFiles, stripped)
-		strippedMap[name] = stripped
+		fd := parsed[name]
+		if relFileSet[name] {
+			fd = stripSourceRetention(fd)
+		}
+		protoFiles = append(protoFiles, fd)
+		strippedMap[name] = fd
 	}
 
 	// Handle descriptor set output
 	if cfg.descriptorSetOut != "" {
 		fds := &descriptorpb.FileDescriptorSet{}
 		if cfg.includeImports {
-			for _, fd := range protoFiles {
+			for _, name := range orderedFiles {
+				fd := strippedMap[name]
+				if !relFileSet[name] {
+					fd = stripSourceRetention(parsed[name])
+				}
 				fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
 				if !cfg.includeSourceInfo {
 					fdCopy.SourceCodeInfo = nil
@@ -321,10 +344,6 @@ func Run(args []string) error {
 				fds.File = append(fds.File, fdCopy)
 			}
 		} else {
-			relFileSet := make(map[string]bool)
-			for _, name := range relFiles {
-				relFileSet[name] = true
-			}
 			for _, name := range orderedFiles {
 				if relFileSet[name] {
 					fdCopy := proto.Clone(strippedMap[name]).(*descriptorpb.FileDescriptorProto)
@@ -384,7 +403,7 @@ func Run(args []string) error {
 	return nil
 }
 
-func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, orderedFiles *[]string, importStack []string, collectErrors *[]string) (bool, error) {
+func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, parseResults map[string]*parser.ParseResult, orderedFiles *[]string, importStack []string, collectErrors *[]string) (bool, error) {
 	// Check for import cycles
 	for idx, f := range importStack {
 		if f == filename {
@@ -449,12 +468,13 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 	}
 
 	parsed[filename] = fd
+	parseResults[filename] = result
 
 	// Parse dependencies
 	newStack := append(importStack, filename)
 	failedDeps := map[string]bool{}
 	for _, dep := range fd.GetDependency() {
-		ok, err := parseRecursive(dep, srcTree, parsed, explicitJsonNames, orderedFiles, newStack, collectErrors)
+		ok, err := parseRecursive(dep, srcTree, parsed, explicitJsonNames, parseResults, orderedFiles, newStack, collectErrors)
 		if err != nil {
 			return false, err
 		}
@@ -2968,11 +2988,13 @@ func stripSourceRetention(fd *descriptorpb.FileDescriptorProto) *descriptorpb.Fi
 		return fd
 	}
 	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
-	clearExtRangeOpts(fdCopy.GetMessageType())
+	// Collect paths of ext ranges whose options become nil after stripping verification.
+	var emptyOptsPaths [][]int32
+	clearExtRangeOptsCollect(fdCopy.GetMessageType(), []int32{4}, &emptyOptsPaths)
 	if fdCopy.SourceCodeInfo != nil {
 		var filtered []*descriptorpb.SourceCodeInfo_Location
 		for _, loc := range fdCopy.SourceCodeInfo.Location {
-			if !isExtRangeOptsPath(loc.Path) {
+			if !isStrippedExtRangeOptsPath(loc.Path, emptyOptsPaths) {
 				filtered = append(filtered, loc)
 			}
 		}
@@ -2995,30 +3017,62 @@ func hasExtRangeOpts(msgs []*descriptorpb.DescriptorProto) bool {
 	return false
 }
 
-func clearExtRangeOpts(msgs []*descriptorpb.DescriptorProto) {
-	for _, msg := range msgs {
-		for _, er := range msg.GetExtensionRange() {
+// clearExtRangeOptsCollect clears verification from ext range options and
+// collects paths prefix (e.g. [4,0,5,0,3]) for ranges whose options became nil.
+func clearExtRangeOptsCollect(msgs []*descriptorpb.DescriptorProto, basePath []int32, emptyPaths *[][]int32) {
+	for mi, msg := range msgs {
+		msgPath := append(append([]int32{}, basePath...), int32(mi))
+		for ri, er := range msg.GetExtensionRange() {
 			if er.Options != nil {
 				er.Options.Verification = nil
 				er.Options.Declaration = nil
 				if proto.Size(er.Options) == 0 {
 					er.Options = nil
+					optsPath := append(append([]int32{}, msgPath...), 5, int32(ri), 3)
+					*emptyPaths = append(*emptyPaths, optsPath)
 				}
 			}
 		}
-		clearExtRangeOpts(msg.GetNestedType())
+		clearExtRangeOptsCollect(msg.GetNestedType(), append(append([]int32{}, msgPath...), 3), emptyPaths)
 	}
 }
 
-// isExtRangeOptsPath checks if a SCI path points to an extension range options field.
-// Pattern: 4, N, [3, N, ]*, 5, N, 3, [...]
-func isExtRangeOptsPath(path []int32) bool {
-	if len(path) < 5 || path[0] != 4 {
+// isStrippedExtRangeOptsPath checks if a SCI path should be stripped.
+// Strip: verification-specific paths ([..., 5, N, 3, 3, ...]) always.
+// Also strip options container and all sub-paths for ranges in emptyPaths.
+func isStrippedExtRangeOptsPath(path []int32, emptyPaths [][]int32) bool {
+	// Check if this is a verification path (field 3 of ExtensionRangeOptions)
+	if isVerificationPath(path) {
+		return true
+	}
+	// Check if this path is under an emptied options container
+	for _, ep := range emptyPaths {
+		if len(path) >= len(ep) && pathPrefix(path, ep) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathPrefix(path, prefix []int32) bool {
+	for i, v := range prefix {
+		if path[i] != v {
+			return false
+		}
+	}
+	return true
+}
+
+// isVerificationPath checks if a SCI path points to the verification field
+// (field 3) within ExtensionRangeOptions.
+// Pattern: 4, N, [3, N, ]*, 5, N, 3, 3[, ...]
+func isVerificationPath(path []int32) bool {
+	if len(path) < 6 || path[0] != 4 {
 		return false
 	}
 	i := 2
-	for i+2 < len(path) {
-		if path[i] == 5 && i+2 < len(path) && path[i+2] == 3 {
+	for i+3 < len(path) {
+		if path[i] == 5 && path[i+2] == 3 && path[i+3] == 3 {
 			return true
 		}
 		if path[i] == 3 {
@@ -3295,5 +3349,212 @@ func formatErrorLineMSVS(line string, srcTree *importer.SourceTree) string {
 		}
 	}
 	return fmt.Sprintf("%s(%d) : error in column=%d:%s", filename, lineNum, colNum, message)
+}
+
+type fileOptExtInfo struct {
+	field *descriptorpb.FieldDescriptorProto
+	pkg   string
+}
+
+// resolveCustomFileOptions resolves parenthesized custom file options against
+// extension definitions. It finds the matching extension field, encodes the
+// value, and sets it on the FileOptions proto as unknown (extension) fields.
+func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+	// Build extension map: name → extension field for FileOptions extensions
+	var allExts []fileOptExtInfo
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, ext := range fd.GetExtension() {
+			if ext.GetExtendee() == ".google.protobuf.FileOptions" {
+				allExts = append(allExts, fileOptExtInfo{field: ext, pkg: fd.GetPackage()})
+			}
+		}
+		// Also check extensions nested in messages
+		for _, msg := range fd.GetMessageType() {
+			collectFileOptionsExtensions(msg, fd.GetPackage(), &allExts)
+		}
+	}
+
+	var errs []string
+	for _, name := range orderedFiles {
+		result := parseResults[name]
+		if result == nil {
+			continue
+		}
+		fd := parsed[name]
+		for _, opt := range result.CustomFileOptions {
+			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			if ext == nil {
+				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.",
+					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+				continue
+			}
+
+			// Update SCI path with actual field number
+			if opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
+				fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = []int32{8, ext.GetNumber()}
+			}
+
+			// Encode the extension value as protowire bytes
+			rawBytes, err := encodeCustomOptionValue(ext, opt.Value, opt.ValueType)
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+				continue
+			}
+
+			// Add to FileOptions unknown fields
+			fd.Options.ProtoReflect().SetUnknown(
+				append(fd.Options.ProtoReflect().GetUnknown(), rawBytes...))
+		}
+	}
+	return errs
+}
+
+func collectFileOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
+	msgFQN := parentFQN + "." + msg.GetName()
+	for _, ext := range msg.GetExtension() {
+		if ext.GetExtendee() == ".google.protobuf.FileOptions" {
+			*exts = append(*exts, fileOptExtInfo{field: ext, pkg: msgFQN})
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectFileOptionsExtensions(nested, msgFQN, exts)
+	}
+}
+
+// findFileOptionExtension looks up an extension field by name, considering package scope.
+func findFileOptionExtension(name string, currentPkg string, allExts []fileOptExtInfo) *descriptorpb.FieldDescriptorProto {
+	// Try fully-qualified lookup (name starts with .)
+	if strings.HasPrefix(name, ".") {
+		fqn := name[1:] // strip leading dot
+		for _, e := range allExts {
+			extFQN := e.field.GetName()
+			if e.pkg != "" {
+				extFQN = e.pkg + "." + e.field.GetName()
+			}
+			if extFQN == fqn {
+				return e.field
+			}
+		}
+		return nil
+	}
+
+	// Try current package scope first
+	if currentPkg != "" {
+		for _, e := range allExts {
+			if e.field.GetName() == name && e.pkg == currentPkg {
+				return e.field
+			}
+		}
+	}
+
+	// Try bare name match
+	for _, e := range allExts {
+		if e.field.GetName() == name {
+			return e.field
+		}
+	}
+
+	// Try dotted name as relative path
+	if strings.Contains(name, ".") {
+		for _, e := range allExts {
+			extFQN := e.field.GetName()
+			if e.pkg != "" {
+				extFQN = e.pkg + "." + e.field.GetName()
+			}
+			if strings.HasSuffix(extFQN, "."+name) || extFQN == name {
+				return e.field
+			}
+		}
+	}
+
+	return nil
+}
+
+// encodeCustomOptionValue encodes a custom option value as protowire bytes.
+func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value string, valueType tokenizer.TokenType) ([]byte, error) {
+	fieldNum := protowire.Number(ext.GetNumber())
+	var b []byte
+
+	switch ext.GetType() {
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING,
+		descriptorpb.FieldDescriptorProto_TYPE_BYTES:
+		b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
+		b = protowire.AppendString(b, value)
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32,
+		descriptorpb.FieldDescriptorProto_TYPE_INT64,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT64:
+		v, err := strconv.ParseInt(value, 0, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid integer value: %s", value)
+		}
+		if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_SINT32 ||
+			ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_SINT64 {
+			b = protowire.AppendTag(b, fieldNum, protowire.VarintType)
+			b = protowire.AppendVarint(b, protowire.EncodeZigZag(v))
+		} else {
+			b = protowire.AppendTag(b, fieldNum, protowire.VarintType)
+			b = protowire.AppendVarint(b, uint64(v))
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_UINT64:
+		v, err := strconv.ParseUint(value, 0, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid unsigned integer value: %s", value)
+		}
+		b = protowire.AppendTag(b, fieldNum, protowire.VarintType)
+		b = protowire.AppendVarint(b, v)
+	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
+		b = protowire.AppendTag(b, fieldNum, protowire.VarintType)
+		if value == "true" {
+			b = protowire.AppendVarint(b, 1)
+		} else {
+			b = protowire.AppendVarint(b, 0)
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
+		v, err := strconv.ParseFloat(value, 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid float value: %s", value)
+		}
+		b = protowire.AppendTag(b, fieldNum, protowire.Fixed32Type)
+		b = protowire.AppendFixed32(b, math.Float32bits(float32(v)))
+	case descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid double value: %s", value)
+		}
+		b = protowire.AppendTag(b, fieldNum, protowire.Fixed64Type)
+		b = protowire.AppendFixed64(b, math.Float64bits(v))
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+		v, err := strconv.ParseUint(value, 0, 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid fixed32 value: %s", value)
+		}
+		b = protowire.AppendTag(b, fieldNum, protowire.Fixed32Type)
+		b = protowire.AppendFixed32(b, uint32(v))
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+		v, err := strconv.ParseUint(value, 0, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid fixed64 value: %s", value)
+		}
+		b = protowire.AppendTag(b, fieldNum, protowire.Fixed64Type)
+		b = protowire.AppendFixed64(b, v)
+	case descriptorpb.FieldDescriptorProto_TYPE_ENUM:
+		// For enums, the value is an identifier name — need to look up the number
+		// For now, try parsing as integer
+		v, err := strconv.ParseInt(value, 0, 32)
+		if err != nil {
+			return nil, fmt.Errorf("enum value resolution not yet implemented for: %s", value)
+		}
+		b = protowire.AppendTag(b, fieldNum, protowire.VarintType)
+		b = protowire.AppendVarint(b, uint64(v))
+	default:
+		return nil, fmt.Errorf("unsupported custom option type: %v", ext.GetType())
+	}
+
+	return b, nil
 }
 

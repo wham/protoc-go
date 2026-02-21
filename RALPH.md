@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1301/1301 tests passing.
+ALL DONE — 1306/1306 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -229,6 +229,10 @@ ALL DONE — 1301/1301 tests passing.
 
 198. ✅ Empty import file-not-found handling — when `srcTree.Open(filename)` fails for a dependency and `collectErrors` is active, add `<filename>: File not found.` to collectErrors and return `(false, nil)` instead of propagating error, so parent also emits `Import "" was not found or had errors.` follow-up error matching C++ protoc's two-line output
 199. ✅ `weak` field option (field 10 of FieldOptions, boolean) with source code info — `[weak = true]` sets `FieldOptions.Weak`, SCI path `[..., 8, 10]`
+200. ✅ Custom file option support — `option (my_file_option) = "hello";` where the option is an extension to `google.protobuf.FileOptions`, parsed as `CustomFileOption` in parser, resolved post-parse in `resolveCustomFileOptions` via `protowire` encoding on `FileOptions` unknown fields
+201. ✅ Message-literal field options — `edition_defaults = { edition: EDITION_LEGACY, value: "EXPLICIT" }` and `feature_support = { edition_introduced: EDITION_2023 }` on FieldOptions fields 20 and 22, parsed via `parseMessageLiteralFieldOption`
+202. ✅ Extension range declaration options — `declaration = { number: N, type: "...", full_name: "..." }` on ExtensionRangeOptions field 2, parsed via `parseDeclarationLiteral`, SCI entries for each declaration
+203. ✅ Source retention stripping scope fix — strip source-retention fields (verification, declaration) only from source files in `protoFile`, not dependency files; descriptor_set output strips ALL files
 
 ## Notes
 
