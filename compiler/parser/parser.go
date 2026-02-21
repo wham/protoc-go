@@ -3501,6 +3501,11 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		valTok := p.tok.Next()
 		p.trackEnd(valTok)
 
+		// Reject angle bracket aggregate syntax — C++ protoc doesn't support it for options
+		if valTok.Value == "<" {
+			return fmt.Errorf("%d:%d: Expected option value.", valTok.Line+1, valTok.Column+1)
+		}
+
 		var aggregateFields []AggregateField
 
 		if valTok.Value == "{" {

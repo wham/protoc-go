@@ -179,11 +179,10 @@ proto_file[0]: google/protobuf/descriptor.proto (package="google.protobuf", synt
     value: EDITION_99999_TEST_ONLY = 99999
     value: EDITION_MAX = 2147483647
   source_code_info_locations: 1451
-proto_file[1]: test.proto (package="customenumopt", syntax="")
-  message: Config
+proto_file[1]: test.proto (package="aggopt", syntax="")
+  message: MyOpt
     field: name (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
-  enum: Severity
-    value: LOW = 0
-    value: MEDIUM = 1
-    value: HIGH = 2
-  source_code_info_locations: 31
+    field: value (number=2, type=TYPE_INT32, label=LABEL_OPTIONAL)
+  message: Foo
+    field: tag (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
+  source_code_info_locations: 32
