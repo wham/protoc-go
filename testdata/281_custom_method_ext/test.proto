@@ -1,0 +1,23 @@
+syntax = "proto2";
+
+package custommethodext;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.MethodOptions {
+  optional string auth_role = 50001;
+}
+
+message PingRequest {
+  optional string payload = 1;
+}
+
+message PingResponse {
+  optional string payload = 1;
+}
+
+service PingService {
+  rpc Ping (PingRequest) returns (PingResponse) {
+    option (auth_role) = "admin";
+  }
+}
