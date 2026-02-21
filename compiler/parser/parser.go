@@ -4021,12 +4021,14 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE ||
 				field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT {
 				lower := strings.ToLower(defVal)
-				if lower == "inf" || lower == "-inf" || lower == "nan" || lower == "infinity" || lower == "-infinity" {
+				if lower == "inf" || lower == "-inf" || lower == "nan" || lower == "-nan" || lower == "infinity" || lower == "-infinity" {
 					defVal = lower
 					if defVal == "infinity" {
 						defVal = "inf"
 					} else if defVal == "-infinity" {
 						defVal = "-inf"
+					} else if defVal == "-nan" {
+						defVal = "nan"
 					}
 				} else if v, err := strconv.ParseFloat(defVal, 64); err == nil {
 					if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT {
