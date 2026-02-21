@@ -2315,6 +2315,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go's `validateFeaturesEditions()` at cli.go:1657-1670 produces `"test.proto: Features are only valid under editions."` — no line/column info. C++ protoc produces `"test.proto:1:1: Features are only valid under editions."` with line:col `1:1`. Both reject (exit 1) but error format differs (missing `:1:1` in Go).
 - **Root cause:** `cli.go:1668` — `fmt.Sprintf("%s: Features are only valid under editions.", name)` uses only the filename. Should include `:1:1:` (or the actual location of the features option) to match C++ protoc's error format. C++ protoc emits the error at the file's first line/column since features are a file-level concern.
 
+### Run 269 — Same-enum duplicate name shows spurious scoping note (FAILED: 5/5 profiles)
+- **Test:** `263_same_enum_dup_name` — proto3 enum with `ACTIVE = 1;` and `ACTIVE = 2;` (duplicate value NAME within the same enum)
+- **Bug:** Go emits 2 error lines: the base `"ACTIVE" is already defined in "sameenumdup".` PLUS `Note that enum values use C++ scoping rules...`. C++ protoc emits only 1 line (the base error, no scoping note). The scoping note is only relevant for CROSS-enum conflicts (explaining why values from different enums collide). For same-enum duplicates, C++ omits the note since the conflict is self-evident.
+- **Root cause:** `cli.go:2196-2200` — the `check()` closure unconditionally appends the scoping note whenever `enumName != ""`. No check is performed to determine whether the conflict is cross-scope (different enums) vs same-scope (same enum). C++ protoc's `descriptor.cc` only emits the note when the conflicting symbol was registered by a DIFFERENT enum. The fix from earlier runs (adding the note for cross-enum conflicts) over-corrected by always showing it.
+
 ### Known gaps still unexplored (updated):
 - **Features on proto2 files** — same missing line:col bug
 - **Custom option with message type** — aggregate value `option (my_opt) = { key: "value" };` — likely not supported

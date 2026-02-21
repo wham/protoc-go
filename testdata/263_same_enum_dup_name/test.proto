@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package sameenumdup;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  ACTIVE = 2;
+}
+
+message Msg {
+  Status status = 1;
+}
