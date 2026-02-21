@@ -1,0 +1,23 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package method_subfield;
+
+message MethodConfig {
+  optional string name = 1;
+  optional int32 timeout = 2;
+}
+
+extend google.protobuf.MethodOptions {
+  optional MethodConfig my_method_config = 50001;
+}
+
+message Request {}
+message Response {}
+
+service MyService {
+  rpc DoWork(Request) returns (Response) {
+    option (my_method_config).name = "worker";
+  }
+}
