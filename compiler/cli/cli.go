@@ -599,6 +599,10 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
+		if strings.HasPrefix(arg, "--enable_codegen_trace") {
+			continue
+		}
+
 		if strings.HasPrefix(arg, "--descriptor_set_in=") {
 			continue
 		}
