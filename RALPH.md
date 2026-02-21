@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1416/1416 tests passing.
+ALL DONE — 1421/1421 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -446,3 +446,4 @@ ALL DONE — 1416/1416 tests passing.
 268. ✅ Multiple custom field options — `[(label) = "primary", (priority) = 5]` correctly resolves each option's SCI path to its own extension field number (50001, 50002) instead of all getting the first extension's number
 269. ✅ Custom message option support — `option (my_msg_label) = "primary";` where the option is an extension to `google.protobuf.MessageOptions`, parsed as `CustomMessageOption` in parser, resolved post-parse in `resolveCustomMessageOptions` via `protowire` encoding on `MessageOptions` unknown fields, SCI entries at `[msgPath..., 7]` and `[msgPath..., 7, extNum]` with placeholder field number 0 resolved post-parse via `SCILoc` pointer
 270. ✅ Custom service option support — `option (service_label) = "primary";` where the option is an extension to `google.protobuf.ServiceOptions`, parsed as `CustomServiceOption` in parser, resolved post-parse in `resolveCustomServiceOptions` via `protowire` encoding on `ServiceOptions` unknown fields, SCI entries at `[svcPath..., 3]` and `[svcPath..., 3, extNum]` with placeholder field number 0 resolved post-parse via `SCILoc` pointer
+271. ✅ Custom method option support — `option (auth_role) = "admin";` where the option is an extension to `google.protobuf.MethodOptions`, parsed as `CustomMethodOption` in parser, resolved post-parse in `resolveCustomMethodOptions` via `protowire` encoding on `MethodOptions` unknown fields, SCI entries at `[methodPath..., 4]` and `[methodPath..., 4, extNum]` with placeholder field number 0 resolved post-parse via `SCILoc` pointer
