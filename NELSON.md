@@ -2539,3 +2539,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Integer value for bool in other scopes** — same bug likely exists in `resolveCustomMessageOptions`, `resolveCustomServiceOptions`, etc. (all call `encodeCustomOptionValue`)
 - **List syntax in `consumeAggregateAngle`** — same `[...]` bug as Run 301 but with `<>` delimiters
 - **Nested list values** — `values: [[1, 2], [3, 4]]` for repeated message with repeated int fields
+
+### Run 302 — Bool shorthand `t`/`f` in aggregate option (FAILED: 5/5 profiles)
+- **Test:** `297_aggregate_bool_shorthand` — proto2 file with custom option `(my_settings) = { enabled: t  verbose: f };` using single-character bool shorthand
+- **Bug:** `encodeCustomOptionValue()` at line 4415 checks `strings.EqualFold(value, "true") || value == "1"` to determine true. `"t"` doesn't match `"true"` via EqualFold (different lengths), and `"t" != "1"`. So `t` encodes as false (varint 0). C++ protoc's text format parser accepts `t`/`T` as true and `f`/`F`/`0` as false. Same-size descriptors (226 bytes) but different bool values encoded.
+- **Root cause:** `cli.go:4415` — bool parsing doesn't accept C++'s shorthand forms `t`/`T`/`f`/`F`. C++ `Tokenizer::ParseBoolean` recognizes: `true`/`True`/`TRUE`/`t`/`T`/`1` as true; everything else as false.
