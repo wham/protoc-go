@@ -3790,6 +3790,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 
 		valTok := p.tok.Next()
 		valEnd := valTok.Column + len(valTok.Value)
+		valEndLine := valTok.Line
 		if valTok.Type == tokenizer.TokenString {
 			valEnd = valTok.Column + valTok.RawLen // use raw length (includes quotes + escapes)
 			// Concatenate adjacent string tokens (C++ protoc allows this)
@@ -3797,6 +3798,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				next := p.tok.Next()
 				valTok.Value += next.Value
 				valEnd = next.Column + next.RawLen
+				valEndLine = next.Line
 			}
 		}
 
@@ -4083,7 +4085,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 					return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", optNameTok.Line+1, optNameTok.Column+1, optName)
 				}
 				addLoc(append(copyPath(fieldPath), 8, 21, featFieldNum),
-					optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+					optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 			} else {
 				return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", optNameTok.Line+1, optNameTok.Column+1, optName)
 			}
@@ -4098,43 +4100,43 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				defStartCol = minusTok.Column
 			}
 			addLoc(append(copyPath(fieldPath), 7),
-				valTok.Line, defStartCol, valTok.Line, valEnd)
+				valTok.Line, defStartCol, valEndLine, valEnd)
 		case "json_name":
 			// json_name goes to path [10] (field 10 of FieldDescriptorProto)
 			addLoc(append(copyPath(fieldPath), 10),
-				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 			addLoc(append(copyPath(fieldPath), 10),
-				valTok.Line, valTok.Column, valTok.Line, valEnd)
+				valTok.Line, valTok.Column, valEndLine, valEnd)
 		case "deprecated":
 			addLoc(append(copyPath(fieldPath), 8, 3),
-				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "packed":
 			addLoc(append(copyPath(fieldPath), 8, 2),
-				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "lazy":
 			addLoc(append(copyPath(fieldPath), 8, 5),
-				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "jstype":
 			addLoc(append(copyPath(fieldPath), 8, 6),
-				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "ctype":
 			addLoc(append(copyPath(fieldPath), 8, 1),
-				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "debug_redact":
 			addLoc(append(copyPath(fieldPath), 8, 16),
-				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "unverified_lazy":
 			addLoc(append(copyPath(fieldPath), 8, 15),
-				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "weak":
 			addLoc(append(copyPath(fieldPath), 8, 10),
-				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "retention":
 			addLoc(append(copyPath(fieldPath), 8, 17),
-				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "targets":
 			addLoc(append(copyPath(fieldPath), 8, 19, targetsCount),
-				optNameTok.Line, optNameTok.Column, valTok.Line, valEnd)
+				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 			targetsCount++
 		}
 
