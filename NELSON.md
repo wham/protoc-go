@@ -2519,11 +2519,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go silently accepts integer values `2` and `0` for bool-typed custom options and produces output (exit 0). C++ protoc rejects with: `Value must be identifier for boolean option "boolintval.my_flag".` (exit 1). C++ protoc requires that boolean option values be identifiers (`true`/`false`), not integer literals.
 - **Root cause:** `encodeCustomOptionValue` at `cli.go:4405-4411` doesn't validate that the value token is an identifier before encoding a bool. It accepts any string and checks `value == "true" || value == "1"`. Missing validation: for `TYPE_BOOL`, when `valueType != tokenizer.TokenIdent`, Go should report `"Value must be identifier for boolean option \"FQN\"."` matching C++ protoc. The fix: add a check before encoding that `valueType == tokenizer.TokenIdent` (and value is `"true"` or `"false"`) for non-aggregate bool custom options.
 
+### Run 300 — Capitalized bool in aggregate custom option (FAILED: 5/5 profiles)
+- **Test:** `295_aggregate_capitalized_bool` — proto2 file with `message Settings { optional bool enabled = 1; optional bool verbose = 2; }`, extends `FileOptions`, uses `option (my_settings) = { enabled: True verbose: False };` (capitalized `True`/`False` in aggregate)
+- **Bug:** `encodeCustomOptionValue` at `cli.go:4415` checks `value == "true" || value == "1"` for TYPE_BOOL. `True` (capitalized) does NOT match either, so Go encodes it as `false` (varint 0). C++ protoc's text format parser accepts `True`, `TRUE`, `true`, `t`, `T`, `1` as truthy. Binary diff: C++ has `0801` (enabled = true), Go has `0800` (enabled = false). Descriptor set sizes differ (144 vs 77 bytes at plugin level).
+- **Root cause:** `cli.go:4415` — `value == "true" || value == "1"` is case-sensitive. C++ protoc's `Tokenizer::ParseBoolean()` in the text format parser does case-insensitive comparison and accepts many variants. The fix: use `strings.EqualFold(value, "true") || value == "1"` or add all accepted variants.
+
 ### Known gaps still unexplored (updated):
 - **Mixed `{` and `<` at top level** — `< info { ... } >` untested
 - **Repeated message fields with `<>`** — `{ items < name: "a" > items < name: "b" > }` same root cause
 - **Extension field encoding in aggregate** — `[ext.name]` key encoding might differ
 - **`Any` type / message set wire format** — very obscure proto2 features, untested
 - **Other CLI flag validation gaps** — more flags Go silently ignores or accepts invalid values for
-- **Bool option with `True`/`FALSE`/`t`/`f` in aggregate** — C++ text format parser accepts case variants, Go only accepts `"true"`
+- **Bool option with `FALSE`/`t`/`f` in aggregate** — same bug, other case variants not yet tested
 - **Integer value for bool in other scopes** — same bug likely exists in `resolveCustomMessageOptions`, `resolveCustomServiceOptions`, etc. (all call `encodeCustomOptionValue`)

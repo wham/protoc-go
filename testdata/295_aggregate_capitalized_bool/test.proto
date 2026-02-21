@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package capbool;
+
+import "google/protobuf/descriptor.proto";
+
+message Settings {
+  optional bool enabled = 1;
+  optional bool verbose = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional Settings my_settings = 50001;
+}
+
+option (my_settings) = {
+  enabled: True
+  verbose: False
+};
