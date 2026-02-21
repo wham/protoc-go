@@ -2380,3 +2380,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Group in oneof inside editions** — missing rejection
 - **Edition `optional` label error message** — wording likely differs
 - **Aggregate custom option on message/field/enum/service/method** — same bug as Run 274 but in other contexts
+
+### Run 277 — deprecated_legacy_json_field_conflicts not respected (FAILED: 5/5 profiles)
+- **Test:** `272_deprecated_json_compat` — proto3 message with `option deprecated_legacy_json_field_conflicts = true;` and two fields `foo_bar`/`fooBar` with conflicting JSON names
+- **Bug:** Go parser correctly sets `MessageOptions.DeprecatedLegacyJsonFieldConflicts = true` on the descriptor, but `validateJsonNameConflicts()` in cli.go never checks this flag. Go rejects the file with a JSON name conflict error. C++ protoc v29.3 respects the flag and suppresses the conflict, accepting the file successfully.
+- **Root cause:** `cli.go:1572-1637` — `validateJsonNameConflicts` and `collectJsonNameConflictErrors` never read `msg.GetOptions().GetDeprecatedLegacyJsonFieldConflicts()`. The flag is parsed and stored but never consulted during validation. C++ protoc checks this flag in its `ValidateJsonName` logic and skips conflict errors when set.
