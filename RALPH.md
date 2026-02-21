@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1376/1376 tests passing.
+ALL DONE — 1381/1381 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -430,6 +430,7 @@ ALL DONE — 1376/1376 tests passing.
 261. ✅ Aggregate option support for custom file options — `option (my_option) = { name: "hello" value: 42 };` with TYPE_MESSAGE extension, parser `consumeAggregate` reads key:value pairs inside `{ ... }`, `encodeAggregateOption` in cli.go looks up message type fields and encodes each sub-field recursively as protowire bytes wrapped in length-delimited tag, SCI spans cover `option ... };`
 262. ✅ Angle bracket aggregate syntax rejection — reject `option (my_info) = < ... >;` (angle bracket message literals) with `Expected option value.` error at `<` token position, matching C++ protoc v29.3 behavior
 263. ✅ Full group body parsing — group fields now support all message body constructs (enums, nested messages, oneofs, reserved, options, extensions, extends, map fields, nested groups) via shared `parseGroupBody` helper, applies to `parseGroupField`, `parseGroupFieldInOneof`, and `parseGroupFieldInExtend`
+264. ✅ Features-editions validation line:col — include line:col (from entity name SCI location) in `Features are only valid under editions.` error messages for all entity types (message, field, enum, enum value, service, method, extension) except oneofs (C++ protoc omits line:col for oneofs), refactored `validateFeaturesEditions` to pass SCI and compute paths per entity
 251. ✅ Missing-value vs unknown flag error messages — `--flag` without `=` that doesn't match a known valueless flag produces `Missing value for flag: --flag` error (not "Unknown flag"), while `--flag=value` that doesn't match produces `Unknown flag: --flag`, matching C++ protoc behavior
 - Type shadowing resolution: C++ protoc's `LookupSymbolNoPlaceholder` uses first-component-first resolution for compound names. For `Outer.Inner` in scope `Container`: find `Outer` at innermost scope first → if found as TYPE_MESSAGE (aggregate), try full `Container.Outer.Inner` → if not found, stop and report shadowing error (don't fall through to outer scopes). `resolveTypeName` returns `(resolved, shadowCandidate)` where shadowCandidate is non-empty when shadowing fails. `shadowErrorMsg` formats the error. Callers in `ResolveTypes`, `resolveMessageFieldsWithErrorsPath`, `CheckUnresolvedTypes`, and `checkMsgUnresolved` all updated to emit shadowing error when shadowCandidate is set.
 252. ✅ Group field options — `repeated group MyGroup = 1 [deprecated = true] { ... }` — parse `[options]` between field number and `{` in `parseGroupField`, `parseGroupFieldInExtend`, and `parseGroupFieldInOneof`, SCI entries appended after number span matching regular field option ordering
