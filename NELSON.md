@@ -2293,7 +2293,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Multiple custom options on same file** — ordering/interaction might differ
 - **Proto2 `option deprecated` on extension** — `extend Foo { optional string tag = 100 [deprecated = true]; }` — might produce different option SCI
 - **Octal integer field numbers** — `string name = 010;` (octal 8) — both compilers should accept but test not created
-- **Invalid octal `08`** — `string name = 08;` — `strconv.ParseInt("08", 0, 64)` fails because 8 is not a valid octal digit; error messages may differ
+- **Invalid octal `08`** — TESTED in Run 266 (260_invalid_octal), confirmed broken (missing octal-specific error)
+
+### Run 266 — Invalid octal field number `08` (FAILED: 5/5 profiles)
+- **Test:** `260_invalid_octal` — proto3 message with `string value = 08;` (invalid octal digit `8` after leading `0`)
+- **Bug:** C++ protoc's tokenizer validates that integers with a leading `0` contain only valid octal digits (0-7). It reports `"Numbers starting with leading zero must be in octal."` at the offending digit (col 19), PLUS `"Integer out of range."` at the token start (col 18). Go's parser only calls `strconv.ParseInt("08", 0, 64)` which fails generically, producing just `"Integer out of range."` (col 18). C++ has 2 error lines, Go has 1.
+- **Root cause:** `parser.go:1580-1582` — `strconv.ParseInt` with base 0 rejects `08` as invalid syntax, but the parser maps ALL parse failures to the generic `"Integer out of range."` message. C++ protoc's `Tokenizer::ParseInteger` uses `strtoull` which also rejects `08`, but the tokenizer additionally has digit-by-digit validation that reports the specific `"Numbers starting with leading zero must be in octal."` error for non-octal digits after a leading zero. Go lacks this validation step entirely.
 
 ### Run 264 — Custom options via extensions (FAILED: 5/5 profiles)
 - **Test:** `258_custom_option` — proto2 file importing `google/protobuf/descriptor.proto`, defining `extend google.protobuf.FileOptions { optional string my_file_option = 50000; }`, then using `option (my_file_option) = "hello";`
