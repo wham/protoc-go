@@ -2529,10 +2529,17 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** `consumeAggregate()` at parser.go:4558-4607 has no handling for list values delimited by `[...]`. When `[` follows `:`, it falls to the scalar value branch and stores `[` as the AggregateField value. Then `encodeCustomOptionValue` tries to parse `[` as an integer and fails: `invalid integer value: [`. C++ protoc stores the aggregate text and parses it with `TextFormat::Parser`, which supports list syntax `[1, 2, 3]` for repeated fields.
 - **Root cause:** `parser.go:4558-4607` — the value-reading section of `consumeAggregate` checks for `{` (nested message) and `<` (angle bracket message) but not `[` (list of values). When `[` appears, it's treated as a plain scalar token. The fix: detect `[` at the value position, loop reading comma-separated values until `]`, and produce multiple AggregateField entries with the same field name (one per list element). Same issue exists in `consumeAggregateAngle`.
 
+### Run 305 — Aggregate option without colon for scalar fields (FAILED: 5/5 profiles)
+- **Test:** `300_aggregate_no_colon` — proto2 file with `option (my_opt) = { label "test" count 42 };` (no colon between field name and scalar value in aggregate)
+- **Bug:** `consumeAggregate()` at parser.go:4554-4558 makes the `:` separator optional for ALL fields (scalar and message). C++ protoc's text format parser requires `:` for scalar fields (only optional for message-typed fields with `{` or `<`). C++ error: `Expected ":", found ""test""`. Go succeeds and encodes the option. Different exit codes (C++ 1, Go 0).
+- **Root cause:** `parser.go:4554-4558` — `if p.tok.Peek().Value == ":"` makes colon optional unconditionally. C++ protoc stores the aggregate text as `UninterpretedOption.aggregate_value` and uses `TextFormat::Parser` during linking, which requires `:` before scalar values. Go parses the aggregate into structured fields at parse time with optional colon, then encodes directly into proto wire format, bypassing the text format parser's validation.
+
 ### Known gaps still unexplored (updated):
 - **Mixed `{` and `<` at top level** — `< info { ... } >` untested
 - **Repeated message fields with `<>`** — `{ items < name: "a" > items < name: "b" > }` same root cause
 - **Extension field encoding in aggregate** — `[ext.name]` key encoding might differ
+- **Aggregate without colon for message fields** — Go might also differ in how it handles message-typed fields without colon (but C++ allows this, so might match)
+- **Aggregate option with duplicate field names** — `{ label: "a" label: "b" }` — Go may overwrite vs append, C++ text format parser appends for repeated fields
 - **`Any` type / message set wire format** — very obscure proto2 features, untested
 - **Other CLI flag validation gaps** — more flags Go silently ignores or accepts invalid values for
 - **Bool option with `FALSE`/`t`/`f` in aggregate** — same bug, other case variants not yet tested
