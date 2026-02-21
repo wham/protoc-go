@@ -1219,18 +1219,12 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 	p.addLocationSpan(append(copyPath(fieldPath), 6),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
-	// Parse nested fields inside group body
+	// Parse group body (full message body: fields, enums, nested messages, etc.)
 	nested := &descriptorpb.DescriptorProto{
 		Name: proto.String(groupName),
 	}
-	var innerFieldIdx int32
-	for p.tok.Peek().Value != "}" {
-		innerField, err := p.parseField(append(copyPath(nestedPath), 2, innerFieldIdx))
-		if err != nil {
-			return nil, nil, err
-		}
-		nested.Field = append(nested.Field, innerField)
-		innerFieldIdx++
+	if err := p.parseGroupBody(nested, nestedPath); err != nil {
+		return nil, nil, err
 	}
 
 	endTok := p.tok.Next() // consume "}"
@@ -1768,18 +1762,12 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	p.addLocationSpan(append(copyPath(fieldPath), 6),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
-	// Parse nested fields inside group body
+	// Parse group body (full message body: fields, enums, nested messages, etc.)
 	nested := &descriptorpb.DescriptorProto{
 		Name: proto.String(groupName),
 	}
-	var innerFieldIdx int32
-	for p.tok.Peek().Value != "}" {
-		innerField, err := p.parseField(append(copyPath(nestedPath), 2, innerFieldIdx))
-		if err != nil {
-			return nil, nil, err
-		}
-		nested.Field = append(nested.Field, innerField)
-		innerFieldIdx++
+	if err := p.parseGroupBody(nested, nestedPath); err != nil {
+		return nil, nil, err
 	}
 
 	endTok := p.tok.Next() // consume "}"
@@ -1791,6 +1779,135 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	p.locations[nestedLocIdx].Span = groupSpan
 
 	return field, nested, nil
+}
+
+// parseGroupBody parses the contents of a group body (between { and }),
+// handling all message body constructs: fields, enums, nested messages, etc.
+func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath []int32) error {
+	var fieldIdx, nestedMsgIdx, nestedEnumIdx, oneofIdx int32
+	var reservedRangeIdx, reservedNameIdx int32
+	var extensionRangeIdx int32
+	var nestedExtIdx int32
+	seenMsgOptions := map[string]bool{}
+	type syntheticOneof struct {
+		field *descriptorpb.FieldDescriptorProto
+		name  string
+	}
+	var syntheticOneofs []syntheticOneof
+
+	for p.tok.Peek().Value != "}" {
+		tok := p.tok.Peek()
+
+		switch tok.Value {
+		case "message":
+			msg, err := p.parseMessage(append(copyPath(nestedPath), 3, nestedMsgIdx))
+			if err != nil {
+				return err
+			}
+			nested.NestedType = append(nested.NestedType, msg)
+			nestedMsgIdx++
+		case "enum":
+			e, err := p.parseEnum(append(copyPath(nestedPath), 4, nestedEnumIdx))
+			if err != nil {
+				return err
+			}
+			nested.EnumType = append(nested.EnumType, e)
+			nestedEnumIdx++
+		case "oneof":
+			fields, nestedTypes, decl, err := p.parseOneof(nestedPath, oneofIdx, &fieldIdx, &nestedMsgIdx)
+			if err != nil {
+				return err
+			}
+			nested.OneofDecl = append(nested.OneofDecl, decl)
+			nested.Field = append(nested.Field, fields...)
+			nested.NestedType = append(nested.NestedType, nestedTypes...)
+			oneofIdx++
+		case "map":
+			if p.tok.PeekAt(1).Value == "<" {
+				field, entry, err := p.parseMapField(nestedPath, fieldIdx, nestedMsgIdx)
+				if err != nil {
+					return err
+				}
+				nested.Field = append(nested.Field, field)
+				nested.NestedType = append(nested.NestedType, entry)
+				fieldIdx++
+				nestedMsgIdx++
+			} else {
+				field, err := p.parseField(append(copyPath(nestedPath), 2, fieldIdx))
+				if err != nil {
+					return err
+				}
+				if field.Proto3Optional != nil && *field.Proto3Optional {
+					syntheticOneofs = append(syntheticOneofs, syntheticOneof{
+						field: field,
+						name:  "_" + field.GetName(),
+					})
+				}
+				nested.Field = append(nested.Field, field)
+				fieldIdx++
+			}
+		case "reserved":
+			if err := p.parseMessageReserved(nested, nestedPath, &reservedRangeIdx, &reservedNameIdx); err != nil {
+				return err
+			}
+		case "option":
+			if err := p.parseMessageOption(nested, nestedPath, seenMsgOptions); err != nil {
+				return err
+			}
+		case "extend":
+			if err := p.parseNestedExtend(nested, nestedPath, &nestedExtIdx, &nestedMsgIdx); err != nil {
+				return err
+			}
+		case "extensions":
+			if err := p.parseExtensionRange(nested, nestedPath, &extensionRangeIdx); err != nil {
+				return err
+			}
+		case ";":
+			p.tok.Next()
+		default:
+			if isGroupField(tok.Value, p.tok.PeekAt(1).Value) {
+				field, nestedType, err := p.parseGroupField(nestedPath, fieldIdx, nestedMsgIdx)
+				if err != nil {
+					return err
+				}
+				nested.Field = append(nested.Field, field)
+				nested.NestedType = append(nested.NestedType, nestedType)
+				fieldIdx++
+				nestedMsgIdx++
+			} else {
+				field, err := p.parseField(append(copyPath(nestedPath), 2, fieldIdx))
+				if err != nil {
+					return err
+				}
+				if field.Proto3Optional != nil && *field.Proto3Optional {
+					syntheticOneofs = append(syntheticOneofs, syntheticOneof{
+						field: field,
+						name:  "_" + field.GetName(),
+					})
+				}
+				nested.Field = append(nested.Field, field)
+				fieldIdx++
+			}
+		}
+	}
+
+	for _, so := range syntheticOneofs {
+		so.field.OneofIndex = proto.Int32(oneofIdx)
+		nested.OneofDecl = append(nested.OneofDecl, &descriptorpb.OneofDescriptorProto{
+			Name: proto.String(so.name),
+		})
+		oneofIdx++
+	}
+
+	if nested.GetOptions().GetMessageSetWireFormat() {
+		for _, er := range nested.ExtensionRange {
+			if er.GetEnd() == 536870912 {
+				er.End = proto.Int32(2147483647)
+			}
+		}
+	}
+
+	return nil
 }
 
 // parseGroupField parses a group field declaration: label "group" Name "=" Number "{" fields... "}"
@@ -1894,18 +2011,12 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 	p.addLocationSpan(append(copyPath(fieldPath), 6),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
-	// Parse nested fields inside group body
+	// Parse group body (full message body: fields, enums, nested messages, etc.)
 	nested := &descriptorpb.DescriptorProto{
 		Name: proto.String(groupName),
 	}
-	var innerFieldIdx int32
-	for p.tok.Peek().Value != "}" {
-		innerField, err := p.parseField(append(copyPath(nestedPath), 2, innerFieldIdx))
-		if err != nil {
-			return nil, nil, err
-		}
-		nested.Field = append(nested.Field, innerField)
-		innerFieldIdx++
+	if err := p.parseGroupBody(nested, nestedPath); err != nil {
+		return nil, nil, err
 	}
 
 	endTok := p.tok.Next() // consume "}"
