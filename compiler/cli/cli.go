@@ -798,6 +798,10 @@ func validatePackedNonRepeated(orderedFiles []string, parsed map[string]*descrip
 				if ext.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED || !isPackableType(ext.GetType()) {
 					path := []int32{7, int32(i), 5}
 					line, col := findLocationByPath(path, sci)
+					if line == 0 && col == 0 {
+						path2 := []int32{7, int32(i), 6}
+						line, col = findLocationByPath(path2, sci)
+					}
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: [packed = true] can only be specified for repeated primitive fields.", fd.GetName(), line, col))
 				}
 			}
@@ -810,8 +814,7 @@ func collectPackedErrors(filename string, msg *descriptorpb.DescriptorProto, msg
 	for i, field := range msg.GetField() {
 		if field.GetOptions().GetPacked() {
 			if field.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED || !isPackableType(field.GetType()) {
-				fieldPath := append(append([]int32{}, msgPath...), 2, int32(i), 5)
-				line, col := findLocationByPath(fieldPath, sci)
+				line, col := findFieldTypeLocation(msgPath, i, sci)
 				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: [packed = true] can only be specified for repeated primitive fields.", filename, line, col))
 			}
 		}
@@ -822,6 +825,10 @@ func collectPackedErrors(filename string, msg *descriptorpb.DescriptorProto, msg
 			if ext.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED || !isPackableType(ext.GetType()) {
 				extPath := append(append([]int32{}, msgPath...), 6, int32(i), 5)
 				line, col := findLocationByPath(extPath, sci)
+				if line == 0 && col == 0 {
+					extPath2 := append(append([]int32{}, msgPath...), 6, int32(i), 6)
+					line, col = findLocationByPath(extPath2, sci)
+				}
 				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: [packed = true] can only be specified for repeated primitive fields.", filename, line, col))
 			}
 		}
@@ -2114,22 +2121,24 @@ func findFieldTypeLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.Sour
 	if sci == nil {
 		return 0, 0
 	}
-	// Path: msgPath + [2, fieldIdx, 5] where 2=field, 5=type
-	target := append(append([]int32{}, msgPath...), 2, int32(fieldIdx), 5)
-	for _, loc := range sci.GetLocation() {
-		path := loc.GetPath()
-		if len(path) == len(target) {
-			match := true
-			for i := range path {
-				if path[i] != target[i] {
-					match = false
-					break
+	// Try path [5] (type) first, then [6] (type_name) for message/enum refs
+	for _, sub := range []int32{5, 6} {
+		target := append(append([]int32{}, msgPath...), 2, int32(fieldIdx), sub)
+		for _, loc := range sci.GetLocation() {
+			path := loc.GetPath()
+			if len(path) == len(target) {
+				match := true
+				for i := range path {
+					if path[i] != target[i] {
+						match = false
+						break
+					}
 				}
-			}
-			if match {
-				span := loc.GetSpan()
-				if len(span) >= 2 {
-					return int(span[0]) + 1, int(span[1]) + 1
+				if match {
+					span := loc.GetSpan()
+					if len(span) >= 2 {
+						return int(span[0]) + 1, int(span[1]) + 1
+					}
 				}
 			}
 		}
