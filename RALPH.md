@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1431/1431 tests passing.
+ALL DONE — 1436/1436 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -449,3 +449,4 @@ ALL DONE — 1431/1431 tests passing.
 271. ✅ Custom method option support — `option (auth_role) = "admin";` where the option is an extension to `google.protobuf.MethodOptions`, parsed as `CustomMethodOption` in parser, resolved post-parse in `resolveCustomMethodOptions` via `protowire` encoding on `MethodOptions` unknown fields, SCI entries at `[methodPath..., 4]` and `[methodPath..., 4, extNum]` with placeholder field number 0 resolved post-parse via `SCILoc` pointer
 272. ✅ Custom enum option support — `option (enum_label) = "status_tracker";` where the option is an extension to `google.protobuf.EnumOptions`, parsed as `CustomEnumOption` in parser, resolved post-parse in `resolveCustomEnumOptions` via `protowire` encoding on `EnumOptions` unknown fields, SCI entries at `[enumPath..., 3]` and `[enumPath..., 3, extNum]` with placeholder field number 0 resolved post-parse via `SCILoc` pointer
 273. ✅ Custom enum value option support — `HIGH = 1 [(display_name) = "High Priority"]` where the option is an extension to `google.protobuf.EnumValueOptions`, parsed as `CustomEnumValueOption` in parser, resolved post-parse in `resolveCustomEnumValueOptions` via `protowire` encoding on `EnumValueOptions` unknown fields, SCI entries deferred until after bracket span to maintain correct ordering (path `[valuePath..., 3, extNum]`)
+274. ✅ Sfixed32/sfixed64 negative custom option values — separated sfixed32/sfixed64 from fixed32/fixed64 in `encodeCustomOptionValue` (cli.go) to use `strconv.ParseInt` instead of `strconv.ParseUint`, then cast to `uint32(int32(v))` / `uint64(v)` for protowire encoding, allowing negative values like `[(min_value) = -40]`
