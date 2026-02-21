@@ -656,12 +656,11 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "-") {
-			// Extract flag name (before '=')
-			flagName := arg
 			if idx := strings.Index(arg, "="); idx >= 0 {
-				flagName = arg[:idx]
+				flagName := arg[:idx]
+				return nil, fmt.Errorf("Unknown flag: %s", flagName)
 			}
-			return nil, fmt.Errorf("Unknown flag: %s", flagName)
+			return nil, fmt.Errorf("Missing value for flag: %s", arg)
 		}
 
 		// Proto file
