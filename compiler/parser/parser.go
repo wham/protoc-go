@@ -23,6 +23,22 @@ func (e *MultiError) Error() string {
 	return strings.Join(e.Errors, "\n")
 }
 
+// invalidOctalError checks if a number token is an invalid octal literal (starts with 0,
+// contains 8 or 9). Returns the error string with the position of the first invalid digit,
+// or empty string if not an invalid octal.
+func invalidOctalError(filename string, tok tokenizer.Token) string {
+	v := tok.Value
+	if len(v) < 2 || v[0] != '0' || v[1] == 'x' || v[1] == 'X' {
+		return ""
+	}
+	for i := 1; i < len(v); i++ {
+		if v[i] == '8' || v[i] == '9' {
+			return fmt.Sprintf("%s:%d:%d: Numbers starting with leading zero must be in octal.", filename, tok.Line+1, tok.Column+1+i)
+		}
+	}
+	return ""
+}
+
 type parser struct {
 	tok       *tokenizer.Tokenizer
 	locations []*descriptorpb.SourceCodeInfo_Location
@@ -1579,6 +1595,10 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	}
 	num, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
 	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
+		intErr := fmt.Sprintf("%s:%d:%d: Integer out of range.", p.filename, numTok.Line+1, numTok.Column+1)
+		if octalErr := invalidOctalError(p.filename, numTok); octalErr != "" {
+			return nil, &MultiError{Errors: []string{octalErr, intErr}}
+		}
 		return nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 	}
 	field.Number = proto.Int32(int32(num))
