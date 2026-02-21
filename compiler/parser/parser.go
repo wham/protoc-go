@@ -1494,6 +1494,12 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		custOpt.NameTok = nameTok
 		custOpt.Message = msg
 
+		// Reject angle bracket aggregate syntax and positive sign
+		if p.tok.Peek().Value == "<" || p.tok.Peek().Value == "+" {
+			rejTok := p.tok.Next()
+			return fmt.Errorf("%d:%d: Expected option value.", rejTok.Line+1, rejTok.Column+1)
+		}
+
 		// Read value
 		if p.tok.Peek().Value == "-" {
 			p.tok.Next()
