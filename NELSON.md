@@ -2325,11 +2325,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go parser accepts `optional` and `repeated` labels in edition 2023 files without error. C++ protoc rejects with: `Label "optional" is not supported in editions. By default, all singular fields have presence unless features.field_presence is set.` Go succeeds and produces a descriptor; C++ fails with an error.
 - **Root cause:** `parser.go` — `parseField` at the label-handling code (around lines 1513-1560) handles `optional`, `required`, `repeated` keywords but never checks `p.syntax == "editions"`. In editions, field labels are not allowed — presence is controlled via `features.field_presence`. The parser needs to emit an error when a label keyword is encountered in edition files. Only 3 places check for `p.syntax == "editions"` (lines 354, 665, 2462) and none are in the field parsing path.
 
+### Run 271 — Edition 2023 with group keyword (FAILED: 5/5 profiles)
+- **Test:** `266_edition_group` — edition 2023 file with `repeated group Result = 1 { string url = 1; string title = 2; }`
+- **Bug:** Go parser accepts `repeated group` in edition 2023 files and produces a descriptor. C++ protoc rejects with: `test.proto:6:12: Group syntax is no longer supported in editions. To get group behavior you can specify features.message_encoding = DELIMITED on a message field.`
+- **Root cause:** `parser.go` — `parseGroupField` and `isGroupField` have no `p.syntax == "editions"` check. The group parsing path (lines 560-575 in message body, `parseGroupField` function) accepts groups unconditionally regardless of syntax. In editions, groups are replaced by `features.message_encoding = DELIMITED` on regular message fields. The parser needs to reject `group` keyword when `p.syntax == "editions"`.
+
 ### Known gaps still unexplored (updated):
 - **Features on proto2 files** — same missing line:col bug
 - **Custom option with message type** — aggregate value `option (my_opt) = { key: "value" };` — likely not supported
 - **Multiple custom options on same file** — ordering/interaction might differ
 - **Proto2 `option deprecated` on extension** — `extend Foo { optional string tag = 100 [deprecated = true]; }` — might produce different option SCI
 - **Edition 2023 with `required` label** — same issue as `optional` — labels forbidden in editions
-- **Edition 2023 with `group` keyword** — groups forbidden in editions
 - **Edition 2023 with `extensions`/`extend`** — might have validation differences
+- **Group in oneof inside editions** — same missing rejection
