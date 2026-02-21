@@ -1,0 +1,17 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package repext;
+
+extend google.protobuf.FileOptions {
+  repeated string tags = 50001;
+}
+
+option (tags) = "alpha";
+option (tags) = "beta";
+option (tags) = "gamma";
+
+message Payload {
+  optional string name = 1;
+}
