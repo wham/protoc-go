@@ -1416,8 +1416,11 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 	}
 
 	validateMsgBool := func(name string) error {
-		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+		if valTok.Type != tokenizer.TokenIdent {
 			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.MessageOptions.%s\".", valTok.Line+1, valTok.Column+1, name)
+		}
+		if valTok.Value != "true" && valTok.Value != "false" {
+			return fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.MessageOptions.%s\".", valTok.Line+1, valTok.Column+1, name)
 		}
 		return nil
 	}
@@ -2195,14 +2198,20 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 				var fieldNum int32
 				switch optName {
 				case "deprecated":
-					if optValTok.Type != tokenizer.TokenIdent || (optValTok.Value != "true" && optValTok.Value != "false") {
+					if optValTok.Type != tokenizer.TokenIdent {
 						return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.EnumValueOptions.deprecated\".", optValTok.Line+1, optValTok.Column+1)
+					}
+					if optValTok.Value != "true" && optValTok.Value != "false" {
+						return nil, fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.EnumValueOptions.deprecated\".", optValTok.Line+1, optValTok.Column+1)
 					}
 					enumValOpts.Deprecated = proto.Bool(optValTok.Value == "true")
 					fieldNum = 1
 				case "debug_redact":
-					if optValTok.Type != tokenizer.TokenIdent || (optValTok.Value != "true" && optValTok.Value != "false") {
+					if optValTok.Type != tokenizer.TokenIdent {
 						return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.EnumValueOptions.debug_redact\".", optValTok.Line+1, optValTok.Column+1)
+					}
+					if optValTok.Value != "true" && optValTok.Value != "false" {
+						return nil, fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.EnumValueOptions.debug_redact\".", optValTok.Line+1, optValTok.Column+1)
 					}
 					enumValOpts.DebugRedact = proto.Bool(optValTok.Value == "true")
 					fieldNum = 3
@@ -2454,20 +2463,29 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 	var fieldNum int32
 	switch optName {
 	case "allow_alias":
-		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+		if valTok.Type != tokenizer.TokenIdent {
 			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.EnumOptions.allow_alias\".", valTok.Line+1, valTok.Column+1)
+		}
+		if valTok.Value != "true" && valTok.Value != "false" {
+			return fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.EnumOptions.allow_alias\".", valTok.Line+1, valTok.Column+1)
 		}
 		e.Options.AllowAlias = proto.Bool(valTok.Value == "true")
 		fieldNum = 2
 	case "deprecated":
-		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+		if valTok.Type != tokenizer.TokenIdent {
 			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.EnumOptions.deprecated\".", valTok.Line+1, valTok.Column+1)
+		}
+		if valTok.Value != "true" && valTok.Value != "false" {
+			return fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.EnumOptions.deprecated\".", valTok.Line+1, valTok.Column+1)
 		}
 		e.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 3
 	case "deprecated_legacy_json_field_conflicts":
-		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+		if valTok.Type != tokenizer.TokenIdent {
 			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.EnumOptions.deprecated_legacy_json_field_conflicts\".", valTok.Line+1, valTok.Column+1)
+		}
+		if valTok.Value != "true" && valTok.Value != "false" {
+			return fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.EnumOptions.deprecated_legacy_json_field_conflicts\".", valTok.Line+1, valTok.Column+1)
 		}
 		e.Options.DeprecatedLegacyJsonFieldConflicts = proto.Bool(valTok.Value == "true")
 		fieldNum = 6
@@ -2844,8 +2862,11 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 	var fieldNum int32
 	switch optName {
 	case "deprecated":
-		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+		if valTok.Type != tokenizer.TokenIdent {
 			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.ServiceOptions.deprecated\".", valTok.Line+1, valTok.Column+1)
+		}
+		if valTok.Value != "true" && valTok.Value != "false" {
+			return fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.ServiceOptions.deprecated\".", valTok.Line+1, valTok.Column+1)
 		}
 		svc.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 33
@@ -2992,8 +3013,11 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 	var fieldNum int32
 	switch optName {
 	case "deprecated":
-		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+		if valTok.Type != tokenizer.TokenIdent {
 			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.MethodOptions.deprecated\".", valTok.Line+1, valTok.Column+1)
+		}
+		if valTok.Value != "true" && valTok.Value != "false" {
+			return fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.MethodOptions.deprecated\".", valTok.Line+1, valTok.Column+1)
 		}
 		method.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		fieldNum = 33
@@ -3740,8 +3764,11 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 
 	// Helper to validate boolean option values
 	validateBool := func(name string) error {
-		if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+		if valTok.Type != tokenizer.TokenIdent {
 			return fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FileOptions.%s\".", valTok.Line+1, valTok.Column+1, name)
+		}
+		if valTok.Value != "true" && valTok.Value != "false" {
+			return fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.FileOptions.%s\".", valTok.Line+1, valTok.Column+1, name)
 		}
 		return nil
 	}
@@ -4315,24 +4342,33 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			field.JsonName = proto.String(valTok.Value)
 			p.explicitJsonNames[field] = true
 		case "deprecated":
-			if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+			if valTok.Type != tokenizer.TokenIdent {
 				return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FieldOptions.deprecated\".", valTok.Line+1, valTok.Column+1)
+			}
+			if valTok.Value != "true" && valTok.Value != "false" {
+				return nil, fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.FieldOptions.deprecated\".", valTok.Line+1, valTok.Column+1)
 			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}
 			field.Options.Deprecated = proto.Bool(valTok.Value == "true")
 		case "packed":
-			if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+			if valTok.Type != tokenizer.TokenIdent {
 				return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FieldOptions.packed\".", valTok.Line+1, valTok.Column+1)
+			}
+			if valTok.Value != "true" && valTok.Value != "false" {
+				return nil, fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.FieldOptions.packed\".", valTok.Line+1, valTok.Column+1)
 			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}
 			field.Options.Packed = proto.Bool(valTok.Value == "true")
 		case "lazy":
-			if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+			if valTok.Type != tokenizer.TokenIdent {
 				return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FieldOptions.lazy\".", valTok.Line+1, valTok.Column+1)
+			}
+			if valTok.Value != "true" && valTok.Value != "false" {
+				return nil, fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.FieldOptions.lazy\".", valTok.Line+1, valTok.Column+1)
 			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
@@ -4373,24 +4409,33 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FieldOptions.CType\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.ctype\".", valTok.Line+1, valTok.Column+1, valTok.Value)
 			}
 		case "debug_redact":
-			if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+			if valTok.Type != tokenizer.TokenIdent {
 				return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FieldOptions.debug_redact\".", valTok.Line+1, valTok.Column+1)
+			}
+			if valTok.Value != "true" && valTok.Value != "false" {
+				return nil, fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.FieldOptions.debug_redact\".", valTok.Line+1, valTok.Column+1)
 			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}
 			field.Options.DebugRedact = proto.Bool(valTok.Value == "true")
 		case "unverified_lazy":
-			if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+			if valTok.Type != tokenizer.TokenIdent {
 				return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FieldOptions.unverified_lazy\".", valTok.Line+1, valTok.Column+1)
+			}
+			if valTok.Value != "true" && valTok.Value != "false" {
+				return nil, fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.FieldOptions.unverified_lazy\".", valTok.Line+1, valTok.Column+1)
 			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
 			}
 			field.Options.UnverifiedLazy = proto.Bool(valTok.Value == "true")
 		case "weak":
-			if valTok.Type != tokenizer.TokenIdent || (valTok.Value != "true" && valTok.Value != "false") {
+			if valTok.Type != tokenizer.TokenIdent {
 				return nil, fmt.Errorf("%d:%d: Value must be identifier for boolean option \"google.protobuf.FieldOptions.weak\".", valTok.Line+1, valTok.Column+1)
+			}
+			if valTok.Value != "true" && valTok.Value != "false" {
+				return nil, fmt.Errorf("%d:%d: Value must be \"true\" or \"false\" for boolean option \"google.protobuf.FieldOptions.weak\".", valTok.Line+1, valTok.Column+1)
 			}
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
