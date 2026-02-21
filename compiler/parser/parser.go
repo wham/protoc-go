@@ -90,11 +90,12 @@ type CustomFileOption struct {
 
 // AggregateField is a key-value pair inside an aggregate option value.
 type AggregateField struct {
-	Name      string
-	Value     string
-	ValueType tokenizer.TokenType
-	Negative  bool               // true if value was preceded by '-'
-	SubFields []AggregateField   // nested message literal fields
+	Name        string
+	Value       string
+	ValueType   tokenizer.TokenType
+	Negative    bool               // true if value was preceded by '-'
+	SubFields   []AggregateField   // nested message literal fields
+	IsExtension bool               // true if name was bracketed [ext.name]
 }
 
 // CustomFieldOption represents a parenthesized custom option on a field
@@ -4521,9 +4522,31 @@ func (p *parser) parseParenthesizedOptionName(openTok tokenizer.Token) (string, 
 func (p *parser) consumeAggregate() []AggregateField {
 	var fields []AggregateField
 	for p.tok.Peek().Value != "}" && p.tok.Peek().Type != tokenizer.TokenEOF {
-		keyTok := p.tok.Next()
-		p.trackEnd(keyTok)
-		fieldName := keyTok.Value
+		isExtension := false
+		var fieldName string
+
+		if p.tok.Peek().Value == "[" {
+			// Extension field reference: [ext.name]
+			bracketTok := p.tok.Next() // consume '['
+			p.trackEnd(bracketTok)
+			isExtension = true
+			nameTok := p.tok.Next()
+			p.trackEnd(nameTok)
+			fieldName = nameTok.Value
+			for p.tok.Peek().Value == "." {
+				dotTok := p.tok.Next()
+				p.trackEnd(dotTok)
+				partTok := p.tok.Next()
+				p.trackEnd(partTok)
+				fieldName += "." + partTok.Value
+			}
+			closeBracket := p.tok.Next() // consume ']'
+			p.trackEnd(closeBracket)
+		} else {
+			keyTok := p.tok.Next()
+			p.trackEnd(keyTok)
+			fieldName = keyTok.Value
+		}
 
 		// Expect ':' separator
 		if p.tok.Peek().Value == ":" {
@@ -4539,8 +4562,9 @@ func (p *parser) consumeAggregate() []AggregateField {
 			closeTok := p.tok.Next() // consume '}'
 			p.trackEnd(closeTok)
 			fields = append(fields, AggregateField{
-				Name:      fieldName,
-				SubFields: subFields,
+				Name:        fieldName,
+				SubFields:   subFields,
+				IsExtension: isExtension,
 			})
 		} else if p.tok.Peek().Value == "<" {
 			brTok := p.tok.Next() // consume '<'
@@ -4549,8 +4573,9 @@ func (p *parser) consumeAggregate() []AggregateField {
 			closeTok := p.tok.Next() // consume '>'
 			p.trackEnd(closeTok)
 			fields = append(fields, AggregateField{
-				Name:      fieldName,
-				SubFields: subFields,
+				Name:        fieldName,
+				SubFields:   subFields,
+				IsExtension: isExtension,
 			})
 		} else {
 			negative := false
@@ -4563,10 +4588,11 @@ func (p *parser) consumeAggregate() []AggregateField {
 			}
 
 			fields = append(fields, AggregateField{
-				Name:      fieldName,
-				Value:     valTok.Value,
-				ValueType: valTok.Type,
-				Negative:  negative,
+				Name:        fieldName,
+				Value:       valTok.Value,
+				ValueType:   valTok.Type,
+				Negative:    negative,
+				IsExtension: isExtension,
 			})
 		}
 
@@ -4584,9 +4610,30 @@ func (p *parser) consumeAggregate() []AggregateField {
 func (p *parser) consumeAggregateAngle() []AggregateField {
 	var fields []AggregateField
 	for p.tok.Peek().Value != ">" && p.tok.Peek().Type != tokenizer.TokenEOF {
-		keyTok := p.tok.Next()
-		p.trackEnd(keyTok)
-		fieldName := keyTok.Value
+		isExtension := false
+		var fieldName string
+
+		if p.tok.Peek().Value == "[" {
+			bracketTok := p.tok.Next()
+			p.trackEnd(bracketTok)
+			isExtension = true
+			nameTok := p.tok.Next()
+			p.trackEnd(nameTok)
+			fieldName = nameTok.Value
+			for p.tok.Peek().Value == "." {
+				dotTok := p.tok.Next()
+				p.trackEnd(dotTok)
+				partTok := p.tok.Next()
+				p.trackEnd(partTok)
+				fieldName += "." + partTok.Value
+			}
+			closeBracket := p.tok.Next()
+			p.trackEnd(closeBracket)
+		} else {
+			keyTok := p.tok.Next()
+			p.trackEnd(keyTok)
+			fieldName = keyTok.Value
+		}
 
 		// Expect ':' separator
 		if p.tok.Peek().Value == ":" {
@@ -4602,8 +4649,9 @@ func (p *parser) consumeAggregateAngle() []AggregateField {
 			closeTok := p.tok.Next() // consume '}'
 			p.trackEnd(closeTok)
 			fields = append(fields, AggregateField{
-				Name:      fieldName,
-				SubFields: subFields,
+				Name:        fieldName,
+				SubFields:   subFields,
+				IsExtension: isExtension,
 			})
 		} else if p.tok.Peek().Value == "<" {
 			brTok := p.tok.Next() // consume '<'
@@ -4612,8 +4660,9 @@ func (p *parser) consumeAggregateAngle() []AggregateField {
 			closeTok := p.tok.Next() // consume '>'
 			p.trackEnd(closeTok)
 			fields = append(fields, AggregateField{
-				Name:      fieldName,
-				SubFields: subFields,
+				Name:        fieldName,
+				SubFields:   subFields,
+				IsExtension: isExtension,
 			})
 		} else {
 			negative := false
@@ -4626,10 +4675,11 @@ func (p *parser) consumeAggregateAngle() []AggregateField {
 			}
 
 			fields = append(fields, AggregateField{
-				Name:      fieldName,
-				Value:     valTok.Value,
-				ValueType: valTok.Type,
-				Negative:  negative,
+				Name:        fieldName,
+				Value:       valTok.Value,
+				ValueType:   valTok.Type,
+				Negative:    negative,
+				IsExtension: isExtension,
 			})
 		}
 

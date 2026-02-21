@@ -3595,6 +3595,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 		prefix := fd.GetPackage()
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
+	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
 	var errs []string
 	for _, name := range orderedFiles {
@@ -3671,7 +3672,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 				var rawBytes []byte
 				var err error
 				if opt.AggregateFields != nil {
-					rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+					rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
 				} else {
 					value := opt.Value
 					if opt.Negative {
@@ -3811,6 +3812,7 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 		prefix := fd.GetPackage()
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
+	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
 	var errs []string
 	for _, name := range orderedFiles {
@@ -3836,7 +3838,7 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -3898,6 +3900,7 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 		prefix := fd.GetPackage()
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
+	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
 	var errs []string
 	for _, name := range orderedFiles {
@@ -3923,7 +3926,7 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -3982,6 +3985,7 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 		prefix := fd.GetPackage()
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
+	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
 	var errs []string
 	for _, name := range orderedFiles {
@@ -4005,7 +4009,7 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -4063,6 +4067,7 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 		prefix := fd.GetPackage()
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
+	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
 	var errs []string
 	for _, name := range orderedFiles {
@@ -4086,7 +4091,7 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -4144,6 +4149,7 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 		prefix := fd.GetPackage()
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
+	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
 	var errs []string
 	for _, name := range orderedFiles {
@@ -4167,7 +4173,7 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -4225,6 +4231,7 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 		prefix := fd.GetPackage()
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
+	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
 	var errs []string
 	for _, name := range orderedFiles {
@@ -4248,7 +4255,7 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -4306,6 +4313,7 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 		prefix := fd.GetPackage()
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
+	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
 	var errs []string
 	for _, name := range orderedFiles {
@@ -4329,7 +4337,7 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -4483,8 +4491,55 @@ func collectMsgFields(msgs []*descriptorpb.DescriptorProto, prefix string, out m
 	}
 }
 
+// collectExtensionsByExtendee builds a map: extendee FQN (without leading dot) → extension FQN → FieldDescriptorProto
+// for resolving [ext.name] references in aggregate option message literals.
+func collectExtensionsByExtendee(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) map[string]map[string]*descriptorpb.FieldDescriptorProto {
+	out := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		for _, ext := range fd.GetExtension() {
+			extendee := ext.GetExtendee()
+			if strings.HasPrefix(extendee, ".") {
+				extendee = extendee[1:]
+			}
+			if out[extendee] == nil {
+				out[extendee] = map[string]*descriptorpb.FieldDescriptorProto{}
+			}
+			fqn := ext.GetName()
+			if pkg != "" {
+				fqn = pkg + "." + fqn
+			}
+			out[extendee][fqn] = ext
+		}
+		collectMsgExtensionsByExtendee(fd.GetMessageType(), pkg, out)
+	}
+	return out
+}
+
+func collectMsgExtensionsByExtendee(msgs []*descriptorpb.DescriptorProto, prefix string, out map[string]map[string]*descriptorpb.FieldDescriptorProto) {
+	for _, msg := range msgs {
+		fqn := msg.GetName()
+		if prefix != "" {
+			fqn = prefix + "." + msg.GetName()
+		}
+		for _, ext := range msg.GetExtension() {
+			extendee := ext.GetExtendee()
+			if strings.HasPrefix(extendee, ".") {
+				extendee = extendee[1:]
+			}
+			if out[extendee] == nil {
+				out[extendee] = map[string]*descriptorpb.FieldDescriptorProto{}
+			}
+			extFqn := fqn + "." + ext.GetName()
+			out[extendee][extFqn] = ext
+		}
+		collectMsgExtensionsByExtendee(msg.GetNestedType(), fqn, out)
+	}
+}
+
 // encodeAggregateOption encodes an aggregate (message literal) custom option value.
-func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []parser.AggregateField, msgFieldMap map[string]map[string]*descriptorpb.FieldDescriptorProto, enumValueNumbers map[string]map[string]int32) ([]byte, error) {
+func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []parser.AggregateField, msgFieldMap map[string]map[string]*descriptorpb.FieldDescriptorProto, enumValueNumbers map[string]map[string]int32, extByExtendee map[string]map[string]*descriptorpb.FieldDescriptorProto) ([]byte, error) {
 	typeName := ext.GetTypeName()
 	if strings.HasPrefix(typeName, ".") {
 		typeName = typeName[1:]
@@ -4498,13 +4553,25 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 	// Encode each field of the aggregate
 	var inner []byte
 	for _, af := range aggFields {
-		subField, ok := msgFields[af.Name]
-		if !ok {
-			return nil, fmt.Errorf("unknown field %q in message %s", af.Name, typeName)
+		var subField *descriptorpb.FieldDescriptorProto
+		if af.IsExtension {
+			// Look up extension field by FQN in the extendee's extensions
+			if exts, ok := extByExtendee[typeName]; ok {
+				subField = exts[af.Name]
+			}
+			if subField == nil {
+				return nil, fmt.Errorf("unknown field %q in message %s", af.Name, typeName)
+			}
+		} else {
+			var ok bool
+			subField, ok = msgFields[af.Name]
+			if !ok {
+				return nil, fmt.Errorf("unknown field %q in message %s", af.Name, typeName)
+			}
 		}
 		if len(af.SubFields) > 0 {
 			// Nested message literal — recurse
-			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers)
+			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			if err != nil {
 				return nil, fmt.Errorf("field %s: %w", af.Name, err)
 			}
@@ -4531,7 +4598,7 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 }
 
 // encodeAggregateFields encodes nested message literal sub-fields for a TYPE_MESSAGE field.
-func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields []parser.AggregateField, msgFieldMap map[string]map[string]*descriptorpb.FieldDescriptorProto, enumValueNumbers map[string]map[string]int32) ([]byte, error) {
+func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields []parser.AggregateField, msgFieldMap map[string]map[string]*descriptorpb.FieldDescriptorProto, enumValueNumbers map[string]map[string]int32, extByExtendee map[string]map[string]*descriptorpb.FieldDescriptorProto) ([]byte, error) {
 	typeName := field.GetTypeName()
 	if strings.HasPrefix(typeName, ".") {
 		typeName = typeName[1:]
@@ -4543,12 +4610,23 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 
 	var inner []byte
 	for _, af := range aggFields {
-		subField, ok := msgFields[af.Name]
-		if !ok {
-			return nil, fmt.Errorf("unknown field %q in message %s", af.Name, typeName)
+		var subField *descriptorpb.FieldDescriptorProto
+		if af.IsExtension {
+			if exts, ok := extByExtendee[typeName]; ok {
+				subField = exts[af.Name]
+			}
+			if subField == nil {
+				return nil, fmt.Errorf("unknown field %q in message %s", af.Name, typeName)
+			}
+		} else {
+			var ok bool
+			subField, ok = msgFields[af.Name]
+			if !ok {
+				return nil, fmt.Errorf("unknown field %q in message %s", af.Name, typeName)
+			}
 		}
 		if len(af.SubFields) > 0 {
-			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers)
+			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			if err != nil {
 				return nil, fmt.Errorf("field %s: %w", af.Name, err)
 			}
