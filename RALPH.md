@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1461/1461 tests passing.
+ALL DONE — 1466/1466 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -433,6 +433,7 @@ ALL DONE — 1461/1461 tests passing.
 264. ✅ Features-editions validation line:col — include line:col (from entity name SCI location) in `Features are only valid under editions.` error messages for all entity types (message, field, enum, enum value, service, method, extension) except oneofs (C++ protoc omits line:col for oneofs), refactored `validateFeaturesEditions` to pass SCI and compute paths per entity
 251. ✅ Missing-value vs unknown flag error messages — `--flag` without `=` that doesn't match a known valueless flag produces `Missing value for flag: --flag` error (not "Unknown flag"), while `--flag=value` that doesn't match produces `Unknown flag: --flag`, matching C++ protoc behavior
 279. ✅ Angle bracket nested message literals in aggregate options — `info < label: "test" count: 3 >` inside `{ ... }` aggregate option bodies, `consumeAggregateAngle` handles `< >` delimited sub-messages (same key:value pairs as `{ }`), supports nesting with both `{ }` and `< >`, called from both `consumeAggregate` and `consumeAggregateAngle` recursively
+280. ✅ Extension field references in aggregate options — `[aggext.color_name]: "red"` inside message literal bodies, `consumeAggregate`/`consumeAggregateAngle` parse `[ext.name]` syntax with `IsExtension` flag on `AggregateField`, `collectExtensionsByExtendee` builds extendee FQN → extension FQN → FieldDescriptorProto map, `encodeAggregateFields` resolves extension fields by FQN for encoding
 - Type shadowing resolution: C++ protoc's `LookupSymbolNoPlaceholder` uses first-component-first resolution for compound names. For `Outer.Inner` in scope `Container`: find `Outer` at innermost scope first → if found as TYPE_MESSAGE (aggregate), try full `Container.Outer.Inner` → if not found, stop and report shadowing error (don't fall through to outer scopes). `resolveTypeName` returns `(resolved, shadowCandidate)` where shadowCandidate is non-empty when shadowing fails. `shadowErrorMsg` formats the error. Callers in `ResolveTypes`, `resolveMessageFieldsWithErrorsPath`, `CheckUnresolvedTypes`, and `checkMsgUnresolved` all updated to emit shadowing error when shadowCandidate is set.
 252. ✅ Group field options — `repeated group MyGroup = 1 [deprecated = true] { ... }` — parse `[options]` between field number and `{` in `parseGroupField`, `parseGroupFieldInExtend`, and `parseGroupFieldInOneof`, SCI entries appended after number span matching regular field option ordering
 253. ✅ `--enable_codegen_trace` flag parsing — accept `--enable_codegen_trace` and `--enable_codegen_trace=VALUE` flags without error, value is currently ignored (only relevant for tracing codegen plugins). C++ protoc accepts this flag and continues to normal validation.
