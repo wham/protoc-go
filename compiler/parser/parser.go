@@ -1501,7 +1501,15 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		}
 
 		if p.tok.Peek().Value == "{" {
-			custOpt.AggregateFields = p.consumeAggregate()
+			brTok := p.tok.Next() // consume '{'
+			p.trackEnd(brTok)
+			var aggErr error
+			custOpt.AggregateFields, aggErr = p.consumeAggregate()
+			if aggErr != nil {
+				return fmt.Errorf("%d:%d: Error while parsing option value for \"%s\": %s", brTok.Line+1, brTok.Column+1, inner, aggErr.Error())
+			}
+			closeTok := p.tok.Next() // consume '}'
+			p.trackEnd(closeTok)
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
@@ -2344,7 +2352,14 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 					custOpt.Negative = neg
 
 					if p.tok.Peek().Value == "{" {
-						aggFields := p.consumeAggregate()
+						brTok := p.tok.Next() // consume '{'
+						p.trackEnd(brTok)
+						aggFields, aggErr := p.consumeAggregate()
+						if aggErr != nil {
+							return nil, fmt.Errorf("%d:%d: Error while parsing option value for \"%s\": %s", brTok.Line+1, brTok.Column+1, inner, aggErr.Error())
+						}
+						closeTok := p.tok.Next() // consume '}'
+						p.trackEnd(closeTok)
 						custOpt.AggregateFields = aggFields
 					} else {
 						valTok := p.tok.Next()
@@ -2675,7 +2690,15 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		}
 
 		if p.tok.Peek().Value == "{" {
-			custOpt.AggregateFields = p.consumeAggregate()
+			brTok := p.tok.Next() // consume '{'
+			p.trackEnd(brTok)
+			var aggErr error
+			custOpt.AggregateFields, aggErr = p.consumeAggregate()
+			if aggErr != nil {
+				return fmt.Errorf("%d:%d: Error while parsing option value for \"%s\": %s", brTok.Line+1, brTok.Column+1, inner, aggErr.Error())
+			}
+			closeTok := p.tok.Next() // consume '}'
+			p.trackEnd(closeTok)
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
@@ -3138,7 +3161,15 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 		}
 
 		if p.tok.Peek().Value == "{" {
-			custOpt.AggregateFields = p.consumeAggregate()
+			brTok := p.tok.Next() // consume '{'
+			p.trackEnd(brTok)
+			var aggErr error
+			custOpt.AggregateFields, aggErr = p.consumeAggregate()
+			if aggErr != nil {
+				return fmt.Errorf("%d:%d: Error while parsing option value for \"%s\": %s", brTok.Line+1, brTok.Column+1, inner, aggErr.Error())
+			}
+			closeTok := p.tok.Next() // consume '}'
+			p.trackEnd(closeTok)
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
@@ -3351,7 +3382,15 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 		}
 
 		if p.tok.Peek().Value == "{" {
-			custOpt.AggregateFields = p.consumeAggregate()
+			brTok := p.tok.Next() // consume '{'
+			p.trackEnd(brTok)
+			var aggErr error
+			custOpt.AggregateFields, aggErr = p.consumeAggregate()
+			if aggErr != nil {
+				return fmt.Errorf("%d:%d: Error while parsing option value for \"%s\": %s", brTok.Line+1, brTok.Column+1, inner, aggErr.Error())
+			}
+			closeTok := p.tok.Next() // consume '}'
+			p.trackEnd(closeTok)
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
@@ -3817,7 +3856,15 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 		}
 
 		if p.tok.Peek().Value == "{" {
-			custOpt.AggregateFields = p.consumeAggregate()
+			brTok := p.tok.Next() // consume '{'
+			p.trackEnd(brTok)
+			var aggErr error
+			custOpt.AggregateFields, aggErr = p.consumeAggregate()
+			if aggErr != nil {
+				return fmt.Errorf("%d:%d: Error while parsing option value for \"%s\": %s", brTok.Line+1, brTok.Column+1, inner, aggErr.Error())
+			}
+			closeTok := p.tok.Next() // consume '}'
+			p.trackEnd(closeTok)
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
@@ -4171,7 +4218,11 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 
 		if valTok.Value == "{" {
 			// Aggregate (message literal) value
-			aggregateFields = p.consumeAggregate()
+			var aggErr error
+			aggregateFields, aggErr = p.consumeAggregate()
+			if aggErr != nil {
+				return fmt.Errorf("%d:%d: Error while parsing option value for \"%s\": %s", valTok.Line+1, valTok.Column+1, innerName, aggErr.Error())
+			}
 			closeTok, err := p.tok.Expect("}")
 			if err != nil {
 				return err
@@ -4522,7 +4573,7 @@ func (p *parser) parseParenthesizedOptionName(openTok tokenizer.Token) (string, 
 
 // consumeAggregate reads key:value pairs inside a message literal { ... }.
 // Called after consuming '{'. Stops before '}'.
-func (p *parser) consumeAggregate() []AggregateField {
+func (p *parser) consumeAggregate() ([]AggregateField, error) {
 	var fields []AggregateField
 	for p.tok.Peek().Value != "}" && p.tok.Peek().Type != tokenizer.TokenEOF {
 		isExtension := false
@@ -4551,17 +4602,27 @@ func (p *parser) consumeAggregate() []AggregateField {
 			fieldName = keyTok.Value
 		}
 
-		// Expect ':' separator
+		// Expect ':' separator (required for scalars, optional for message literals)
 		if p.tok.Peek().Value == ":" {
 			colonTok := p.tok.Next()
 			p.trackEnd(colonTok)
+		} else if p.tok.Peek().Value != "{" && p.tok.Peek().Value != "<" {
+			nextTok := p.tok.Peek()
+			raw := nextTok.Value
+			if nextTok.Type == tokenizer.TokenString {
+				raw = "\"" + raw + "\""
+			}
+			return nil, fmt.Errorf("Expected \":\", found \"%s\".", raw)
 		}
 
 		// Read value — may be nested message literal { ... } or < ... > or scalar
 		if p.tok.Peek().Value == "{" {
 			brTok := p.tok.Next() // consume '{'
 			p.trackEnd(brTok)
-			subFields := p.consumeAggregate()
+			subFields, err := p.consumeAggregate()
+			if err != nil {
+				return nil, err
+			}
 			closeTok := p.tok.Next() // consume '}'
 			p.trackEnd(closeTok)
 			fields = append(fields, AggregateField{
@@ -4572,7 +4633,10 @@ func (p *parser) consumeAggregate() []AggregateField {
 		} else if p.tok.Peek().Value == "<" {
 			brTok := p.tok.Next() // consume '<'
 			p.trackEnd(brTok)
-			subFields := p.consumeAggregateAngle()
+			subFields, err := p.consumeAggregateAngle()
+			if err != nil {
+				return nil, err
+			}
 			closeTok := p.tok.Next() // consume '>'
 			p.trackEnd(closeTok)
 			fields = append(fields, AggregateField{
@@ -4588,7 +4652,10 @@ func (p *parser) consumeAggregate() []AggregateField {
 				if p.tok.Peek().Value == "{" {
 					subBr := p.tok.Next()
 					p.trackEnd(subBr)
-					subFields := p.consumeAggregate()
+					subFields, err := p.consumeAggregate()
+					if err != nil {
+						return nil, err
+					}
 					subClose := p.tok.Next()
 					p.trackEnd(subClose)
 					fields = append(fields, AggregateField{
@@ -4599,7 +4666,10 @@ func (p *parser) consumeAggregate() []AggregateField {
 				} else if p.tok.Peek().Value == "<" {
 					subBr := p.tok.Next()
 					p.trackEnd(subBr)
-					subFields := p.consumeAggregateAngle()
+					subFields, err := p.consumeAggregateAngle()
+					if err != nil {
+						return nil, err
+					}
 					subClose := p.tok.Next()
 					p.trackEnd(subClose)
 					fields = append(fields, AggregateField{
@@ -4674,12 +4744,12 @@ func (p *parser) consumeAggregate() []AggregateField {
 			p.trackEnd(sepTok)
 		}
 	}
-	return fields
+	return fields, nil
 }
 
 // consumeAggregateAngle reads key:value pairs inside a message literal < ... >.
 // Called after consuming '<'. Stops before '>'.
-func (p *parser) consumeAggregateAngle() []AggregateField {
+func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
 	var fields []AggregateField
 	for p.tok.Peek().Value != ">" && p.tok.Peek().Type != tokenizer.TokenEOF {
 		isExtension := false
@@ -4707,17 +4777,27 @@ func (p *parser) consumeAggregateAngle() []AggregateField {
 			fieldName = keyTok.Value
 		}
 
-		// Expect ':' separator
+		// Expect ':' separator (required for scalars, optional for message literals)
 		if p.tok.Peek().Value == ":" {
 			colonTok := p.tok.Next()
 			p.trackEnd(colonTok)
+		} else if p.tok.Peek().Value != "{" && p.tok.Peek().Value != "<" {
+			nextTok := p.tok.Peek()
+			raw := nextTok.Value
+			if nextTok.Type == tokenizer.TokenString {
+				raw = "\"" + raw + "\""
+			}
+			return nil, fmt.Errorf("Expected \":\", found \"%s\".", raw)
 		}
 
 		// Read value — may be nested message literal { ... } or < ... > or scalar
 		if p.tok.Peek().Value == "{" {
 			brTok := p.tok.Next() // consume '{'
 			p.trackEnd(brTok)
-			subFields := p.consumeAggregate()
+			subFields, err := p.consumeAggregate()
+			if err != nil {
+				return nil, err
+			}
 			closeTok := p.tok.Next() // consume '}'
 			p.trackEnd(closeTok)
 			fields = append(fields, AggregateField{
@@ -4728,7 +4808,10 @@ func (p *parser) consumeAggregateAngle() []AggregateField {
 		} else if p.tok.Peek().Value == "<" {
 			brTok := p.tok.Next() // consume '<'
 			p.trackEnd(brTok)
-			subFields := p.consumeAggregateAngle()
+			subFields, err := p.consumeAggregateAngle()
+			if err != nil {
+				return nil, err
+			}
 			closeTok := p.tok.Next() // consume '>'
 			p.trackEnd(closeTok)
 			fields = append(fields, AggregateField{
@@ -4744,7 +4827,10 @@ func (p *parser) consumeAggregateAngle() []AggregateField {
 				if p.tok.Peek().Value == "{" {
 					subBr := p.tok.Next()
 					p.trackEnd(subBr)
-					subFields := p.consumeAggregate()
+					subFields, err := p.consumeAggregate()
+					if err != nil {
+						return nil, err
+					}
 					subClose := p.tok.Next()
 					p.trackEnd(subClose)
 					fields = append(fields, AggregateField{
@@ -4755,7 +4841,10 @@ func (p *parser) consumeAggregateAngle() []AggregateField {
 				} else if p.tok.Peek().Value == "<" {
 					subBr := p.tok.Next()
 					p.trackEnd(subBr)
-					subFields := p.consumeAggregateAngle()
+					subFields, err := p.consumeAggregateAngle()
+					if err != nil {
+						return nil, err
+					}
 					subClose := p.tok.Next()
 					p.trackEnd(subClose)
 					fields = append(fields, AggregateField{
@@ -4830,7 +4919,7 @@ func (p *parser) consumeAggregateAngle() []AggregateField {
 			p.trackEnd(sepTok)
 		}
 	}
-	return fields
+	return fields, nil
 }
 
 func (p *parser) skipStatement() error {
@@ -4906,7 +4995,14 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 
 			if p.tok.Peek().Value == "{" {
 				// Aggregate value
-				aggFields := p.consumeAggregate()
+				brTok := p.tok.Next() // consume '{'
+				p.trackEnd(brTok)
+				aggFields, aggErr := p.consumeAggregate()
+				if aggErr != nil {
+					return nil, fmt.Errorf("%d:%d: Error while parsing option value for \"%s\": %s", brTok.Line+1, brTok.Column+1, inner, aggErr.Error())
+				}
+				closeTok := p.tok.Next() // consume '}'
+				p.trackEnd(closeTok)
 				custOpt.AggregateFields = aggFields
 			} else {
 				valTok := p.tok.Next()

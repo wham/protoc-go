@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1517/1517 tests passing.
+ALL DONE — 1522/1522 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -463,3 +463,4 @@ ALL DONE — 1517/1517 tests passing.
 285. ✅ Bool shorthand values in aggregate options — `enabled: t` and `verbose: f` (and `True`/`False`) in aggregate option bodies, `encodeCustomOptionValue` TYPE_BOOL case checks `value == "true" || value == "True" || value == "t" || value == "1"` for true, matching C++ protoc's text format parser which accepts `true`, `True`, `t`, `1` as truthy and `false`, `False`, `f`, `0` as falsy
 286. ✅ Positive sign rejection in custom option values — reject `+` prefix in option values (e.g., `option (my_count) = +42;`) with `Expected option value.` error at `+` token position, matching C++ protoc behavior
 287. ✅ Deep sub-field custom file option paths — `option (my_ext).inner.name = "test";` with multi-level sub-field paths, parser consumes all `.subfield` segments into `SubFieldPath []string`, resolver walks message type hierarchy for each segment, encodes nested length-delimited protowire bytes from innermost to outermost, SCI path `[8, extNum, field1Num, field2Num, ...]`
+288. ✅ Aggregate option colon requirement — reject missing `:` separator in aggregate option values for scalar fields (e.g., `label "test"` without colon) with `Error while parsing option value for "OPTNAME": Expected ":", found "TOKEN".` error at `{` position, `consumeAggregate`/`consumeAggregateAngle` return `([]AggregateField, error)`, colon is optional only for message-typed sub-fields (`{`/`<` values)
