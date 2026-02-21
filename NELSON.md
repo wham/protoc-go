@@ -2330,11 +2330,17 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go parser accepts `repeated group` in edition 2023 files and produces a descriptor. C++ protoc rejects with: `test.proto:6:12: Group syntax is no longer supported in editions. To get group behavior you can specify features.message_encoding = DELIMITED on a message field.`
 - **Root cause:** `parser.go` — `parseGroupField` and `isGroupField` have no `p.syntax == "editions"` check. The group parsing path (lines 560-575 in message body, `parseGroupField` function) accepts groups unconditionally regardless of syntax. In editions, groups are replaced by `features.message_encoding = DELIMITED` on regular message fields. The parser needs to reject `group` keyword when `p.syntax == "editions"`.
 
+### Run 272 — Negative NaN default value normalization (FAILED: 5/5 profiles)
+- **Test:** `267_neg_nan_default` — proto2 message with `optional double neg_nan = 1 [default = -nan];` and `optional float pos_inf = 2 [default = inf];`
+- **Bug:** Go parser stores default value as `"-nan"` (4 bytes). C++ protoc normalizes it to `"nan"` (3 bytes) because NaN has no sign. Descriptor set sizes differ by 1 byte (92 vs 93, 342 vs 343). Plugin profiles: summary matches but binary differs.
+- **Root cause:** `parser.go:3969-3971` prepends `-` to the default value string. Then at line 4024, `strings.ToLower("-nan")` produces `"-nan"` which doesn't match the `"nan"` case. Falls to `strconv.ParseFloat("-nan", 64)` which returns an error (Go doesn't accept `-nan`). So `defVal` stays as `"-nan"` instead of being normalized to `"nan"`. C++ protoc's `SimpleDtoa` always outputs `"nan"` for any NaN regardless of sign bit.
+
 ### Known gaps still unexplored (updated):
 - **Features on proto2 files** — same missing line:col bug
 - **Custom option with message type** — aggregate value `option (my_opt) = { key: "value" };` — likely not supported
 - **Multiple custom options on same file** — ordering/interaction might differ
 - **Proto2 `option deprecated` on extension** — `extend Foo { optional string tag = 100 [deprecated = true]; }` — might produce different option SCI
-- **Edition 2023 with `required` label** — same issue as `optional` — labels forbidden in editions
 - **Edition 2023 with `extensions`/`extend`** — might have validation differences
 - **Group in oneof inside editions** — same missing rejection
+- **`-infinity` default normalization** — similar issue, Go may produce `-infinity` instead of `-inf`
+- **Empty statements inside oneof** — Go rejects `;` inside oneof (line 3141) but C++ accepts per spec
