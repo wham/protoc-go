@@ -284,6 +284,7 @@ func Run(args []string) error {
 	valErrors = append(valErrors, validateMessageDefault(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateEnumDefaultValues(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateProto3(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateEditionGroups(orderedFiles, parsed)...)
 	featEditionErrs := validateFeaturesEditions(orderedFiles, parsed)
 	valErrors = append(valErrors, featEditionErrs...)
 	if len(featEditionErrs) == 0 {
@@ -1985,6 +1986,35 @@ func validateProto3(orderedFiles []string, parsed map[string]*descriptorpb.FileD
 		}
 	}
 	return errs
+}
+
+func validateEditionGroups(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		for i, msg := range fd.GetMessageType() {
+			collectEditionGroupErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+	}
+	return errs
+}
+
+func collectEditionGroupErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, field := range msg.GetField() {
+		if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+			line, col := findFieldTypeLocation(msgPath, i, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Group syntax is no longer supported in editions. To get group behavior you can specify features.message_encoding = DELIMITED on a message field.", filename, line, col))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		collectEditionGroupErrors(filename, nested, append(append([]int32{}, msgPath...), 3, int32(i)), sci, errs)
+	}
 }
 
 func allowedProto3Extendee(name string) bool {
