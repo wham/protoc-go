@@ -1664,48 +1664,57 @@ func validateFeaturesEditions(orderedFiles []string, parsed map[string]*descript
 		if fd.GetSyntax() == "editions" {
 			continue
 		}
-		// File-level features: report with line:col from syntax declaration
+		sci := fd.GetSourceCodeInfo()
+		// File-level features
 		if fd.GetOptions() != nil && fd.GetOptions().GetFeatures() != nil {
-			line, col := findLocationByPath([]int32{12}, fd.GetSourceCodeInfo())
+			line, col := findLocationByPath([]int32{12}, sci)
 			errs = append(errs, fmt.Sprintf("%s:%d:%d: Features are only valid under editions.", name, line, col))
 		}
-		// Sub-entity features: report without line:col
-		collectFeaturesEditionsErrors(name, fd, &errs)
+		collectFeaturesEditionsErrors(name, fd, sci, &errs)
 	}
 	return errs
 }
 
-func collectFeaturesEditionsErrors(name string, fd *descriptorpb.FileDescriptorProto, errs *[]string) {
-	for _, msg := range fd.GetMessageType() {
-		collectFeaturesEditionsInMsg(name, msg, errs)
+func featEdErr(name string, path []int32, sci *descriptorpb.SourceCodeInfo) string {
+	line, col := findLocationByPath(path, sci)
+	if line == 0 && col == 0 {
+		return fmt.Sprintf("%s: Features are only valid under editions.", name)
 	}
-	for _, e := range fd.GetEnumType() {
-		collectFeaturesEditionsInEnum(name, e, errs)
+	return fmt.Sprintf("%s:%d:%d: Features are only valid under editions.", name, line, col)
+}
+
+func collectFeaturesEditionsErrors(name string, fd *descriptorpb.FileDescriptorProto, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, msg := range fd.GetMessageType() {
+		collectFeaturesEditionsInMsg(name, []int32{4, int32(i)}, msg, sci, errs)
 	}
-	for _, svc := range fd.GetService() {
+	for i, e := range fd.GetEnumType() {
+		collectFeaturesEditionsInEnum(name, []int32{5, int32(i)}, e, sci, errs)
+	}
+	for i, svc := range fd.GetService() {
+		svcPath := []int32{6, int32(i)}
 		if svc.GetOptions() != nil && svc.GetOptions().GetFeatures() != nil {
-			*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
+			*errs = append(*errs, featEdErr(name, append(clonePath(svcPath), 1), sci))
 		}
-		for _, m := range svc.GetMethod() {
+		for j, m := range svc.GetMethod() {
 			if m.GetOptions() != nil && m.GetOptions().GetFeatures() != nil {
-				*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
+				*errs = append(*errs, featEdErr(name, append(clonePath(svcPath), 2, int32(j), 1), sci))
 			}
 		}
 	}
-	for _, ext := range fd.GetExtension() {
+	for i, ext := range fd.GetExtension() {
 		if ext.GetOptions() != nil && ext.GetOptions().GetFeatures() != nil {
-			*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
+			*errs = append(*errs, featEdErr(name, []int32{7, int32(i), 1}, sci))
 		}
 	}
 }
 
-func collectFeaturesEditionsInMsg(name string, msg *descriptorpb.DescriptorProto, errs *[]string) {
+func collectFeaturesEditionsInMsg(name string, msgPath []int32, msg *descriptorpb.DescriptorProto, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
 	if msg.GetOptions() != nil && msg.GetOptions().GetFeatures() != nil {
-		*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
+		*errs = append(*errs, featEdErr(name, append(clonePath(msgPath), 1), sci))
 	}
-	for _, f := range msg.GetField() {
+	for i, f := range msg.GetField() {
 		if f.GetOptions() != nil && f.GetOptions().GetFeatures() != nil {
-			*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
+			*errs = append(*errs, featEdErr(name, append(clonePath(msgPath), 2, int32(i), 1), sci))
 		}
 	}
 	for _, o := range msg.GetOneofDecl() {
@@ -1713,26 +1722,26 @@ func collectFeaturesEditionsInMsg(name string, msg *descriptorpb.DescriptorProto
 			*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
 		}
 	}
-	for _, e := range msg.GetEnumType() {
-		collectFeaturesEditionsInEnum(name, e, errs)
+	for i, e := range msg.GetEnumType() {
+		collectFeaturesEditionsInEnum(name, append(clonePath(msgPath), 4, int32(i)), e, sci, errs)
 	}
-	for _, ext := range msg.GetExtension() {
+	for i, ext := range msg.GetExtension() {
 		if ext.GetOptions() != nil && ext.GetOptions().GetFeatures() != nil {
-			*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
+			*errs = append(*errs, featEdErr(name, append(clonePath(msgPath), 6, int32(i), 1), sci))
 		}
 	}
-	for _, nested := range msg.GetNestedType() {
-		collectFeaturesEditionsInMsg(name, nested, errs)
+	for i, nested := range msg.GetNestedType() {
+		collectFeaturesEditionsInMsg(name, append(clonePath(msgPath), 3, int32(i)), nested, sci, errs)
 	}
 }
 
-func collectFeaturesEditionsInEnum(name string, e *descriptorpb.EnumDescriptorProto, errs *[]string) {
+func collectFeaturesEditionsInEnum(name string, enumPath []int32, e *descriptorpb.EnumDescriptorProto, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
 	if e.GetOptions() != nil && e.GetOptions().GetFeatures() != nil {
-		*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
+		*errs = append(*errs, featEdErr(name, append(clonePath(enumPath), 1), sci))
 	}
-	for _, v := range e.GetValue() {
+	for i, v := range e.GetValue() {
 		if v.GetOptions() != nil && v.GetOptions().GetFeatures() != nil {
-			*errs = append(*errs, fmt.Sprintf("%s: Features are only valid under editions.", name))
+			*errs = append(*errs, featEdErr(name, append(clonePath(enumPath), 2, int32(i), 1), sci))
 		}
 	}
 }
@@ -2977,6 +2986,12 @@ func collectExtensionRangeErrors(filename string, msg *descriptorpb.DescriptorPr
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectExtensionRangeErrors(filename, nested, nestedPath, sci, msgRanges, errs)
 	}
+}
+
+func clonePath(p []int32) []int32 {
+	c := make([]int32, len(p))
+	copy(c, p)
+	return c
 }
 
 func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, int) {
