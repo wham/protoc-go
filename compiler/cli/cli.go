@@ -215,22 +215,25 @@ func Run(args []string) error {
 
 	// Phase 1: Build/cross-link validation — accumulate errors (C++ protoc collects all)
 	var buildErrors []string
+	fieldHints := make(map[*descriptorpb.DescriptorProto]*messageHint)
 	buildErrors = append(buildErrors, validateMapKeyTypes(orderedFiles, parsed)...)
 	dupNameErrs := validateDuplicateNames(orderedFiles, parsed)
 	buildErrors = append(buildErrors, dupNameErrs...)
 	if len(dupNameErrs) > 0 {
 		buildErrors = append(buildErrors, validateMapEntryConflicts(orderedFiles, parsed)...)
 	}
-	buildErrors = append(buildErrors, validatePositiveFieldNumbers(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateMaxFieldNumbers(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateExtRangePositive(orderedFiles, parsed, fieldHints)...)
+	buildErrors = append(buildErrors, validatePositiveFieldNumbers(orderedFiles, parsed, fieldHints)...)
+	buildErrors = append(buildErrors, validateMaxFieldNumbers(orderedFiles, parsed, fieldHints)...)
 	buildErrors = append(buildErrors, validateReservedFieldNumbers(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateDuplicateFieldNumbers(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateReservedNumberConflicts(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateReservedNumberConflicts(orderedFiles, parsed, fieldHints)...)
 	buildErrors = append(buildErrors, validateDuplicateReservedNames(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateReservedNameConflicts(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateEmptyEnums(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateDuplicateEnumValues(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateExtensionFieldConflicts(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateExtensionFieldConflicts(orderedFiles, parsed, fieldHints)...)
+	appendSuggestions(fieldHints, &buildErrors)
 	buildErrors = append(buildErrors, validateReservedRangeOverlaps(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateEnumReservedRangeOverlaps(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateEnumReservedValueConflicts(orderedFiles, parsed)...)
@@ -913,31 +916,31 @@ func collectJstypeErrors(filename string, msg *descriptorpb.DescriptorProto, msg
 	}
 }
 
-// validatePositiveFieldNumbers checks that all field numbers are positive integers.
-func validatePositiveFieldNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+// validateExtRangePositive checks that extension range start numbers are positive.
+func validateExtRangePositive(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, hints map[*descriptorpb.DescriptorProto]*messageHint) []string {
 	var errs []string
 	for _, name := range orderedFiles {
 		fd := parsed[name]
 		pkg := fd.GetPackage()
+		sci := fd.GetSourceCodeInfo()
 		for i, msg := range fd.GetMessageType() {
 			fqn := msg.GetName()
 			if pkg != "" {
 				fqn = pkg + "." + fqn
 			}
-			collectPositiveFieldNumberErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+			collectExtRangePositiveErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, sci, &errs, hints)
 		}
 	}
 	return errs
 }
 
-func collectPositiveFieldNumberErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
-	for i, field := range msg.GetField() {
-		if field.GetNumber() <= 0 {
-			line, col := findFieldNumberLocation(msgPath, i, sci)
-			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Field numbers must be positive integers.", filename, line, col))
-			// Suggest next available field number
-			next := suggestFieldNumber(msg)
-			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Suggested field numbers for %s: %d", filename, line, col, fqn, next))
+func collectExtRangePositiveErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string, hints map[*descriptorpb.DescriptorProto]*messageHint) {
+	for j, er := range msg.GetExtensionRange() {
+		if er.GetStart() <= 0 {
+			path := append(append([]int32{}, msgPath...), 5, int32(j), 1)
+			line, col := findLocationByPath(path, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extension numbers must be positive integers.", filename, line, col))
+			requestHint(hints, msg, filename, fqn, line, col, int(er.GetStart()), int(er.GetEnd()))
 		}
 	}
 	for i, nested := range msg.GetNestedType() {
@@ -946,28 +949,12 @@ func collectPositiveFieldNumberErrors(filename string, msg *descriptorpb.Descrip
 		}
 		nestedFqn := fqn + "." + nested.GetName()
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
-		collectPositiveFieldNumberErrors(filename, nested, nestedFqn, nestedPath, sci, errs)
+		collectExtRangePositiveErrors(filename, nested, nestedFqn, nestedPath, sci, errs, hints)
 	}
 }
 
-func suggestFieldNumber(msg *descriptorpb.DescriptorProto) int32 {
-	used := make(map[int32]bool)
-	for _, field := range msg.GetField() {
-		if field.GetNumber() > 0 {
-			used[field.GetNumber()] = true
-		}
-	}
-	var n int32 = 1
-	for used[n] {
-		n++
-	}
-	return n
-}
-
-const kMaxFieldNumber = 536870911 // 2^29 - 1
-
-// validateMaxFieldNumbers checks that no field number exceeds 536870911.
-func validateMaxFieldNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+// validatePositiveFieldNumbers checks that all field numbers are positive integers.
+func validatePositiveFieldNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, hints map[*descriptorpb.DescriptorProto]*messageHint) []string {
 	var errs []string
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -977,7 +964,170 @@ func validateMaxFieldNumbers(orderedFiles []string, parsed map[string]*descripto
 			if pkg != "" {
 				fqn = pkg + "." + fqn
 			}
-			collectMaxFieldNumberErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+			collectPositiveFieldNumberErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs, hints)
+		}
+	}
+	return errs
+}
+
+func collectPositiveFieldNumberErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string, hints map[*descriptorpb.DescriptorProto]*messageHint) {
+	for i, field := range msg.GetField() {
+		if field.GetNumber() <= 0 {
+			line, col := findFieldNumberLocation(msgPath, i, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Field numbers must be positive integers.", filename, line, col))
+			requestHint(hints, msg, filename, fqn, line, col, 0, 1)
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedFqn := fqn + "." + nested.GetName()
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectPositiveFieldNumberErrors(filename, nested, nestedFqn, nestedPath, sci, errs, hints)
+	}
+}
+
+// messageHint tracks per-message suggestion info, matching C++ MessageHints.
+type messageHint struct {
+	fieldsToSuggest int
+	firstLine       int
+	firstCol        int
+	filename        string
+	fqn             string
+	msg             *descriptorpb.DescriptorProto
+}
+
+// requestHint updates the hint for a message, accumulating fields_to_suggest.
+func requestHint(hints map[*descriptorpb.DescriptorProto]*messageHint, msg *descriptorpb.DescriptorProto, filename, fqn string, line, col int, rangeStart, rangeEnd int) {
+	h, ok := hints[msg]
+	if !ok {
+		h = &messageHint{filename: filename, fqn: fqn, msg: msg, firstLine: line, firstCol: col}
+		hints[msg] = h
+	}
+	add := rangeEnd - rangeStart
+	if add < 0 {
+		add = 0
+	}
+	if add > kMaxFieldNumber {
+		add = kMaxFieldNumber
+	}
+	h.fieldsToSuggest += add
+	if h.fieldsToSuggest > kMaxFieldNumber {
+		h.fieldsToSuggest = kMaxFieldNumber
+	}
+}
+
+// suggestFieldNumbers returns a comma-separated list of up to count available
+// field numbers for the message, excluding used fields, extension ranges,
+// reserved ranges, and the protobuf-reserved 19000-19999 range.
+func suggestFieldNumbers(msg *descriptorpb.DescriptorProto, count int) string {
+	const kFirstReserved = 19000
+	const kLastReserved = 19999
+
+	type rng struct{ from, to int32 }
+	var used []rng
+
+	addOrdinal := func(n int32) {
+		if n <= 0 || n > kMaxFieldNumber {
+			return
+		}
+		used = append(used, rng{n, n + 1})
+	}
+	addRange := func(from, to int32) {
+		if from < 0 {
+			from = 0
+		}
+		if from > kMaxFieldNumber+1 {
+			from = kMaxFieldNumber + 1
+		}
+		if to < 0 {
+			to = 0
+		}
+		if to > kMaxFieldNumber+1 {
+			to = kMaxFieldNumber + 1
+		}
+		if from >= to {
+			return
+		}
+		used = append(used, rng{from, to})
+	}
+
+	for _, field := range msg.GetField() {
+		addOrdinal(field.GetNumber())
+	}
+	for _, ext := range msg.GetExtension() {
+		addOrdinal(ext.GetNumber())
+	}
+	for _, rr := range msg.GetReservedRange() {
+		addRange(rr.GetStart(), rr.GetEnd())
+	}
+	for _, er := range msg.GetExtensionRange() {
+		addRange(er.GetStart(), er.GetEnd())
+	}
+	used = append(used, rng{kMaxFieldNumber, kMaxFieldNumber + 1})
+	used = append(used, rng{kFirstReserved, kLastReserved + 1})
+
+	sort.Slice(used, func(i, j int) bool {
+		if used[i].from != used[j].from {
+			return used[i].from < used[j].from
+		}
+		return used[i].to < used[j].to
+	})
+
+	var parts []string
+	current := int32(1)
+	remaining := count
+	for _, r := range used {
+		for current < r.from && remaining > 0 {
+			parts = append(parts, fmt.Sprintf("%d", current))
+			current++
+			remaining--
+		}
+		if remaining == 0 {
+			break
+		}
+		if current < r.to {
+			current = r.to
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// appendSuggestions appends "Suggested field numbers" lines from collected hints.
+func appendSuggestions(hints map[*descriptorpb.DescriptorProto]*messageHint, errs *[]string) {
+	const kMaxSuggestions = 3
+	for _, h := range hints {
+		count := h.fieldsToSuggest
+		if count > kMaxSuggestions {
+			count = kMaxSuggestions
+		}
+		if count <= 0 {
+			continue
+		}
+		suggestion := suggestFieldNumbers(h.msg, count)
+		if suggestion == "" {
+			continue
+		}
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Suggested field numbers for %s: %s",
+			h.filename, h.firstLine, h.firstCol, h.fqn, suggestion))
+	}
+}
+
+const kMaxFieldNumber = 536870911 // 2^29 - 1
+
+// validateMaxFieldNumbers checks that no field number exceeds 536870911.
+func validateMaxFieldNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, hints map[*descriptorpb.DescriptorProto]*messageHint) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		for i, msg := range fd.GetMessageType() {
+			fqn := msg.GetName()
+			if pkg != "" {
+				fqn = pkg + "." + fqn
+			}
+			collectMaxFieldNumberErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs, hints)
 		}
 		for _, ext := range fd.GetExtension() {
 			if ext.GetNumber() > kMaxFieldNumber {
@@ -988,13 +1138,12 @@ func validateMaxFieldNumbers(orderedFiles []string, parsed map[string]*descripto
 	return errs
 }
 
-func collectMaxFieldNumberErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+func collectMaxFieldNumberErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string, hints map[*descriptorpb.DescriptorProto]*messageHint) {
 	for i, field := range msg.GetField() {
 		if field.GetNumber() > kMaxFieldNumber {
 			line, col := findFieldNumberLocation(msgPath, i, sci)
 			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Field numbers cannot be greater than %d.", filename, line, col, kMaxFieldNumber))
-			next := suggestFieldNumber(msg)
-			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Suggested field numbers for %s: %d", filename, line, col, fqn, next))
+			requestHint(hints, msg, filename, fqn, line, col, 0, 1)
 		}
 	}
 	for _, ext := range msg.GetExtension() {
@@ -1008,7 +1157,7 @@ func collectMaxFieldNumberErrors(filename string, msg *descriptorpb.DescriptorPr
 		}
 		nestedFqn := fqn + "." + nested.GetName()
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
-		collectMaxFieldNumberErrors(filename, nested, nestedFqn, nestedPath, sci, errs)
+		collectMaxFieldNumberErrors(filename, nested, nestedFqn, nestedPath, sci, errs, hints)
 	}
 }
 
@@ -1113,7 +1262,7 @@ func findFieldNumberLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.So
 }
 
 // validateReservedNumberConflicts checks that no field uses a number in the message's reserved ranges.
-func validateReservedNumberConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+func validateReservedNumberConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, hints map[*descriptorpb.DescriptorProto]*messageHint) []string {
 	var errs []string
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -1124,13 +1273,13 @@ func validateReservedNumberConflicts(orderedFiles []string, parsed map[string]*d
 			if pkg != "" {
 				fqn = pkg + "." + fqn
 			}
-			collectReservedNumberConflictErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, sci, &errs)
+			collectReservedNumberConflictErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, sci, &errs, hints)
 		}
 	}
 	return errs
 }
 
-func collectReservedNumberConflictErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+func collectReservedNumberConflictErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string, hints map[*descriptorpb.DescriptorProto]*messageHint) {
 	if msg.GetOptions().GetMapEntry() {
 		return
 	}
@@ -1143,9 +1292,7 @@ func collectReservedNumberConflictErrors(filename string, msg *descriptorpb.Desc
 				line, col := findReservedRangeStartLocation(msgPath, j, sci)
 				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Field \"%s\" uses reserved number %d.",
 					filename, line, col, field.GetName(), num))
-				next := suggestFieldNumber(msg)
-				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Suggested field numbers for %s: %d",
-					filename, line, col, fqn, next))
+				requestHint(hints, msg, filename, fqn, line, col, 0, 1)
 				break
 			}
 		}
@@ -1156,7 +1303,7 @@ func collectReservedNumberConflictErrors(filename string, msg *descriptorpb.Desc
 		}
 		nestedFqn := fqn + "." + nested.GetName()
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
-		collectReservedNumberConflictErrors(filename, nested, nestedFqn, nestedPath, sci, errs)
+		collectReservedNumberConflictErrors(filename, nested, nestedFqn, nestedPath, sci, errs, hints)
 	}
 }
 
@@ -2180,7 +2327,7 @@ func detectMapConflicts(filename string, msg *descriptorpb.DescriptorProto, msgP
 
 // validateExtensionFieldConflicts checks that no field number in a message
 // falls within the message's declared extension ranges.
-func validateExtensionFieldConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+func validateExtensionFieldConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, hints map[*descriptorpb.DescriptorProto]*messageHint) []string {
 	var errs []string
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -2191,13 +2338,13 @@ func validateExtensionFieldConflicts(orderedFiles []string, parsed map[string]*d
 			if pkg != "" {
 				fqn = pkg + "." + fqn
 			}
-			collectExtensionFieldConflictErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, sci, &errs)
+			collectExtensionFieldConflictErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, sci, &errs, hints)
 		}
 	}
 	return errs
 }
 
-func collectExtensionFieldConflictErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+func collectExtensionFieldConflictErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string, hints map[*descriptorpb.DescriptorProto]*messageHint) {
 	if msg.GetOptions().GetMapEntry() {
 		return
 	}
@@ -2211,9 +2358,7 @@ func collectExtensionFieldConflictErrors(filename string, msg *descriptorpb.Desc
 					filename, line, col,
 					er.GetStart(), er.GetEnd()-1,
 					field.GetName(), num))
-				next := suggestFieldNumber(msg)
-				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Suggested field numbers for %s: %d",
-					filename, line, col, fqn, next))
+				requestHint(hints, msg, filename, fqn, line, col, 0, 1)
 				break
 			}
 		}
@@ -2224,7 +2369,7 @@ func collectExtensionFieldConflictErrors(filename string, msg *descriptorpb.Desc
 		}
 		nestedFqn := fqn + "." + nested.GetName()
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
-		collectExtensionFieldConflictErrors(filename, nested, nestedFqn, nestedPath, sci, errs)
+		collectExtensionFieldConflictErrors(filename, nested, nestedFqn, nestedPath, sci, errs, hints)
 	}
 }
 
