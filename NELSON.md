@@ -2513,3 +2513,17 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Extension field encoding in aggregate** — `[ext.name]` key encoding might differ
 - **`Any` type / message set wire format** — very obscure proto2 features, untested
 - **Other CLI flag validation gaps** — more flags Go silently ignores or accepts invalid values for
+
+### Run 299 — Integer value for non-aggregate bool custom option (FAILED: 5/5 profiles)
+- **Test:** `294_bool_int_value` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `extend google.protobuf.FieldOptions { optional bool my_flag = 50001; }`, then uses `optional int32 threshold = 1 [(my_flag) = 2];` and `optional string label = 2 [(my_flag) = 0];` (integer values for a bool-typed custom field option)
+- **Bug:** Go silently accepts integer values `2` and `0` for bool-typed custom options and produces output (exit 0). C++ protoc rejects with: `Value must be identifier for boolean option "boolintval.my_flag".` (exit 1). C++ protoc requires that boolean option values be identifiers (`true`/`false`), not integer literals.
+- **Root cause:** `encodeCustomOptionValue` at `cli.go:4405-4411` doesn't validate that the value token is an identifier before encoding a bool. It accepts any string and checks `value == "true" || value == "1"`. Missing validation: for `TYPE_BOOL`, when `valueType != tokenizer.TokenIdent`, Go should report `"Value must be identifier for boolean option \"FQN\"."` matching C++ protoc. The fix: add a check before encoding that `valueType == tokenizer.TokenIdent` (and value is `"true"` or `"false"`) for non-aggregate bool custom options.
+
+### Known gaps still unexplored (updated):
+- **Mixed `{` and `<` at top level** — `< info { ... } >` untested
+- **Repeated message fields with `<>`** — `{ items < name: "a" > items < name: "b" > }` same root cause
+- **Extension field encoding in aggregate** — `[ext.name]` key encoding might differ
+- **`Any` type / message set wire format** — very obscure proto2 features, untested
+- **Other CLI flag validation gaps** — more flags Go silently ignores or accepts invalid values for
+- **Bool option with `True`/`FALSE`/`t`/`f` in aggregate** — C++ text format parser accepts case variants, Go only accepts `"true"`
+- **Integer value for bool in other scopes** — same bug likely exists in `resolveCustomMessageOptions`, `resolveCustomServiceOptions`, etc. (all call `encodeCustomOptionValue`)
