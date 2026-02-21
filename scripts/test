@@ -401,6 +401,7 @@ CLI_TESTS=(
   "notices|--notices"
   "enable_codegen_trace|--enable_codegen_trace=true"
   "error_format_msvs|--error_format=msvs -I testdata/257_msvs_error --dump_out=/tmp/msvs_test_out testdata/257_msvs_error/test.proto"
+  "error_format_unknown|--error_format=unknown"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

@@ -2482,11 +2482,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Bug:** Go fails with `error encoding custom option: field primary: unknown field "[" in message aggext.Color`. C++ protoc succeeds, correctly parsing `[aggext.color_name]` as an extension field reference inside the message literal.
 - **Root cause:** `parser.go:4519` — `consumeAggregate()` reads the key token as `p.tok.Next()` and uses `keyTok.Value` as the field name. When the key starts with `[` (extension field syntax), `keyTok.Value` is `"["`. The function has no handling for bracketed extension field names (`[qualified.name]`). It should detect `[` as the start of an extension field reference, read tokens until `]`, and use the full `[qualified.name]` as the field key. C++ protoc's text format parser handles this syntax natively since extension fields in message literals use `[FullyQualifiedExtensionName]` as the key.
 
+### Run 296 — Unknown error_format value not rejected (FAILED: 1 CLI test)
+- **Test:** CLI test `error_format_unknown` — `--error_format=unknown` with no other args
+- **Bug:** Go's `parseArgs()` at `cli.go:685-687` stores the error_format value without validation. Any unknown value (not `gcc` or `msvs`) is silently accepted and the Go CLI proceeds to the next validation step, which reports `"Missing input file."`. C++ protoc validates the error_format value immediately and rejects unknown values with `"Unknown error format: unknown"`.
+- **Root cause:** `cli.go:685-687` — `cfg.errorFormat = strings.TrimPrefix(arg, "--error_format=")` stores the value without checking it against the valid set `{"gcc", "msvs"}`. C++ protoc validates the format string right after parsing it and produces a specific error before reaching input file validation.
+
 ### Known gaps still unexplored (updated):
 - **Angle brackets in nested aggregate on non-file scopes** — same `<>` bug affects message-level, field-level, etc. options
 - **Mixed `{` and `<` delimiters** — `{ info < ... > }` tested here, but `< info { ... } >` at top level likely same issue
 - **Repeated message fields with `<>`** — `{ items < name: "a" > items < name: "b" > }` same root cause
-- **Aggregate with enum-typed sub-field** — tested in Run 295 candidate (PASSED — enum resolution works correctly)
 - **Extension field encoding in aggregate** — even if `consumeAggregate` is fixed to read `[ext.name]` keys, `encodeAggregateOption` would need to resolve the extension field descriptor to encode the value correctly
 - **`Any` type / message set wire format** — very obscure proto2 features, untested
-- **`toCamelCase` edge cases** — tested digits in field names, produces same result as C++ (both use same rules)
+- **Other CLI flag validation gaps** — there may be more flags that Go silently ignores or accepts invalid values for
