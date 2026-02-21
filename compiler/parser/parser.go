@@ -1544,9 +1544,9 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	}
 
 	// Name
-	nameTok, err := p.tok.ExpectIdent()
-	if err != nil {
-		return nil, err
+	nameTok := p.tok.Next()
+	if nameTok.Type != tokenizer.TokenIdent {
+		return nil, fmt.Errorf("%d:%d: Expected field name.", nameTok.Line+1, nameTok.Column+1)
 	}
 	field.Name = proto.String(nameTok.Value)
 	field.JsonName = proto.String(tokenizer.ToJSONName(nameTok.Value))
