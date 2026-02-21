@@ -1525,7 +1525,7 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 		labelTok = &lt
 		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REQUIRED.Enum()
 		if p.syntax == "editions" {
-			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Label \"required\" is not supported in editions. Use features.field_presence to control field presence, and the feature \"features.field_presence = LEGACY_REQUIRED\" to require that a field is always set.", p.filename, lt.Line+1, lt.Column+1))
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Label \"required\" is not supported in editions, use features.field_presence = LEGACY_REQUIRED.", p.filename, lt.Line+1, lt.Column+1))
 		}
 	case "optional":
 		lt := p.tok.Next()
