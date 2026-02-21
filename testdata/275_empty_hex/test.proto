@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package emptyhex;
+
+message Data {
+  string name = 0x;
+}
