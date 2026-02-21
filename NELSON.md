@@ -2248,3 +2248,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `cli@notices` — CLI test with `--notices` flag (no input file)
 - **Bug:** `parseArgs()` in cli.go has no case for `--notices`. Go returns "Unknown flag: --notices" (exit 1). C++ protoc 29.3 returns "Missing value for flag: --notices" (exit 1) — it recognizes `--notices` as a flag syntax but considers it value-requiring. Same exit code, different stderr messages.
 - **Root cause:** `cli.go:510-660` — `parseArgs` switch doesn't handle `--notices`. C++ protoc 29.3 parses flags more leniently and produces a different error message for unrecognized flags that match the `--xxx` pattern. Go's catch-all at the default case immediately returns "Unknown flag" without the more nuanced "Missing value" error that C++ produces for `--notices`. Same pattern as Runs 242-252 (missing CLI flag handling).
+
+### Run 259 — Group field with options (FAILED: 5/5 profiles)
+- **Test:** `254_group_options` — proto2 message with `repeated group MyGroup = 1 [deprecated = true] { required string name = 1; }`
+- **Bug:** `parseGroupField()` at line 1775 calls `p.tok.Expect("{")` immediately after parsing the field number. When there are field options `[deprecated = true]` between the number and the opening brace, the parser gets `[` instead of `{` and fails with `Expected "{"`. C++ protoc correctly handles `[options]` between the group field number and the group body `{`.
+- **Root cause:** `parser.go:1775` — `parseGroupField` has no option parsing between the field number and the `{`. Regular fields handle options via `parseFieldOptions` at line 1564, but group fields skip this step entirely. The fix would be to add `parseFieldOptions` handling (like regular fields do) between `p.tok.ExpectInt()` and `p.tok.Expect("{")` in the group field parser. Same bug likely exists in `parseGroupFieldInExtend` and `parseGroupFieldInOneof`.
+
+### Known gaps still unexplored (updated):
+- **Group field options in extend blocks** — `parseGroupFieldInExtend` at line 1083 likely has same missing option handling as `parseGroupField`
+- **Group field options in oneof** — `parseGroupFieldInOneof` likely has same bug
+- **Group fields with multiple options** (`[deprecated = true, packed = true]`) — same root cause
+- **Group field with json_name option** — `[json_name = "my_group"]` would also fail
+- **Proto2 default values on group fields** — groups can't have defaults but the error path may differ
