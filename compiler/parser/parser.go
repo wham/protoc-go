@@ -93,7 +93,8 @@ type AggregateField struct {
 	Name      string
 	Value     string
 	ValueType tokenizer.TokenType
-	Negative  bool // true if value was preceded by '-'
+	Negative  bool               // true if value was preceded by '-'
+	SubFields []AggregateField   // nested message literal fields
 }
 
 // CustomFieldOption represents a parenthesized custom option on a field
@@ -4530,22 +4531,34 @@ func (p *parser) consumeAggregate() []AggregateField {
 			p.trackEnd(colonTok)
 		}
 
-		// Read value
-		negative := false
-		valTok := p.tok.Next()
-		p.trackEnd(valTok)
-		if valTok.Value == "-" {
-			negative = true
-			valTok = p.tok.Next()
+		// Read value — may be nested message literal { ... } or scalar
+		if p.tok.Peek().Value == "{" {
+			brTok := p.tok.Next() // consume '{'
+			p.trackEnd(brTok)
+			subFields := p.consumeAggregate()
+			closeTok := p.tok.Next() // consume '}'
+			p.trackEnd(closeTok)
+			fields = append(fields, AggregateField{
+				Name:      fieldName,
+				SubFields: subFields,
+			})
+		} else {
+			negative := false
+			valTok := p.tok.Next()
 			p.trackEnd(valTok)
-		}
+			if valTok.Value == "-" {
+				negative = true
+				valTok = p.tok.Next()
+				p.trackEnd(valTok)
+			}
 
-		fields = append(fields, AggregateField{
-			Name:      fieldName,
-			Value:     valTok.Value,
-			ValueType: valTok.Type,
-			Negative:  negative,
-		})
+			fields = append(fields, AggregateField{
+				Name:      fieldName,
+				Value:     valTok.Value,
+				ValueType: valTok.Type,
+				Negative:  negative,
+			})
+		}
 
 		// Optional separator (';' or ',')
 		if p.tok.Peek().Value == ";" || p.tok.Peek().Value == "," {

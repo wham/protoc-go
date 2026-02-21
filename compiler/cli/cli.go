@@ -4502,19 +4502,71 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 		if !ok {
 			return nil, fmt.Errorf("unknown field %q in message %s", af.Name, typeName)
 		}
-		val := af.Value
-		if af.Negative {
-			val = "-" + val
+		if len(af.SubFields) > 0 {
+			// Nested message literal — recurse
+			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers)
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", af.Name, err)
+			}
+			inner = append(inner, subBytes...)
+		} else {
+			val := af.Value
+			if af.Negative {
+				val = "-" + val
+			}
+			encoded, err := encodeCustomOptionValue(subField, val, af.ValueType, enumValueNumbers)
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", af.Name, err)
+			}
+			inner = append(inner, encoded...)
 		}
-		encoded, err := encodeCustomOptionValue(subField, val, af.ValueType, enumValueNumbers)
-		if err != nil {
-			return nil, fmt.Errorf("field %s: %w", af.Name, err)
-		}
-		inner = append(inner, encoded...)
 	}
 
 	// Wrap in length-delimited tag
 	fieldNum := protowire.Number(ext.GetNumber())
+	var b []byte
+	b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
+	b = protowire.AppendBytes(b, inner)
+	return b, nil
+}
+
+// encodeAggregateFields encodes nested message literal sub-fields for a TYPE_MESSAGE field.
+func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields []parser.AggregateField, msgFieldMap map[string]map[string]*descriptorpb.FieldDescriptorProto, enumValueNumbers map[string]map[string]int32) ([]byte, error) {
+	typeName := field.GetTypeName()
+	if strings.HasPrefix(typeName, ".") {
+		typeName = typeName[1:]
+	}
+	msgFields, ok := msgFieldMap[typeName]
+	if !ok {
+		return nil, fmt.Errorf("unknown message type %s", field.GetTypeName())
+	}
+
+	var inner []byte
+	for _, af := range aggFields {
+		subField, ok := msgFields[af.Name]
+		if !ok {
+			return nil, fmt.Errorf("unknown field %q in message %s", af.Name, typeName)
+		}
+		if len(af.SubFields) > 0 {
+			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers)
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", af.Name, err)
+			}
+			inner = append(inner, subBytes...)
+		} else {
+			val := af.Value
+			if af.Negative {
+				val = "-" + val
+			}
+			encoded, err := encodeCustomOptionValue(subField, val, af.ValueType, enumValueNumbers)
+			if err != nil {
+				return nil, fmt.Errorf("field %s: %w", af.Name, err)
+			}
+			inner = append(inner, encoded...)
+		}
+	}
+
+	fieldNum := protowire.Number(field.GetNumber())
 	var b []byte
 	b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
 	b = protowire.AppendBytes(b, inner)
