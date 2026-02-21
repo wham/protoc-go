@@ -241,6 +241,14 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customFieldOptErrors, "\n"))
 	}
 
+	customMsgOptErrors := resolveCustomMessageOptions(orderedFiles, parsed, parseResults)
+	if len(customMsgOptErrors) > 0 {
+		if cfg.errorFormat == "msvs" {
+			customMsgOptErrors = formatErrorsMSVS(customMsgOptErrors, srcTree)
+		}
+		return fmt.Errorf("%s", strings.Join(customMsgOptErrors, "\n"))
+	}
+
 	// Phase 1: Build/cross-link validation — accumulate errors (C++ protoc collects all)
 	var buildErrors []string
 	fieldHints := make(map[*descriptorpb.DescriptorProto]*messageHint)
@@ -3659,6 +3667,93 @@ func collectFieldOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN 
 	}
 	for _, nested := range msg.GetNestedType() {
 		collectFieldOptionsExtensions(nested, msgFQN, exts)
+	}
+}
+
+// resolveCustomMessageOptions resolves parenthesized custom options on messages
+// (e.g., option (my_msg_label) = "primary";) against extension definitions for MessageOptions.
+func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+	// Build extension map for MessageOptions extensions
+	var allExts []fileOptExtInfo
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, ext := range fd.GetExtension() {
+			if ext.GetExtendee() == ".google.protobuf.MessageOptions" {
+				allExts = append(allExts, fileOptExtInfo{field: ext, pkg: fd.GetPackage()})
+			}
+		}
+		for _, msg := range fd.GetMessageType() {
+			collectMessageOptionsExtensions(msg, fd.GetPackage(), &allExts)
+		}
+	}
+
+	// Build enum value number map
+	enumValueNumbers := map[string]map[string]int32{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		prefix := fd.GetPackage()
+		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
+		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
+	}
+
+	// Build message field map
+	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
+	for _, n := range orderedFiles {
+		fd := parsed[n]
+		prefix := fd.GetPackage()
+		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
+	}
+
+	var errs []string
+	for _, name := range orderedFiles {
+		result := parseResults[name]
+		if result == nil {
+			continue
+		}
+		fd := parsed[name]
+		for _, opt := range result.CustomMessageOptions {
+			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			if ext == nil {
+				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.",
+					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+				continue
+			}
+
+			// Update SCI path with actual field number
+			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
+				opt.SCILoc.Path[len(opt.SCILoc.Path)-1] = ext.GetNumber()
+			}
+
+			// Encode the extension value as protowire bytes
+			var rawBytes []byte
+			var err error
+			if opt.AggregateFields != nil {
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers)
+			} else {
+				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
+			}
+			if err != nil {
+				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+				continue
+			}
+
+			// Add to MessageOptions unknown fields
+			opt.Message.Options.ProtoReflect().SetUnknown(
+				append(opt.Message.Options.ProtoReflect().GetUnknown(), rawBytes...))
+		}
+	}
+	return errs
+}
+
+func collectMessageOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
+	msgFQN := parentFQN + "." + msg.GetName()
+	for _, ext := range msg.GetExtension() {
+		if ext.GetExtendee() == ".google.protobuf.MessageOptions" {
+			*exts = append(*exts, fileOptExtInfo{field: ext, pkg: msgFQN})
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectMessageOptionsExtensions(nested, msgFQN, exts)
 	}
 }
 

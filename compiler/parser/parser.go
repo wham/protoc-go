@@ -64,7 +64,8 @@ type parser struct {
 	inOneof      bool
 	explicitJsonNames   map[*descriptorpb.FieldDescriptorProto]bool
 	customFileOptions   []CustomFileOption
-	customFieldOptions  []CustomFieldOption
+	customFieldOptions    []CustomFieldOption
+	customMessageOptions  []CustomMessageOption
 }
 
 // ParseResult holds the result of parsing a .proto file.
@@ -102,11 +103,26 @@ type CustomFieldOption struct {
 	SCILoc          *descriptorpb.SourceCodeInfo_Location // SCI entry to update with resolved field number
 }
 
+// CustomMessageOption represents a parenthesized custom option on a message
+// (e.g., option (my_msg_label) = "primary";) that needs post-parse resolution.
+type CustomMessageOption struct {
+	ParenName       string                              // e.g., "(my_msg_label)"
+	InnerName       string                              // e.g., "my_msg_label"
+	Value           string                              // the option value
+	ValueType       tokenizer.TokenType                 // token type of value
+	Message         *descriptorpb.DescriptorProto       // the message this option is on
+	NameTok         tokenizer.Token                     // position of "(" for error reporting
+	AggregateFields []AggregateField                    // non-nil for aggregate values
+	Negative        bool                                // value preceded by '-'
+	SCILoc          *descriptorpb.SourceCodeInfo_Location // SCI entry to update with resolved field number
+}
+
 type ParseResult struct {
-	FD                 *descriptorpb.FileDescriptorProto
-	ExplicitJsonNames  map[*descriptorpb.FieldDescriptorProto]bool
-	CustomFileOptions  []CustomFileOption
-	CustomFieldOptions []CustomFieldOption
+	FD                   *descriptorpb.FileDescriptorProto
+	ExplicitJsonNames    map[*descriptorpb.FieldDescriptorProto]bool
+	CustomFileOptions    []CustomFileOption
+	CustomFieldOptions   []CustomFieldOption
+	CustomMessageOptions []CustomMessageOption
 }
 
 // ParseFile parses a .proto file and returns a ParseResult.
@@ -270,7 +286,7 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 		return nil, &MultiError{Errors: p.errors}
 	}
 
-	return &ParseResult{FD: fd, ExplicitJsonNames: p.explicitJsonNames, CustomFileOptions: p.customFileOptions, CustomFieldOptions: p.customFieldOptions}, nil
+	return &ParseResult{FD: fd, ExplicitJsonNames: p.explicitJsonNames, CustomFileOptions: p.customFileOptions, CustomFieldOptions: p.customFieldOptions, CustomMessageOptions: p.customMessageOptions}, nil
 }
 
 // parseErrorPos extracts 0-based line/col from an error string formatted as "line:col: message"
@@ -1376,10 +1392,77 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		if err != nil {
 			return err
 		}
-		if err := p.skipStatement(); err != nil {
+		// Extract inner name (strip parens)
+		inner := fullName
+		if len(inner) >= 2 && inner[0] == '(' && inner[len(inner)-1] == ')' {
+			inner = inner[1 : len(inner)-1]
+		}
+
+		// Consume "="
+		if _, err := p.tok.Expect("="); err != nil {
 			return err
 		}
-		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, fullName)
+
+		var custOpt CustomMessageOption
+		custOpt.ParenName = fullName
+		custOpt.InnerName = inner
+		custOpt.NameTok = nameTok
+		custOpt.Message = msg
+
+		// Read value
+		if p.tok.Peek().Value == "-" {
+			p.tok.Next()
+			custOpt.Negative = true
+		}
+
+		if p.tok.Peek().Value == "{" {
+			custOpt.AggregateFields = p.consumeAggregate()
+		} else {
+			valTok := p.tok.Next()
+			p.trackEnd(valTok)
+			val := valTok.Value
+			if custOpt.Negative {
+				val = "-" + val
+			}
+			custOpt.Value = val
+			custOpt.ValueType = valTok.Type
+			// Handle string concatenation
+			if valTok.Type == tokenizer.TokenString {
+				for p.tok.Peek().Type == tokenizer.TokenString {
+					next := p.tok.Next()
+					p.trackEnd(next)
+					custOpt.Value += next.Value
+				}
+			}
+		}
+
+		endTok, err := p.tok.Expect(";")
+		if err != nil {
+			return err
+		}
+		p.trackEnd(endTok)
+
+		if msg.Options == nil {
+			msg.Options = &descriptorpb.MessageOptions{}
+		}
+
+		// SCI: [msgPath..., 7] for options statement, [msgPath..., 7, 0] placeholder
+		optPath := append(copyPath(msgPath), 7)
+		span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+			Path: optPath,
+			Span: span,
+		})
+		sciLoc := &descriptorpb.SourceCodeInfo_Location{
+			Path: append(copyPath(optPath), 0), // placeholder field num
+			Span: span,
+		}
+		p.locations = append(p.locations, sciLoc)
+		p.attachComments(len(p.locations)-1, firstIdx)
+		custOpt.SCILoc = sciLoc
+
+		p.customMessageOptions = append(p.customMessageOptions, custOpt)
+		return nil
 	}
 
 	// Handle dotted option names like features.field_presence
