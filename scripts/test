@@ -398,6 +398,7 @@ CLI_TESTS=(
   "descriptor_set_in|--descriptor_set_in=/tmp/descriptors.pb"
   "dependency_out|--dependency_out=/tmp/deps.txt -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "encode|--encode=foo.Message"
+  "notices|--notices"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
