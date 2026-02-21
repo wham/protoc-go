@@ -4168,22 +4168,34 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		}
 		b = protowire.AppendTag(b, fieldNum, protowire.Fixed64Type)
 		b = protowire.AppendFixed64(b, math.Float64bits(v))
-	case descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
-		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
 		v, err := strconv.ParseUint(value, 0, 32)
 		if err != nil {
 			return nil, fmt.Errorf("invalid fixed32 value: %s", value)
 		}
 		b = protowire.AppendTag(b, fieldNum, protowire.Fixed32Type)
 		b = protowire.AppendFixed32(b, uint32(v))
-	case descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
-		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+	case descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+		v, err := strconv.ParseInt(value, 0, 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid sfixed32 value: %s", value)
+		}
+		b = protowire.AppendTag(b, fieldNum, protowire.Fixed32Type)
+		b = protowire.AppendFixed32(b, uint32(int32(v)))
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED64:
 		v, err := strconv.ParseUint(value, 0, 64)
 		if err != nil {
 			return nil, fmt.Errorf("invalid fixed64 value: %s", value)
 		}
 		b = protowire.AppendTag(b, fieldNum, protowire.Fixed64Type)
 		b = protowire.AppendFixed64(b, v)
+	case descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+		v, err := strconv.ParseInt(value, 0, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid sfixed64 value: %s", value)
+		}
+		b = protowire.AppendTag(b, fieldNum, protowire.Fixed64Type)
+		b = protowire.AppendFixed64(b, uint64(v))
 	case descriptorpb.FieldDescriptorProto_TYPE_ENUM:
 		v, err := strconv.ParseInt(value, 0, 32)
 		if err != nil {
