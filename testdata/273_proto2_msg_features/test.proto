@@ -1,0 +1,9 @@
+syntax = "proto2";
+
+package proto2msgfeat;
+
+message Request {
+  option features.field_presence = EXPLICIT;
+  optional string name = 1;
+  optional int32 value = 2;
+}
