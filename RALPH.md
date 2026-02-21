@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1507/1507 tests passing.
+ALL DONE — 1512/1512 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -461,3 +461,4 @@ ALL DONE — 1507/1507 tests passing.
 283. ✅ Custom boolean field option value validation — reject integer/string/float values for custom TYPE_BOOL field options with `Value must be identifier for boolean option "pkg.name".` error at value token position, added `ValTok` to `CustomFieldOption`, modified `findFileOptionExtension` to return extension FQN
 284. ✅ List syntax in aggregate options — `values: [1, 2, 3]` inside `{ ... }` and `< ... >` aggregate option bodies, `consumeAggregate` and `consumeAggregateAngle` handle `[` as list delimiter, each element creates a separate `AggregateField` with the same field name, supports nested message literals (`{ }` and `< >`), negative values, and string concatenation within list elements
 285. ✅ Bool shorthand values in aggregate options — `enabled: t` and `verbose: f` (and `True`/`False`) in aggregate option bodies, `encodeCustomOptionValue` TYPE_BOOL case checks `value == "true" || value == "True" || value == "t" || value == "1"` for true, matching C++ protoc's text format parser which accepts `true`, `True`, `t`, `1` as truthy and `false`, `False`, `f`, `0` as falsy
+286. ✅ Positive sign rejection in custom option values — reject `+` prefix in option values (e.g., `option (my_count) = +42;`) with `Expected option value.` error at `+` token position, matching C++ protoc behavior
