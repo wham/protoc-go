@@ -3603,6 +3603,8 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 			continue
 		}
 		fd := parsed[name]
+		// Track repeated index per extension field number
+		repeatedIdx := map[int32]int32{}
 		for _, opt := range result.CustomFileOptions {
 			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
@@ -3610,6 +3612,8 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
 			}
+
+			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
 
 			if opt.SubField != "" {
 				// Sub-field option: option (ext).subfield = value;
@@ -3654,7 +3658,13 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 			} else {
 				// Update SCI path with actual field number
 				if opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
-					fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = []int32{8, ext.GetNumber()}
+					if isRepeated {
+						idx := repeatedIdx[ext.GetNumber()]
+						fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = []int32{8, ext.GetNumber(), idx}
+						repeatedIdx[ext.GetNumber()] = idx + 1
+					} else {
+						fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = []int32{8, ext.GetNumber()}
+					}
 				}
 
 				// Encode the extension value as protowire bytes
