@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1295/1295 tests passing.
+ALL DONE — 1301/1301 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -426,4 +426,5 @@ ALL DONE — 1295/1295 tests passing.
 253. ✅ `--enable_codegen_trace` flag parsing — accept `--enable_codegen_trace` and `--enable_codegen_trace=VALUE` flags without error, value is currently ignored (only relevant for tracing codegen plugins). C++ protoc accepts this flag and continues to normal validation.
 254. ✅ Reserved-in-oneof error message — use `Expected field name.` instead of `Expected identifier.` when parsing field name in `parseField`, matching C++ protoc's `ConsumeIdentifier(field->mutable_name(), "Expected field name.")`
 255. ✅ Extension range positive integer validation — reject extension ranges starting at 0 with `Extension numbers must be positive integers.` error, refactored field number suggestions to use per-message hint accumulation (matching C++ MessageHints pattern) with `suggestFieldNumbers` accounting for extension ranges, reserved ranges, and 19000-19999 in occupied set, up to 3 suggestions per message
+256. ✅ MSVS error format (`--error_format=msvs`) — transform error messages from GCC format (`file:line:col: message`) to MSVS format (`file(line) : error in column=col: message`), resolve virtual filenames to disk paths via `SourceTree.VirtualFileToDiskFile`, applied at all error return points in `Run()`
 - Extension range positive integer validation: C++ protoc rejects extension range start ≤ 0 with `Extension numbers must be positive integers.` at extension range start SCI location. Uses `RequestHintOnFieldNumbers(proto, NUMBER, start, end)` which adds `end-start` to `fields_to_suggest` (unlike field errors which add 1). All field number suggestion errors (positive, max, reserved conflict, ext field conflict) now use a shared `messageHint` map via `requestHint`. `suggestFieldNumbers` computes occupied ranges from fields, extensions, reserved ranges, extension ranges, and 19000-19999, then finds up to `min(3, fieldsToSuggest)` free numbers. `appendSuggestions` outputs one suggestion line per message at the first error's location. Validated in `validateExtRangePositive` (cli.go), called BEFORE `validatePositiveFieldNumbers` to match C++ ordering.
