@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1406/1406 tests passing.
+ALL DONE — 1411/1411 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -444,3 +444,4 @@ ALL DONE — 1406/1406 tests passing.
 266. ✅ Empty hex literal validation — `0x`/`0X` without following hex digits produces `"0x" must be followed by hex digits.` tokenizer error at position after prefix, `parseIntLenient` helper treats bare `0x` as 0 (matching C++ `ParseInteger`) to prevent redundant `Integer out of range` parser errors
 267. ✅ Custom field option support — `[(my_ext) = "value"]` where the option is an extension to `google.protobuf.FieldOptions`, parsed as `CustomFieldOption` in parser, resolved post-parse in `resolveCustomFieldOptions` via `protowire` encoding on `FieldOptions` unknown fields, SCI entry at `[fieldPath..., 8, extNum]` with placeholder field number 0 resolved post-parse via `SCILoc` pointer (each option stores its own SCI Location pointer for correct per-option field number resolution)
 268. ✅ Multiple custom field options — `[(label) = "primary", (priority) = 5]` correctly resolves each option's SCI path to its own extension field number (50001, 50002) instead of all getting the first extension's number
+269. ✅ Custom message option support — `option (my_msg_label) = "primary";` where the option is an extension to `google.protobuf.MessageOptions`, parsed as `CustomMessageOption` in parser, resolved post-parse in `resolveCustomMessageOptions` via `protowire` encoding on `MessageOptions` unknown fields, SCI entries at `[msgPath..., 7]` and `[msgPath..., 7, extNum]` with placeholder field number 0 resolved post-parse via `SCILoc` pointer
