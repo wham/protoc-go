@@ -2189,12 +2189,14 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		p.addLocationSpan(append(copyPath(valuePath), 1),
 			valNameTok.Line, valNameTok.Column, valNameTok.Line, valNameTok.Column+len(valNameTok.Value))
 		// Value number - path [2]
+		numStartLine := valNumTok.Line
 		numStartCol := valNumTok.Column
 		if minusTok != nil {
+			numStartLine = minusTok.Line
 			numStartCol = minusTok.Column
 		}
 		p.addLocationSpan(append(copyPath(valuePath), 2),
-			valNumTok.Line, numStartCol, valNumTok.Line, valNumTok.Column+len(valNumTok.Value))
+			numStartLine, numStartCol, valNumTok.Line, valNumTok.Column+len(valNumTok.Value))
 
 		// Source code info for enum value options
 		if hasOpts {
