@@ -13,6 +13,7 @@ proto_file[0]: google/protobuf/descriptor.proto (package="google.protobuf", synt
     field: dependency (number=3, type=TYPE_STRING, label=LABEL_REPEATED)
     field: public_dependency (number=10, type=TYPE_INT32, label=LABEL_REPEATED)
     field: weak_dependency (number=11, type=TYPE_INT32, label=LABEL_REPEATED)
+    field: option_dependency (number=15, type=TYPE_STRING, label=LABEL_REPEATED)
     field: message_type (number=4, type=TYPE_MESSAGE, label=LABEL_REPEATED)
     field: enum_type (number=5, type=TYPE_MESSAGE, label=LABEL_REPEATED)
     field: service (number=6, type=TYPE_MESSAGE, label=LABEL_REPEATED)
@@ -32,6 +33,7 @@ proto_file[0]: google/protobuf/descriptor.proto (package="google.protobuf", synt
     field: options (number=7, type=TYPE_MESSAGE, label=LABEL_OPTIONAL)
     field: reserved_range (number=9, type=TYPE_MESSAGE, label=LABEL_REPEATED)
     field: reserved_name (number=10, type=TYPE_STRING, label=LABEL_REPEATED)
+    field: visibility (number=11, type=TYPE_ENUM, label=LABEL_OPTIONAL)
   message: ExtensionRangeOptions
     field: uninterpreted_option (number=999, type=TYPE_MESSAGE, label=LABEL_REPEATED)
     field: declaration (number=2, type=TYPE_MESSAGE, label=LABEL_REPEATED)
@@ -58,6 +60,7 @@ proto_file[0]: google/protobuf/descriptor.proto (package="google.protobuf", synt
     field: options (number=3, type=TYPE_MESSAGE, label=LABEL_OPTIONAL)
     field: reserved_range (number=4, type=TYPE_MESSAGE, label=LABEL_REPEATED)
     field: reserved_name (number=5, type=TYPE_STRING, label=LABEL_REPEATED)
+    field: visibility (number=6, type=TYPE_ENUM, label=LABEL_OPTIONAL)
   message: EnumValueDescriptorProto
     field: name (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
     field: number (number=2, type=TYPE_INT32, label=LABEL_OPTIONAL)
@@ -157,6 +160,8 @@ proto_file[0]: google/protobuf/descriptor.proto (package="google.protobuf", synt
     field: utf8_validation (number=4, type=TYPE_ENUM, label=LABEL_OPTIONAL)
     field: message_encoding (number=5, type=TYPE_ENUM, label=LABEL_OPTIONAL)
     field: json_format (number=6, type=TYPE_ENUM, label=LABEL_OPTIONAL)
+    field: enforce_naming_style (number=7, type=TYPE_ENUM, label=LABEL_OPTIONAL)
+    field: default_symbol_visibility (number=8, type=TYPE_ENUM, label=LABEL_OPTIONAL)
   message: FeatureSetDefaults
     field: defaults (number=1, type=TYPE_MESSAGE, label=LABEL_REPEATED)
     field: minimum_edition (number=4, type=TYPE_ENUM, label=LABEL_OPTIONAL)
@@ -172,20 +177,20 @@ proto_file[0]: google/protobuf/descriptor.proto (package="google.protobuf", synt
     value: EDITION_PROTO3 = 999
     value: EDITION_2023 = 1000
     value: EDITION_2024 = 1001
+    value: EDITION_UNSTABLE = 9999
     value: EDITION_1_TEST_ONLY = 1
     value: EDITION_2_TEST_ONLY = 2
     value: EDITION_99997_TEST_ONLY = 99997
     value: EDITION_99998_TEST_ONLY = 99998
     value: EDITION_99999_TEST_ONLY = 99999
     value: EDITION_MAX = 2147483647
-  source_code_info_locations: 1451
-proto_file[1]: test.proto (package="aggext", syntax="")
-  message: Color
-    field: r (number=1, type=TYPE_INT32, label=LABEL_OPTIONAL)
-    field: g (number=2, type=TYPE_INT32, label=LABEL_OPTIONAL)
-    field: b (number=3, type=TYPE_INT32, label=LABEL_OPTIONAL)
-  message: MyFileOpt
-    field: primary (number=1, type=TYPE_MESSAGE, label=LABEL_OPTIONAL)
-  message: Dummy
-    field: name (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
-  source_code_info_locations: 55
+  enum: SymbolVisibility
+    value: VISIBILITY_UNSET = 0
+    value: VISIBILITY_LOCAL = 1
+    value: VISIBILITY_EXPORT = 2
+  source_code_info_locations: 1554
+proto_file[1]: test.proto (package="aggboolshort", syntax="")
+  message: Settings
+    field: enabled (number=1, type=TYPE_BOOL, label=LABEL_OPTIONAL)
+    field: verbose (number=2, type=TYPE_BOOL, label=LABEL_OPTIONAL)
+  source_code_info_locations: 25

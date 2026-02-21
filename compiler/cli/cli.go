@@ -4412,7 +4412,7 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		b = protowire.AppendVarint(b, v)
 	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
 		b = protowire.AppendTag(b, fieldNum, protowire.VarintType)
-		if strings.EqualFold(value, "true") || value == "1" {
+		if value == "true" || value == "True" || value == "t" || value == "1" {
 			b = protowire.AppendVarint(b, 1)
 		} else {
 			b = protowire.AppendVarint(b, 0)
