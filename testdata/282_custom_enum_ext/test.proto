@@ -1,0 +1,20 @@
+syntax = "proto2";
+
+package customenumext;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.EnumOptions {
+  optional string enum_label = 50001;
+}
+
+enum Status {
+  option (enum_label) = "status_tracker";
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message Container {
+  optional Status status = 1;
+}
