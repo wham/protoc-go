@@ -684,6 +684,9 @@ func parseArgs(args []string) (*config, error) {
 
 		if strings.HasPrefix(arg, "--error_format=") {
 			cfg.errorFormat = strings.TrimPrefix(arg, "--error_format=")
+			if cfg.errorFormat != "gcc" && cfg.errorFormat != "msvs" {
+				return nil, fmt.Errorf("Unknown error format: %s", cfg.errorFormat)
+			}
 			continue
 		}
 
