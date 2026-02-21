@@ -1,0 +1,14 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package custsfixed;
+
+extend google.protobuf.FieldOptions {
+  optional sfixed32 min_value = 50001;
+}
+
+message Sensor {
+  optional int32 temperature = 1 [(min_value) = -40];
+  optional int32 humidity = 2 [(min_value) = 0];
+}
