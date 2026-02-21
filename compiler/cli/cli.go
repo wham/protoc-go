@@ -3881,7 +3881,7 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 			}
 
 			// Validate boolean option values must be identifiers
-			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil {
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenIdent || (opt.Value != "true" && opt.Value != "false") {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
 						name, opt.ValTok.Line+1, opt.ValTok.Column+1, extFQN))
@@ -3891,7 +3891,88 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 
 			// Update SCI path with actual field number
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
-				opt.SCILoc.Path[len(opt.SCILoc.Path)-1] = ext.GetNumber()
+				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
+			}
+
+			if len(opt.SubFieldPath) > 0 {
+				currentTypeName := ext.GetTypeName()
+				if strings.HasPrefix(currentTypeName, ".") {
+					currentTypeName = currentTypeName[1:]
+				}
+
+				var leafFieldDesc *descriptorpb.FieldDescriptorProto
+				valid := true
+				sciPathOffset := len(opt.SCILoc.Path) - len(opt.SubFieldPath)
+				for i, seg := range opt.SubFieldPath {
+					fields, ok := msgFieldMap[currentTypeName]
+					if !ok {
+						errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, currentTypeName, opt.InnerName))
+						valid = false
+						break
+					}
+					subFieldDesc, ok := fields[seg]
+					if !ok {
+						errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, seg, currentTypeName))
+						valid = false
+						break
+					}
+					if opt.SCILoc != nil {
+						opt.SCILoc.Path[sciPathOffset+i] = subFieldDesc.GetNumber()
+					}
+					if i == len(opt.SubFieldPath)-1 {
+						leafFieldDesc = subFieldDesc
+					} else {
+						nextType := subFieldDesc.GetTypeName()
+						if strings.HasPrefix(nextType, ".") {
+							nextType = nextType[1:]
+						}
+						currentTypeName = nextType
+					}
+				}
+				if !valid {
+					continue
+				}
+
+				value := opt.Value
+				if opt.Negative {
+					value = "-" + value
+				}
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				if err != nil {
+					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+					continue
+				}
+
+				encoded := leafBytes
+				for i := len(opt.SubFieldPath) - 2; i >= 0; i-- {
+					parentTypeName := ext.GetTypeName()
+					if strings.HasPrefix(parentTypeName, ".") {
+						parentTypeName = parentTypeName[1:]
+					}
+					for j := 0; j < i; j++ {
+						parentFields := msgFieldMap[parentTypeName]
+						parentField := parentFields[opt.SubFieldPath[j]]
+						nextType := parentField.GetTypeName()
+						if strings.HasPrefix(nextType, ".") {
+							nextType = nextType[1:]
+						}
+						parentTypeName = nextType
+					}
+					parentFields := msgFieldMap[parentTypeName]
+					parentField := parentFields[opt.SubFieldPath[i]]
+					var wrapper []byte
+					wrapper = protowire.AppendTag(wrapper, protowire.Number(parentField.GetNumber()), protowire.BytesType)
+					wrapper = protowire.AppendBytes(wrapper, encoded)
+					encoded = wrapper
+				}
+
+				var rawBytes []byte
+				rawBytes = protowire.AppendTag(rawBytes, protowire.Number(ext.GetNumber()), protowire.BytesType)
+				rawBytes = protowire.AppendBytes(rawBytes, encoded)
+
+				opt.Field.Options.ProtoReflect().SetUnknown(
+					append(opt.Field.Options.ProtoReflect().GetUnknown(), rawBytes...))
+				continue
 			}
 
 			// Encode the extension value as protowire bytes

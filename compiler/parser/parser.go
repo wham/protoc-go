@@ -103,6 +103,7 @@ type AggregateField struct {
 type CustomFieldOption struct {
 	ParenName       string                              // e.g., "(my_ext)"
 	InnerName       string                              // e.g., "my_ext"
+	SubFieldPath    []string                            // e.g., ["name"] for [(ext).name = ...]
 	Value           string                              // the option value
 	ValueType       tokenizer.TokenType                 // token type of value
 	Field           *descriptorpb.FieldDescriptorProto  // the field this option is on
@@ -5010,6 +5011,17 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if err != nil {
 				return nil, err
 			}
+
+			// Handle sub-field path: [(ext).sub1.sub2 = value]
+			var subFieldPath []string
+			for p.tok.Peek().Value == "." {
+				dotTok := p.tok.Next()
+				p.trackEnd(dotTok)
+				subTok := p.tok.Next()
+				p.trackEnd(subTok)
+				subFieldPath = append(subFieldPath, subTok.Value)
+			}
+
 			// Consume "="
 			if _, err := p.tok.Expect("="); err != nil {
 				return nil, err
@@ -5024,6 +5036,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				inner = inner[1 : len(inner)-1]
 			}
 			custOpt.InnerName = inner
+			custOpt.SubFieldPath = subFieldPath
 			custOpt.NameTok = optNameTok
 			custOpt.Field = field
 
@@ -5061,9 +5074,15 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			optEndLine := endTok.Line
 			optEndCol := endTok.Column // don't include ]/,
 
-			// Add SCI: option span [fieldPath..., 8, 0] (placeholder; field number resolved later)
+			// Add SCI: option span [fieldPath..., 8, 0, ...subfields] (placeholder; field number resolved later)
+			sciPath := append(copyPath(fieldPath), 8, 0)
+			if len(subFieldPath) > 0 {
+				for range subFieldPath {
+					sciPath = append(sciPath, 0)
+				}
+			}
 			sciLoc := &descriptorpb.SourceCodeInfo_Location{
-				Path: append(copyPath(fieldPath), 8, 0),
+				Path: sciPath,
 				Span: multiSpan(optNameTok.Line, optNameTok.Column, optEndLine, optEndCol),
 			}
 			optLocs = append(optLocs, sciLoc)
