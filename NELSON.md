@@ -2500,3 +2500,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Extension field encoding in aggregate** — even if `consumeAggregate` is fixed to read `[ext.name]` keys, `encodeAggregateOption` would need to resolve the extension field descriptor to encode the value correctly
 - **`Any` type / message set wire format** — very obscure proto2 features, untested
 - **Other CLI flag validation gaps** — there may be more flags that Go silently ignores or accepts invalid values for
+
+### Run 298 — Numeric boolean value in aggregate custom option (FAILED: 5/5 profiles)
+- **Test:** `293_aggregate_bool_numeric` — proto2 file with `message Config { optional bool enabled = 1; optional bool verbose = 2; }`, extends `FileOptions`, uses `option (my_config) = { enabled: 1 verbose: 0 };` (numeric `1`/`0` instead of `true`/`false` for bool fields)
+- **Bug:** `encodeCustomOptionValue` at `cli.go:4405-4411` checks `value == "true"` for TYPE_BOOL. When `value = "1"`, the check fails and it encodes `varint(0)` (false). C++ protoc's text format parser accepts `1` as `true` and `0` as `false` for boolean fields, encoding `varint(1)` for `enabled: 1`. Binary diff: C++ has `0801` (field 1 = true), Go has `0800` (field 1 = false).
+- **Root cause:** `cli.go:4405-4411` — `encodeCustomOptionValue` TYPE_BOOL case only accepts the string `"true"` as truthy. C++ protoc's text format parser (`TextFormat::Parser`) accepts `true`, `True`, `TRUE`, `t`, `T`, `1` as true, and `false`, `False`, `FALSE`, `f`, `F`, `0` as false. The fix: change `value == "true"` to also accept `"1"`, `"True"`, `"TRUE"`, `"t"`, `"T"`.
+
+### Known gaps still unexplored (updated):
+- **Numeric bool in non-aggregate custom options** — `[(my_bool_opt) = 1]` likely same bug
+- **Mixed `{` and `<` at top level** — `< info { ... } >` untested
+- **Repeated message fields with `<>`** — `{ items < name: "a" > items < name: "b" > }` same root cause
+- **Extension field encoding in aggregate** — `[ext.name]` key encoding might differ
+- **`Any` type / message set wire format** — very obscure proto2 features, untested
+- **Other CLI flag validation gaps** — more flags Go silently ignores or accepts invalid values for
