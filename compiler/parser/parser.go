@@ -4578,6 +4578,65 @@ func (p *parser) consumeAggregate() []AggregateField {
 				SubFields:   subFields,
 				IsExtension: isExtension,
 			})
+		} else if p.tok.Peek().Value == "[" {
+			// List syntax for repeated fields: field: [val1, val2, val3]
+			brTok := p.tok.Next() // consume '['
+			p.trackEnd(brTok)
+			for p.tok.Peek().Value != "]" && p.tok.Peek().Type != tokenizer.TokenEOF {
+				if p.tok.Peek().Value == "{" {
+					subBr := p.tok.Next()
+					p.trackEnd(subBr)
+					subFields := p.consumeAggregate()
+					subClose := p.tok.Next()
+					p.trackEnd(subClose)
+					fields = append(fields, AggregateField{
+						Name:        fieldName,
+						SubFields:   subFields,
+						IsExtension: isExtension,
+					})
+				} else if p.tok.Peek().Value == "<" {
+					subBr := p.tok.Next()
+					p.trackEnd(subBr)
+					subFields := p.consumeAggregateAngle()
+					subClose := p.tok.Next()
+					p.trackEnd(subClose)
+					fields = append(fields, AggregateField{
+						Name:        fieldName,
+						SubFields:   subFields,
+						IsExtension: isExtension,
+					})
+				} else {
+					negative := false
+					valTok := p.tok.Next()
+					p.trackEnd(valTok)
+					if valTok.Value == "-" {
+						negative = true
+						valTok = p.tok.Next()
+						p.trackEnd(valTok)
+					}
+					val := valTok.Value
+					if valTok.Type == tokenizer.TokenString {
+						for p.tok.Peek().Type == tokenizer.TokenString {
+							nextTok := p.tok.Next()
+							p.trackEnd(nextTok)
+							val += nextTok.Value
+						}
+					}
+					fields = append(fields, AggregateField{
+						Name:        fieldName,
+						Value:       val,
+						ValueType:   valTok.Type,
+						Negative:    negative,
+						IsExtension: isExtension,
+					})
+				}
+				if p.tok.Peek().Value == "," {
+					sepTok := p.tok.Next()
+					p.trackEnd(sepTok)
+				}
+			}
+			closeBr := p.tok.Next() // consume ']'
+			p.trackEnd(closeBr)
 		} else {
 			negative := false
 			valTok := p.tok.Next()
@@ -4675,6 +4734,65 @@ func (p *parser) consumeAggregateAngle() []AggregateField {
 				SubFields:   subFields,
 				IsExtension: isExtension,
 			})
+		} else if p.tok.Peek().Value == "[" {
+			// List syntax for repeated fields
+			brTok := p.tok.Next()
+			p.trackEnd(brTok)
+			for p.tok.Peek().Value != "]" && p.tok.Peek().Type != tokenizer.TokenEOF {
+				if p.tok.Peek().Value == "{" {
+					subBr := p.tok.Next()
+					p.trackEnd(subBr)
+					subFields := p.consumeAggregate()
+					subClose := p.tok.Next()
+					p.trackEnd(subClose)
+					fields = append(fields, AggregateField{
+						Name:        fieldName,
+						SubFields:   subFields,
+						IsExtension: isExtension,
+					})
+				} else if p.tok.Peek().Value == "<" {
+					subBr := p.tok.Next()
+					p.trackEnd(subBr)
+					subFields := p.consumeAggregateAngle()
+					subClose := p.tok.Next()
+					p.trackEnd(subClose)
+					fields = append(fields, AggregateField{
+						Name:        fieldName,
+						SubFields:   subFields,
+						IsExtension: isExtension,
+					})
+				} else {
+					negative := false
+					valTok := p.tok.Next()
+					p.trackEnd(valTok)
+					if valTok.Value == "-" {
+						negative = true
+						valTok = p.tok.Next()
+						p.trackEnd(valTok)
+					}
+					val := valTok.Value
+					if valTok.Type == tokenizer.TokenString {
+						for p.tok.Peek().Type == tokenizer.TokenString {
+							nextTok := p.tok.Next()
+							p.trackEnd(nextTok)
+							val += nextTok.Value
+						}
+					}
+					fields = append(fields, AggregateField{
+						Name:        fieldName,
+						Value:       val,
+						ValueType:   valTok.Type,
+						Negative:    negative,
+						IsExtension: isExtension,
+					})
+				}
+				if p.tok.Peek().Value == "," {
+					sepTok := p.tok.Next()
+					p.trackEnd(sepTok)
+				}
+			}
+			closeBr := p.tok.Next() // consume ']'
+			p.trackEnd(closeBr)
 		} else {
 			negative := false
 			valTok := p.tok.Next()
