@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1381/1381 tests passing.
+ALL DONE — 1391/1391 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -440,3 +440,5 @@ ALL DONE — 1381/1381 tests passing.
 256. ✅ MSVS error format (`--error_format=msvs`) — transform error messages from GCC format (`file:line:col: message`) to MSVS format (`file(line) : error in column=col: message`), resolve virtual filenames to disk paths via `SourceTree.VirtualFileToDiskFile`, applied at all error return points in `Run()`
 257. ✅ Custom enum option value resolution — resolve enum value names (e.g., `HIGH`) to their numeric values when encoding TYPE_ENUM custom file options, build enum FQN → (name → number) map from all parsed files using `collectEnumValueNumbers`/`collectEnumValueNumbersInMsgs` helpers
 - Extension range positive integer validation: C++ protoc rejects extension range start ≤ 0 with `Extension numbers must be positive integers.` at extension range start SCI location. Uses `RequestHintOnFieldNumbers(proto, NUMBER, start, end)` which adds `end-start` to `fields_to_suggest` (unlike field errors which add 1). All field number suggestion errors (positive, max, reserved conflict, ext field conflict) now use a shared `messageHint` map via `requestHint`. `suggestFieldNumbers` computes occupied ranges from fields, extensions, reserved ranges, extension ranges, and 19000-19999, then finds up to `min(3, fieldsToSuggest)` free numbers. `appendSuggestions` outputs one suggestion line per message at the first error's location. Validated in `validateExtRangePositive` (cli.go), called BEFORE `validatePositiveFieldNumbers` to match C++ ordering.
+265. ✅ Packed validation SCI fallback for message-typed fields — `collectPackedErrors` and `findFieldTypeLocation` now try SCI path `[..., 5]` (type) first, then fall back to `[..., 6]` (type_name) for message/enum-typed fields where the parser emits type_name SCI instead of type SCI. Same fallback added to file-level and message-level extension packed checks.
+266. ✅ Empty hex literal validation — `0x`/`0X` without following hex digits produces `"0x" must be followed by hex digits.` tokenizer error at position after prefix, `parseIntLenient` helper treats bare `0x` as 0 (matching C++ `ParseInteger`) to prevent redundant `Integer out of range` parser errors

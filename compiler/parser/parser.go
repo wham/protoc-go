@@ -39,6 +39,15 @@ func invalidOctalError(filename string, tok tokenizer.Token) string {
 	return ""
 }
 
+// parseIntLenient wraps strconv.ParseInt but treats bare "0x"/"0X" as 0,
+// matching C++ protoc's ParseInteger which returns 0 for hex prefix with no digits.
+func parseIntLenient(s string, base int, bitSize int) (int64, error) {
+	if s == "0x" || s == "0X" {
+		return 0, nil
+	}
+	return strconv.ParseInt(s, base, bitSize)
+}
+
 type parser struct {
 	tok       *tokenizer.Tokenizer
 	locations []*descriptorpb.SourceCodeInfo_Location
@@ -723,7 +732,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 			if err != nil {
 				return err
 			}
-			startNum, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+			startNum, parseErr := parseIntLenient(numTok.Value, 0, 64)
 			if parseErr != nil || startNum > math.MaxInt32 || startNum < math.MinInt32 {
 				return fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 			}
@@ -746,7 +755,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 					if err != nil {
 						return err
 					}
-					e, parseErr := strconv.ParseInt(endNumTok.Value, 0, 64)
+					e, parseErr := parseIntLenient(endNumTok.Value, 0, 64)
 					if parseErr != nil || e > math.MaxInt32 || e < math.MinInt32 {
 						return fmt.Errorf("%d:%d: Integer out of range.", endNumTok.Line+1, endNumTok.Column+1)
 					}
@@ -812,7 +821,7 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 		if err != nil {
 			return err
 		}
-		startNum, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+		startNum, parseErr := parseIntLenient(numTok.Value, 0, 64)
 		if parseErr != nil || startNum > math.MaxInt32 || startNum < math.MinInt32 {
 			return fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 		}
@@ -839,7 +848,7 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 				if err != nil {
 					return err
 				}
-				e, parseErr := strconv.ParseInt(endNumTok.Value, 0, 64)
+				e, parseErr := parseIntLenient(endNumTok.Value, 0, 64)
 				if parseErr != nil || e > math.MaxInt32 || e < math.MinInt32 {
 					return fmt.Errorf("%d:%d: Integer out of range.", endNumTok.Line+1, endNumTok.Column+1)
 				}
@@ -1161,7 +1170,7 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 	if err != nil {
 		return nil, nil, err
 	}
-	num, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+	num, parseErr := parseIntLenient(numTok.Value, 0, 64)
 	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
 		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 	}
@@ -1602,7 +1611,7 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	if err != nil {
 		return nil, err
 	}
-	num, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+	num, parseErr := parseIntLenient(numTok.Value, 0, 64)
 	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
 		intErr := fmt.Sprintf("%s:%d:%d: Integer out of range.", p.filename, numTok.Line+1, numTok.Column+1)
 		if octalErr := invalidOctalError(p.filename, numTok); octalErr != "" {
@@ -1710,7 +1719,7 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	if err != nil {
 		return nil, nil, err
 	}
-	num, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+	num, parseErr := parseIntLenient(numTok.Value, 0, 64)
 	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
 		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 	}
@@ -1957,7 +1966,7 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 	if err != nil {
 		return nil, nil, err
 	}
-	num, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+	num, parseErr := parseIntLenient(numTok.Value, 0, 64)
 	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
 		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 	}
@@ -2287,7 +2296,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		}
 		p.trackEnd(endValTok)
 
-		num, parseErr := strconv.ParseInt(valNumTok.Value, 0, 64)
+		num, parseErr := parseIntLenient(valNumTok.Value, 0, 64)
 		if parseErr != nil {
 			return nil, fmt.Errorf("%d:%d: Integer out of range.", valNumTok.Line+1, valNumTok.Column+1)
 		}
@@ -2604,7 +2613,7 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 			if err != nil {
 				return err
 			}
-			startNum, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+			startNum, parseErr := parseIntLenient(numTok.Value, 0, 64)
 			if parseErr != nil || startNum > math.MaxInt32 || startNum < math.MinInt32 {
 				return fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 			}
@@ -2650,7 +2659,7 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 					if err != nil {
 						return err
 					}
-					en, parseErr := strconv.ParseInt(endNumTok.Value, 0, 64)
+					en, parseErr := parseIntLenient(endNumTok.Value, 0, 64)
 					if parseErr != nil || en > math.MaxInt32 || en < math.MinInt32 {
 						return fmt.Errorf("%d:%d: Integer out of range.", endNumTok.Line+1, endNumTok.Column+1)
 					}
@@ -3503,7 +3512,7 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 	if err != nil {
 		return nil, nil, err
 	}
-	num, parseErr := strconv.ParseInt(numTok.Value, 0, 64)
+	num, parseErr := parseIntLenient(numTok.Value, 0, 64)
 	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
 		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 	}

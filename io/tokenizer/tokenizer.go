@@ -443,8 +443,16 @@ func (t *Tokenizer) readNumber() {
 	if t.input[t.pos] == '0' && t.pos+1 < len(t.input) && (t.input[t.pos+1] == 'x' || t.input[t.pos+1] == 'X') {
 		t.advance()
 		t.advance()
+		hexStart := t.pos
 		for t.pos < len(t.input) && isHexDigit(t.input[t.pos]) {
 			t.advance()
+		}
+		if t.pos == hexStart {
+			// "0x" with no hex digits following
+			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: `"0x" must be followed by hex digits.`})
+			// Still emit a token so the parser sees something
+			t.tokens = append(t.tokens, Token{Type: TokenInt, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
+			return
 		}
 	} else {
 		for t.pos < len(t.input) && t.input[t.pos] >= '0' && t.input[t.pos] <= '9' {
