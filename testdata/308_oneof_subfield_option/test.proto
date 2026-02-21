@@ -1,0 +1,25 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package oneofsubfield;
+
+message OneofConfig {
+  optional string label = 1;
+  optional int32 priority = 2;
+}
+
+extend google.protobuf.OneofOptions {
+  optional OneofConfig my_oneof_config = 50001;
+}
+
+message Request {
+  optional string id = 1;
+
+  oneof payload {
+    option (my_oneof_config).label = "primary";
+
+    string text = 2;
+    int32 number = 3;
+  }
+}
