@@ -64,6 +64,7 @@ type parser struct {
 	inOneof      bool
 	explicitJsonNames   map[*descriptorpb.FieldDescriptorProto]bool
 	customFileOptions   []CustomFileOption
+	customFieldOptions  []CustomFieldOption
 }
 
 // ParseResult holds the result of parsing a .proto file.
@@ -87,10 +88,24 @@ type AggregateField struct {
 	Negative  bool // true if value was preceded by '-'
 }
 
+// CustomFieldOption represents a parenthesized custom option on a field
+// (e.g., [(my_ext) = "value"]) that needs post-parse resolution.
+type CustomFieldOption struct {
+	ParenName       string                              // e.g., "(my_ext)"
+	InnerName       string                              // e.g., "my_ext"
+	Value           string                              // the option value
+	ValueType       tokenizer.TokenType                 // token type of value
+	Field           *descriptorpb.FieldDescriptorProto  // the field this option is on
+	NameTok         tokenizer.Token                     // position of "(" for error reporting
+	AggregateFields []AggregateField                    // non-nil for aggregate values
+	Negative        bool                                // value preceded by '-'
+}
+
 type ParseResult struct {
-	FD                *descriptorpb.FileDescriptorProto
-	ExplicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool
-	CustomFileOptions []CustomFileOption
+	FD                 *descriptorpb.FileDescriptorProto
+	ExplicitJsonNames  map[*descriptorpb.FieldDescriptorProto]bool
+	CustomFileOptions  []CustomFileOption
+	CustomFieldOptions []CustomFieldOption
 }
 
 // ParseFile parses a .proto file and returns a ParseResult.
@@ -254,7 +269,7 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 		return nil, &MultiError{Errors: p.errors}
 	}
 
-	return &ParseResult{FD: fd, ExplicitJsonNames: p.explicitJsonNames, CustomFileOptions: p.customFileOptions}, nil
+	return &ParseResult{FD: fd, ExplicitJsonNames: p.explicitJsonNames, CustomFileOptions: p.customFileOptions, CustomFieldOptions: p.customFieldOptions}, nil
 }
 
 // parseErrorPos extracts 0-based line/col from an error string formatted as "line:col: message"
@@ -4056,22 +4071,73 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if err != nil {
 				return nil, err
 			}
-			// Skip to end of option (consume = value, up to , or ])
-			for {
-				tok := p.tok.Next()
-				if tok.Type == tokenizer.TokenEOF || tok.Value == "]" || tok.Value == "," {
-					if tok.Value == "," {
-						// Check for trailing comma
-						if p.tok.Peek().Value == "]" {
-							p.tok.Next()
-						} else {
-							continue // more options after this one — but we still error
-						}
-					}
-					break
-				}
+			// Consume "="
+			if _, err := p.tok.Expect("="); err != nil {
+				return nil, err
 			}
-			return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", optNameTok.Line+1, optNameTok.Column+1, fullName)
+
+			// Read value (may be negative, aggregate, or simple scalar)
+			var custOpt CustomFieldOption
+			custOpt.ParenName = fullName
+			// Extract inner name (strip parens and leading dot)
+			inner := fullName
+			if len(inner) >= 2 && inner[0] == '(' && inner[len(inner)-1] == ')' {
+				inner = inner[1 : len(inner)-1]
+			}
+			custOpt.InnerName = inner
+			custOpt.NameTok = optNameTok
+			custOpt.Field = field
+
+			negative := false
+			if p.tok.Peek().Value == "-" {
+				p.tok.Next()
+				negative = true
+			}
+			custOpt.Negative = negative
+
+			if p.tok.Peek().Value == "{" {
+				// Aggregate value
+				aggFields := p.consumeAggregate()
+				custOpt.AggregateFields = aggFields
+			} else {
+				valTok := p.tok.Next()
+				p.trackEnd(valTok)
+				custOpt.Value = valTok.Value
+				if negative {
+					custOpt.Value = "-" + custOpt.Value
+				}
+				custOpt.ValueType = valTok.Type
+			}
+
+			// Determine option span end position
+			endTok := p.tok.Peek()
+			optEndLine := endTok.Line
+			optEndCol := endTok.Column // don't include ]/,
+
+			// Add SCI: option span [fieldPath..., 8, 0] (placeholder; field number resolved later)
+			addLoc(append(copyPath(fieldPath), 8, 0),
+				optNameTok.Line, optNameTok.Column, optEndLine, optEndCol)
+
+			if field.Options == nil {
+				field.Options = &descriptorpb.FieldOptions{}
+			}
+
+			p.customFieldOptions = append(p.customFieldOptions, custOpt)
+
+			// Check for comma (more options) or closing bracket
+			next := p.tok.Peek()
+			if next.Value == "," {
+				p.tok.Next()
+				if p.tok.Peek().Value == "]" {
+					tok := p.tok.Peek()
+					return nil, fmt.Errorf("%d:%d: Expected identifier.", tok.Line+1, tok.Column+1)
+				}
+				continue
+			} else if next.Value == "]" {
+				break
+			} else {
+				break
+			}
 		}
 
 		// Handle dotted option names like features.field_presence
