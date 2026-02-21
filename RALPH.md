@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1547/1547 tests passing.
+ALL DONE — 1552/1552 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -467,3 +467,4 @@ ALL DONE — 1547/1547 tests passing.
 289. ✅ Sub-field custom service option support — `option (my_svc_config).name = "primary";` with sub-field path on custom service options, added `SubFieldPath` to `CustomServiceOption`, parser consumes `.subfield` segments, `resolveCustomServiceOptions` walks message type hierarchy and encodes nested protowire bytes, SCI path includes sub-field numbers
 290. ✅ Sub-field custom method option support — `option (my_method_config).name = "worker";` with sub-field path on custom method options, added `SubFieldPath` to `CustomMethodOption`, parser consumes `.subfield` segments after parenthesized name, `resolveCustomMethodOptions` walks message type hierarchy and encodes nested protowire bytes, SCI path `[methodPath..., 4, extNum, subFieldNum]`
 291. ✅ Sub-field custom enum option support — `option (my_enum_config).label = "status";` with sub-field path on custom enum options, added `SubFieldPath` to `CustomEnumOption`, parser consumes `.subfield` segments after parenthesized name, `resolveCustomEnumOptions` walks message type hierarchy and encodes nested protowire bytes, SCI path `[enumPath..., 3, extNum, subFieldNum]`
+292. ✅ Sub-field custom message option support — `option (my_msg_config).label = "important";` with sub-field path on custom message options, added `SubFieldPath` to `CustomMessageOption`, parser consumes `.subfield` segments after parenthesized name, `resolveCustomMessageOptions` walks message type hierarchy and encodes nested protowire bytes, SCI path `[msgPath..., 7, extNum, subFieldNum]`
