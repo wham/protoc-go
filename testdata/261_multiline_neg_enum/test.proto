@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package multilinenegenum;
+
+enum Temperature {
+  TEMPERATURE_UNSPECIFIED = 0;
+  TEMPERATURE_COLD = -
+    1;
+  TEMPERATURE_FREEZING = -
+    2;
+}
+
+message Weather {
+  Temperature temp = 1;
+}
