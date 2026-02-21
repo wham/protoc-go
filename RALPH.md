@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1527/1527 tests passing.
+ALL DONE — 1532/1532 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -464,3 +464,4 @@ ALL DONE — 1527/1527 tests passing.
 286. ✅ Positive sign rejection in custom option values — reject `+` prefix in option values (e.g., `option (my_count) = +42;`) with `Expected option value.` error at `+` token position, matching C++ protoc behavior
 287. ✅ Deep sub-field custom file option paths — `option (my_ext).inner.name = "test";` with multi-level sub-field paths, parser consumes all `.subfield` segments into `SubFieldPath []string`, resolver walks message type hierarchy for each segment, encodes nested length-delimited protowire bytes from innermost to outermost, SCI path `[8, extNum, field1Num, field2Num, ...]`
 288. ✅ Aggregate option colon requirement — reject missing `:` separator in aggregate option values for scalar fields (e.g., `label "test"` without colon) with `Error while parsing option value for "OPTNAME": Expected ":", found "TOKEN".` error at `{` position, `consumeAggregate`/`consumeAggregateAngle` return `([]AggregateField, error)`, colon is optional only for message-typed sub-fields (`{`/`<` values)
+289. ✅ Sub-field custom service option support — `option (my_svc_config).name = "primary";` with sub-field path on custom service options, added `SubFieldPath` to `CustomServiceOption`, parser consumes `.subfield` segments, `resolveCustomServiceOptions` walks message type hierarchy and encodes nested protowire bytes, SCI path includes sub-field numbers
