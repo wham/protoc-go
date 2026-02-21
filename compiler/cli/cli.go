@@ -3375,6 +3375,15 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 		}
 	}
 
+	// Build enum value number map: enum FQN → (value name → number)
+	enumValueNumbers := map[string]map[string]int32{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		prefix := fd.GetPackage()
+		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
+		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
+	}
+
 	var errs []string
 	for _, name := range orderedFiles {
 		result := parseResults[name]
@@ -3396,7 +3405,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 			}
 
 			// Encode the extension value as protowire bytes
-			rawBytes, err := encodeCustomOptionValue(ext, opt.Value, opt.ValueType)
+			rawBytes, err := encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			if err != nil {
 				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 				continue
@@ -3408,6 +3417,31 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 		}
 	}
 	return errs
+}
+
+func collectEnumValueNumbers(enums []*descriptorpb.EnumDescriptorProto, prefix string, out map[string]map[string]int32) {
+	for _, e := range enums {
+		fqn := prefix + "." + e.GetName()
+		if prefix == "" {
+			fqn = e.GetName()
+		}
+		vals := map[string]int32{}
+		for _, v := range e.GetValue() {
+			vals[v.GetName()] = v.GetNumber()
+		}
+		out[fqn] = vals
+	}
+}
+
+func collectEnumValueNumbersInMsgs(msgs []*descriptorpb.DescriptorProto, prefix string, out map[string]map[string]int32) {
+	for _, msg := range msgs {
+		msgFQN := prefix + "." + msg.GetName()
+		if prefix == "" {
+			msgFQN = msg.GetName()
+		}
+		collectEnumValueNumbers(msg.GetEnumType(), msgFQN, out)
+		collectEnumValueNumbersInMsgs(msg.GetNestedType(), msgFQN, out)
+	}
 }
 
 func collectFileOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -3472,7 +3506,7 @@ func findFileOptionExtension(name string, currentPkg string, allExts []fileOptEx
 }
 
 // encodeCustomOptionValue encodes a custom option value as protowire bytes.
-func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value string, valueType tokenizer.TokenType) ([]byte, error) {
+func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value string, valueType tokenizer.TokenType, enumValueNumbers map[string]map[string]int32) ([]byte, error) {
 	fieldNum := protowire.Number(ext.GetNumber())
 	var b []byte
 
@@ -3543,11 +3577,22 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		b = protowire.AppendTag(b, fieldNum, protowire.Fixed64Type)
 		b = protowire.AppendFixed64(b, v)
 	case descriptorpb.FieldDescriptorProto_TYPE_ENUM:
-		// For enums, the value is an identifier name — need to look up the number
-		// For now, try parsing as integer
 		v, err := strconv.ParseInt(value, 0, 32)
 		if err != nil {
-			return nil, fmt.Errorf("enum value resolution not yet implemented for: %s", value)
+			// Resolve enum value name to number
+			enumTypeName := ext.GetTypeName()
+			if strings.HasPrefix(enumTypeName, ".") {
+				enumTypeName = enumTypeName[1:]
+			}
+			vals, ok := enumValueNumbers[enumTypeName]
+			if !ok {
+				return nil, fmt.Errorf("unknown enum type %s for value: %s", ext.GetTypeName(), value)
+			}
+			num, found := vals[value]
+			if !found {
+				return nil, fmt.Errorf("enum type %q has no value named %q", ext.GetTypeName(), value)
+			}
+			v = int64(num)
 		}
 		b = protowire.AppendTag(b, fieldNum, protowire.VarintType)
 		b = protowire.AppendVarint(b, uint64(v))
