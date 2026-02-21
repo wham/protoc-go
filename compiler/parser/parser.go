@@ -70,6 +70,7 @@ type parser struct {
 	customMethodOptions   []CustomMethodOption
 	customEnumOptions     []CustomEnumOption
 	customEnumValueOptions []CustomEnumValueOption
+	customOneofOptions     []CustomOneofOption
 }
 
 // ParseResult holds the result of parsing a .proto file.
@@ -179,6 +180,20 @@ type CustomEnumValueOption struct {
 	SCILoc          *descriptorpb.SourceCodeInfo_Location
 }
 
+// CustomOneofOption represents a parenthesized custom option on a oneof
+// (e.g., option (oneof_label) = "primary";) that needs post-parse resolution.
+type CustomOneofOption struct {
+	ParenName       string
+	InnerName       string
+	Value           string
+	ValueType       tokenizer.TokenType
+	Oneof           *descriptorpb.OneofDescriptorProto
+	NameTok         tokenizer.Token
+	AggregateFields []AggregateField
+	Negative        bool
+	SCILoc          *descriptorpb.SourceCodeInfo_Location
+}
+
 type ParseResult struct {
 	FD                      *descriptorpb.FileDescriptorProto
 	ExplicitJsonNames       map[*descriptorpb.FieldDescriptorProto]bool
@@ -189,6 +204,7 @@ type ParseResult struct {
 	CustomMethodOptions     []CustomMethodOption
 	CustomEnumOptions       []CustomEnumOption
 	CustomEnumValueOptions  []CustomEnumValueOption
+	CustomOneofOptions      []CustomOneofOption
 }
 
 // ParseFile parses a .proto file and returns a ParseResult.
@@ -352,7 +368,7 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 		return nil, &MultiError{Errors: p.errors}
 	}
 
-	return &ParseResult{FD: fd, ExplicitJsonNames: p.explicitJsonNames, CustomFileOptions: p.customFileOptions, CustomFieldOptions: p.customFieldOptions, CustomMessageOptions: p.customMessageOptions, CustomServiceOptions: p.customServiceOptions, CustomMethodOptions: p.customMethodOptions, CustomEnumOptions: p.customEnumOptions, CustomEnumValueOptions: p.customEnumValueOptions}, nil
+	return &ParseResult{FD: fd, ExplicitJsonNames: p.explicitJsonNames, CustomFileOptions: p.customFileOptions, CustomFieldOptions: p.customFieldOptions, CustomMessageOptions: p.customMessageOptions, CustomServiceOptions: p.customServiceOptions, CustomMethodOptions: p.customMethodOptions, CustomEnumOptions: p.customEnumOptions, CustomEnumValueOptions: p.customEnumValueOptions, CustomOneofOptions: p.customOneofOptions}, nil
 }
 
 // parseErrorPos extracts 0-based line/col from an error string formatted as "line:col: message"
@@ -3777,10 +3793,73 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 		if err != nil {
 			return err
 		}
-		if err := p.skipStatement(); err != nil {
+		inner := fullName
+		if len(inner) >= 2 && inner[0] == '(' && inner[len(inner)-1] == ')' {
+			inner = inner[1 : len(inner)-1]
+		}
+
+		if _, err := p.tok.Expect("="); err != nil {
 			return err
 		}
-		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, fullName)
+
+		var custOpt CustomOneofOption
+		custOpt.ParenName = fullName
+		custOpt.InnerName = inner
+		custOpt.NameTok = nameTok
+		custOpt.Oneof = decl
+
+		if p.tok.Peek().Value == "-" {
+			p.tok.Next()
+			custOpt.Negative = true
+		}
+
+		if p.tok.Peek().Value == "{" {
+			custOpt.AggregateFields = p.consumeAggregate()
+		} else {
+			valTok := p.tok.Next()
+			p.trackEnd(valTok)
+			val := valTok.Value
+			if custOpt.Negative {
+				val = "-" + val
+			}
+			custOpt.Value = val
+			custOpt.ValueType = valTok.Type
+			if valTok.Type == tokenizer.TokenString {
+				for p.tok.Peek().Type == tokenizer.TokenString {
+					next := p.tok.Next()
+					p.trackEnd(next)
+					custOpt.Value += next.Value
+				}
+			}
+		}
+
+		endTok, err := p.tok.Expect(";")
+		if err != nil {
+			return err
+		}
+		p.trackEnd(endTok)
+
+		if decl.Options == nil {
+			decl.Options = &descriptorpb.OneofOptions{}
+		}
+
+		// SCI: [oneofPath..., 2] for options statement, [oneofPath..., 2, 0] placeholder
+		optPath := append(copyPath(oneofPath), 2)
+		span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+			Path: optPath,
+			Span: span,
+		})
+		sciLoc := &descriptorpb.SourceCodeInfo_Location{
+			Path: append(copyPath(optPath), 0),
+			Span: span,
+		}
+		p.locations = append(p.locations, sciLoc)
+		p.attachComments(len(p.locations)-1, firstIdx)
+		custOpt.SCILoc = sciLoc
+
+		p.customOneofOptions = append(p.customOneofOptions, custOpt)
+		return nil
 	}
 
 	var featSubField string

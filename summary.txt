@@ -179,12 +179,10 @@ proto_file[0]: google/protobuf/descriptor.proto (package="google.protobuf", synt
     value: EDITION_99999_TEST_ONLY = 99999
     value: EDITION_MAX = 2147483647
   source_code_info_locations: 1451
-proto_file[1]: test.proto (package="customenumval", syntax="")
-  message: Task
-    field: title (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
-    field: level (number=2, type=TYPE_ENUM, label=LABEL_OPTIONAL)
-  enum: Priority
-    value: UNKNOWN = 0
-    value: HIGH = 1
-    value: LOW = 2
-  source_code_info_locations: 38
+proto_file[1]: test.proto (package="subfieldopt", syntax="")
+  message: MyOption
+    field: name (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
+    field: level (number=2, type=TYPE_INT32, label=LABEL_OPTIONAL)
+  message: Placeholder
+    field: data (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
+  source_code_info_locations: 34
