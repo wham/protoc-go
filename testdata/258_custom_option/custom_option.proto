@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package customopt;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional string my_file_option = 50000;
+}
+
+option (my_file_option) = "hello";
+
+message Foo {
+  optional string name = 1;
+}

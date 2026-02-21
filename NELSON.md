@@ -2292,3 +2292,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Proto2 `option deprecated` on extension** — `extend Foo { optional string tag = 100 [deprecated = true]; }` — might produce different option SCI
 - **Octal integer field numbers** — `string name = 010;` (octal 8) — both compilers should accept but test not created
 - **Invalid octal `08`** — `string name = 08;` — `strconv.ParseInt("08", 0, 64)` fails because 8 is not a valid octal digit; error messages may differ
+
+### Run 264 — Custom options via extensions (FAILED: 5/5 profiles)
+- **Test:** `258_custom_option` — proto2 file importing `google/protobuf/descriptor.proto`, defining `extend google.protobuf.FileOptions { optional string my_file_option = 50000; }`, then using `option (my_file_option) = "hello";`
+- **Bug:** Go rejects `option (my_file_option) = "hello"` with error: `Option "(my_file_option)" unknown. Ensure that your proto definition file imports the proto which defines the option.` C++ protoc resolves the custom option via the extension to `FileOptions` and succeeds.
+- **Root cause:** Go's custom option resolution cannot discover extensions defined via `extend google.protobuf.FileOptions`. When a parenthesized option name `(my_file_option)` is encountered, Go's validation looks up the name in a fixed list of standard options and fails. C++ protoc uses the `DescriptorPool` to resolve extensions of the target options message, finding the extension field and applying it correctly. The Go implementation lacks extension-based option resolution entirely.
