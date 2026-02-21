@@ -163,6 +163,7 @@ type CustomMethodOption struct {
 type CustomEnumOption struct {
 	ParenName       string
 	InnerName       string
+	SubFieldPath    []string
 	Value           string
 	ValueType       tokenizer.TokenType
 	Enum            *descriptorpb.EnumDescriptorProto
@@ -2681,6 +2682,16 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 			inner = inner[1 : len(inner)-1]
 		}
 
+		// Handle sub-field path: option (name).sub1.sub2... = value;
+		var subFieldPath []string
+		for p.tok.Peek().Value == "." {
+			dotTok := p.tok.Next()
+			p.trackEnd(dotTok)
+			subTok := p.tok.Next()
+			p.trackEnd(subTok)
+			subFieldPath = append(subFieldPath, subTok.Value)
+		}
+
 		// Consume "="
 		if _, err := p.tok.Expect("="); err != nil {
 			return err
@@ -2689,6 +2700,7 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		var custOpt CustomEnumOption
 		custOpt.ParenName = fullName
 		custOpt.InnerName = inner
+		custOpt.SubFieldPath = subFieldPath
 		custOpt.NameTok = nameTok
 		custOpt.Enum = e
 
@@ -2744,8 +2756,14 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 			Path: optPath,
 			Span: span,
 		})
+		sciPath := append(copyPath(optPath), 0) // placeholder field num
+		if len(subFieldPath) > 0 {
+			sciPath = make([]int32, len(optPath)+1+len(subFieldPath))
+			copy(sciPath, optPath)
+			// remaining elements will be resolved post-parse
+		}
 		sciLoc := &descriptorpb.SourceCodeInfo_Location{
-			Path: append(copyPath(optPath), 0), // placeholder field num
+			Path: sciPath,
 			Span: span,
 		}
 		p.locations = append(p.locations, sciLoc)
