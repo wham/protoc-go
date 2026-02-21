@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1421/1421 tests passing.
+ALL DONE — 1426/1426 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -447,3 +447,4 @@ ALL DONE — 1421/1421 tests passing.
 269. ✅ Custom message option support — `option (my_msg_label) = "primary";` where the option is an extension to `google.protobuf.MessageOptions`, parsed as `CustomMessageOption` in parser, resolved post-parse in `resolveCustomMessageOptions` via `protowire` encoding on `MessageOptions` unknown fields, SCI entries at `[msgPath..., 7]` and `[msgPath..., 7, extNum]` with placeholder field number 0 resolved post-parse via `SCILoc` pointer
 270. ✅ Custom service option support — `option (service_label) = "primary";` where the option is an extension to `google.protobuf.ServiceOptions`, parsed as `CustomServiceOption` in parser, resolved post-parse in `resolveCustomServiceOptions` via `protowire` encoding on `ServiceOptions` unknown fields, SCI entries at `[svcPath..., 3]` and `[svcPath..., 3, extNum]` with placeholder field number 0 resolved post-parse via `SCILoc` pointer
 271. ✅ Custom method option support — `option (auth_role) = "admin";` where the option is an extension to `google.protobuf.MethodOptions`, parsed as `CustomMethodOption` in parser, resolved post-parse in `resolveCustomMethodOptions` via `protowire` encoding on `MethodOptions` unknown fields, SCI entries at `[methodPath..., 4]` and `[methodPath..., 4, extNum]` with placeholder field number 0 resolved post-parse via `SCILoc` pointer
+272. ✅ Custom enum option support — `option (enum_label) = "status_tracker";` where the option is an extension to `google.protobuf.EnumOptions`, parsed as `CustomEnumOption` in parser, resolved post-parse in `resolveCustomEnumOptions` via `protowire` encoding on `EnumOptions` unknown fields, SCI entries at `[enumPath..., 3]` and `[enumPath..., 3, extNum]` with placeholder field number 0 resolved post-parse via `SCILoc` pointer
