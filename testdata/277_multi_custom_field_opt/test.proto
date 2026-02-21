@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package multicustfield;
+
+extend google.protobuf.FieldOptions {
+  optional string label = 50001;
+  optional int32 priority = 50002;
+}
+
+message Task {
+  required string name = 1 [(label) = "primary", (priority) = 5];
+  optional string desc = 2;
+}
