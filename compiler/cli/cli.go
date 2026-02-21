@@ -3610,7 +3610,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 		// Track repeated index per extension field number
 		repeatedIdx := map[int32]int32{}
 		for _, opt := range result.CustomFileOptions {
-			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -3734,27 +3734,29 @@ func collectFileOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN s
 }
 
 // findFileOptionExtension looks up an extension field by name, considering package scope.
-func findFileOptionExtension(name string, currentPkg string, allExts []fileOptExtInfo) *descriptorpb.FieldDescriptorProto {
+func findFileOptionExtension(name string, currentPkg string, allExts []fileOptExtInfo) (*descriptorpb.FieldDescriptorProto, string) {
+	buildFQN := func(e fileOptExtInfo) string {
+		if e.pkg != "" {
+			return e.pkg + "." + e.field.GetName()
+		}
+		return e.field.GetName()
+	}
 	// Try fully-qualified lookup (name starts with .)
 	if strings.HasPrefix(name, ".") {
 		fqn := name[1:] // strip leading dot
 		for _, e := range allExts {
-			extFQN := e.field.GetName()
-			if e.pkg != "" {
-				extFQN = e.pkg + "." + e.field.GetName()
-			}
-			if extFQN == fqn {
-				return e.field
+			if buildFQN(e) == fqn {
+				return e.field, buildFQN(e)
 			}
 		}
-		return nil
+		return nil, ""
 	}
 
 	// Try current package scope first
 	if currentPkg != "" {
 		for _, e := range allExts {
 			if e.field.GetName() == name && e.pkg == currentPkg {
-				return e.field
+				return e.field, buildFQN(e)
 			}
 		}
 	}
@@ -3762,24 +3764,21 @@ func findFileOptionExtension(name string, currentPkg string, allExts []fileOptEx
 	// Try bare name match
 	for _, e := range allExts {
 		if e.field.GetName() == name {
-			return e.field
+			return e.field, buildFQN(e)
 		}
 	}
 
 	// Try dotted name as relative path
 	if strings.Contains(name, ".") {
 		for _, e := range allExts {
-			extFQN := e.field.GetName()
-			if e.pkg != "" {
-				extFQN = e.pkg + "." + e.field.GetName()
-			}
+			extFQN := buildFQN(e)
 			if strings.HasSuffix(extFQN, "."+name) || extFQN == name {
-				return e.field
+				return e.field, extFQN
 			}
 		}
 	}
 
-	return nil
+	return nil, ""
 }
 
 // resolveCustomFieldOptions resolves parenthesized custom options on fields
@@ -3825,11 +3824,20 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomFieldOptions {
-			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
+			}
+
+			// Validate boolean option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil {
+				if opt.ValueType != tokenizer.TokenIdent || (opt.Value != "true" && opt.Value != "false") {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.ValTok.Line+1, opt.ValTok.Column+1, extFQN))
+					continue
+				}
 			}
 
 			// Update SCI path with actual field number
@@ -3913,7 +3921,7 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomMessageOptions {
-			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -3998,7 +4006,7 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomServiceOptions {
-			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -4080,7 +4088,7 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomMethodOptions {
-			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -4162,7 +4170,7 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomEnumOptions {
-			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -4244,7 +4252,7 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomEnumValueOptions {
-			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -4326,7 +4334,7 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomOneofOptions {
-			ext := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))

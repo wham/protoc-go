@@ -107,6 +107,7 @@ type CustomFieldOption struct {
 	ValueType       tokenizer.TokenType                 // token type of value
 	Field           *descriptorpb.FieldDescriptorProto  // the field this option is on
 	NameTok         tokenizer.Token                     // position of "(" for error reporting
+	ValTok          tokenizer.Token                     // position of value for error reporting
 	AggregateFields []AggregateField                    // non-nil for aggregate values
 	Negative        bool                                // value preceded by '-'
 	SCILoc          *descriptorpb.SourceCodeInfo_Location // SCI entry to update with resolved field number
@@ -4795,6 +4796,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 					custOpt.Value = "-" + custOpt.Value
 				}
 				custOpt.ValueType = valTok.Type
+				custOpt.ValTok = valTok
 			}
 
 			// Determine option span end position

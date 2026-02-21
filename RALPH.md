@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1482/1482 tests passing.
+ALL DONE — 1487/1487 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -457,3 +457,4 @@ ALL DONE — 1482/1482 tests passing.
 277. ✅ Repeated custom file option SCI paths — for repeated extension fields (e.g., `repeated string tags = 50001`), each `option (tags) = ...;` gets SCI path `[8, fieldNum, index]` (with repeated index) instead of `[8, fieldNum]`, matching C++ protoc behavior. Track `repeatedIdx` map per file in `resolveCustomFileOptions`.
 278. ✅ Nested aggregate option support — `option (my_opt) = { info: { label: "primary" priority: 5 } tag: "test" };` with nested message literal fields, `consumeAggregate` recursively handles `{ ... }` sub-values via `SubFields` on `AggregateField`, `encodeAggregateFields` in cli.go recursively encodes TYPE_MESSAGE sub-fields as length-delimited protowire bytes
 281. ✅ Adjacent string concatenation in aggregate option message literals — `label: "hello" "world"` inside `{ ... }` and `< ... >` aggregate option bodies, `consumeAggregate` and `consumeAggregateAngle` consume adjacent `TokenString` tokens and concatenate values, same pattern as file option/import/syntax string concatenation
+282. ✅ Aggregate bool numeric values — `enabled: 1` and `verbose: 0` in aggregate options encode as bool true/false respectively, `encodeCustomOptionValue` TYPE_BOOL case checks `value == "true" || value == "1"` for true
