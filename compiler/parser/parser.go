@@ -186,6 +186,7 @@ type CustomEnumValueOption struct {
 	AggregateFields []AggregateField
 	Negative        bool
 	SCILoc          *descriptorpb.SourceCodeInfo_Location
+	SubFieldPath    []string
 }
 
 // CustomOneofOption represents a parenthesized custom option on a oneof
@@ -2359,17 +2360,30 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 					if err != nil {
 						return nil, err
 					}
+
+					inner := fullName
+					if len(inner) >= 2 && inner[0] == '(' && inner[len(inner)-1] == ')' {
+						inner = inner[1 : len(inner)-1]
+					}
+
+					// Handle sub-field path: [(name).sub1.sub2 = value]
+					var subFieldPath []string
+					for p.tok.Peek().Value == "." {
+						dotTok := p.tok.Next()
+						p.trackEnd(dotTok)
+						subTok := p.tok.Next()
+						p.trackEnd(subTok)
+						subFieldPath = append(subFieldPath, subTok.Value)
+					}
+
 					if _, err := p.tok.Expect("="); err != nil {
 						return nil, err
 					}
 
 					var custOpt CustomEnumValueOption
 					custOpt.ParenName = fullName
-					inner := fullName
-					if len(inner) >= 2 && inner[0] == '(' && inner[len(inner)-1] == ')' {
-						inner = inner[1 : len(inner)-1]
-					}
 					custOpt.InnerName = inner
+					custOpt.SubFieldPath = subFieldPath
 					custOpt.NameTok = optNameTok
 
 					neg := false
@@ -2642,7 +2656,14 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 			// Add deferred custom enum value option SCI entries
 			for i := range pendingCustEnumValOpts {
 				sciLoc := pendingCustEnumValOpts[i].SCILoc
-				sciLoc.Path = append(copyPath(optPath), 0) // placeholder field num, resolved later
+				basePath := append(copyPath(optPath), 0) // placeholder field num, resolved later
+				if len(pendingCustEnumValOpts[i].SubFieldPath) > 0 {
+					sciPath := make([]int32, len(basePath)+len(pendingCustEnumValOpts[i].SubFieldPath))
+					copy(sciPath, basePath)
+					sciLoc.Path = sciPath
+				} else {
+					sciLoc.Path = basePath
+				}
 				p.locations = append(p.locations, sciLoc)
 			}
 		}
