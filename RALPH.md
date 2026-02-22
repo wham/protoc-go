@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1567/1567 tests passing.
+ALL DONE — 1568/1568 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -471,3 +471,4 @@ ALL DONE — 1567/1567 tests passing.
 293. ✅ Sub-field custom enum value option support — `[(my_ev_config).label = "low"]` with sub-field path on custom enum value options, added `SubFieldPath` to `CustomEnumValueOption`, parser consumes `.subfield` segments after parenthesized name, `resolveCustomEnumValueOptions` walks message type hierarchy and encodes nested protowire bytes, SCI path `[valuePath..., 3, extNum, subFieldNum]`
 294. ✅ Sub-field custom oneof option support — `option (my_oneof_config).label = "primary";` with sub-field path on custom oneof options, added `SubFieldPath` to `CustomOneofOption`, parser consumes `.subfield` segments after parenthesized name, `resolveCustomOneofOptions` walks message type hierarchy and encodes nested protowire bytes, SCI path `[oneofPath..., 2, extNum, subFieldNum]`
 295. ✅ Angle bracket option error recovery — `option (my_config) = < ... >;` now produces two errors matching C++ protoc: `Expected option value.` at `<` + `Expected top-level statement (e.g. "message").` for tokens after recovered `{...}` block. Added `skipStatementCpp`/`skipRestOfBlock` helpers matching C++ `SkipStatement`/`SkipRestOfBlock` behavior (stops after `{block}` or `;`). Top-level default case now uses error recovery instead of fatal error.
+296. ✅ `--decode_raw` stdin parsing — read binary proto from stdin, validate wire format, print decoded fields to stdout matching C++ protoc output format (`field: value`, `field { submsg }`, C-escaped strings). Invalid input produces `Failed to parse input.` error (exit 1). Empty stdin exits 0.

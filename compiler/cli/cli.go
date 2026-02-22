@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -3745,7 +3746,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 					rawBytes, err = encodeCustomOptionValue(ext, value, opt.ValueType, enumValueNumbers)
 				}
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+					errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, ext.GetName()))
 					continue
 				}
 
@@ -3996,7 +3997,7 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+				errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, ext.GetName()))
 				continue
 			}
 
@@ -4165,7 +4166,7 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+				errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, ext.GetName()))
 				continue
 			}
 
@@ -4329,7 +4330,7 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+				errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, ext.GetName()))
 				continue
 			}
 
@@ -4492,7 +4493,7 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+				errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, ext.GetName()))
 				continue
 			}
 
@@ -4655,7 +4656,7 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+				errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, ext.GetName()))
 				continue
 			}
 
@@ -4818,7 +4819,7 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+				errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, ext.GetName()))
 				continue
 			}
 
@@ -4981,7 +4982,7 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
 			if err != nil {
-				errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+				errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, ext.GetName()))
 				continue
 			}
 
@@ -5190,6 +5191,7 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 	}
 
 	// Encode each field of the aggregate
+	seenFields := map[string]bool{}
 	var inner []byte
 	for _, af := range aggFields {
 		var subField *descriptorpb.FieldDescriptorProto
@@ -5208,11 +5210,17 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 				return nil, fmt.Errorf("unknown field %q in message %s", af.Name, typeName)
 			}
 		}
+		if subField.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
+			if seenFields[af.Name] {
+				return nil, &aggregateDupFieldError{fieldName: af.Name}
+			}
+			seenFields[af.Name] = true
+		}
 		if len(af.SubFields) > 0 {
 			// Nested message literal — recurse
 			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			if err != nil {
-				return nil, fmt.Errorf("field %s: %w", af.Name, err)
+				return nil, err
 			}
 			inner = append(inner, subBytes...)
 		} else {
@@ -5247,6 +5255,7 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 		return nil, fmt.Errorf("unknown message type %s", field.GetTypeName())
 	}
 
+	seenFields := map[string]bool{}
 	var inner []byte
 	for _, af := range aggFields {
 		var subField *descriptorpb.FieldDescriptorProto
@@ -5264,10 +5273,16 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 				return nil, fmt.Errorf("unknown field %q in message %s", af.Name, typeName)
 			}
 		}
+		if subField.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
+			if seenFields[af.Name] {
+				return nil, &aggregateDupFieldError{fieldName: af.Name}
+			}
+			seenFields[af.Name] = true
+		}
 		if len(af.SubFields) > 0 {
 			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			if err != nil {
-				return nil, fmt.Errorf("field %s: %w", af.Name, err)
+				return nil, err
 			}
 			inner = append(inner, subBytes...)
 		} else {
@@ -5288,6 +5303,23 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 	b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
 	b = protowire.AppendBytes(b, inner)
 	return b, nil
+}
+
+type aggregateDupFieldError struct {
+	fieldName string
+}
+
+func (e *aggregateDupFieldError) Error() string {
+	return fmt.Sprintf("Non-repeated field \"%s\" is specified multiple times.", e.fieldName)
+}
+
+func formatAggregateError(err error, filename string, braceTok tokenizer.Token, optName string) string {
+	var dupErr *aggregateDupFieldError
+	if errors.As(err, &dupErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, dupErr.Error())
+	}
+	return fmt.Sprintf("%s: error encoding custom option: %v", filename, err)
 }
 
 func decodeRawProto(w *os.File, data []byte, indent int) error {

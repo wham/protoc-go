@@ -86,6 +86,7 @@ type CustomFileOption struct {
 	SCIIndex  int             // index in SCI locations for [8, fieldNum] entry
 	NameTok   tokenizer.Token // position of "(" for error reporting
 	AggregateFields []AggregateField // non-nil for aggregate (message literal) values
+	AggregateBraceTok tokenizer.Token // position of "{" for aggregate error reporting
 }
 
 // AggregateField is a key-value pair inside an aggregate option value.
@@ -110,6 +111,7 @@ type CustomFieldOption struct {
 	NameTok         tokenizer.Token                     // position of "(" for error reporting
 	ValTok          tokenizer.Token                     // position of value for error reporting
 	AggregateFields []AggregateField                    // non-nil for aggregate values
+	AggregateBraceTok tokenizer.Token                   // position of "{" for aggregate error reporting
 	Negative        bool                                // value preceded by '-'
 	SCILoc          *descriptorpb.SourceCodeInfo_Location // SCI entry to update with resolved field number
 }
@@ -125,6 +127,7 @@ type CustomMessageOption struct {
 	Message         *descriptorpb.DescriptorProto       // the message this option is on
 	NameTok         tokenizer.Token                     // position of "(" for error reporting
 	AggregateFields []AggregateField                    // non-nil for aggregate values
+	AggregateBraceTok tokenizer.Token                   // position of "{" for aggregate error reporting
 	Negative        bool                                // value preceded by '-'
 	SCILoc          *descriptorpb.SourceCodeInfo_Location // SCI entry to update with resolved field number
 }
@@ -140,6 +143,7 @@ type CustomServiceOption struct {
 	Service         *descriptorpb.ServiceDescriptorProto
 	NameTok         tokenizer.Token
 	AggregateFields []AggregateField
+	AggregateBraceTok tokenizer.Token
 	Negative        bool
 	SCILoc          *descriptorpb.SourceCodeInfo_Location
 }
@@ -155,6 +159,7 @@ type CustomMethodOption struct {
 	Method          *descriptorpb.MethodDescriptorProto
 	NameTok         tokenizer.Token
 	AggregateFields []AggregateField
+	AggregateBraceTok tokenizer.Token
 	Negative        bool
 	SCILoc          *descriptorpb.SourceCodeInfo_Location
 }
@@ -170,6 +175,7 @@ type CustomEnumOption struct {
 	Enum            *descriptorpb.EnumDescriptorProto
 	NameTok         tokenizer.Token
 	AggregateFields []AggregateField
+	AggregateBraceTok tokenizer.Token
 	Negative        bool
 	SCILoc          *descriptorpb.SourceCodeInfo_Location
 }
@@ -184,6 +190,7 @@ type CustomEnumValueOption struct {
 	EnumValue       *descriptorpb.EnumValueDescriptorProto
 	NameTok         tokenizer.Token
 	AggregateFields []AggregateField
+	AggregateBraceTok tokenizer.Token
 	Negative        bool
 	SCILoc          *descriptorpb.SourceCodeInfo_Location
 	SubFieldPath    []string
@@ -199,6 +206,7 @@ type CustomOneofOption struct {
 	Oneof           *descriptorpb.OneofDescriptorProto
 	NameTok         tokenizer.Token
 	AggregateFields []AggregateField
+	AggregateBraceTok tokenizer.Token
 	Negative        bool
 	SCILoc          *descriptorpb.SourceCodeInfo_Location
 	SubFieldPath    []string
@@ -1529,6 +1537,7 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		if p.tok.Peek().Value == "{" {
 			brTok := p.tok.Next() // consume '{'
 			p.trackEnd(brTok)
+			custOpt.AggregateBraceTok = brTok
 			var aggErr error
 			custOpt.AggregateFields, aggErr = p.consumeAggregate()
 			if aggErr != nil {
@@ -2406,6 +2415,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 						closeTok := p.tok.Next() // consume '}'
 						p.trackEnd(closeTok)
 						custOpt.AggregateFields = aggFields
+						custOpt.AggregateBraceTok = brTok
 					} else {
 						valTok := p.tok.Next()
 						p.trackEnd(valTok)
@@ -2755,6 +2765,7 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		if p.tok.Peek().Value == "{" {
 			brTok := p.tok.Next() // consume '{'
 			p.trackEnd(brTok)
+			custOpt.AggregateBraceTok = brTok
 			var aggErr error
 			custOpt.AggregateFields, aggErr = p.consumeAggregate()
 			if aggErr != nil {
@@ -3243,6 +3254,7 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 		if p.tok.Peek().Value == "{" {
 			brTok := p.tok.Next() // consume '{'
 			p.trackEnd(brTok)
+			custOpt.AggregateBraceTok = brTok
 			var aggErr error
 			custOpt.AggregateFields, aggErr = p.consumeAggregate()
 			if aggErr != nil {
@@ -3481,6 +3493,7 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 		if p.tok.Peek().Value == "{" {
 			brTok := p.tok.Next() // consume '{'
 			p.trackEnd(brTok)
+			custOpt.AggregateBraceTok = brTok
 			var aggErr error
 			custOpt.AggregateFields, aggErr = p.consumeAggregate()
 			if aggErr != nil {
@@ -3971,6 +3984,7 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 		if p.tok.Peek().Value == "{" {
 			brTok := p.tok.Next() // consume '{'
 			p.trackEnd(brTok)
+			custOpt.AggregateBraceTok = brTok
 			var aggErr error
 			custOpt.AggregateFields, aggErr = p.consumeAggregate()
 			if aggErr != nil {
@@ -4387,15 +4401,16 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		p.attachComments(len(p.locations)-1, firstIdx)
 
 		p.customFileOptions = append(p.customFileOptions, CustomFileOption{
-			ParenName:       fullName,
-			InnerName:       innerName,
-			SubFieldPath:    subFieldPath,
-			Value:           valTok.Value,
-			ValueType:       valTok.Type,
-			Negative:        negative,
-			SCIIndex:        sciIdx,
-			NameTok:         nameTok,
-			AggregateFields: aggregateFields,
+			ParenName:         fullName,
+			InnerName:         innerName,
+			SubFieldPath:      subFieldPath,
+			Value:             valTok.Value,
+			ValueType:         valTok.Type,
+			Negative:          negative,
+			SCIIndex:          sciIdx,
+			NameTok:           nameTok,
+			AggregateFields:   aggregateFields,
+			AggregateBraceTok: valTok,
 		})
 		return nil
 	}
@@ -5136,6 +5151,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				closeTok := p.tok.Next() // consume '}'
 				p.trackEnd(closeTok)
 				custOpt.AggregateFields = aggFields
+				custOpt.AggregateBraceTok = brTok
 			} else {
 				valTok := p.tok.Next()
 				p.trackEnd(valTok)
