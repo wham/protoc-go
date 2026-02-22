@@ -2318,7 +2318,16 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 		check := func(fqn, shortName, scope string, line, col int, enumName string) {
 			if seen[fqn] {
 				var errMsg string
-				if line > 0 && col > 0 {
+				if scope == "" {
+					// No package — C++ protoc omits " in ..." suffix
+					if line > 0 && col > 0 {
+						errMsg = fmt.Sprintf("%s:%d:%d: \"%s\" is already defined.",
+							fd.GetName(), line, col, shortName)
+					} else {
+						errMsg = fmt.Sprintf("%s: \"%s\" is already defined.",
+							fd.GetName(), shortName)
+					}
+				} else if line > 0 && col > 0 {
 					errMsg = fmt.Sprintf("%s:%d:%d: \"%s\" is already defined in \"%s\".",
 						fd.GetName(), line, col, shortName, scope)
 				} else {

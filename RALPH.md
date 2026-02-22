@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1578/1578 tests passing.
+ALL DONE — 1583/1583 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -475,3 +475,4 @@ ALL DONE — 1578/1578 tests passing.
 297. ✅ Aggregate option duplicate non-repeated field validation — reject non-repeated fields specified multiple times in aggregate options (`{ label: "first" label: "second" }`) with `Non-repeated field "X" is specified multiple times.` error wrapped in `Error while parsing option value for "OPTNAME":` at `{` position, `aggregateDupFieldError` type + `formatAggregateError` helper, `AggregateBraceTok` field on all custom option types
 - Aggregate option duplicate non-repeated field validation: C++ protoc rejects non-repeated fields specified multiple times in aggregate option values (e.g., `{ label: "first" label: "second" }`). Error format: `filename:line:col: Error while parsing option value for "OPTNAME": Non-repeated field "FIELDNAME" is specified multiple times.` Position is at the `{` token. `aggregateDupFieldError` type in cli.go, checked in `encodeAggregateOption` and `encodeAggregateFields`. `formatAggregateError` helper formats the error with position. `AggregateBraceTok` field added to all 8 custom option types to store the `{` position. Set at each parser site where `{` is consumed for aggregate custom options.
 298. ✅ Duplicate non-repeated custom file option validation — reject non-repeated custom file options specified twice (e.g., `option (my_label) = "first"; option (my_label) = "second";`) with `Option "(my_label)" was already set.` error at second occurrence's `(` position, tracked via `seenCustomOpts` map in `resolveCustomFileOptions` (cli.go), skips repeated extensions
+299. ✅ No-package enum duplicate value FQN — when file has no `package`, enum value FQNs in duplicate value errors omit the leading dot (e.g., `"URGENT"` not `".URGENT"`), handle empty `parentScope` in `collectDuplicateEnumValueErrors`
