@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1568/1568 tests passing.
+ALL DONE — 1573/1573 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -472,3 +472,5 @@ ALL DONE — 1568/1568 tests passing.
 294. ✅ Sub-field custom oneof option support — `option (my_oneof_config).label = "primary";` with sub-field path on custom oneof options, added `SubFieldPath` to `CustomOneofOption`, parser consumes `.subfield` segments after parenthesized name, `resolveCustomOneofOptions` walks message type hierarchy and encodes nested protowire bytes, SCI path `[oneofPath..., 2, extNum, subFieldNum]`
 295. ✅ Angle bracket option error recovery — `option (my_config) = < ... >;` now produces two errors matching C++ protoc: `Expected option value.` at `<` + `Expected top-level statement (e.g. "message").` for tokens after recovered `{...}` block. Added `skipStatementCpp`/`skipRestOfBlock` helpers matching C++ `SkipStatement`/`SkipRestOfBlock` behavior (stops after `{block}` or `;`). Top-level default case now uses error recovery instead of fatal error.
 296. ✅ `--decode_raw` stdin parsing — read binary proto from stdin, validate wire format, print decoded fields to stdout matching C++ protoc output format (`field: value`, `field { submsg }`, C-escaped strings). Invalid input produces `Failed to parse input.` error (exit 1). Empty stdin exits 0.
+297. ✅ Aggregate option duplicate non-repeated field validation — reject non-repeated fields specified multiple times in aggregate options (`{ label: "first" label: "second" }`) with `Non-repeated field "X" is specified multiple times.` error wrapped in `Error while parsing option value for "OPTNAME":` at `{` position, `aggregateDupFieldError` type + `formatAggregateError` helper, `AggregateBraceTok` field on all custom option types
+- Aggregate option duplicate non-repeated field validation: C++ protoc rejects non-repeated fields specified multiple times in aggregate option values (e.g., `{ label: "first" label: "second" }`). Error format: `filename:line:col: Error while parsing option value for "OPTNAME": Non-repeated field "FIELDNAME" is specified multiple times.` Position is at the `{` token. `aggregateDupFieldError` type in cli.go, checked in `encodeAggregateOption` and `encodeAggregateFields`. `formatAggregateError` helper formats the error with position. `AggregateBraceTok` field added to all 8 custom option types to store the `{` position. Set at each parser site where `{` is consumed for aggregate custom options.
