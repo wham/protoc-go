@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -151,8 +152,19 @@ func Run(args []string) error {
 		return nil
 	}
 
-	// --decode_raw reads binary proto from stdin; no files needed
+	// --decode_raw reads binary proto from stdin and decodes as raw wire format
 	if cfg.decodeRaw {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("Failed to parse input.")
+		}
+		if len(data) == 0 {
+			return nil
+		}
+		if err := validateRawProto(data); err != nil {
+			return fmt.Errorf("Failed to parse input.")
+		}
+		decodeRawProto(os.Stdout, data, 0)
 		return nil
 	}
 
@@ -5276,5 +5288,198 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 	b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
 	b = protowire.AppendBytes(b, inner)
 	return b, nil
+}
+
+func decodeRawProto(w *os.File, data []byte, indent int) error {
+	for len(data) > 0 {
+		num, wtype, n := protowire.ConsumeTag(data)
+		if n < 0 || num < 1 {
+			return fmt.Errorf("invalid tag")
+		}
+		data = data[n:]
+		prefix := strings.Repeat("  ", indent)
+		switch wtype {
+		case protowire.VarintType:
+			v, vn := protowire.ConsumeVarint(data)
+			if vn < 0 {
+				return fmt.Errorf("invalid varint")
+			}
+			data = data[vn:]
+			fmt.Fprintf(w, "%s%d: %d\n", prefix, num, v)
+		case protowire.Fixed64Type:
+			v, vn := protowire.ConsumeFixed64(data)
+			if vn < 0 {
+				return fmt.Errorf("invalid fixed64")
+			}
+			data = data[vn:]
+			fmt.Fprintf(w, "%s%d: 0x%016x\n", prefix, num, v)
+		case protowire.Fixed32Type:
+			v, vn := protowire.ConsumeFixed32(data)
+			if vn < 0 {
+				return fmt.Errorf("invalid fixed32")
+			}
+			data = data[vn:]
+			fmt.Fprintf(w, "%s%d: 0x%08x\n", prefix, num, v)
+		case protowire.BytesType:
+			v, vn := protowire.ConsumeBytes(data)
+			if vn < 0 {
+				return fmt.Errorf("invalid bytes")
+			}
+			data = data[vn:]
+			// Try to parse as sub-message first
+			if tryErr := validateRawProto(v); tryErr == nil && len(v) > 0 {
+				fmt.Fprintf(w, "%s%d {\n", prefix, num)
+				decodeRawProto(w, v, indent+1)
+				fmt.Fprintf(w, "%s}\n", prefix)
+			} else {
+				fmt.Fprintf(w, "%s%d: \"%s\"\n", prefix, num, cEscapeForDecode(v))
+			}
+		case protowire.StartGroupType:
+			fmt.Fprintf(w, "%s%d {\n", prefix, num)
+			for len(data) > 0 {
+				peekNum, peekType, peekN := protowire.ConsumeTag(data)
+				if peekN < 0 {
+					return fmt.Errorf("invalid tag in group")
+				}
+				if peekType == protowire.EndGroupType && peekNum == num {
+					data = data[peekN:]
+					break
+				}
+				consumed, err := decodeRawField(w, data, indent+1)
+				if err != nil {
+					return err
+				}
+				data = data[consumed:]
+			}
+			fmt.Fprintf(w, "%s}\n", prefix)
+		default:
+			return fmt.Errorf("unknown wire type %d", wtype)
+		}
+	}
+	return nil
+}
+
+func validateRawProto(data []byte) error {
+	for len(data) > 0 {
+		num, wtype, n := protowire.ConsumeTag(data)
+		if n < 0 || num < 1 {
+			return fmt.Errorf("invalid")
+		}
+		data = data[n:]
+		switch wtype {
+		case protowire.VarintType:
+			_, vn := protowire.ConsumeVarint(data)
+			if vn < 0 {
+				return fmt.Errorf("invalid")
+			}
+			data = data[vn:]
+		case protowire.Fixed64Type:
+			if len(data) < 8 {
+				return fmt.Errorf("invalid")
+			}
+			data = data[8:]
+		case protowire.Fixed32Type:
+			if len(data) < 4 {
+				return fmt.Errorf("invalid")
+			}
+			data = data[4:]
+		case protowire.BytesType:
+			_, vn := protowire.ConsumeBytes(data)
+			if vn < 0 {
+				return fmt.Errorf("invalid")
+			}
+			data = data[vn:]
+		case protowire.StartGroupType:
+			// skip group contents
+			for len(data) > 0 {
+				gNum, gType, gn := protowire.ConsumeTag(data)
+				if gn < 0 {
+					return fmt.Errorf("invalid")
+				}
+				if gType == protowire.EndGroupType && gNum == num {
+					data = data[gn:]
+					break
+				}
+				return fmt.Errorf("group validation not implemented")
+			}
+		default:
+			return fmt.Errorf("invalid")
+		}
+	}
+	return nil
+}
+
+func decodeRawField(w *os.File, data []byte, indent int) (int, error) {
+	num, wtype, n := protowire.ConsumeTag(data)
+	if n < 0 || num < 1 {
+		return 0, fmt.Errorf("invalid tag")
+	}
+	consumed := n
+	rest := data[n:]
+	prefix := strings.Repeat("  ", indent)
+	switch wtype {
+	case protowire.VarintType:
+		v, vn := protowire.ConsumeVarint(rest)
+		if vn < 0 {
+			return 0, fmt.Errorf("invalid varint")
+		}
+		consumed += vn
+		fmt.Fprintf(w, "%s%d: %d\n", prefix, num, v)
+	case protowire.Fixed64Type:
+		v, vn := protowire.ConsumeFixed64(rest)
+		if vn < 0 {
+			return 0, fmt.Errorf("invalid fixed64")
+		}
+		consumed += vn
+		fmt.Fprintf(w, "%s%d: 0x%016x\n", prefix, num, v)
+	case protowire.Fixed32Type:
+		v, vn := protowire.ConsumeFixed32(rest)
+		if vn < 0 {
+			return 0, fmt.Errorf("invalid fixed32")
+		}
+		consumed += vn
+		fmt.Fprintf(w, "%s%d: 0x%08x\n", prefix, num, v)
+	case protowire.BytesType:
+		v, vn := protowire.ConsumeBytes(rest)
+		if vn < 0 {
+			return 0, fmt.Errorf("invalid bytes")
+		}
+		consumed += vn
+		if tryErr := validateRawProto(v); tryErr == nil && len(v) > 0 {
+			fmt.Fprintf(w, "%s%d {\n", prefix, num)
+			decodeRawProto(w, v, indent+1)
+			fmt.Fprintf(w, "%s}\n", prefix)
+		} else {
+			fmt.Fprintf(w, "%s%d: \"%s\"\n", prefix, num, cEscapeForDecode(v))
+		}
+	default:
+		return 0, fmt.Errorf("unknown wire type")
+	}
+	return consumed, nil
+}
+
+func cEscapeForDecode(data []byte) string {
+	var sb strings.Builder
+	for _, b := range data {
+		switch b {
+		case '\n':
+			sb.WriteString(`\n`)
+		case '\r':
+			sb.WriteString(`\r`)
+		case '\t':
+			sb.WriteString(`\t`)
+		case '"':
+			sb.WriteString(`\"`)
+		case '\\':
+			sb.WriteString(`\\`)
+		default:
+			if b >= 0x20 && b < 0x7f {
+				sb.WriteByte(b)
+			} else {
+				fmt.Fprintf(&sb, `\%03o`, b)
+			}
+		}
+	}
+	return sb.String()
 }
 
