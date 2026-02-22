@@ -1625,8 +1625,14 @@ func collectDuplicateEnumValueErrors(filename string, e *descriptorpb.EnumDescri
 		if firstName, ok := seen[num]; ok {
 			line, col := findEnumValueNumberLocation(enumPath, i, sci)
 			// Enum values are scoped to the parent (package or message), not the enum
-			valFqn := parentScope + "." + val.GetName()
-			firstFqn := parentScope + "." + firstName
+			valFqn := val.GetName()
+			if parentScope != "" {
+				valFqn = parentScope + "." + valFqn
+			}
+			firstFqn := firstName
+			if parentScope != "" {
+				firstFqn = parentScope + "." + firstFqn
+			}
 			// Find next available enum value
 			nextAvail := nextAvailableEnumValue(e)
 			*errs = append(*errs, fmt.Sprintf(
