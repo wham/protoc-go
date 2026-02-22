@@ -395,6 +395,7 @@ CLI_TESTS=(
   "deterministic_output|--deterministic_output"
   "retain_options|--retain_options"
   "decode_raw|--decode_raw"
+  "decode_raw_stdin|--decode_raw|hello"
   "descriptor_set_in|--descriptor_set_in=/tmp/descriptors.pb"
   "dependency_out|--dependency_out=/tmp/deps.txt -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "encode|--encode=foo.Message"
