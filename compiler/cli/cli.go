@@ -3622,6 +3622,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 		fd := parsed[name]
 		// Track repeated index per extension field number
 		repeatedIdx := map[int32]int32{}
+		seenCustomOpts := map[string]bool{}
 		for _, opt := range result.CustomFileOptions {
 			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
@@ -3631,6 +3632,16 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 			}
 
 			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+
+			if !isRepeated && len(opt.SubFieldPath) == 0 {
+				optKey := opt.ParenName
+				if seenCustomOpts[optKey] {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" was already set.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				seenCustomOpts[optKey] = true
+			}
 
 			if len(opt.SubFieldPath) > 0 {
 				// Sub-field option: option (ext).sub1.sub2... = value;
