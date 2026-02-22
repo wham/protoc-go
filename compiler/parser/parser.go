@@ -325,7 +325,9 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 			// Empty statement — consume and continue (C++ protoc allows these)
 			p.tok.Next()
 		default:
-			parseErr = fmt.Errorf("%d:%d: unexpected token %q", tok.Line+1, tok.Column+1, tok.Value)
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected top-level statement (e.g. \"message\").", p.filename, tok.Line+1, tok.Column+1))
+			p.skipStatementCpp()
+			continue
 		}
 		if parseErr != nil {
 			break
@@ -4320,7 +4322,9 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 
 		// Reject angle bracket aggregate syntax and positive sign — C++ protoc doesn't support them for options
 		if valTok.Value == "<" || valTok.Value == "+" {
-			return fmt.Errorf("%d:%d: Expected option value.", valTok.Line+1, valTok.Column+1)
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected option value.", p.filename, valTok.Line+1, valTok.Column+1))
+			p.skipStatementCpp()
+			return nil
 		}
 
 		var aggregateFields []AggregateField
@@ -5882,6 +5886,53 @@ func (p *parser) skipToToken(target string) {
 		tok := p.tok.Next()
 		if tok.Value == target || tok.Type == tokenizer.TokenEOF {
 			return
+		}
+	}
+}
+
+// skipStatementCpp implements C++ protoc's SkipStatement() behavior:
+// skips tokens until ; (consumed), { (consumes block then returns), or } (not consumed).
+func (p *parser) skipStatementCpp() {
+	for {
+		tok := p.tok.Peek()
+		if tok.Type == tokenizer.TokenEOF {
+			return
+		}
+		if tok.Value == ";" {
+			p.tok.Next()
+			return
+		}
+		if tok.Value == "{" {
+			p.tok.Next()
+			p.skipRestOfBlock()
+			return
+		}
+		if tok.Value == "}" {
+			return
+		}
+		p.tok.Next()
+	}
+}
+
+// skipRestOfBlock consumes tokens until the matching } is found (and consumed).
+func (p *parser) skipRestOfBlock() {
+	depth := 0
+	for {
+		tok := p.tok.Peek()
+		if tok.Type == tokenizer.TokenEOF {
+			return
+		}
+		if tok.Value == "}" {
+			p.tok.Next()
+			if depth <= 0 {
+				return
+			}
+			depth--
+		} else if tok.Value == "{" {
+			p.tok.Next()
+			depth++
+		} else {
+			p.tok.Next()
 		}
 	}
 }
