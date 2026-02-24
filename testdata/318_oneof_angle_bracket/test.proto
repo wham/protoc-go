@@ -1,0 +1,22 @@
+syntax = "proto2";
+
+package oneofangle;
+
+import "google/protobuf/descriptor.proto";
+
+message OneofConfig {
+  optional string label = 1;
+  optional int32 priority = 2;
+}
+
+extend google.protobuf.OneofOptions {
+  optional OneofConfig oneof_config = 50001;
+}
+
+message TestMsg {
+  oneof choice {
+    option (oneof_config) = < label: "choice" priority: 5 >;
+    string name = 1;
+    int32 id = 2;
+  }
+}
