@@ -5157,6 +5157,14 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			custOpt.NameTok = optNameTok
 			custOpt.Field = field
 
+			// Reject angle bracket aggregate syntax and positive sign
+			if p.tok.Peek().Value == "<" || p.tok.Peek().Value == "+" {
+				rejTok := p.tok.Next()
+				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected option value.", p.filename, rejTok.Line+1, rejTok.Column+1))
+				p.skipToToken("]")
+				return nil, nil
+			}
+
 			negative := false
 			if p.tok.Peek().Value == "-" {
 				p.tok.Next()
