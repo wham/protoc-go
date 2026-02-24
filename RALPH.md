@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1603/1603 tests passing.
+ALL DONE — 1608/1608 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -479,3 +479,4 @@ ALL DONE — 1603/1603 tests passing.
 300. ✅ No-package duplicate symbol error format — when file has no `package`, duplicate symbol errors use `"X" is already defined.` (no scope suffix) instead of `"X" is already defined in "".`, matching C++ protoc behavior where empty scope omits the `in ""` part
 301. ✅ Method option angle bracket rejection — reject `option (method_config) = < ... >;` (angle bracket message literals) in method bodies with `Expected option value.` error at `<` token position, matching C++ protoc v29.3 behavior, using error recovery (`skipStatementCpp`) to continue parsing
 302. ✅ Enum option angle bracket rejection — reject `option (enum_config) = < ... >;` (angle bracket message literals) in enum bodies with `Expected option value.` error at `<` token position, matching C++ protoc v29.3 behavior, using error recovery (`skipStatementCpp`/`p.errors`) to continue parsing
+303. ✅ Custom field option angle bracket rejection — reject `[(field_config) = < ... >]` (angle bracket message literals) in field option brackets with `Expected option value.` error at `<` token position, using error recovery (`skipToToken("]")`) to continue parsing subsequent fields
