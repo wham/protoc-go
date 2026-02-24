@@ -2684,3 +2684,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Negative float default span** — `[default = -1.5]` likely has same column offset bug
 - **Proto2 string default values with escape sequences** — span computation bug
 - **Custom option on extension range** — `extensions 100 to 199 [(my_option) = "foo"];`
+
+### Run 326 — Semicolon separator in field options (FAILED: 5/5 profiles)
+- **Test:** `320_semicolon_in_options` — proto3 message with `string name = 1 [deprecated = true; json_name = "n"];` (semicolon instead of comma between options)
+- **Bug:** C++ protoc errors: `test.proto:6:37: Expected "]".` and `test.proto:6:49: Expected field name.` (two errors, column 37 = the `;` position). Go protoc-go errors: `test.proto:6:39: Expected ";"` (one error, different message, column 39 = after `]`). Both compilers reject the proto, but the error messages and column numbers differ.
+- **Root cause:** Go's `parseFieldOptions` at line 5722 breaks out of the options loop when it encounters `;` (not `,` or `]`), then line 5727 treats `;` as the close bracket. Then `parseField` calls `Expect(";")` and gets `json_name` token instead, producing a different error at a different position. C++ protoc stays inside the options loop and directly reports "Expected `]`" at the `;` position.
