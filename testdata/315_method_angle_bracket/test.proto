@@ -1,0 +1,22 @@
+syntax = "proto2";
+
+package methodangle;
+
+import "google/protobuf/descriptor.proto";
+
+message MethodConfig {
+  optional string name = 1;
+  optional int32 timeout = 2;
+}
+
+extend google.protobuf.MethodOptions {
+  optional MethodConfig method_config = 50001;
+}
+
+message Empty {}
+
+service MyService {
+  rpc Ping(Empty) returns (Empty) {
+    option (method_config) = < name: "worker" timeout: 30 >;
+  }
+}
