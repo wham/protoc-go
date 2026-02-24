@@ -2368,6 +2368,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		}
 		var parsedEnumValOpts []enumValOptInfo
 		var pendingCustEnumValOpts []CustomEnumValueOption
+		bracketSkipped := false
 
 		if p.tok.Peek().Value == "[" {
 			bracketTok := p.tok.Next() // consume "["
@@ -2413,6 +2414,15 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 					custOpt.InnerName = inner
 					custOpt.SubFieldPath = subFieldPath
 					custOpt.NameTok = optNameTok
+
+					// Reject angle bracket aggregate syntax and positive sign
+					if p.tok.Peek().Value == "<" || p.tok.Peek().Value == "+" {
+						rejTok := p.tok.Next()
+						p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected option value.", p.filename, rejTok.Line+1, rejTok.Column+1))
+						p.skipToToken("]")
+						bracketSkipped = true
+						break
+					}
 
 					neg := false
 					if p.tok.Peek().Value == "-" {
@@ -2608,13 +2618,15 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 				}
 			}
 
-			closeBracket, err := p.tok.Expect("]")
-			if err != nil {
-				return nil, err
+			if !bracketSkipped {
+				closeBracket, err := p.tok.Expect("]")
+				if err != nil {
+					return nil, err
+				}
+				p.trackEnd(closeBracket)
+				optsBracketEndLine = closeBracket.Line
+				optsBracketEndCol = closeBracket.Column
 			}
-			p.trackEnd(closeBracket)
-			optsBracketEndLine = closeBracket.Line
-			optsBracketEndCol = closeBracket.Column
 		}
 
 		endValTok, err := p.tok.Expect(";")
