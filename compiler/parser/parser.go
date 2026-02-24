@@ -3,6 +3,7 @@
 package parser
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -13,6 +14,11 @@ import (
 	"google.golang.org/protobuf/proto"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 )
+
+// errBreakOneof is a sentinel error used when angle bracket syntax in a custom
+// oneof option causes the parser to exit the oneof block (matching C++ protoc
+// error recovery behavior).
+var errBreakOneof = errors.New("break oneof")
 
 // MultiError is an error containing multiple pre-formatted error messages.
 type MultiError struct {
@@ -331,6 +337,10 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 			}
 		case ";":
 			// Empty statement — consume and continue (C++ protoc allows these)
+			p.tok.Next()
+		case "}":
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected top-level statement (e.g. \"message\").", p.filename, tok.Line+1, tok.Column+1))
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Unmatched \"}\".", p.filename, tok.Line+1, tok.Column+1))
 			p.tok.Next()
 		default:
 			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected top-level statement (e.g. \"message\").", p.filename, tok.Line+1, tok.Column+1))
@@ -663,6 +673,9 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 		case "oneof":
 			fields, nestedTypes, decl, err := p.parseOneof(path, oneofIdx, &fieldIdx, &nestedMsgIdx)
 			if err != nil {
+				if errors.Is(err, errBreakOneof) {
+					continue
+				}
 				return nil, err
 			}
 			msg.OneofDecl = append(msg.OneofDecl, decl)
@@ -2061,6 +2074,9 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 		case "oneof":
 			fields, nestedTypes, decl, err := p.parseOneof(nestedPath, oneofIdx, &fieldIdx, &nestedMsgIdx)
 			if err != nil {
+				if errors.Is(err, errBreakOneof) {
+					continue
+				}
 				return err
 			}
 			nested.OneofDecl = append(nested.OneofDecl, decl)
@@ -3913,6 +3929,9 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32, ne
 		if p.tok.Peek().Value == "option" {
 			err := p.parseOneofOption(oneofPath, decl)
 			if err != nil {
+				if errors.Is(err, errBreakOneof) {
+					return nil, nil, nil, errBreakOneof
+				}
 				return nil, nil, nil, err
 			}
 			continue
@@ -3999,6 +4018,14 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 		custOpt.SubFieldPath = subFieldPath
 		custOpt.NameTok = nameTok
 		custOpt.Oneof = decl
+
+		// Reject angle bracket aggregate syntax and positive sign
+		if p.tok.Peek().Value == "<" || p.tok.Peek().Value == "+" {
+			rejTok := p.tok.Next()
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected option value.", p.filename, rejTok.Line+1, rejTok.Column+1))
+			p.skipStatementCpp()
+			return errBreakOneof
+		}
 
 		if p.tok.Peek().Value == "-" {
 			p.tok.Next()
