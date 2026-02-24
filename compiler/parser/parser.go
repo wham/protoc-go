@@ -384,6 +384,24 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 	}
 
 	if parseErr != nil {
+		if len(p.errors) > 0 {
+			// Merge p.errors with parseErr, sorted by position
+			var allErrs []posError
+			errStr := parseErr.Error()
+			eLine, eCol := parseErrorPos(errStr)
+			allErrs = append(allErrs, posError{eLine, eCol, fmt.Sprintf("%s:%s", p.filename, errStr), nil})
+			for _, e := range p.errors {
+				el, ec := parseErrorPosFromFormatted(e, p.filename)
+				allErrs = append(allErrs, posError{el, ec, e, nil})
+			}
+			sortPosErrors(allErrs)
+			var msgs []string
+			for _, e := range allErrs {
+				msgs = append(msgs, e.msg)
+				msgs = append(msgs, e.notes...)
+			}
+			return nil, &MultiError{Errors: msgs}
+		}
 		return nil, parseErr
 	}
 
@@ -5720,7 +5738,10 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		} else if next.Value == "]" {
 			break
 		} else {
-			break
+			// Unexpected token inside option brackets (e.g., ";" instead of "," or "]")
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected \"]\".", p.filename, next.Line+1, next.Column+1))
+			// Return early — leave the unexpected token for the caller's error recovery
+			return nil, nil
 		}
 	}
 
