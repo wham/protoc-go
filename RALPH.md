@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1608/1608 tests passing.
+ALL DONE — 1613/1613 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -480,3 +480,5 @@ ALL DONE — 1608/1608 tests passing.
 301. ✅ Method option angle bracket rejection — reject `option (method_config) = < ... >;` (angle bracket message literals) in method bodies with `Expected option value.` error at `<` token position, matching C++ protoc v29.3 behavior, using error recovery (`skipStatementCpp`) to continue parsing
 302. ✅ Enum option angle bracket rejection — reject `option (enum_config) = < ... >;` (angle bracket message literals) in enum bodies with `Expected option value.` error at `<` token position, matching C++ protoc v29.3 behavior, using error recovery (`skipStatementCpp`/`p.errors`) to continue parsing
 303. ✅ Custom field option angle bracket rejection — reject `[(field_config) = < ... >]` (angle bracket message literals) in field option brackets with `Expected option value.` error at `<` token position, using error recovery (`skipToToken("]")`) to continue parsing subsequent fields
+304. ✅ Custom oneof option angle bracket rejection — reject `option (oneof_config) = < ... >;` (angle bracket message literals) in custom oneof options with `Expected option value.` error at `<` token position, `errBreakOneof` sentinel exits oneof loop, message body continues with proto2 label errors, file-level `}` produces "Expected top-level statement" + "Unmatched }" matching C++ protoc error recovery chain
+- Oneof angle bracket error recovery: C++ protoc's error chain when `<` appears in a custom oneof option: (1) `Expected option value.` at `<`, (2) ParseOption fails → ParseOneof fails → message body SkipStatement eats through `;`, (3) subsequent oneof fields parsed as message-level fields (proto2 → "Expected required..."), (4) oneof `}` consumed as message `}`, (5) message `}` at file level → "Expected top-level statement" + "Unmatched }". Go implementation: `errBreakOneof` sentinel error propagates from `parseOneofOption` → `parseOneof` → caught in `parseMessage`/`parseGroupBody` which `continue` the message body loop. File-level `case "}"` handles unmatched `}` by emitting both errors and consuming the token.
