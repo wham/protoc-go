@@ -2689,3 +2689,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `320_semicolon_in_options` — proto3 message with `string name = 1 [deprecated = true; json_name = "n"];` (semicolon instead of comma between options)
 - **Bug:** C++ protoc errors: `test.proto:6:37: Expected "]".` and `test.proto:6:49: Expected field name.` (two errors, column 37 = the `;` position). Go protoc-go errors: `test.proto:6:39: Expected ";"` (one error, different message, column 39 = after `]`). Both compilers reject the proto, but the error messages and column numbers differ.
 - **Root cause:** Go's `parseFieldOptions` at line 5722 breaks out of the options loop when it encounters `;` (not `,` or `]`), then line 5727 treats `;` as the close bracket. Then `parseField` calls `Expect(";")` and gets `json_name` token instead, producing a different error at a different position. C++ protoc stays inside the options loop and directly reports "Expected `]`" at the `;` position.
+
+### Run 327 — `--decode` without value missing hint line (FAILED: 1/1 CLI test)
+- **Test:** CLI test `decode_no_value` — invokes `--decode` flag without a value
+- **Bug:** Go protoc-go outputs only `Missing value for flag: --decode` (1 line). C++ protoc outputs the same line PLUS a second line: `To decode an unknown message, use --decode_raw.` Go is missing this helpful hint line.
+- **Root cause:** `cli.go` `parseArgs` handles `--decode` as a flag needing a value and emits the generic "Missing value for flag" error, but does not add the C++ protoc hint about `--decode_raw`. C++ protoc's `CommandLineInterface::ParseArguments` has special-case logic for `--decode` to append the hint message.
