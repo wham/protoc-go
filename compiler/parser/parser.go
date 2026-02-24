@@ -497,8 +497,8 @@ func (p *parser) parseEdition(fd *descriptorpb.FileDescriptorProto) error {
 	if !ok {
 		return fmt.Errorf("%d:%d: unknown edition %q", valTok.Line+1, valTok.Column+1, valTok.Value)
 	}
-	if edEnum > descriptorpb.Edition_EDITION_2023 {
-		return fmt.Errorf("%d:%d: Edition %s is later than the maximum supported edition 2023", startTok.Line+1, startTok.Column+1, valTok.Value)
+	if edEnum > descriptorpb.Edition_EDITION_2024 {
+		return fmt.Errorf("%d:%d: Edition %s is later than the maximum supported edition 2024", startTok.Line+1, startTok.Column+1, valTok.Value)
 	}
 
 	fd.Syntax = proto.String("editions")
@@ -1723,7 +1723,7 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 				msg.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
 				featFieldNum = 6
 			default:
-				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 			}
 			// SCI: [msgPath..., 7] for options statement, [msgPath..., 7, 12, featFieldNum] for specific feature
 			optPath := append(copyPath(msgPath), 7)
@@ -1739,7 +1739,7 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 			p.attachComments(len(p.locations)-1, firstIdx)
 			return nil
 		}
-		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
 	// Source code info: [msgPath..., 7] for options, [msgPath..., 7, fieldNum] for specific option
@@ -2554,7 +2554,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 							enumValOpts.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
 							featFieldNum = 6
 						default:
-							return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", optNameTok.Line+1, optNameTok.Column+1, optName)
+							return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", optNameTok.Line+1, optNameTok.Column+1, optName)
 						}
 						endCol := optValTok.Column + len(optValTok.Value)
 						parsedEnumValOpts = append(parsedEnumValOpts, enumValOptInfo{
@@ -2566,7 +2566,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 							featFieldNum:  featFieldNum,
 						})
 					} else {
-						return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", optNameTok.Line+1, optNameTok.Column+1, optName)
+						return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", optNameTok.Line+1, optNameTok.Column+1, optName)
 					}
 				}
 
@@ -2942,7 +2942,7 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 				e.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
 				featFieldNum = 6
 			default:
-				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 			}
 			// SCI: [enumPath..., 3] for options statement, [enumPath..., 3, 7, featFieldNum] for specific feature
 			optPath := append(copyPath(enumPath), 3)
@@ -2958,7 +2958,7 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 			p.attachComments(len(p.locations)-1, firstIdx)
 			return nil
 		}
-		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
 	// Source code info: [enumPath..., 3] for options, [enumPath..., 3, fieldNum] for specific option
@@ -3239,6 +3239,14 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 			return err
 		}
 
+		// Reject angle bracket aggregate syntax and positive sign
+		if p.tok.Peek().Value == "<" || p.tok.Peek().Value == "+" {
+			rejTok := p.tok.Next()
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected option value.", p.filename, rejTok.Line+1, rejTok.Column+1))
+			p.skipStatementCpp()
+			return nil
+		}
+
 		var custOpt CustomServiceOption
 		custOpt.ParenName = fullName
 		custOpt.InnerName = inner
@@ -3411,7 +3419,7 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 				svc.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
 				featFieldNum = 6
 			default:
-				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 			}
 			optPath := append(copyPath(svcPath), 3)
 			span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
@@ -3426,7 +3434,7 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 			p.attachComments(len(p.locations)-1, firstIdx)
 			return nil
 		}
-		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
 	optPath := append(copyPath(svcPath), 3)
@@ -3666,7 +3674,7 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 				method.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
 				featFieldNum = 6
 			default:
-				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 			}
 			optPath := append(copyPath(methodPath), 4)
 			span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
@@ -3681,7 +3689,7 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 			p.attachComments(len(p.locations)-1, firstIdx)
 			return nil
 		}
-		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
 	optPath := append(copyPath(methodPath), 4)
@@ -4122,7 +4130,7 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 			decl.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
 			featFieldNum = 6
 		default:
-			return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+			return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 		}
 		// SCI: [oneofPath..., 2] for options statement, [oneofPath..., 2, 1, featFieldNum] for specific feature
 		optPath := append(copyPath(oneofPath), 2)
@@ -4139,7 +4147,7 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 		return nil
 	}
 
-	return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+	return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 }
 
 func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
@@ -4653,7 +4661,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 				fd.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
 				featFieldNum = 6
 			default:
-				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 			}
 			// SCI: [8] for option statement, [8, 50, featFieldNum] for specific feature
 			span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
@@ -4668,7 +4676,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 			p.attachComments(len(p.locations)-1, firstIdx)
 			return nil
 		}
-		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", nameTok.Line+1, nameTok.Column+1, optName)
+		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
 	// Source code info: [8] for the option statement, [8, fieldNum] for the specific option
@@ -5579,12 +5587,12 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 					field.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
 					featFieldNum = 6
 				default:
-					return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", optNameTok.Line+1, optNameTok.Column+1, optName)
+					return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", optNameTok.Line+1, optNameTok.Column+1, optName)
 				}
 				addLoc(append(copyPath(fieldPath), 8, 21, featFieldNum),
 					optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 			} else {
-				return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option.", optNameTok.Line+1, optNameTok.Column+1, optName)
+				return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", optNameTok.Line+1, optNameTok.Column+1, optName)
 			}
 		}
 

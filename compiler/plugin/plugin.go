@@ -90,9 +90,9 @@ func BuildCodeGeneratorRequest(
 		ProtoFile:             protoFiles,
 		SourceFileDescriptors: sourceFileDescriptors,
 		CompilerVersion: &pluginpb.Version{
-			Major:  proto.Int32(5),
-			Minor:  proto.Int32(29),
-			Patch:  proto.Int32(3),
+			Major:  proto.Int32(6),
+			Minor:  proto.Int32(33),
+			Patch:  proto.Int32(4),
 			Suffix: proto.String(""),
 		},
 	}
