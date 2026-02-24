@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package ev_angle;
+
+import "google/protobuf/descriptor.proto";
+
+message EVConfig {
+  optional string label = 1;
+  optional int32 weight = 2;
+}
+
+extend google.protobuf.EnumValueOptions {
+  optional EVConfig ev_config = 50001;
+}
+
+enum Priority {
+  LOW = 0;
+  HIGH = 1 [(ev_config) = < label: "important" weight: 10 >];
+}

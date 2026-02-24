@@ -2659,3 +2659,28 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Test:** `318_oneof_angle_bracket` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message OneofConfig { optional string label = 1; optional int32 priority = 2; }`, extends `google.protobuf.OneofOptions` with `optional OneofConfig oneof_config = 50001`, then uses `option (oneof_config) = < label: "choice" priority: 5 >;` inside a oneof body (angle bracket `<` aggregate syntax on a message-typed custom oneof option)
 - **Bug:** C++ protoc rejects with 5 errors starting with `test.proto:18:29: Expected option value.` pointing at `<`, plus error recovery errors for the remaining oneof fields and closing braces. Go protoc-go rejects with single error `test.proto:18:31: Expected ";"` — different error message text, different column (29 vs 31), and 1 error vs 5 errors.
 - **Root cause:** `parseOneofOption` at line 4008 checks for `{` to detect aggregate values but does NOT check for `<`. When `<` is encountered, Go falls through to scalar handling, reads `<` as the value token, then `Expect(";")` at line 4037 gets `label` instead. Same class of bug as Runs 306, 320-323 — the `<` rejection was never added to oneof option parsing. Remaining untested scope: enum value (inline `[...]` syntax).
+
+### Run 325 — Angle bracket `<>` aggregate in enum value custom option (FAILED: 5/5 profiles)
+- **Test:** `319_ev_angle_bracket` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message EVConfig { optional string label = 1; optional int32 weight = 2; }`, extends `google.protobuf.EnumValueOptions` with `optional EVConfig ev_config = 50001`, then uses `[(ev_config) = < label: "important" weight: 10 >]` on an enum value (angle bracket `<` aggregate syntax on a message-typed custom enum value option, inline `[...]` syntax)
+- **Bug:** C++ protoc rejects with `test.proto:18:27: Expected option value.` pointing at the `<` token. Go protoc-go rejects with `test.proto:18:29: Expected "]"` — different error message text, different column (27 vs 29), and different error context (`Expected option value` vs `Expected "]"`).
+- **Root cause:** Enum value option parsing (inline `[...]` syntax) checks for `{` to detect aggregate values but does NOT check for `<`. When `<` is encountered, Go reads `<` as a scalar value, then fails when looking for `]` or `,` to close the bracketed options. Same class of bug as Runs 306, 320-324 — the `<` rejection was never added to enum value inline option parsing. This completes coverage of all option scopes for the angle bracket aggregate bug: file (N/A), message (306), service (320), method (321), enum (322), field (323), oneof (324), enum value (325).
+
+### Known gaps still unexplored (updated):
+- **String concatenation in `consumeAggregateAngle`** — tested for `consumeAggregate` (Run 297) but not for angle bracket variant
+- **Repeated message fields with `<>`** — aggregate with repeated sub-message using `<>` syntax
+- **Extension field encoding in aggregate** — Run 295 tested, but nested extension fields untested
+- **Aggregate option with duplicate field names at non-file scopes** — Run 316 only tested file level
+- **List syntax `[...]` in `consumeAggregateAngle`** — untested
+- **Deep nesting of aggregate options** — untested
+- **`Any` type / message set wire format** — untested
+- **Bool option with `FALSE`/`t`/`f` at various non-aggregate scopes** — Run 302 only tested aggregate
+- **Numeric bool in non-aggregate custom options at non-field scopes** — Run 299 tested field scope only
+- **Edition 2023 with `repeated` label** — Run 270 tested `optional`, but `repeated` likely also produces different error
+- **Empty statements inside oneof bodies** — likely broken (missing `;` case)
+- **Oneof options (non-custom)** — standard oneof options likely skipped
+- **`extend` inside message bodies** — likely not handled
+- **Map field with enum value type** — resolution might differ
+- **Type shadowing** — same nested type name in different parent messages
+- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
+- **Proto2 string default values with escape sequences** — span computation bug
+- **Custom option on extension range** — `extensions 100 to 199 [(my_option) = "foo"];`
