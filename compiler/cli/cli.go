@@ -1044,6 +1044,9 @@ func parseArgs(args []string) (*config, error) {
 				flagName := arg[:idx]
 				return nil, fmt.Errorf("Unknown flag: %s", flagName)
 			}
+			if arg == "--decode" {
+				return nil, fmt.Errorf("Missing value for flag: %s\nTo decode an unknown message, use --decode_raw.", arg)
+			}
 			return nil, fmt.Errorf("Missing value for flag: %s", arg)
 		}
 
