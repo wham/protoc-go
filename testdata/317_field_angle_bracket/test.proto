@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package fieldangle;
+
+import "google/protobuf/descriptor.proto";
+
+message FieldConfig {
+  optional string label = 1;
+  optional int32 weight = 2;
+}
+
+extend google.protobuf.FieldOptions {
+  optional FieldConfig field_config = 50001;
+}
+
+message Document {
+  optional string title = 1 [(field_config) = < label: "title" weight: 10 >];
+  optional string body = 2 [(field_config) = < label: "body" weight: 5 >];
+}
