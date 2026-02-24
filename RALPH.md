@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1588/1588 tests passing.
+ALL DONE — 1593/1593 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -243,11 +243,11 @@ ALL DONE — 1588/1588 tests passing.
 - Each test case is run under 5 profiles: plugin, plugin_param, descriptor_set, descriptor_set_src, descriptor_set_full
 - There are also CLI error tests (cli@no_args, cli@missing_output, cli@bad_proto_path)
 - Test names: `<case>@<profile>` (e.g., `01_basic_message@plugin`, `cli@no_args`)
-- C++ protoc is at `/tmp/protoc-install/bin/protoc` (libprotoc 29.3), includes at `/tmp/protoc-install/include`
+- C++ protoc is at `/opt/homebrew/bin/protoc` (libprotoc 33.4), includes at `/opt/homebrew/include`
 - find-protoc adds `/tmp/protoc-install/bin` to PATH and uses bare "protoc" name (needed for cli@no_args test)
 - protoc-gen-dump clears parameter field before writing summary.txt and request.pb (avoids path differences)
 - Source code info ordering: use placeholder-then-update pattern so container spans come before children
-- compiler_version: major=5, minor=29, patch=3
+- compiler_version: major=6, minor=33, patch=4
 - Field options (deprecated, packed, json_name, etc.) are parsed by `parseFieldOptions` in parser.go
 - Field options source code info is deferred and appended after field number span to match C++ ordering
 - The tokenizer strips quotes from strings, so string option values need +2 for column end calculation
