@@ -2756,6 +2756,14 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		custOpt.NameTok = nameTok
 		custOpt.Enum = e
 
+		// Reject angle bracket aggregate syntax and positive sign
+		if p.tok.Peek().Value == "<" || p.tok.Peek().Value == "+" {
+			rejTok := p.tok.Next()
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected option value.", p.filename, rejTok.Line+1, rejTok.Column+1))
+			p.skipStatementCpp()
+			return nil
+		}
+
 		// Read value
 		if p.tok.Peek().Value == "-" {
 			p.tok.Next()
