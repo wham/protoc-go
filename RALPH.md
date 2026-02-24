@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1623/1623 tests passing.
+ALL DONE — 1624/1624 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -483,3 +483,4 @@ ALL DONE — 1623/1623 tests passing.
 304. ✅ Custom oneof option angle bracket rejection — reject `option (oneof_config) = < ... >;` (angle bracket message literals) in custom oneof options with `Expected option value.` error at `<` token position, `errBreakOneof` sentinel exits oneof loop, message body continues with proto2 label errors, file-level `}` produces "Expected top-level statement" + "Unmatched }" matching C++ protoc error recovery chain
 - Oneof angle bracket error recovery: C++ protoc's error chain when `<` appears in a custom oneof option: (1) `Expected option value.` at `<`, (2) ParseOption fails → ParseOneof fails → message body SkipStatement eats through `;`, (3) subsequent oneof fields parsed as message-level fields (proto2 → "Expected required..."), (4) oneof `}` consumed as message `}`, (5) message `}` at file level → "Expected top-level statement" + "Unmatched }". Go implementation: `errBreakOneof` sentinel error propagates from `parseOneofOption` → `parseOneof` → caught in `parseMessage`/`parseGroupBody` which `continue` the message body loop. File-level `case "}"` handles unmatched `}` by emitting both errors and consuming the token.
 305. ✅ Semicolon inside field option brackets error recovery — `[deprecated = true; json_name = "n"]` produces `Expected "]".` at `;` position and `Expected field name.` at `=` position matching C++ protoc two-error behavior, using `p.errors` for first error and returning nil to let caller's `Expect(";")` succeed, then message body parser retries remaining tokens as new field. Fixed `ParseFile` to merge `p.errors` with `parseErr` when both are present (previously `p.errors` was discarded if `parseErr` was non-nil).
+306. ✅ `--decode` missing value hint — `--decode` without `=` produces `Missing value for flag: --decode` followed by `To decode an unknown message, use --decode_raw.` matching C++ protoc behavior
