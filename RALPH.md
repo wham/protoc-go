@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1629/1629 tests passing.
+ALL DONE — 1634/1634 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -485,3 +485,4 @@ ALL DONE — 1629/1629 tests passing.
 305. ✅ Semicolon inside field option brackets error recovery — `[deprecated = true; json_name = "n"]` produces `Expected "]".` at `;` position and `Expected field name.` at `=` position matching C++ protoc two-error behavior, using `p.errors` for first error and returning nil to let caller's `Expect(";")` succeed, then message body parser retries remaining tokens as new field. Fixed `ParseFile` to merge `p.errors` with `parseErr` when both are present (previously `p.errors` was discarded if `parseErr` was non-nil).
 306. ✅ `--decode` missing value hint — `--decode` without `=` produces `Missing value for flag: --decode` followed by `To decode an unknown message, use --decode_raw.` matching C++ protoc behavior
 307. ✅ Aggregate option invalid bool validation — reject `TRUE`/`FALSE` (all-caps) and other invalid boolean values in aggregate options with `Invalid value for boolean field "X". Value: "Y".` error wrapped in `Error while parsing option value for "OPTNAME":` at `{` position, C++ text format parser only accepts `true`/`True`/`t`/`1` (truthy) and `false`/`False`/`f`/`0` (falsy)
+308. ✅ Custom extension range option support — `extensions 100 to 199 [(my_annotation) = "annotated"];` with parenthesized custom options on extension ranges, parsed as `CustomExtRangeOption` in parser, resolved post-parse in `resolveCustomExtRangeOptions` via `protowire` encoding on `ExtensionRangeOptions` unknown fields, SCI entries at `[msgPath..., 5, rangeIdx, 3, extNum]` with placeholder field number 0 resolved post-parse via `SCILocs` pointers (one per range)
