@@ -1,6 +1,6 @@
 files_to_generate: [test.proto]
 parameter: ""
-compiler_version: major:5 minor:29 patch:3 suffix:""
+compiler_version: major:6 minor:33 patch:4 suffix:""
 proto_file_count: 2
 source_file_descriptor_count: 1
 
@@ -189,8 +189,6 @@ proto_file[0]: google/protobuf/descriptor.proto (package="google.protobuf", synt
     value: VISIBILITY_LOCAL = 1
     value: VISIBILITY_EXPORT = 2
   source_code_info_locations: 1554
-proto_file[1]: test.proto (package="aggboolshort", syntax="")
-  message: Settings
-    field: enabled (number=1, type=TYPE_BOOL, label=LABEL_OPTIONAL)
-    field: verbose (number=2, type=TYPE_BOOL, label=LABEL_OPTIONAL)
-  source_code_info_locations: 25
+proto_file[1]: test.proto (package="extrangecustom", syntax="")
+  message: Extendable
+  source_code_info_locations: 19

@@ -77,6 +77,7 @@ type parser struct {
 	customEnumOptions     []CustomEnumOption
 	customEnumValueOptions []CustomEnumValueOption
 	customOneofOptions     []CustomOneofOption
+	customExtRangeOptions  []CustomExtRangeOption
 }
 
 // ParseResult holds the result of parsing a .proto file.
@@ -218,6 +219,24 @@ type CustomOneofOption struct {
 	SubFieldPath    []string
 }
 
+// CustomExtRangeOption represents a parenthesized custom option on an extension range
+// (e.g., extensions 100 to 199 [(my_annotation) = "annotated"];) that needs post-parse resolution.
+type CustomExtRangeOption struct {
+	ParenName       string
+	InnerName       string
+	SubFieldPath    []string
+	Value           string
+	ValueType       tokenizer.TokenType
+	Ranges          []*descriptorpb.DescriptorProto_ExtensionRange // ranges this option applies to
+	NameTok         tokenizer.Token
+	ValEndLine      int
+	ValEndCol       int
+	AggregateFields []AggregateField
+	AggregateBraceTok tokenizer.Token
+	Negative        bool
+	SCILocs         []*descriptorpb.SourceCodeInfo_Location // one SCI entry per range
+}
+
 type ParseResult struct {
 	FD                      *descriptorpb.FileDescriptorProto
 	ExplicitJsonNames       map[*descriptorpb.FieldDescriptorProto]bool
@@ -229,6 +248,7 @@ type ParseResult struct {
 	CustomEnumOptions       []CustomEnumOption
 	CustomEnumValueOptions  []CustomEnumValueOption
 	CustomOneofOptions      []CustomOneofOption
+	CustomExtRangeOptions   []CustomExtRangeOption
 }
 
 // ParseFile parses a .proto file and returns a ParseResult.
@@ -416,7 +436,7 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 		return nil, &MultiError{Errors: p.errors}
 	}
 
-	return &ParseResult{FD: fd, ExplicitJsonNames: p.explicitJsonNames, CustomFileOptions: p.customFileOptions, CustomFieldOptions: p.customFieldOptions, CustomMessageOptions: p.customMessageOptions, CustomServiceOptions: p.customServiceOptions, CustomMethodOptions: p.customMethodOptions, CustomEnumOptions: p.customEnumOptions, CustomEnumValueOptions: p.customEnumValueOptions, CustomOneofOptions: p.customOneofOptions}, nil
+	return &ParseResult{FD: fd, ExplicitJsonNames: p.explicitJsonNames, CustomFileOptions: p.customFileOptions, CustomFieldOptions: p.customFieldOptions, CustomMessageOptions: p.customMessageOptions, CustomServiceOptions: p.customServiceOptions, CustomMethodOptions: p.customMethodOptions, CustomEnumOptions: p.customEnumOptions, CustomEnumValueOptions: p.customEnumValueOptions, CustomOneofOptions: p.customOneofOptions, CustomExtRangeOptions: p.customExtRangeOptions}, nil
 }
 
 // parseErrorPos extracts 0-based line/col from an error string formatted as "line:col: message"
@@ -1065,6 +1085,83 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 		var declSCIs []declSCI
 		for {
 			nameTok := p.tok.Next()
+			if nameTok.Value == "(" {
+				// Parenthesized custom option, e.g., (my_annotation)
+				fullName, err := p.parseParenthesizedOptionName(nameTok)
+				if err != nil {
+					return err
+				}
+				if _, err := p.tok.Expect("="); err != nil {
+					return err
+				}
+
+				var custOpt CustomExtRangeOption
+				custOpt.ParenName = fullName
+				inner := fullName
+				if len(inner) >= 2 && inner[0] == '(' && inner[len(inner)-1] == ')' {
+					inner = inner[1 : len(inner)-1]
+				}
+				custOpt.InnerName = inner
+				custOpt.NameTok = nameTok
+
+				// Parse sub-field path
+				for p.tok.Peek().Value == "." {
+					p.tok.Next() // consume "."
+					subTok := p.tok.Next()
+					custOpt.SubFieldPath = append(custOpt.SubFieldPath, subTok.Value)
+				}
+
+				if p.tok.Peek().Value == "{" {
+					braceTok := p.tok.Next()
+					custOpt.AggregateBraceTok = braceTok
+					agg, aggErr := p.consumeAggregate()
+					if aggErr != nil {
+						return fmt.Errorf("%d:%d: %s", braceTok.Line+1, braceTok.Column+1, aggErr.Error())
+					}
+					custOpt.AggregateFields = agg
+					closeBrace := p.tok.Next() // consume "}"
+					custOpt.ValEndLine = closeBrace.Line
+					custOpt.ValEndCol = closeBrace.Column + 1
+				} else if p.tok.Peek().Value == "<" {
+					// Angle bracket rejection
+					angleTok := p.tok.Next()
+					p.errors = append(p.errors, fmt.Sprintf("%d:%d: Expected option value.", angleTok.Line+1, angleTok.Column+1))
+					depth := 1
+					for depth > 0 {
+						t := p.tok.Next()
+						if t.Value == "<" {
+							depth++
+						} else if t.Value == ">" {
+							depth--
+						}
+					}
+				} else {
+					negative := false
+					if p.tok.Peek().Value == "-" {
+						p.tok.Next()
+						negative = true
+					}
+					valTok := p.tok.Next()
+					custOpt.Value = valTok.Value
+					custOpt.ValueType = valTok.Type
+					custOpt.Negative = negative
+					endCol := valTok.Column + len(valTok.Value)
+					if valTok.RawLen > 0 {
+						endCol = valTok.Column + valTok.RawLen
+					}
+					custOpt.ValEndLine = valTok.Line
+					custOpt.ValEndCol = endCol
+				}
+
+				// Collect ranges this option applies to
+				for i := startCount; i < *rangeIdx; i++ {
+					if msg.ExtensionRange[i].Options == nil {
+						msg.ExtensionRange[i].Options = &descriptorpb.ExtensionRangeOptions{}
+					}
+					custOpt.Ranges = append(custOpt.Ranges, msg.ExtensionRange[i])
+				}
+				p.customExtRangeOptions = append(p.customExtRangeOptions, custOpt)
+			} else {
 			if _, err := p.tok.Expect("="); err != nil {
 				return err
 			}
@@ -1108,6 +1205,7 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 					parsedOpts = append(parsedOpts, extRangeOpt{3, nameTok, valTok})
 				}
 			}
+			} // end else (non-parenthesized)
 			if p.tok.Peek().Value == "," {
 				p.tok.Next()
 			} else {
@@ -1135,6 +1233,19 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 			for _, opt := range parsedOpts {
 				optPath := append(copyPath(optsPath), opt.fieldNum)
 				p.addLocationSpan(optPath, opt.nameTok.Line, opt.nameTok.Column, opt.valTok.Line, opt.valTok.Column+len(opt.valTok.Value))
+			}
+			// SCI for custom ext range options (placeholder field number 0, resolved post-parse)
+			for j := range p.customExtRangeOptions {
+				co := &p.customExtRangeOptions[j]
+				if len(co.Ranges) == 0 || co.Ranges[0] != msg.ExtensionRange[startCount] {
+					continue // not from this statement
+				}
+				sciPath := append(copyPath(optsPath), 0) // placeholder
+				for range co.SubFieldPath {
+					sciPath = append(sciPath, 0)
+				}
+				loc := p.addLocationSpanReturn(sciPath, co.NameTok.Line, co.NameTok.Column, co.ValEndLine, co.ValEndCol)
+				co.SCILocs = append(co.SCILocs, loc)
 			}
 			// SCI for declaration entries (field 2 = declaration in ExtensionRangeOptions)
 			for j, ds := range declSCIs {
@@ -6075,6 +6186,17 @@ func (p *parser) addLocationSpan(path []int32, startLine, startCol, endLine, end
 		Path: pathCopy,
 		Span: multiSpan(startLine, startCol, endLine, endCol),
 	})
+}
+
+func (p *parser) addLocationSpanReturn(path []int32, startLine, startCol, endLine, endCol int) *descriptorpb.SourceCodeInfo_Location {
+	pathCopy := make([]int32, len(path))
+	copy(pathCopy, path)
+	loc := &descriptorpb.SourceCodeInfo_Location{
+		Path: pathCopy,
+		Span: multiSpan(startLine, startCol, endLine, endCol),
+	}
+	p.locations = append(p.locations, loc)
+	return loc
 }
 
 // attachComments attaches leading/trailing/detached comments to a location.
