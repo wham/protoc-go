@@ -1,0 +1,13 @@
+syntax = "proto2";
+
+package extrangecustom;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.ExtensionRangeOptions {
+  optional string my_annotation = 50000;
+}
+
+message Extendable {
+  extensions 100 to 199 [(my_annotation) = "annotated"];
+}
