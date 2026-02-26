@@ -404,6 +404,8 @@ CLI_TESTS=(
   "error_format_msvs|--error_format=msvs -I testdata/257_msvs_error --dump_out=/tmp/msvs_test_out testdata/257_msvs_error/test.proto"
   "error_format_unknown|--error_format=unknown"
   "decode_no_value|--decode"
+  "encode_no_proto|--encode=foo.Message"
+  "decode_no_proto|--decode=foo.Message"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
@@ -411,6 +413,195 @@ for cli_spec in "${CLI_TESTS[@]}"; do
   run_cli_test "$cli_name" "$cli_args" "$cli_stdin" &
   PIDS+=($!)
   TEST_NAMES+=("cli@${cli_name}")
+done
+
+# -- stdin/stdout tests (decode_raw with real binary) ----------------------
+
+run_decode_raw_test() {
+  local test_name="$1"
+  local binary_hex="$2"
+  local full_name="stdin@${test_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$result_dir"
+
+  # Convert hex to binary
+  local binary_file="$result_dir/input.bin"
+  echo "$binary_hex" | xxd -r -p > "$binary_file"
+
+  # Run C++ protoc --decode_raw
+  local cpp_exit=0
+  "$PROTOC" --decode_raw < "$binary_file" >"$result_dir/cpp_stdout.txt" 2>"$result_dir/cpp_stderr.txt" || cpp_exit=$?
+
+  # Run Go protoc-go --decode_raw
+  local go_exit=0
+  "$PROTOC_GO" --decode_raw < "$binary_file" >"$result_dir/go_stdout.txt" 2>"$result_dir/go_stderr.txt" || go_exit=$?
+
+  if [ "$cpp_exit" != "$go_exit" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "exit code mismatch: C++ protoc=$cpp_exit, Go protoc-go=$go_exit"
+      echo "--- C++ stderr ---"
+      cat "$result_dir/cpp_stderr.txt"
+      echo "+++ Go stderr +++"
+      cat "$result_dir/go_stderr.txt"
+    } > "$failure_file"
+    return
+  fi
+
+  local cpp_stdout go_stdout
+  cpp_stdout=$(cat "$result_dir/cpp_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  go_stdout=$(cat "$result_dir/go_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+
+  if [ "$cpp_stdout" != "$go_stdout" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "stdout mismatch"
+      diff -u "$result_dir/cpp_stdout.txt" "$result_dir/go_stdout.txt" 2>&1 || true
+    } > "$failure_file"
+    return
+  fi
+
+  local cpp_stderr go_stderr
+  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  go_stderr=$(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+
+  if [ "$cpp_stderr" != "$go_stderr" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "stderr mismatch"
+      diff -u "$result_dir/cpp_stderr.txt" "$result_dir/go_stderr.txt" 2>&1 || true
+    } > "$failure_file"
+    return
+  fi
+
+  echo "PASS 0 0" > "$result_file"
+}
+
+# Hex-encoded protobuf binary data for decode_raw tests:
+#   simple: field 1 (string "hello"), field 2 (varint 42)
+#   nested: field 1 (string "outer"), field 2 (embedded msg with field 1 = "inner")
+#   multi_type: field 1 (varint 150), field 2 (string "test"), field 3 (fixed32 0x12345678), field 5 (fixed64)
+#   empty: empty input (zero bytes)
+#   corrupt: truncated varint
+STDIN_TESTS=(
+  "decode_raw_simple|0a0568656c6c6f102a"
+  "decode_raw_nested|0a056f7574657212070a05696e6e6572"
+  "decode_raw_multi_type|0896011204746573741d78563412"
+  "decode_raw_empty|"
+  "decode_raw_corrupt|08"
+)
+
+for stdin_spec in "${STDIN_TESTS[@]}"; do
+  IFS='|' read -r stdin_name stdin_hex <<< "$stdin_spec"
+  run_decode_raw_test "$stdin_name" "$stdin_hex" &
+  PIDS+=($!)
+  TEST_NAMES+=("stdin@${stdin_name}")
+done
+
+# -- determinism tests -----------------------------------------------------
+# Run protoc-go multiple times on select cases and verify byte-identical output.
+
+run_determinism_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local mode="$3"
+  local full_name="determinism@${test_name}_${mode}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+  local iterations=5
+
+  mkdir -p "$result_dir"
+
+  local proto_files proto_basenames
+  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
+  if [ -z "$proto_files" ]; then
+    echo "PASS 0 0" > "$result_file"
+    return
+  fi
+  proto_basenames=""
+  for f in $proto_files; do
+    proto_basenames="$proto_basenames $(basename "$f")"
+  done
+
+  # Run N times and collect outputs
+  for ((i=1; i<=iterations; i++)); do
+    local run_dir="$result_dir/run_${i}"
+    mkdir -p "$run_dir"
+
+    if [ "$mode" = "plugin" ]; then
+      (cd "$test_dir" && "$PROTOC_GO" \
+        --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+        --dump_out="$run_dir" \
+        --dump_opt="$run_dir" \
+        -I"$PROTOC_INCLUDE" \
+        -I. \
+        $proto_basenames) 2>"$run_dir/stderr.txt" || true
+    else
+      (cd "$test_dir" && "$PROTOC_GO" \
+        --descriptor_set_out="$run_dir/output.pb" \
+        --include_imports --include_source_info \
+        -I"$PROTOC_INCLUDE" \
+        -I. \
+        $proto_basenames) 2>"$run_dir/stderr.txt" || true
+    fi
+  done
+
+  # Compare all runs against run_1
+  local ref_dir="$result_dir/run_1"
+  local mismatches=""
+
+  for ((i=2; i<=iterations; i++)); do
+    local run_dir="$result_dir/run_${i}"
+    if [ "$mode" = "plugin" ]; then
+      if [ -f "$ref_dir/request.pb" ] && [ -f "$run_dir/request.pb" ]; then
+        if ! cmp -s "$ref_dir/request.pb" "$run_dir/request.pb"; then
+          mismatches="$mismatches run_1 vs run_${i} (request.pb differs)"
+        fi
+      fi
+    else
+      if [ -f "$ref_dir/output.pb" ] && [ -f "$run_dir/output.pb" ]; then
+        if ! cmp -s "$ref_dir/output.pb" "$run_dir/output.pb"; then
+          mismatches="$mismatches run_1 vs run_${i} (output.pb differs)"
+        fi
+      fi
+    fi
+  done
+
+  if [ -z "$mismatches" ]; then
+    echo "PASS 0 0" > "$result_file"
+  else
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "Non-deterministic output detected across $iterations runs:"
+      echo "$mismatches"
+    } > "$failure_file"
+  fi
+}
+
+# Run determinism tests on a selection of diverse test cases
+DETERMINISM_CASES=(
+  "01_basic_message"
+  "04_nested"
+  "06_map"
+  "11_import_public"
+  "16_comments"
+  "28_proto2_group"
+  "329_large_stress"
+)
+
+for det_case in "${DETERMINISM_CASES[@]}"; do
+  det_dir="$TESTS_DIR/$det_case"
+  if [ -d "$det_dir" ]; then
+    for det_mode in plugin descriptor; do
+      run_determinism_test "$det_case" "$det_dir" "$det_mode" &
+      PIDS+=($!)
+      TEST_NAMES+=("determinism@${det_case}_${det_mode}")
+    done
+  fi
 done
 
 # Wait for all tests to finish

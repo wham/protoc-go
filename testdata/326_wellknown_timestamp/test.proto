@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package wkt_timestamp;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+message Event {
+  string name = 1;
+  google.protobuf.Timestamp created_at = 2;
+  google.protobuf.Duration ttl = 3;
+  google.protobuf.Timestamp updated_at = 4;
+}
+
+message Schedule {
+  repeated google.protobuf.Timestamp times = 1;
+  google.protobuf.Duration interval = 2;
+}

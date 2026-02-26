@@ -1,0 +1,126 @@
+#!/bin/bash
+# Generates a large .proto file for stress testing.
+# Output: testdata/329_large_stress/test.proto
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+OUT="$SCRIPT_DIR/../testdata/329_large_stress/test.proto"
+
+NUM_MESSAGES=500
+FIELDS_PER_MSG=20
+NESTING_DEPTH=15
+NUM_ENUMS=50
+NUM_SERVICES=10
+
+cat > "$OUT" << 'HEADER'
+syntax = "proto3";
+
+package large_stress;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/any.proto";
+
+HEADER
+
+# Generate top-level enums
+for ((e=0; e<NUM_ENUMS; e++)); do
+  echo "enum TopEnum${e} {" >> "$OUT"
+  echo "  TOP_ENUM_${e}_UNSPECIFIED = 0;" >> "$OUT"
+  for ((v=1; v<=10; v++)); do
+    echo "  TOP_ENUM_${e}_VALUE_${v} = ${v};" >> "$OUT"
+  done
+  echo "}" >> "$OUT"
+  echo "" >> "$OUT"
+done
+
+# Generate messages with many fields
+for ((m=0; m<NUM_MESSAGES; m++)); do
+  echo "message Msg${m} {" >> "$OUT"
+  fn=1
+  for ((f=0; f<FIELDS_PER_MSG; f++)); do
+    case $((f % 8)) in
+      0) echo "  string field_str_${f} = ${fn};" >> "$OUT" ;;
+      1) echo "  int32 field_i32_${f} = ${fn};" >> "$OUT" ;;
+      2) echo "  int64 field_i64_${f} = ${fn};" >> "$OUT" ;;
+      3) echo "  bool field_bool_${f} = ${fn};" >> "$OUT" ;;
+      4) echo "  double field_dbl_${f} = ${fn};" >> "$OUT" ;;
+      5) echo "  bytes field_bytes_${f} = ${fn};" >> "$OUT" ;;
+      6) echo "  float field_flt_${f} = ${fn};" >> "$OUT" ;;
+      7) echo "  uint64 field_u64_${f} = ${fn};" >> "$OUT" ;;
+    esac
+    fn=$((fn + 1))
+  done
+  # Add a map field
+  echo "  map<string, int32> labels = ${fn};" >> "$OUT"
+  fn=$((fn + 1))
+  # Add a repeated field
+  echo "  repeated string tags = ${fn};" >> "$OUT"
+  fn=$((fn + 1))
+  # Add a oneof
+  echo "  oneof variant {" >> "$OUT"
+  echo "    string var_str = ${fn};" >> "$OUT"
+  fn=$((fn + 1))
+  echo "    int32 var_int = ${fn};" >> "$OUT"
+  fn=$((fn + 1))
+  echo "    bool var_bool = ${fn};" >> "$OUT"
+  fn=$((fn + 1))
+  echo "  }" >> "$OUT"
+  # Cross-reference other messages
+  if ((m > 0)); then
+    fn=$((fn + 1))
+    echo "  Msg$((m - 1)) parent = ${fn};" >> "$OUT"
+  fi
+  if ((m > 1)); then
+    fn=$((fn + 1))
+    echo "  repeated Msg$((m / 2)) refs = ${fn};" >> "$OUT"
+  fi
+  # Use well-known types in first few messages
+  if ((m == 0)); then
+    fn=$((fn + 1))
+    echo "  google.protobuf.Timestamp created_at = ${fn};" >> "$OUT"
+  fi
+  if ((m == 1)); then
+    fn=$((fn + 1))
+    echo "  google.protobuf.Any payload = ${fn};" >> "$OUT"
+  fi
+  echo "}" >> "$OUT"
+  echo "" >> "$OUT"
+done
+
+# Generate deeply nested message
+echo "message DeepNest {" >> "$OUT"
+echo "  string top = 1;" >> "$OUT"
+indent="  "
+for ((d=1; d<=NESTING_DEPTH; d++)); do
+  indent="${indent}  "
+  echo "${indent}message Level${d} {" >> "$OUT"
+  echo "${indent}  string value = 1;" >> "$OUT"
+  echo "${indent}  int32 depth = 2;" >> "$OUT"
+done
+# Close all nesting levels
+for ((d=NESTING_DEPTH; d>=1; d--)); do
+  indent="  "
+  for ((i=0; i<d; i++)); do
+    indent="${indent}  "
+  done
+  echo "${indent}}" >> "$OUT"
+done
+echo "}" >> "$OUT"
+echo "" >> "$OUT"
+
+# Generate services
+for ((s=0; s<NUM_SERVICES; s++)); do
+  echo "service Service${s} {" >> "$OUT"
+  for ((r=0; r<10; r++)); do
+    req_msg=$((s * 10 + r))
+    resp_msg=$(((s * 10 + r + 1) % NUM_MESSAGES))
+    if ((req_msg < NUM_MESSAGES && resp_msg < NUM_MESSAGES)); then
+      echo "  rpc Method${r}(Msg${req_msg}) returns (Msg${resp_msg});" >> "$OUT"
+    fi
+  done
+  echo "}" >> "$OUT"
+  echo "" >> "$OUT"
+done
+
+wc -l "$OUT"
+echo "Generated $OUT"

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package multierrimport;
+
+import "nonexistent.proto";
+import "also_missing.proto";
+
+message Msg {
+  string name = 1;
+  NonExistentType field = 2;
+}

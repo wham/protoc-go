@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package wkt_wrappers;
+
+import "google/protobuf/wrappers.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/field_mask.proto";
+
+message Config {
+  google.protobuf.StringValue name = 1;
+  google.protobuf.Int32Value count = 2;
+  google.protobuf.BoolValue enabled = 3;
+  google.protobuf.DoubleValue rate = 4;
+  google.protobuf.BytesValue data = 5;
+  google.protobuf.FloatValue score = 6;
+  google.protobuf.Int64Value big_count = 7;
+  google.protobuf.UInt32Value unsigned_count = 8;
+  google.protobuf.UInt64Value big_unsigned = 9;
+}
+
+service ConfigService {
+  rpc GetConfig(google.protobuf.Empty) returns (Config);
+  rpc UpdateConfig(Config) returns (google.protobuf.Empty);
+  rpc GetFields(google.protobuf.FieldMask) returns (Config);
+}
