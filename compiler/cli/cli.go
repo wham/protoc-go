@@ -5335,10 +5335,13 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		b = protowire.AppendVarint(b, v)
 	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
 		b = protowire.AppendTag(b, fieldNum, protowire.VarintType)
-		if value == "true" || value == "True" || value == "t" || value == "1" {
+		switch value {
+		case "true", "True", "t", "1":
 			b = protowire.AppendVarint(b, 1)
-		} else {
+		case "false", "False", "f", "0":
 			b = protowire.AppendVarint(b, 0)
+		default:
+			return nil, &aggregateBoolError{fieldName: ext.GetName(), value: value}
 		}
 	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
 		v, err := strconv.ParseFloat(value, 32)
@@ -5607,11 +5610,25 @@ func (e *aggregateDupFieldError) Error() string {
 	return fmt.Sprintf("Non-repeated field \"%s\" is specified multiple times.", e.fieldName)
 }
 
+type aggregateBoolError struct {
+	fieldName string
+	value     string
+}
+
+func (e *aggregateBoolError) Error() string {
+	return fmt.Sprintf("Invalid value for boolean field \"%s\". Value: \"%s\".", e.fieldName, e.value)
+}
+
 func formatAggregateError(err error, filename string, braceTok tokenizer.Token, optName string) string {
 	var dupErr *aggregateDupFieldError
 	if errors.As(err, &dupErr) {
 		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
 			filename, braceTok.Line+1, braceTok.Column+1, optName, dupErr.Error())
+	}
+	var boolErr *aggregateBoolError
+	if errors.As(err, &boolErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, boolErr.Error())
 	}
 	return fmt.Sprintf("%s: error encoding custom option: %v", filename, err)
 }
