@@ -45,7 +45,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-ALL DONE — 1624/1624 tests passing.
+ALL DONE — 1629/1629 tests passing.
 
 ### Completed
 1. ✅ Tokenizer (io/tokenizer/tokenizer.go) — full lexer with line/col tracking
@@ -484,3 +484,4 @@ ALL DONE — 1624/1624 tests passing.
 - Oneof angle bracket error recovery: C++ protoc's error chain when `<` appears in a custom oneof option: (1) `Expected option value.` at `<`, (2) ParseOption fails → ParseOneof fails → message body SkipStatement eats through `;`, (3) subsequent oneof fields parsed as message-level fields (proto2 → "Expected required..."), (4) oneof `}` consumed as message `}`, (5) message `}` at file level → "Expected top-level statement" + "Unmatched }". Go implementation: `errBreakOneof` sentinel error propagates from `parseOneofOption` → `parseOneof` → caught in `parseMessage`/`parseGroupBody` which `continue` the message body loop. File-level `case "}"` handles unmatched `}` by emitting both errors and consuming the token.
 305. ✅ Semicolon inside field option brackets error recovery — `[deprecated = true; json_name = "n"]` produces `Expected "]".` at `;` position and `Expected field name.` at `=` position matching C++ protoc two-error behavior, using `p.errors` for first error and returning nil to let caller's `Expect(";")` succeed, then message body parser retries remaining tokens as new field. Fixed `ParseFile` to merge `p.errors` with `parseErr` when both are present (previously `p.errors` was discarded if `parseErr` was non-nil).
 306. ✅ `--decode` missing value hint — `--decode` without `=` produces `Missing value for flag: --decode` followed by `To decode an unknown message, use --decode_raw.` matching C++ protoc behavior
+307. ✅ Aggregate option invalid bool validation — reject `TRUE`/`FALSE` (all-caps) and other invalid boolean values in aggregate options with `Invalid value for boolean field "X". Value: "Y".` error wrapped in `Error while parsing option value for "OPTNAME":` at `{` position, C++ text format parser only accepts `true`/`True`/`t`/`1` (truthy) and `false`/`False`/`f`/`0` (falsy)
