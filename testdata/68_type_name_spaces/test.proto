@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package spacetype;
+
+message Inner {
+  string value = 1;
+}
+
+message Outer {
+  spacetype .  Inner ref = 1;
+}

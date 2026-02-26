@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package dupoption;
+
+option java_package = "com.example.first";
+option java_package = "com.example.second";
+
+message Config {
+  string name = 1;
+}

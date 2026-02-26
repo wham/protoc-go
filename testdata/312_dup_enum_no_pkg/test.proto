@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+enum Priority {
+  UNKNOWN = 0;
+  HIGH = 1;
+  URGENT = 1;
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package dupname;
+
+message User {
+  string name = 1;
+}
+
+message User {
+  int32 id = 1;
+}

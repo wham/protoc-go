@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package mapentry;
+
+message FakeEntry {
+  option map_entry = true;
+  string key = 1;
+  string value = 2;
+}
+
+message Container {
+  string name = 1;
+}

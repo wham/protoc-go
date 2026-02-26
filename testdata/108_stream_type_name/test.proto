@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package streamname;
+
+message stream {
+  string data = 1;
+}
+
+service DataService {
+  rpc Process(stream) returns (stream);
+}

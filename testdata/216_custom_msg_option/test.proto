@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package custommsgopt;
+
+message Foo {
+  option (my_custom_opt) = "value";
+  string name = 1;
+}

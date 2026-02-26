@@ -1,0 +1,12 @@
+syntax = "proto2";
+
+package grouponeof;
+
+message Container {
+  oneof choice {
+    group MyGroup = 1 {
+      optional string name = 1;
+    }
+    string text = 2;
+  }
+}

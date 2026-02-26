@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package enumoverflow;
+
+enum LargeEnum {
+  DEFAULT = 0;
+  TOO_BIG = 2147483648;
+}
+
+message Config {
+  LargeEnum level = 1;
+}

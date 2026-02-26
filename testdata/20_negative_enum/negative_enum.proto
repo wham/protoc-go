@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package negative_enum;
+
+enum Temperature {
+  TEMPERATURE_UNSPECIFIED = 0;
+  TEMPERATURE_COLD = -1;
+  TEMPERATURE_FREEZING = -2;
+  TEMPERATURE_HOT = 1;
+}
+
+message Weather {
+  Temperature temp = 1;
+}

@@ -1,0 +1,8 @@
+edition = "2023";
+
+package msgfeattarget;
+
+message Config {
+  option features.enum_type = CLOSED;
+  string name = 1;
+}

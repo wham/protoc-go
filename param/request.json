@@ -1,0 +1,346 @@
+{
+  "fileToGenerate": [
+    "test.proto"
+  ],
+  "parameter": "param",
+  "protoFile": [
+    {
+      "name": "test.proto",
+      "package": "fieldtargets",
+      "messageType": [
+        {
+          "name": "Config",
+          "field": [
+            {
+              "name": "name",
+              "number": 1,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_STRING",
+              "jsonName": "name",
+              "options": {
+                "targets": [
+                  "TARGET_TYPE_FIELD"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "sourceCodeInfo": {
+        "location": [
+          {
+            "span": [
+              0,
+              0,
+              6,
+              1
+            ]
+          },
+          {
+            "path": [
+              12
+            ],
+            "span": [
+              0,
+              0,
+              18
+            ]
+          },
+          {
+            "path": [
+              2
+            ],
+            "span": [
+              2,
+              0,
+              21
+            ]
+          },
+          {
+            "path": [
+              4,
+              0
+            ],
+            "span": [
+              4,
+              0,
+              6,
+              1
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              1
+            ],
+            "span": [
+              4,
+              8,
+              14
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0
+            ],
+            "span": [
+              5,
+              2,
+              48
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              5
+            ],
+            "span": [
+              5,
+              2,
+              8
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              5,
+              9,
+              13
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              5,
+              16,
+              17
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              8
+            ],
+            "span": [
+              5,
+              18,
+              47
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              8,
+              19,
+              0
+            ],
+            "span": [
+              5,
+              19,
+              46
+            ]
+          }
+        ]
+      },
+      "syntax": "proto3"
+    }
+  ],
+  "sourceFileDescriptors": [
+    {
+      "name": "test.proto",
+      "package": "fieldtargets",
+      "messageType": [
+        {
+          "name": "Config",
+          "field": [
+            {
+              "name": "name",
+              "number": 1,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_STRING",
+              "jsonName": "name",
+              "options": {
+                "targets": [
+                  "TARGET_TYPE_FIELD"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "sourceCodeInfo": {
+        "location": [
+          {
+            "span": [
+              0,
+              0,
+              6,
+              1
+            ]
+          },
+          {
+            "path": [
+              12
+            ],
+            "span": [
+              0,
+              0,
+              18
+            ]
+          },
+          {
+            "path": [
+              2
+            ],
+            "span": [
+              2,
+              0,
+              21
+            ]
+          },
+          {
+            "path": [
+              4,
+              0
+            ],
+            "span": [
+              4,
+              0,
+              6,
+              1
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              1
+            ],
+            "span": [
+              4,
+              8,
+              14
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0
+            ],
+            "span": [
+              5,
+              2,
+              48
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              5
+            ],
+            "span": [
+              5,
+              2,
+              8
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              5,
+              9,
+              13
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              5,
+              16,
+              17
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              8
+            ],
+            "span": [
+              5,
+              18,
+              47
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              8,
+              19,
+              0
+            ],
+            "span": [
+              5,
+              19,
+              46
+            ]
+          }
+        ]
+      },
+      "syntax": "proto3"
+    }
+  ],
+  "compilerVersion": {
+    "major": 5,
+    "minor": 29,
+    "patch": 3,
+    "suffix": ""
+  }
+}

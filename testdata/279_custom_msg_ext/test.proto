@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package custmsgext;
+
+extend google.protobuf.MessageOptions {
+  optional string my_msg_label = 50001;
+}
+
+message Foo {
+  option (my_msg_label) = "primary";
+  optional string name = 1;
+  optional int32 value = 2;
+}

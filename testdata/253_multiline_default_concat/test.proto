@@ -1,0 +1,9 @@
+syntax = "proto2";
+
+package mldefault;
+
+message Config {
+  optional string greeting = 1 [default = "hello "
+      "world"];
+  optional string farewell = 2 [default = "goodbye"];
+}

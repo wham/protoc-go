@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package mapoverflow;
+
+message Config {
+  string name = 1;
+  map<string, string> metadata = 2147483648;
+}

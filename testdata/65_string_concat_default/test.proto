@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package strconcat;
+
+message Config {
+  optional string greeting = 1 [default = "hello" " world"];
+  optional string farewell = 2 [default = "goodbye"];
+}

@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package extensiontest;
+
+message Base {
+  optional string name = 1;
+  optional int32 id = 2;
+
+  extensions 100 to 199;
+  extensions 1000 to max;
+}
+
+message Detail {
+  optional string description = 1;
+}

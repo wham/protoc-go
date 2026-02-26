@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package negnan;
+
+message Values {
+  optional double neg_nan = 1 [default = -nan];
+  optional float pos_inf = 2 [default = inf];
+}

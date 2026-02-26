@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package test;
+
+message Sensor {
+  optional int32 min_temp = 1 [default = -40];
+  optional int32 max_temp = 2 [default = 100];
+}

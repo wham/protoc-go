@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package escape_test;
+
+option java_package = "com.example\ttest";
+option go_package = "example.com/escape\ntest";
+
+message EscapeDemo {
+  string name = 1;
+}

@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+message EnumConfig {
+  optional string label = 1;
+  optional int32 priority = 2;
+}
+
+extend google.protobuf.EnumOptions {
+  optional EnumConfig my_enum_config = 50001;
+}
+
+enum Status {
+  option (my_enum_config).label = "status";
+
+  STATUS_UNKNOWN = 0;
+  STATUS_ACTIVE = 1;
+}

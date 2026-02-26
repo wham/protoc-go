@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package msglegacyjson;
+
+message User {
+  option deprecated_legacy_json_field_conflicts = true;
+
+  string name = 1;
+  int32 id = 2;
+}

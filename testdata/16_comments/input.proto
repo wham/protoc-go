@@ -1,0 +1,16 @@
+// File-level leading detached comment.
+
+// File-level leading comment about the syntax.
+syntax = "proto3";
+
+// Package comment.
+package comments;
+
+// Message leading comment.
+message Person {
+  // Name field comment.
+  string name = 1;
+
+  // Age field comment.
+  int32 age = 2; // Age trailing comment.
+}

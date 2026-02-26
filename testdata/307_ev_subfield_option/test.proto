@@ -1,0 +1,25 @@
+syntax = "proto2";
+
+package evsubfield;
+
+import "google/protobuf/descriptor.proto";
+
+message EnumValueConfig {
+  optional string label = 1;
+  optional int32 weight = 2;
+}
+
+extend google.protobuf.EnumValueOptions {
+  optional EnumValueConfig my_ev_config = 50001;
+}
+
+enum Priority {
+  PRIORITY_UNKNOWN = 0;
+  PRIORITY_LOW = 1 [(my_ev_config).label = "low"];
+  PRIORITY_HIGH = 2 [(my_ev_config).weight = 10];
+}
+
+message Task {
+  optional Priority priority = 1;
+  optional string name = 2;
+}

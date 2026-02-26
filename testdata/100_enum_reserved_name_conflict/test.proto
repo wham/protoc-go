@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package enumresname;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  reserved "DELETED", "ARCHIVED";
+  DELETED = 3;
+}

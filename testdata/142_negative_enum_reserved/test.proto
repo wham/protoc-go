@@ -1,0 +1,16 @@
+syntax = "proto2";
+
+package negenumres;
+
+enum Temperature {
+  UNKNOWN = 0;
+  WARM = 1;
+  COLD = -1;
+  FREEZING = -10;
+  reserved -20 to -15;
+  reserved -5;
+}
+
+message Forecast {
+  optional Temperature temp = 1;
+}

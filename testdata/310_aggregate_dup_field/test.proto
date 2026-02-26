@@ -1,0 +1,16 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package aggdup;
+
+message MyConfig {
+  optional string label = 1;
+  optional int32 count = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyConfig my_config = 50001;
+}
+
+option (my_config) = { label: "first" label: "second" count: 42 };

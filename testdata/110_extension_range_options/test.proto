@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package extrangeopt;
+
+message Extendable {
+  optional string name = 1;
+  extensions 100 to 199 [verification = UNVERIFIED];
+}

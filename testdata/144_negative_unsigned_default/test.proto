@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package neguint;
+
+message Config {
+  optional uint32 value = 1 [default = -5];
+  optional uint64 large = 2 [default = -100];
+}

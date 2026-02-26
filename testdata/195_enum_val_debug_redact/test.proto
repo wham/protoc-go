@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package enum_debug;
+
+enum Sensitivity {
+  UNKNOWN = 0;
+  SECRET = 1 [debug_redact = true];
+  PUBLIC = 2;
+}
+
+message Msg {
+  Sensitivity level = 1;
+}

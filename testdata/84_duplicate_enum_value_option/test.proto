@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package dupevopt;
+
+enum Priority {
+  UNKNOWN = 0;
+  HIGH = 1 [deprecated = true, deprecated = false];
+  LOW = 2;
+}
+
+message Task {
+  string name = 1;
+  Priority priority = 2;
+}

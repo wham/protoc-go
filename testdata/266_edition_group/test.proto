@@ -1,0 +1,10 @@
+edition = "2023";
+
+package test;
+
+message SearchResponse {
+  repeated group Result = 1 {
+    string url = 1;
+    string title = 2;
+  }
+}

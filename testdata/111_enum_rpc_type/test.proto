@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package enumrpc;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message Response {
+  string data = 1;
+}
+
+service MyService {
+  rpc GetStatus(Status) returns (Response);
+}

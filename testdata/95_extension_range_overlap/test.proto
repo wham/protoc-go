@@ -1,0 +1,9 @@
+syntax = "proto2";
+
+package extoverlap;
+
+message Extendable {
+  required string name = 1;
+  extensions 100 to 200;
+  extensions 150 to 300;
+}

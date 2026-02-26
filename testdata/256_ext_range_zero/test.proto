@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package extrangezero;
+
+message Extendable {
+  optional string name = 1;
+  extensions 0 to 10;
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package mapcomment;
+
+message Config {
+  // The name of this configuration.
+  string name = 1;
+
+  // Key-value labels for the configuration.
+  map<string, string> labels = 2;
+}

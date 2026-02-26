@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package fieldtargets;
+
+message Config {
+  string name = 1 [targets = TARGET_TYPE_FIELD];
+}

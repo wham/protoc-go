@@ -1,0 +1,8 @@
+syntax = "proto4";
+
+package badsyntax;
+
+message Config {
+  string name = 1;
+  int32 count = 2;
+}

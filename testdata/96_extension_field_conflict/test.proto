@@ -1,0 +1,9 @@
+syntax = "proto2";
+
+package extfieldconflict;
+
+message Config {
+  required string name = 1;
+  optional int32 value = 100;
+  extensions 100 to 200;
+}

@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package weakopt;
+
+message Dep {
+  string value = 1;
+}
+
+message Config {
+  string name = 1;
+  Dep ref = 2 [weak = true];
+}

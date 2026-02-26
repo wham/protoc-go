@@ -4,9 +4,12 @@
 
 set -euo pipefail
 
-# Try homebrew first, then PATH
-if command -v protoc &>/dev/null; then
-    PROTOC="$(command -v protoc)"
+# Try homebrew first, then local install, then PATH
+if [ -x "/tmp/protoc-install/bin/protoc" ]; then
+    export PATH="/tmp/protoc-install/bin:$PATH"
+    PROTOC="protoc"
+elif command -v protoc &>/dev/null; then
+    PROTOC="protoc"
 else
     echo "Error: protoc not found. Install with: brew install protobuf" >&2
     exit 1
@@ -17,6 +20,8 @@ if [ -d "/opt/homebrew/include/google/protobuf" ]; then
     PROTOC_INCLUDE="/opt/homebrew/include"
 elif [ -d "/usr/local/include/google/protobuf" ]; then
     PROTOC_INCLUDE="/usr/local/include"
+elif [ -d "/tmp/protoc-install/include/google/protobuf" ]; then
+    PROTOC_INCLUDE="/tmp/protoc-install/include"
 elif [ -d "/usr/include/google/protobuf" ]; then
     PROTOC_INCLUDE="/usr/include"
 else

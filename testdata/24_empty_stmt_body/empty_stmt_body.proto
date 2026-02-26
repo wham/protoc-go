@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package emptystmtbody;
+
+message Request {
+  ;
+  string query = 1;
+  ;
+  int32 page_size = 2;
+}
+
+enum Status {
+  UNKNOWN = 0;
+  ;
+  ACTIVE = 1;
+}
+
+service SearchService {
+  ;
+  rpc Search (Request) returns (Request);
+}

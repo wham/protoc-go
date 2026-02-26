@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package undeftype;
+
+message Response {
+  string result = 1;
+}
+
+service MyService {
+  rpc Process(NonExistent) returns (Response);
+}

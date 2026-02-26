@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package packedstr;
+
+message TagList {
+  repeated string tags = 1 [packed = true];
+  repeated bytes data = 2 [packed = true];
+  repeated int32 ids = 3 [packed = true];
+}

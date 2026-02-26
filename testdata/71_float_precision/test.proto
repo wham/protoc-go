@@ -1,0 +1,9 @@
+syntax = "proto2";
+
+package floatprecision;
+
+message Config {
+  optional double ratio = 1 [default = 1e10];
+  optional double epsilon = 2 [default = 1e-6];
+  optional double third = 3 [default = 0.333333333333333];
+}

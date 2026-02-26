@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package strfloat;
+
+message Config {
+  optional float ratio = 1 [default = "1.5"];
+  optional double scale = 2 [default = "3.14"];
+}

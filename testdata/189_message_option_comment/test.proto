@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package msgoption;
+
+message Config {
+  // This message is deprecated and should not be used.
+  option deprecated = true;
+
+  string name = 1;
+  int32 value = 2;
+}

@@ -388,6 +388,22 @@ CLI_TESTS=(
   "no_args|"
   "missing_output|missing.proto"
   "bad_proto_path|--proto_path=/nonexistent/path --dump_out=/tmp missing.proto"
+  "unknown_flag|--unknown_flag=test"
+  "error_format|--error_format=gcc"
+  "fatal_warnings|--fatal_warnings"
+  "print_free_field|--print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "deterministic_output|--deterministic_output"
+  "retain_options|--retain_options"
+  "decode_raw|--decode_raw"
+  "decode_raw_stdin|--decode_raw|hello"
+  "descriptor_set_in|--descriptor_set_in=/tmp/descriptors.pb"
+  "dependency_out|--dependency_out=/tmp/deps.txt -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "encode|--encode=foo.Message"
+  "notices|--notices"
+  "enable_codegen_trace|--enable_codegen_trace=true"
+  "error_format_msvs|--error_format=msvs -I testdata/257_msvs_error --dump_out=/tmp/msvs_test_out testdata/257_msvs_error/test.proto"
+  "error_format_unknown|--error_format=unknown"
+  "decode_no_value|--decode"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

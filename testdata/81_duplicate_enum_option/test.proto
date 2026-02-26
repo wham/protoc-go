@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package dupenumopt;
+
+enum Status {
+  option deprecated = true;
+  option deprecated = false;
+  UNKNOWN = 0;
+  ACTIVE = 1;
+}
+
+message Config {
+  Status status = 1;
+}

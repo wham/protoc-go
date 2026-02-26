@@ -1,0 +1,23 @@
+syntax = "proto2";
+
+package customsvcext;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.ServiceOptions {
+  optional string service_label = 50001;
+}
+
+message Request {
+  optional string query = 1;
+}
+
+message Response {
+  optional string result = 1;
+}
+
+service SearchService {
+  option (service_label) = "primary";
+
+  rpc Search(Request) returns (Response);
+}

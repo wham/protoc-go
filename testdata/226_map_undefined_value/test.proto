@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package mapundef;
+
+message Config {
+  string name = 1;
+  map<string, NonExistent> items = 2;
+}

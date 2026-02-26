@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package dupimport;
+
+import "base.proto";
+import "base.proto";
+
+message Event {
+  string name = 1;
+  Timestamp created_at = 2;
+}

@@ -1,0 +1,12 @@
+syntax = "proto2";
+
+package exttest;
+
+message Extendable {
+  optional string name = 1;
+  extensions 100 to 200;
+}
+
+extend Extendable {
+  optional string nickname = 100;
+}

@@ -1,0 +1,14 @@
+edition = "2023";
+
+package enumfeatures;
+
+enum Status {
+  option features.enum_type = CLOSED;
+  STATUS_UNKNOWN = 0;
+  STATUS_ACTIVE = 1;
+  STATUS_INACTIVE = 2;
+}
+
+message Container {
+  Status status = 1;
+}

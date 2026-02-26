@@ -1,0 +1,523 @@
+{
+  "fileToGenerate": [
+    "basic.proto"
+  ],
+  "protoFile": [
+    {
+      "name": "basic.proto",
+      "package": "basic",
+      "messageType": [
+        {
+          "name": "Person",
+          "field": [
+            {
+              "name": "name",
+              "number": 1,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_STRING",
+              "jsonName": "name"
+            },
+            {
+              "name": "id",
+              "number": 2,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_INT32",
+              "jsonName": "id"
+            },
+            {
+              "name": "email",
+              "number": 3,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_STRING",
+              "jsonName": "email"
+            }
+          ]
+        }
+      ],
+      "sourceCodeInfo": {
+        "location": [
+          {
+            "span": [
+              0,
+              0,
+              8,
+              1
+            ]
+          },
+          {
+            "path": [
+              12
+            ],
+            "span": [
+              0,
+              0,
+              18
+            ]
+          },
+          {
+            "path": [
+              2
+            ],
+            "span": [
+              2,
+              0,
+              14
+            ]
+          },
+          {
+            "path": [
+              4,
+              0
+            ],
+            "span": [
+              4,
+              0,
+              8,
+              1
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              1
+            ],
+            "span": [
+              4,
+              8,
+              14
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0
+            ],
+            "span": [
+              5,
+              2,
+              18
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              5
+            ],
+            "span": [
+              5,
+              2,
+              8
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              5,
+              9,
+              13
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              5,
+              16,
+              17
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1
+            ],
+            "span": [
+              6,
+              2,
+              15
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              5
+            ],
+            "span": [
+              6,
+              2,
+              7
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              1
+            ],
+            "span": [
+              6,
+              8,
+              10
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              3
+            ],
+            "span": [
+              6,
+              13,
+              14
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              2
+            ],
+            "span": [
+              7,
+              2,
+              19
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              2,
+              5
+            ],
+            "span": [
+              7,
+              2,
+              8
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              2,
+              1
+            ],
+            "span": [
+              7,
+              9,
+              14
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              2,
+              3
+            ],
+            "span": [
+              7,
+              17,
+              18
+            ]
+          }
+        ]
+      },
+      "syntax": "proto3"
+    }
+  ],
+  "sourceFileDescriptors": [
+    {
+      "name": "basic.proto",
+      "package": "basic",
+      "messageType": [
+        {
+          "name": "Person",
+          "field": [
+            {
+              "name": "name",
+              "number": 1,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_STRING",
+              "jsonName": "name"
+            },
+            {
+              "name": "id",
+              "number": 2,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_INT32",
+              "jsonName": "id"
+            },
+            {
+              "name": "email",
+              "number": 3,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_STRING",
+              "jsonName": "email"
+            }
+          ]
+        }
+      ],
+      "sourceCodeInfo": {
+        "location": [
+          {
+            "span": [
+              0,
+              0,
+              8,
+              1
+            ]
+          },
+          {
+            "path": [
+              12
+            ],
+            "span": [
+              0,
+              0,
+              18
+            ]
+          },
+          {
+            "path": [
+              2
+            ],
+            "span": [
+              2,
+              0,
+              14
+            ]
+          },
+          {
+            "path": [
+              4,
+              0
+            ],
+            "span": [
+              4,
+              0,
+              8,
+              1
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              1
+            ],
+            "span": [
+              4,
+              8,
+              14
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0
+            ],
+            "span": [
+              5,
+              2,
+              18
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              5
+            ],
+            "span": [
+              5,
+              2,
+              8
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              5,
+              9,
+              13
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              5,
+              16,
+              17
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1
+            ],
+            "span": [
+              6,
+              2,
+              15
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              5
+            ],
+            "span": [
+              6,
+              2,
+              7
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              1
+            ],
+            "span": [
+              6,
+              8,
+              10
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              3
+            ],
+            "span": [
+              6,
+              13,
+              14
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              2
+            ],
+            "span": [
+              7,
+              2,
+              19
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              2,
+              5
+            ],
+            "span": [
+              7,
+              2,
+              8
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              2,
+              1
+            ],
+            "span": [
+              7,
+              9,
+              14
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              2,
+              3
+            ],
+            "span": [
+              7,
+              17,
+              18
+            ]
+          }
+        ]
+      },
+      "syntax": "proto3"
+    }
+  ],
+  "compilerVersion": {
+    "major": 5,
+    "minor": 29,
+    "patch": 3,
+    "suffix": ""
+  }
+}

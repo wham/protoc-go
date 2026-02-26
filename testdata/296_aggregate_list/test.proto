@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package agglist;
+
+import "google/protobuf/descriptor.proto";
+
+message MyFileOpt {
+  repeated int32 values = 1;
+  optional string label = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyFileOpt my_file_opt = 50001;
+}
+
+option (my_file_opt) = {
+  values: [1, 2, 3]
+  label: "test"
+};

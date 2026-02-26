@@ -1,0 +1,37 @@
+syntax = "proto2";
+
+package aggext;
+
+import "google/protobuf/descriptor.proto";
+
+message Color {
+  optional int32 r = 1;
+  optional int32 g = 2;
+  optional int32 b = 3;
+  extensions 100 to 200;
+}
+
+extend Color {
+  optional string color_name = 100;
+}
+
+message MyFileOpt {
+  optional Color primary = 1;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyFileOpt my_file_opt = 50001;
+}
+
+option (my_file_opt) = {
+  primary {
+    r: 255
+    g: 0
+    b: 0
+    [aggext.color_name]: "red"
+  }
+};
+
+message Dummy {
+  optional string name = 1;
+}

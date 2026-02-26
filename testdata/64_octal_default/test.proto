@@ -1,0 +1,9 @@
+syntax = "proto2";
+
+package octaldef;
+
+message FilePermission {
+  optional int32 mode = 1 [default = 0755];
+  optional int32 flags = 2 [default = 0644];
+  optional int32 mask = 3 [default = 0777];
+}

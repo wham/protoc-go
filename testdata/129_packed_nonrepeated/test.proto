@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package packedtest;
+
+message Config {
+  int32 count = 1 [packed = true];
+  string name = 2;
+}

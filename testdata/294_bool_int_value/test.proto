@@ -1,0 +1,14 @@
+syntax = "proto2";
+
+package boolintval;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FieldOptions {
+  optional bool my_flag = 50001;
+}
+
+message Config {
+  optional int32 threshold = 1 [(my_flag) = 2];
+  optional string label = 2 [(my_flag) = 0];
+}

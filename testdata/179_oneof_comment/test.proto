@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package oneofcmt;
+
+message Request {
+  string id = 1;
+
+  // The payload can be text or a number.
+  oneof payload {
+    string text = 2;
+    int32 number = 3;
+  }
+}

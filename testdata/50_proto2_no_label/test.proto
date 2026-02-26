@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package nolabel;
+
+message Config {
+  string name = 1;
+  int32 count = 2;
+}

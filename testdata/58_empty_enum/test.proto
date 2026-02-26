@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package emptyenum;
+
+enum Status {}
+
+message Config {
+  string name = 1;
+}

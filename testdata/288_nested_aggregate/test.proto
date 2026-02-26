@@ -1,0 +1,31 @@
+syntax = "proto2";
+
+package nestagg;
+
+import "google/protobuf/descriptor.proto";
+
+message Inner {
+  optional string label = 1;
+  optional int32 priority = 2;
+}
+
+message MyFileOpt {
+  optional Inner info = 1;
+  optional string tag = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyFileOpt my_file_opt = 50001;
+}
+
+option (my_file_opt) = {
+  info: {
+    label: "primary"
+    priority: 5
+  }
+  tag: "test"
+};
+
+message Foo {
+  optional string name = 1;
+}

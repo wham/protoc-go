@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package deepsubfield;
+
+import "google/protobuf/descriptor.proto";
+
+message InnerMsg {
+  optional string name = 1;
+}
+
+message MyExt {
+  optional InnerMsg inner = 1;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyExt my_ext = 50001;
+}
+
+option (my_ext).inner.name = "test";

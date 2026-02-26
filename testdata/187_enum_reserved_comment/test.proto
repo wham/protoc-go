@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package enumrescomment;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+  // These values are reserved for future use.
+  reserved 10 to 20;
+}
+
+message Container {
+  Status status = 1;
+}

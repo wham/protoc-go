@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package custom;
+
+option (undefined_opt) = "hello";
+
+message Foo {
+  string name = 1;
+}

@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package floatdefint;
+
+message Config {
+  optional int32 threshold = 1 [default = 1.5];
+  optional int64 big_value = 2 [default = 3.14];
+}

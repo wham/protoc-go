@@ -1,0 +1,12 @@
+files_to_generate: [basic.proto]
+parameter: ""
+compiler_version: major:5 minor:29 patch:3 suffix:""
+proto_file_count: 1
+source_file_descriptor_count: 1
+
+proto_file[0]: basic.proto (package="basic", syntax="proto3")
+  message: Person
+    field: name (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
+    field: id (number=2, type=TYPE_INT32, label=LABEL_OPTIONAL)
+    field: email (number=3, type=TYPE_STRING, label=LABEL_OPTIONAL)
+  source_code_info_locations: 17

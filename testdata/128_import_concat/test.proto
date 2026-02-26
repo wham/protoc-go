@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package importconcat;
+
+import "base" ".proto";
+
+message Event {
+  string name = 1;
+  Timestamp created_at = 2;
+}

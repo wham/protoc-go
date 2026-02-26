@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package enumvalcomma;
+
+enum Priority {
+  UNKNOWN = 0;
+  HIGH = 1 [deprecated = true,];
+  LOW = 2;
+}

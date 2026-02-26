@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+import "";
+
+package emptyimport;
+
+message Config {
+  string name = 1;
+}

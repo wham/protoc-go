@@ -1,0 +1,11 @@
+syntax = "proto2";
+
+package extnotfound;
+
+message Other {
+  optional string data = 1;
+}
+
+extend NonExistent {
+  optional string tag = 100;
+}

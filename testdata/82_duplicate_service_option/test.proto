@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package dupsvcopt;
+
+message Request {}
+message Response {}
+
+service Greeter {
+  option deprecated = true;
+  option deprecated = false;
+
+  rpc SayHello (Request) returns (Response);
+}

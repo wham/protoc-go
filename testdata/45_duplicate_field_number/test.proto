@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package dupfield;
+
+message User {
+  string name = 1;
+  int32 id = 1;
+  string email = 2;
+}

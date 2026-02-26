@@ -1,0 +1,20 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package msgsubfield;
+
+message MessageConfig {
+  optional string label = 1;
+  optional int32 weight = 2;
+}
+
+extend google.protobuf.MessageOptions {
+  optional MessageConfig my_msg_config = 50001;
+}
+
+message TaggedMessage {
+  option (my_msg_config).label = "important";
+
+  optional string content = 1;
+}

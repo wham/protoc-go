@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package dupenum;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  ENABLED = 1;
+}
+
+message Config {
+  Status state = 1;
+}

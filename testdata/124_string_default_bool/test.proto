@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package strbooldefault;
+
+message Config {
+  optional bool verbose = 1 [default = "true"];
+  optional bool debug = 2 [default = "false"];
+}

@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package unknownevopt;
+
+enum Priority {
+  UNKNOWN = 0;
+  HIGH = 1 [foobar = true];
+  MEDIUM = 2;
+  LOW = 3;
+}
+
+message Task {
+  string title = 1;
+  Priority level = 2;
+}

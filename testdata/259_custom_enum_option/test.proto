@@ -1,0 +1,21 @@
+syntax = "proto2";
+
+package customenumopt;
+
+import "google/protobuf/descriptor.proto";
+
+enum Severity {
+  LOW = 0;
+  MEDIUM = 1;
+  HIGH = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional Severity my_severity = 50001;
+}
+
+option (my_severity) = HIGH;
+
+message Config {
+  optional string name = 1;
+}

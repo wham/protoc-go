@@ -1,0 +1,23 @@
+syntax = "proto2";
+
+package aggrboolnum;
+
+import "google/protobuf/descriptor.proto";
+
+message Config {
+  optional bool enabled = 1;
+  optional bool verbose = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional Config my_config = 50001;
+}
+
+option (my_config) = {
+  enabled: 1
+  verbose: 0
+};
+
+message Payload {
+  optional string data = 1;
+}

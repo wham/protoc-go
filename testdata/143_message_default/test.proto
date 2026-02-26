@@ -1,0 +1,12 @@
+syntax = "proto2";
+
+package msgdefault;
+
+message Inner {
+  optional string value = 1;
+}
+
+message Outer {
+  optional Inner child = 1 [default = "test"];
+  optional string name = 2;
+}

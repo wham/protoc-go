@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package strjstype;
+
+message Config {
+  string name = 1;
+  int64 big_value = 2 [jstype = "JS_STRING"];
+}

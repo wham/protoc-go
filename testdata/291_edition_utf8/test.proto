@@ -1,0 +1,8 @@
+edition = "2023";
+
+package editionutf8;
+
+message Msg {
+  string name = 1 [features.utf8_validation = NONE];
+  bytes data = 2;
+}

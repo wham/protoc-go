@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package intdefstr;
+
+message Config {
+  optional string name = 1 [default = 42];
+  optional string label = 2 [default = "valid"];
+}

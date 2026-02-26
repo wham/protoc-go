@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package oneofopt;
+
+message Request {
+  oneof choice {
+    option features.field_presence = IMPLICIT;
+    string name = 1;
+    int32 count = 2;
+  }
+}

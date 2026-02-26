@@ -1,0 +1,8 @@
+syntax = "proto3";
+package invalidescape;
+
+option java_package = "com.example\etest";
+
+message Config {
+  string name = 1;
+}

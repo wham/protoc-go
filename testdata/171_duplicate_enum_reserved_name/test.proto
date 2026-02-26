@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package dupenumres;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  reserved "DELETED", "DELETED";
+}
+
+message Config {
+  Status status = 1;
+}

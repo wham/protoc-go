@@ -1,0 +1,28 @@
+syntax = "proto2";
+
+package agganglenest;
+
+import "google/protobuf/descriptor.proto";
+
+message Inner {
+  optional string label = 1;
+  optional int32 count = 2;
+}
+
+message MyConfig {
+  optional Inner info = 1;
+  optional string tag = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyConfig my_config = 50003;
+}
+
+option (my_config) = {
+  info < label: "test" count: 3 >
+  tag: "hello"
+};
+
+message Placeholder {
+  optional string name = 1;
+}

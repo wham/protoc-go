@@ -1,0 +1,14 @@
+syntax = "proto2";
+
+package groupenum;
+
+message Container {
+  optional group MyGroup = 1 {
+    optional string name = 2;
+    enum Status {
+      UNKNOWN = 0;
+      ACTIVE = 1;
+    }
+    optional Status status = 3;
+  }
+}

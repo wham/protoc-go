@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package strboolsvc;
+
+message Request {
+  string query = 1;
+}
+
+message Response {
+  string result = 1;
+}
+
+service SearchService {
+  option deprecated = "true";
+
+  rpc Search(Request) returns (Response);
+}

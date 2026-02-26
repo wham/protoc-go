@@ -1,0 +1,7 @@
+syntax = "proto3";
+package jsonexplicit;
+
+message Contact {
+  string first_name = 1 [json_name = "name"];
+  string last_name = 2 [json_name = "name"];
+}

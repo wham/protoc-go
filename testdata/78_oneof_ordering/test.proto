@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package oneoforder;
+
+message Request {
+  optional string name = 1;
+  oneof payload {
+    string text = 2;
+    int32 number = 3;
+  }
+  optional int32 age = 4;
+}

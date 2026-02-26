@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package aggboolshort;
+
+message Settings {
+  optional bool enabled = 1;
+  optional bool verbose = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional Settings my_settings = 50001;
+}
+
+option (my_settings) = {
+  enabled: t
+  verbose: f
+};

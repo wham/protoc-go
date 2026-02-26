@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package fqn;
+
+message Inner {
+  string value = 1;
+}
+
+message Outer {
+  .fqn.Inner ref = 1;
+}

@@ -1,0 +1,17 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+message FieldConfig {
+  optional string name = 1;
+  optional int32 priority = 2;
+}
+
+extend google.protobuf.FieldOptions {
+  optional FieldConfig my_field_config = 50001;
+}
+
+message Example {
+  optional string label = 1 [(my_field_config).name = "primary"];
+  optional int32 count = 2 [(my_field_config).priority = 5];
+}

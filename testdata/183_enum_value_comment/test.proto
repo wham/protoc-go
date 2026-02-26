@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package enumvalcomment;
+
+enum Priority {
+  // The default unknown priority.
+  UNKNOWN = 0;
+
+  // High priority tasks are handled first.
+  HIGH = 1;
+
+  // Low priority tasks are handled last.
+  LOW = 2;
+}
+
+message Task {
+  string name = 1;
+  Priority level = 2;
+}

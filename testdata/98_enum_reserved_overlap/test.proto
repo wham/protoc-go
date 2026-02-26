@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package enumresoverlap;
+
+enum Priority {
+  PRIORITY_UNSPECIFIED = 0;
+  PRIORITY_HIGH = 1;
+  PRIORITY_MEDIUM = 5;
+  PRIORITY_LOW = 10;
+  reserved 20 to 30;
+  reserved 25 to 40;
+}
+
+message Request {
+  Priority priority = 1;
+}

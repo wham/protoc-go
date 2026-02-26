@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package weaktest;
+
+import weak "base.proto";
+
+message Event {
+  string name = 1;
+  Timestamp created_at = 2;
+}

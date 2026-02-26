@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package mapboolkey;
+
+message Msg {
+  map<bool, string> flags = 1;
+  map<sint32, string> smap = 2;
+  map<sfixed64, string> fmap = 3;
+}

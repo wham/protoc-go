@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package packedmsg;
+
+message Inner {
+  string value = 1;
+}
+
+message Outer {
+  repeated Inner items = 1 [packed = true];
+}

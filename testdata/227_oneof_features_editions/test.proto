@@ -1,0 +1,11 @@
+edition = "2023";
+
+package oneofeditions;
+
+message Config {
+  oneof choice {
+    option features.utf8_validation = NONE;
+    string name = 1;
+    int32 count = 2;
+  }
+}

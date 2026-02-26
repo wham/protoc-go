@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package proto3features;
+
+option features.field_presence = EXPLICIT;
+
+message Request {
+  string name = 1;
+  int32 value = 2;
+}

@@ -1,0 +1,9 @@
+syntax = "proto2";
+
+package bytesesc;
+
+message Config {
+  optional bytes data = 1 [default = "\x00\xff\x42"];
+  optional bytes empty = 2 [default = ""];
+  optional bytes text = 3 [default = "hello"];
+}

@@ -1,0 +1,13 @@
+syntax = "proto2";
+
+package enumdefault;
+
+enum Priority {
+  LOW = 0;
+  MEDIUM = 1;
+  HIGH = 2;
+}
+
+message Config {
+  optional Priority level = 1 [default = NONEXISTENT];
+}

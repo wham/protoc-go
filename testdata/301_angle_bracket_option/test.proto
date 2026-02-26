@@ -1,0 +1,13 @@
+syntax = "proto3";
+package test;
+import "google/protobuf/descriptor.proto";
+message MyInfo {
+  string name = 1;
+}
+extend google.protobuf.MessageOptions {
+  optional MyInfo my_info = 50001;
+}
+message Msg {
+  option (my_info) = < name: "hello" >;
+  string value = 1;
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package svcbody;
+
+message Request {
+  string name = 1;
+}
+
+service MyService {
+  message Nested {}
+}

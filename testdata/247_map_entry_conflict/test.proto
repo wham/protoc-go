@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package mapentry;
+
+message Container {
+  message TagsEntry {
+    string key = 1;
+    string value = 2;
+  }
+  map<string, string> tags = 1;
+}

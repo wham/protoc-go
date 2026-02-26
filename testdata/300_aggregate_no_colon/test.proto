@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package aggnocolon;
+
+import "google/protobuf/descriptor.proto";
+
+message MyOpt {
+  optional string label = 1;
+  optional int32 count = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyOpt my_opt = 50002;
+}
+
+option (my_opt) = {
+  label "test"
+  count 42
+};

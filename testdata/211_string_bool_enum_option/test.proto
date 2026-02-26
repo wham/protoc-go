@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package strboolopt;
+
+enum Status {
+  option deprecated = "true";
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message Config {
+  string name = 1;
+  Status status = 2;
+}

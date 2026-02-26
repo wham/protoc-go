@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package msgsetorder;
+
+// Extension range comes before message_set_wire_format option.
+// C++ protoc resolves max to INT32_MAX (2147483647) regardless of order.
+// Go protoc-go may resolve max to 536870912 because the option hasn't been set yet.
+message MyMessageSet {
+  extensions 4 to max;
+  option message_set_wire_format = true;
+}
+
+message Container {
+  optional MyMessageSet data = 1;
+}

@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package stridempot;
+
+message Request {
+  string query = 1;
+}
+
+message Response {
+  string result = 1;
+}
+
+service SearchService {
+  rpc Search(Request) returns (Response) {
+    option idempotency_level = "NO_SIDE_EFFECTS";
+  }
+}

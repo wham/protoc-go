@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package proto3enumzero;
+
+enum Priority {
+  HIGH = 1;
+  MEDIUM = 2;
+  LOW = 3;
+}
+
+message Task {
+  string name = 1;
+  Priority priority = 2;
+}

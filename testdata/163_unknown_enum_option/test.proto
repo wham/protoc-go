@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package unknownenumopt;
+
+enum Status {
+  option foobar = true;
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message Config {
+  Status state = 1;
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package enumconflict;
+
+message Foo {
+  string name = 1;
+}
+
+enum Bar {
+  Foo = 0;
+}

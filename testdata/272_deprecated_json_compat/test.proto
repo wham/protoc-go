@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package deprecated_json;
+
+message Msg {
+  option deprecated_legacy_json_field_conflicts = true;
+  string foo_bar = 1;
+  string fooBar = 2;
+}

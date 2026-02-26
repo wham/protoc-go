@@ -1,0 +1,13 @@
+syntax = "proto2";
+package grpext;
+
+message Base {
+  optional int32 id = 1;
+  extensions 100 to 200;
+}
+
+extend Base {
+  optional group MyGroup = 100 {
+    optional string name = 1;
+  }
+}

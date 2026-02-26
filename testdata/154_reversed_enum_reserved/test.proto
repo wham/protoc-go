@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package revenumres;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  reserved 20 to 10;
+}
+
+message Config {
+  Status status = 1;
+}

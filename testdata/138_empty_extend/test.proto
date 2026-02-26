@@ -1,0 +1,11 @@
+syntax = "proto2";
+
+package emptyext;
+
+message Base {
+  optional string name = 1;
+  extensions 100 to 200;
+}
+
+extend Base {
+}

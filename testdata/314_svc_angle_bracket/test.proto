@@ -1,0 +1,21 @@
+syntax = "proto2";
+
+package svcangle;
+
+import "google/protobuf/descriptor.proto";
+
+message ServiceConfig {
+  optional string name = 1;
+  optional int32 priority = 2;
+}
+
+extend google.protobuf.ServiceOptions {
+  optional ServiceConfig svc_config = 50001;
+}
+
+message Empty {}
+
+service MyService {
+  option (svc_config) = < name: "hello" priority: 1 >;
+  rpc Ping(Empty) returns (Empty);
+}

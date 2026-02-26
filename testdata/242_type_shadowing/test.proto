@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package shadow;
+
+message Outer {
+  message Inner {
+    string value = 1;
+  }
+}
+
+message Container {
+  message Outer {
+    string id = 1;
+  }
+  // Container.Outer shadows package-level Outer,
+  // so Outer.Inner should fail (Container.Outer has no Inner).
+  Outer.Inner ref = 1;
+}

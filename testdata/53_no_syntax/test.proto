@@ -1,0 +1,6 @@
+package nosyntax;
+
+message Config {
+  string name = 1;
+  int32 count = 2;
+}
