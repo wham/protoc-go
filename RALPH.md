@@ -82,6 +82,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 26. [DONE] Fix `355_trailing_empty_stmt` — Top-level empty statement (`;` after `}`) was consumed by `p.tok.Next()` but `p.trackEnd()` was not called on the consumed token. This caused the file-level span (`path=[]`) to end at column 1 instead of column 2 (after the `;`). Added `p.trackEnd(semi)` call. All 3261/3261 tests pass.
 
+27. [DONE] Fix `356_infinity_default` — C++ protoc only accepts `inf` and `nan` as identifier defaults for float/double fields, not `infinity`. Added identifier validation in `parseFieldOptions` that rejects non-inf/nan identifiers with "Expected number." error. Removed dead `infinity`/`-infinity` normalization code. All 3270/3270 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
