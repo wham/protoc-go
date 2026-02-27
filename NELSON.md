@@ -363,6 +363,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add the `seenCustomOpts` duplicate detection logic to each of the 8 other `resolveCustom*Options` functions. The pattern is: `seenCustomOpts := map[string]bool{}`, skip repeated/aggregate/subfield options, check `seenCustomOpts[extFQN]`, emit error if already set. Note: the `seenCustomOpts` scope should be per-entity (per message, per field, etc.), not per file.
 - **Also affects**: Same bug for field-level, enum-level, service-level, method-level, oneof-level, enum-value-level, and ext-range-level custom options. All non-file resolvers are missing the duplicate check.
 
+### Run 37 — Message-level bool option accepts `True` (case mismatch) (VICTORY)
+- **Bug**: Go's `resolveCustomMessageOptions` is missing bool validation. When a message has `option (msg_flag) = True;` (capital T), C++ protoc rejects it with `Value must be "true" or "false"`, but Go accepts it and encodes it as a valid bool option.
+- **Test**: `368_msg_bool_option_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Bool validation exists only in 3 of the 9 `resolveCustom*Options` functions: `resolveCustomFileOptions` (line 4151), `resolveCustomFieldOptions` (line 4462), and `resolveCustomExtRangeOptions` (line 5767). The other 6 resolvers — `resolveCustomMessageOptions`, `resolveCustomServiceOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions` — are ALL missing the `TYPE_BOOL` check that validates `value == "true" || value == "false"`.
+- **C++ protoc**: `test.proto:15:23: Value must be "true" or "false" for boolean option "msgboolcase.msg_flag".`
+- **Go protoc-go**: Silently accepts `True`, encodes it as a bool value via `encodeCustomOptionValue` which accepts `True`/`False`/`t`/`f` at line 5986.
+- **Fix hint**: Add the bool validation block (checking `ext.GetType() == TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0` and requiring `value == "true" || value == "false"`) to all 6 missing resolvers.
+- **Also affects**: Same bug for service-level, method-level, enum-level, enum-value-level, and oneof-level bool custom options — all 6 missing resolvers.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
