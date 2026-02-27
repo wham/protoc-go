@@ -57,11 +57,23 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: Accepts it fine (libprotoc 33.4). Produces valid descriptor set.
 - **Go protoc-go**: Fails with `Error while parsing option value: Expected ":", found "anyexpand".`
 
+### Run 2 — Line comment at EOF without trailing newline (VICTORY)
+- **Bug**: Go tokenizer always appends `\n` to line comment text (`tokenizer.go:242: return text + "\n"`), even when the file ends without a trailing newline. C++ protoc correctly omits the `\n` when the comment is at EOF without a trailing newline.
+- **Test**: `333_comment_eof_no_newline` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `readLineCommentText()` in `io/tokenizer/tokenizer.go:242` unconditionally returns `text + "\n"`. Should only add `\n` when there was one in the source.
+- **C++ protoc**: `trailing_comments: " eof"` (no trailing newline).
+- **Go protoc-go**: `trailing_comments: " eof\n"` (with trailing newline).
+- **Discrepancy**: Source code info comment text differs by one byte.
+
 ### Ideas for next time
 - Source code info accuracy for specific constructs (extend blocks, service methods, oneof fields)
-- CRLF line endings (Go tokenizer treats `\r` as column-incrementing whitespace, not newline)
+- CRLF line endings — tested `\v` in block comments, both agree; `\r` as column-incrementing whitespace also matches C++
 - Custom options with message-typed fields set to scalar values (error message differences)
 - Extension range validation for 19000-19999 reserved range
 - Proto2 groups nested 3+ levels deep (group in group in group)
 - Edition features + extensions interactions
 - Proto files importing the same file via different paths
+- Custom option scope resolution (Go returns first match, not proper scope-based lookup)
+- Sub-field option type validation (Go doesn't check intermediate fields are MESSAGE type)
+- Extension extendee type validation (Go doesn't check extendee is MESSAGE)
+- Block comment at EOF without trailing newline (similar bug to line comment?)
