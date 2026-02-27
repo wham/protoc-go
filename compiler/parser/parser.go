@@ -6086,6 +6086,12 @@ func simpleFtoa(v float32) string {
 	} else if math.IsNaN(v64) {
 		return "nan"
 	}
+	// For subnormal float32 values, C's strtof doesn't reliably round-trip
+	// the 6-digit representation, so C++ protoc always uses 9 digits.
+	bits := math.Float32bits(v)
+	if bits&0x7F800000 == 0 {
+		return strconv.FormatFloat(v64, 'g', 9, 64)
+	}
 	s := strconv.FormatFloat(v64, 'g', 6, 64)
 	if v2, err := strconv.ParseFloat(s, 32); err != nil || float32(v2) != v {
 		s = strconv.FormatFloat(v64, 'g', 9, 64)
