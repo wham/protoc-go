@@ -5315,6 +5315,12 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
+	type enumOptKey struct {
+		enum *descriptorpb.EnumDescriptorProto
+		name string
+	}
+	seenEnumOpts := map[enumOptKey]bool{}
+
 	var errs []string
 	for _, name := range orderedFiles {
 		result := parseResults[name]
@@ -5328,6 +5334,17 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
+			}
+
+			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+			if !isRepeated && len(opt.SubFieldPath) == 0 {
+				k := enumOptKey{opt.Enum, opt.ParenName}
+				if seenEnumOpts[k] {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" was already set.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				seenEnumOpts[k] = true
 			}
 
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
