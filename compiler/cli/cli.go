@@ -4174,6 +4174,15 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 				}
 			}
 
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
+			}
+
 			if len(opt.SubFieldPath) > 0 {
 				// Sub-field option: option (ext).sub1.sub2... = value;
 				if subFieldNums[name] == nil {
@@ -6231,6 +6240,52 @@ func (e *aggregatePositiveSignError) Error() string {
 	default:
 		return "Expected integer, got: +"
 	}
+}
+
+// checkIntRangeOption validates that integer values fit in 32-bit types.
+// Returns an error string if out of range, empty string if OK.
+func checkIntRangeOption(ext *descriptorpb.FieldDescriptorProto, value string, negative bool, extFQN string) string {
+	switch ext.GetType() {
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32, descriptorpb.FieldDescriptorProto_TYPE_SINT32:
+		s := value
+		if negative {
+			s = "-" + s
+		}
+		v, err := strconv.ParseInt(s, 0, 64)
+		if err != nil {
+			return ""
+		}
+		if v < math.MinInt32 || v > math.MaxInt32 {
+			typeName := "int32"
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_SINT32 {
+				typeName = "sint32"
+			}
+			return fmt.Sprintf("Value out of range, %d to %d, for %s option \"%s\".",
+				int64(math.MinInt32), int64(math.MaxInt32), typeName, extFQN)
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32:
+		s := value
+		if negative {
+			s = "-" + s
+		}
+		v, err := strconv.ParseInt(s, 0, 64)
+		if err != nil {
+			uv, uerr := strconv.ParseUint(s, 0, 64)
+			if uerr != nil {
+				return ""
+			}
+			if uv > math.MaxUint32 {
+				return fmt.Sprintf("Value out of range, 0 to %d, for uint32 option \"%s\".",
+					uint64(math.MaxUint32), extFQN)
+			}
+			return ""
+		}
+		if v < 0 || v > math.MaxUint32 {
+			return fmt.Sprintf("Value out of range, 0 to %d, for uint32 option \"%s\".",
+				uint64(math.MaxUint32), extFQN)
+		}
+	}
+	return ""
 }
 
 func formatAggregateError(err error, filename string, braceTok tokenizer.Token, optName string) string {
