@@ -16,6 +16,7 @@ import (
 	"github.com/wham/protoc-go/io/tokenizer"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 )
 
@@ -3418,27 +3419,56 @@ func hasSubFieldCustomOpts(pr *parser.ParseResult) bool {
 			return true
 		}
 	}
+	for _, opt := range pr.CustomFieldOptions {
+		if len(opt.SubFieldPath) > 0 {
+			return true
+		}
+	}
 	return false
 }
 
 // cloneWithMergedExtUnknowns clones fd and merges multiple unknown field entries
-// with the same tag (length-delimited) in FileOptions into single entries.
+// with the same tag (length-delimited) in FileOptions and FieldOptions into single entries.
 func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto) *descriptorpb.FileDescriptorProto {
 	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
-	if fdCopy.Options == nil {
-		return fdCopy
+	if fdCopy.Options != nil {
+		mergeUnknownExtensions(fdCopy.Options.ProtoReflect())
 	}
-	raw := fdCopy.Options.ProtoReflect().GetUnknown()
+	mergeFieldOptionsInMessages(fdCopy.GetMessageType())
+	return fdCopy
+}
+
+// mergeFieldOptionsInMessages recursively merges unknown extensions in FieldOptions
+// for all fields in the given messages and their nested types.
+func mergeFieldOptionsInMessages(msgs []*descriptorpb.DescriptorProto) {
+	for _, msg := range msgs {
+		for _, field := range msg.GetField() {
+			if field.Options != nil {
+				mergeUnknownExtensions(field.Options.ProtoReflect())
+			}
+		}
+		for _, ext := range msg.GetExtension() {
+			if ext.Options != nil {
+				mergeUnknownExtensions(ext.Options.ProtoReflect())
+			}
+		}
+		mergeFieldOptionsInMessages(msg.GetNestedType())
+	}
+}
+
+// mergeUnknownExtensions merges multiple unknown field entries with the same
+// field number (BytesType) into single entries.
+func mergeUnknownExtensions(m protoreflect.Message) {
+	raw := m.GetUnknown()
 	if len(raw) == 0 {
-		return fdCopy
+		return
 	}
 
-	// Parse entries
 	type entry struct {
 		num     protowire.Number
 		wtyp    protowire.Type
-		payload []byte // only for BytesType
-		raw     []byte // full raw bytes for non-BytesType entries
+		payload []byte
+		raw     []byte
 	}
 	var entries []entry
 	buf := raw
@@ -3446,7 +3476,7 @@ func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto) *descripto
 		entryStart := buf
 		num, wtyp, n := protowire.ConsumeTag(buf)
 		if n < 0 {
-			break
+			return
 		}
 		buf = buf[n:]
 		var payload []byte
@@ -3454,42 +3484,55 @@ func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto) *descripto
 		case protowire.BytesType:
 			v, vn := protowire.ConsumeBytes(buf)
 			if vn < 0 {
-				return fdCopy
+				return
 			}
 			payload = v
 			buf = buf[vn:]
 		case protowire.VarintType:
 			_, vn := protowire.ConsumeVarint(buf)
 			if vn < 0 {
-				return fdCopy
+				return
 			}
 			buf = buf[vn:]
 		case protowire.Fixed32Type:
 			_, vn := protowire.ConsumeFixed32(buf)
 			if vn < 0 {
-				return fdCopy
+				return
 			}
 			buf = buf[vn:]
 		case protowire.Fixed64Type:
 			_, vn := protowire.ConsumeFixed64(buf)
 			if vn < 0 {
-				return fdCopy
+				return
 			}
 			buf = buf[vn:]
 		default:
-			return fdCopy
+			return
 		}
 		entries = append(entries, entry{num: num, wtyp: wtyp, payload: payload, raw: entryStart[:len(entryStart)-len(buf)]})
 	}
 
-	// Group BytesType entries by field number and merge payloads
+	// Check if any BytesType field appears more than once
+	counts := make(map[protowire.Number]int)
+	needsMerge := false
+	for _, e := range entries {
+		if e.wtyp == protowire.BytesType {
+			counts[e.num]++
+			if counts[e.num] > 1 {
+				needsMerge = true
+			}
+		}
+	}
+	if !needsMerge {
+		return
+	}
+
 	merged := make(map[protowire.Number][]byte)
 	for _, e := range entries {
 		if e.wtyp == protowire.BytesType {
 			merged[e.num] = append(merged[e.num], e.payload...)
 		}
 	}
-	// Reconstruct in order of first appearance
 	emitted := make(map[protowire.Number]bool)
 	var result []byte
 	for _, e := range entries {
@@ -3503,8 +3546,7 @@ func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto) *descripto
 			result = append(result, e.raw...)
 		}
 	}
-	fdCopy.Options.ProtoReflect().SetUnknown(result)
-	return fdCopy
+	m.SetUnknown(result)
 }
 
 // stripSourceRetention returns a copy of fd with source-retention-only options removed.
@@ -4262,12 +4304,7 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -4431,12 +4468,7 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -4596,12 +4628,7 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -4759,12 +4786,7 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -4922,12 +4944,7 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -5085,12 +5102,7 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -5248,12 +5260,7 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
