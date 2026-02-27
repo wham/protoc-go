@@ -78,6 +78,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 24. [DONE] Fix `353_toplevel_ext_field_merge` — Top-level extensions (fd.Extension) with sub-field custom options on their FieldOptions were not being merged in `proto_file`. Added loop over `fdCopy.GetExtension()` in `cloneWithMergedExtUnknowns` to merge FieldOptions unknown fields for top-level extensions. All 3243/3243 tests pass.
 
+25. [DONE] Fix `354_nested_ext_scope` — `findFileOptionExtension` had an overly-broad "bare name match" that would match any extension by field name regardless of scope. Replaced with proper C++ scope walking: tries `currentPkg.name`, then `parentPkg.name`, up to root scope. This correctly rejects `(nested_opt)` when the extension is nested inside a message (must use `(Container.nested_opt)` instead). All 3252/3252 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
@@ -102,4 +104,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 - `compiler/cli/cli.go`: Extension range sub-field options follow the same merge pattern. `resolveCustomExtRangeOptions` returns per-file sub-field tracking. `mergeExtRangeOptionsInMessages` recursively handles extension ranges in messages. `hasSubFieldCustomOpts` now checks `CustomExtRangeOptions`. `cloneWithMergedExtUnknowns` now handles all option types including ExtensionRangeOptions.
 - `compiler/cli/cli.go`: C++ protoc sorts unknown fields (custom extension options) by field number in `proto_file` and `descriptor_set_out`, but preserves source order in `source_file_descriptors`. `sortUnknownFields` parses raw protobuf bytes into field entries and stable-sorts by field number. `sortFDOptionsUnknownFields` applies sorting to all Options messages in a FileDescriptorProto. Sorting is applied in the `protoFiles` build loop, cloning from `parsed` when necessary to avoid modifying `source_file_descriptors`.
 - `compiler/cli/cli.go`: `cloneWithMergedExtUnknowns` now also merges FieldOptions unknown fields for top-level extensions (`fd.Extension`), not just fields/extensions within messages. Previously only `mergeFieldOptionsInMessages` was called which handled message-level fields and nested extensions, but top-level extensions were missed.
+- `compiler/cli/cli.go`: `findFileOptionExtension` now uses proper C++ scope walking instead of a broad "bare name match". For a name like `nested_opt` in package `scope_test`, it tries `scope_test.nested_opt` then `nested_opt` (root). This prevents matching extensions nested inside messages (e.g., `scope_test.Container.nested_opt`) when only the bare field name is used.
 - Run tests with `scripts/test` or `scripts/test --summary`.
