@@ -443,6 +443,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add a `seenEnumOpts` map (keyed by enum pointer + extension FQN) to `resolveCustomEnumOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern needed for the other 5 resolvers (service, method, enum_value, oneof, ext_range).
 - **Also affects**: Same bug for service-level, method-level, enum-value-level, oneof-level, and ext-range-level custom options. All 6 non-file/non-field/non-message resolvers are missing the duplicate check.
 
+### Run 46 — Duplicate non-repeated service-level custom option not rejected (VICTORY)
+- **Bug**: Go's `resolveCustomServiceOptions` does NOT check for duplicate non-repeated custom options. When a service has `option (svc_tag) = 42; option (svc_tag) = 99;` (same non-repeated option set twice), C++ protoc rejects the second one with "Option was already set", but Go silently accepts both and encodes two entries in the unknown fields.
+- **Test**: `377_svc_dup_option` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Duplicate detection (`seenCustomOpts` map) exists in 4 of 9 `resolveCustom*Options` functions: `resolveCustomFileOptions` (line 4129), `resolveCustomFieldOptions` (line 4450), `resolveCustomMessageOptions` (line 4689), `resolveCustomEnumOptions` (line 5322). The other 5 resolvers — `resolveCustomServiceOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`, `resolveCustomExtRangeOptions` — all lack this check.
+- **C++ protoc**: `test.proto:16:10: Option "(svc_tag)" was already set.`
+- **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in ServiceOptions unknown fields.
+- **Fix hint**: Add a `seenSvcOpts` map (keyed by service pointer + extension FQN) to `resolveCustomServiceOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern needed for the other 4 resolvers (method, enum_value, oneof, ext_range).
+- **Also affects**: Same bug for method-level, enum-value-level, oneof-level, and ext-range-level custom options. All 5 non-file/non-field/non-message/non-enum resolvers are missing the duplicate check.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
