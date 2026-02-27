@@ -117,7 +117,7 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 	// Phase 1: Check for trailing comment on same line as previous token
 	if canAttachToPrev {
 		// Skip non-newline whitespace
-		for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r') {
+		for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r' || t.input[t.pos] == '\v' || t.input[t.pos] == '\f') {
 			t.advance()
 		}
 		if t.pos >= len(t.input) {
@@ -139,7 +139,7 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 			result.PrevTrailing = text
 			canAttachToPrev = false
 			// Consume rest of line
-			for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r') {
+			for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r' || t.input[t.pos] == '\v' || t.input[t.pos] == '\f') {
 				t.advance()
 			}
 			if t.pos < len(t.input) && t.input[t.pos] == '\n' {
@@ -157,7 +157,7 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 	// Phase 2: Collect remaining comments, detect blank lines for detachment
 	for t.pos < len(t.input) {
 		// Skip non-newline whitespace
-		for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r') {
+		for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r' || t.input[t.pos] == '\v' || t.input[t.pos] == '\f') {
 			t.advance()
 		}
 		if t.pos >= len(t.input) {
@@ -191,7 +191,7 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 			hasComment = true
 			isLineComment = false
 			// Consume trailing whitespace and newline
-			for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r') {
+			for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r' || t.input[t.pos] == '\v' || t.input[t.pos] == '\f') {
 				t.advance()
 			}
 			if t.pos < len(t.input) && t.input[t.pos] == '\n' {
