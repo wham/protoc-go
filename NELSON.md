@@ -300,6 +300,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: In `resolveTypeName`, when the first part of a compound name matches an enum type, treat it the same as a message match: try the full compound in the current scope, fail (since enums don't have nested types), and return a shadow error. Replace the "skip, continue" logic at line 6675 with: `return "." + name, firstCandidate` (shadow error with the enum's full path).
 - **Also affects**: Any compound type reference where the first part matches an enum in an inner scope. This is a scope resolution correctness bug, not just an edge case.
 
+### Run 30 — Fully-qualified option name with leading dot rejected by Go (VICTORY)
+- **Bug**: Go's `parseParenthesizedOptionName()` doesn't handle a leading `.` in custom option extension names. When an option is declared as `option (.pkg.my_opt) = "value";`, C++ protoc accepts the fully-qualified name (the leading dot forces absolute scope lookup). Go's parser reads `.` as the first `innerTok`, then the loop looks for another `.` separator, but the next token is `pkg` (an identifier), so the loop exits and `Expect(")")` fails because the next token is `pkg`, not `)`.
+- **Test**: `361_fqn_option_name` — all 9 profiles fail.
+- **Root cause**: `parseParenthesizedOptionName()` at parser.go:4902-4920 reads the first token and then loops on `.` separators. When the first token IS `.`, the parser stores `fullName = "(."` and then expects either another `.` or `)`. It doesn't handle the case where `.` is a leading qualifier (meaning the next tokens are `ident(.ident)*`).
+- **C++ protoc**: Accepts `(.fqnopt.my_label)` — produces valid descriptor with the option value.
+- **Go protoc-go**: `test.proto:14:10: Expected ")".` — rejects the syntax.
+- **Fix hint**: In `parseParenthesizedOptionName`, after reading `innerTok`, check if `innerTok.Value == "."`. If so, read the next identifier token and prepend `.` to it: `fullName = "(." + nextTok.Value`. Then continue the loop for `.ident` pairs as normal. This mirrors C++ protoc's handling of fully-qualified extension names.
+- **Also affects**: This bug affects ALL option entity types: file options, message options, field options, enum options, enum value options, service options, method options, oneof options, extension range options — all call `parseParenthesizedOptionName`.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
