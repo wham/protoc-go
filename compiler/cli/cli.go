@@ -6,7 +6,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -693,14 +692,8 @@ func Run(args []string) error {
 		if err != nil {
 			return fmt.Errorf("marshaling descriptor set: %w", err)
 		}
-		dir := filepath.Dir(cfg.descriptorSetOut)
-		if dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return fmt.Errorf("creating output directory: %w", err)
-			}
-		}
-		if err := os.WriteFile(cfg.descriptorSetOut, data, 0o644); err != nil {
-			return fmt.Errorf("writing descriptor set: %w", err)
+		if err := writeDescriptorSet(cfg.descriptorSetOut, data); err != nil {
+			return err
 		}
 	}
 
@@ -722,6 +715,10 @@ func Run(args []string) error {
 
 		resp, err := plugin.RunPlugin(plug.path, req)
 		if err != nil {
+			var startErr *plugin.PluginStartError
+			if errors.As(err, &startErr) {
+				return fmt.Errorf("--%s_out: protoc-gen-%s: Plugin failed with status code 1.", plug.name, plug.name)
+			}
 			return err
 		}
 
@@ -735,6 +732,24 @@ func Run(args []string) error {
 	}
 
 	return nil
+}
+
+// writeDescriptorSet writes the descriptor set file, matching C++ protoc error format.
+func writeDescriptorSet(path string, data []byte) error {
+	f, err := os.Create(path)
+	if err != nil {
+		if pe, ok := err.(*os.PathError); ok {
+			errMsg := pe.Err.Error()
+			if len(errMsg) > 0 {
+				errMsg = strings.ToUpper(errMsg[:1]) + errMsg[1:]
+			}
+			return fmt.Errorf("%s: %s", path, errMsg)
+		}
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write(data)
+	return err
 }
 
 func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, parseResults map[string]*parser.ParseResult, orderedFiles *[]string, importStack []string, collectErrors *[]string) (bool, error) {

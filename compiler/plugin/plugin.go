@@ -14,6 +14,15 @@ import (
 	pluginpb "google.golang.org/protobuf/types/pluginpb"
 )
 
+// PluginStartError indicates that a plugin could not be started.
+type PluginStartError struct {
+	Path string
+}
+
+func (e *PluginStartError) Error() string {
+	return fmt.Sprintf("plugin %s failed to start", e.Path)
+}
+
 // RunPlugin executes a protoc plugin with the given CodeGeneratorRequest.
 func RunPlugin(pluginPath string, req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error) {
 	reqBytes, err := proto.Marshal(req)
@@ -35,7 +44,11 @@ func RunPlugin(pluginPath string, req *pluginpb.CodeGeneratorRequest) (*pluginpb
 	}
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("starting plugin %s: %w", pluginPath, err)
+		// Match C++ protoc error format from subprocess.cc:
+		// The child process writes these two lines to stderr and exits with code 1.
+		fmt.Fprintf(os.Stderr, "%s: program not found or is not executable\n", pluginPath)
+		fmt.Fprintf(os.Stderr, "Please specify a program using absolute path or make sure the program is available in your PATH system variable\n")
+		return nil, &PluginStartError{Path: pluginPath}
 	}
 
 	if _, err := stdinPipe.Write(reqBytes); err != nil {
