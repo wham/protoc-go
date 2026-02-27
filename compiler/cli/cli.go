@@ -658,6 +658,14 @@ func Run(args []string) error {
 		if pr := parseResults[name]; pr != nil && hasSubFieldCustomOpts(pr) {
 			fd = cloneWithMergedExtUnknowns(fd, subFieldFileOptNums[name], subFieldFieldOptNums[name], subFieldMsgOptNums[name], subFieldEnumOptNums[name], subFieldEnumValOptNums[name], subFieldSvcOptNums[name], subFieldMethodOptNums[name], subFieldOneofOptNums[name], subFieldExtRangeOptNums[name])
 		}
+		// Sort unknown fields by field number on Options (C++ proto_file order).
+		// Clone if fd still shares pointer with parsed to avoid modifying source_file_descriptors.
+		if hasOptionsUnknowns(fd) {
+			if fd == parsed[name] {
+				fd = proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
+			}
+			sortFDOptionsUnknownFields(fd)
+		}
 		protoFiles = append(protoFiles, fd)
 		strippedMap[name] = fd
 	}
@@ -6368,5 +6376,200 @@ func cEscapeForDecode(data []byte) string {
 		}
 	}
 	return sb.String()
+}
+
+// sortUnknownFields sorts raw protobuf unknown fields by field number (stable).
+// C++ protoc emits extension/unknown fields in field-number order; we must match.
+func sortUnknownFields(raw []byte) []byte {
+	if len(raw) == 0 {
+		return raw
+	}
+	type entry struct {
+		num  protowire.Number
+		data []byte
+	}
+	var entries []entry
+	r := raw
+	for len(r) > 0 {
+		num, _, n := protowire.ConsumeTag(r)
+		if n < 0 {
+			return raw
+		}
+		_, _, total := protowire.ConsumeField(r)
+		if total < 0 {
+			return raw
+		}
+		entries = append(entries, entry{num: num, data: append([]byte(nil), r[:total]...)})
+		r = r[total:]
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].num < entries[j].num
+	})
+	var result []byte
+	for _, e := range entries {
+		result = append(result, e.data...)
+	}
+	return result
+}
+
+// sortOptionsUnknownFields sorts unknown fields on all Options messages in all
+// parsed files, so that custom extension options appear in field-number order
+// (matching C++ protoc behavior).
+func sortOptionsUnknownFields(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) {
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sortFDOptionsUnknownFields(fd)
+	}
+}
+
+// sortFDOptionsUnknownFields sorts unknown fields on all Options messages in fd.
+func sortFDOptionsUnknownFields(fd *descriptorpb.FileDescriptorProto) {
+	sortProtoUnknown(fd.GetOptions())
+	for _, msg := range fd.GetMessageType() {
+		sortMessageOptionsDeep(msg)
+	}
+	for _, e := range fd.GetEnumType() {
+		sortEnumOptions(e)
+	}
+	for _, ext := range fd.GetExtension() {
+		sortProtoUnknown(ext.GetOptions())
+	}
+	for _, svc := range fd.GetService() {
+		sortProtoUnknown(svc.GetOptions())
+		for _, m := range svc.GetMethod() {
+			sortProtoUnknown(m.GetOptions())
+		}
+	}
+}
+
+// hasOptionsUnknowns returns true if any Options message in fd has unknown fields.
+func hasOptionsUnknowns(fd *descriptorpb.FileDescriptorProto) bool {
+	if hasUnknown(fd.GetOptions()) {
+		return true
+	}
+	for _, msg := range fd.GetMessageType() {
+		if hasMessageOptionsUnknowns(msg) {
+			return true
+		}
+	}
+	for _, e := range fd.GetEnumType() {
+		if hasEnumOptionsUnknowns(e) {
+			return true
+		}
+	}
+	for _, ext := range fd.GetExtension() {
+		if hasUnknown(ext.GetOptions()) {
+			return true
+		}
+	}
+	for _, svc := range fd.GetService() {
+		if hasUnknown(svc.GetOptions()) {
+			return true
+		}
+		for _, m := range svc.GetMethod() {
+			if hasUnknown(m.GetOptions()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasMessageOptionsUnknowns(msg *descriptorpb.DescriptorProto) bool {
+	if hasUnknown(msg.GetOptions()) {
+		return true
+	}
+	for _, f := range msg.GetField() {
+		if hasUnknown(f.GetOptions()) {
+			return true
+		}
+	}
+	for _, o := range msg.GetOneofDecl() {
+		if hasUnknown(o.GetOptions()) {
+			return true
+		}
+	}
+	for _, e := range msg.GetEnumType() {
+		if hasEnumOptionsUnknowns(e) {
+			return true
+		}
+	}
+	for _, ext := range msg.GetExtension() {
+		if hasUnknown(ext.GetOptions()) {
+			return true
+		}
+	}
+	for _, rng := range msg.GetExtensionRange() {
+		if hasUnknown(rng.GetOptions()) {
+			return true
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		if hasMessageOptionsUnknowns(nested) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEnumOptionsUnknowns(e *descriptorpb.EnumDescriptorProto) bool {
+	if hasUnknown(e.GetOptions()) {
+		return true
+	}
+	for _, v := range e.GetValue() {
+		if hasUnknown(v.GetOptions()) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasUnknown(m proto.Message) bool {
+	if m == nil {
+		return false
+	}
+	return len(m.ProtoReflect().GetUnknown()) > 0
+}
+
+func sortMessageOptionsDeep(msg *descriptorpb.DescriptorProto) {
+	sortProtoUnknown(msg.GetOptions())
+	for _, f := range msg.GetField() {
+		sortProtoUnknown(f.GetOptions())
+	}
+	for _, o := range msg.GetOneofDecl() {
+		sortProtoUnknown(o.GetOptions())
+	}
+	for _, e := range msg.GetEnumType() {
+		sortEnumOptions(e)
+	}
+	for _, ext := range msg.GetExtension() {
+		sortProtoUnknown(ext.GetOptions())
+	}
+	for _, rng := range msg.GetExtensionRange() {
+		sortProtoUnknown(rng.GetOptions())
+	}
+	for _, nested := range msg.GetNestedType() {
+		sortMessageOptionsDeep(nested)
+	}
+}
+
+func sortEnumOptions(e *descriptorpb.EnumDescriptorProto) {
+	sortProtoUnknown(e.GetOptions())
+	for _, v := range e.GetValue() {
+		sortProtoUnknown(v.GetOptions())
+	}
+}
+
+func sortProtoUnknown(m proto.Message) {
+	if m == nil {
+		return
+	}
+	ref := m.ProtoReflect()
+	raw := ref.GetUnknown()
+	if len(raw) == 0 {
+		return
+	}
+	sorted := sortUnknownFields(raw)
+	ref.SetUnknown(sorted)
 }
 
