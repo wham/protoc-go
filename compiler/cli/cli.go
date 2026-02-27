@@ -4665,6 +4665,12 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
+	type msgOptKey struct {
+		msg  *descriptorpb.DescriptorProto
+		name string
+	}
+	seenMsgOpts := map[msgOptKey]bool{}
+
 	var errs []string
 	subFieldNums := map[string]map[int32]bool{}
 	for _, name := range orderedFiles {
@@ -4679,6 +4685,17 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
+			}
+
+			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+			if !isRepeated && len(opt.SubFieldPath) == 0 {
+				k := msgOptKey{opt.Message, opt.ParenName}
+				if seenMsgOpts[k] {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" was already set.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				seenMsgOpts[k] = true
 			}
 
 			// Update SCI path with actual field number
