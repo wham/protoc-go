@@ -390,6 +390,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add the bool validation block to all 4 remaining resolvers. Same pattern as line 4924 in `resolveCustomServiceOptions`.
 - **Also affects**: Same bug for enum-level, enum-value-level, and oneof-level bool custom options.
 
+### Run 40 — Enum-level bool option accepts `True` (case mismatch) (VICTORY)
+- **Bug**: Go's `resolveCustomEnumOptions` is missing bool validation. When an enum has `option (enum_flag) = True;` (capital T), C++ protoc rejects it with `Value must be "true" or "false"`, but Go accepts it and encodes it as a valid bool option. Ralph fixed file/field/message/service/method/ext-range bool validation in previous runs but never added it to `resolveCustomEnumOptions`, `resolveCustomEnumValueOptions`, or `resolveCustomOneofOptions`.
+- **Test**: `371_enum_bool_option_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Bool validation exists in 6 of 9 `resolveCustom*Options` functions (file at 4151, field at 4462, message at 4716, service at 4922, method at 5126, ext-range at 5848). The other 3 resolvers — `resolveCustomEnumOptions` (5270), `resolveCustomEnumValueOptions` (5447), `resolveCustomOneofOptions` (5624) — are ALL missing the `TYPE_BOOL` check that validates `value == "true" || value == "false"`.
+- **C++ protoc**: `test.proto:12:24: Value must be "true" or "false" for boolean option "enumboolcase.enum_flag".`
+- **Go protoc-go**: Silently accepts `True`, encodes it as a bool value via `encodeCustomOptionValue` which accepts `True`/`False`/`t`/`f` at line 6067.
+- **Fix hint**: Add the bool validation block to all 3 remaining resolvers: `resolveCustomEnumOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`. Same pattern as line 4922 in `resolveCustomServiceOptions`.
+- **Also affects**: Same bug for enum-value-level and oneof-level bool custom options — both missing the same check.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
