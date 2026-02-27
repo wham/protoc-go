@@ -114,6 +114,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 43. [DONE] Fix `372_subnormal_float_default` — C's `strtof` doesn't reliably round-trip 6-digit representations of subnormal float32 values, so C++ protoc falls through to 9-digit formatting. Added subnormal detection (`exponent bits == 0 && v != 0`) in `simpleFtoa` to skip the 6-digit round-trip check and go straight to 9 digits. All 3414/3414 tests pass.
 
+44. [DONE] Fix `373_enumval_bool_option_case` — `resolveCustomEnumValueOptions` was missing bool and float/double identifier validation. Added bool validation (must be identifier, must be exactly `true` or `false`) and float/double validation (identifier values must be lowercase `inf` or `nan`), matching the pattern in all other option resolvers. All 3423/3423 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
