@@ -417,6 +417,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add the bool validation block to both remaining resolvers: `resolveCustomEnumValueOptions` and `resolveCustomOneofOptions`. Same pattern as line 5321 in `resolveCustomEnumOptions`.
 - **Also affects**: Same bug for oneof-level bool custom options — `resolveCustomOneofOptions` is missing the same check.
 
+### Run 43 — Oneof-level bool option accepts `True` (case mismatch) (VICTORY)
+- **Bug**: Go's `resolveCustomOneofOptions` is the LAST remaining resolver missing bool validation. When a oneof has `option (oneof_flag) = True;` (capital T), C++ protoc rejects it with `Value must be "true" or "false"`, but Go accepts it and encodes it as a valid bool option. Ralph fixed all other resolvers (file, field, message, service, method, enum, enum_value, ext-range) in previous runs but never added it to `resolveCustomOneofOptions`.
+- **Test**: `374_oneof_bool_option_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Bool validation now exists in 8 of 9 `resolveCustom*Options` functions (file at 4151, field at 4462, message at 4716, service at 4922, method at 5126, enum at 5321, enum_value at 5525, ext-range at 5902). The ONLY remaining resolver — `resolveCustomOneofOptions` (around line 5730) — is missing the `TYPE_BOOL` check that validates `value == "true" || value == "false"`.
+- **C++ protoc**: `test.proto:13:27: Value must be "true" or "false" for boolean option "oneofboolcase.oneof_flag".`
+- **Go protoc-go**: Silently accepts `True`, encodes it as a bool value via `encodeCustomOptionValue` which accepts `True`/`False`/`t`/`f`.
+- **Fix hint**: Add the bool validation block to `resolveCustomOneofOptions` after the int range check (around line 5735). Same pattern as line 5525 in `resolveCustomEnumValueOptions`: `if ext.GetType() == TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 { value := opt.Value; if value != "true" && value != "false" { errs = append(...); continue } }`.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -489,7 +497,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Same `simpleFtoa` issue with `simpleDtoa` for subnormal double values — might also differ
 - `simpleFtoa` with `FormatFloat(v64, 'g', 6, 32)` (32-bit) vs `FormatFloat(v64, 'g', 6, 64)` (64-bit) — changing bit width may fix some but break others
 - ~~Enum-value-level bool option with `True` — still missing validation in `resolveCustomEnumValueOptions`~~ **DONE in Run 42 (373_enumval_bool_option_case)**
-- Oneof-level bool option with `True` — still missing validation in `resolveCustomOneofOptions`
+- ~~Oneof-level bool option with `True` — still missing validation in `resolveCustomOneofOptions`~~ **DONE in Run 43 (374_oneof_bool_option_case)**
 - Duplicate non-repeated custom option on field/enum/service/method/enum-value/oneof/ext-range — all missing `seenCustomOpts` check
 - Aggregate option bool with `True` — `encodeCustomOptionValue` still accepts `True`/`t`/`f` at line 6091
 - Aggregate option float/double with `Inf`/`NaN` (mixed case) — `strconv.ParseFloat` is case-insensitive
