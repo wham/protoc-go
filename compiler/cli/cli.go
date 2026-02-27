@@ -545,7 +545,7 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customEnumValOptErrors, "\n"))
 	}
 
-	customOneofOptErrors := resolveCustomOneofOptions(orderedFiles, parsed, parseResults)
+	customOneofOptErrors, subFieldOneofOptNums := resolveCustomOneofOptions(orderedFiles, parsed, parseResults)
 	if len(customOneofOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customOneofOptErrors = formatErrorsMSVS(customOneofOptErrors, srcTree)
@@ -656,7 +656,7 @@ func Run(args []string) error {
 		// If the file has sub-field custom options, clone and merge unknown fields
 		// so proto_file has merged entries (matching C++ protoc's linked descriptors)
 		if pr := parseResults[name]; pr != nil && hasSubFieldCustomOpts(pr) {
-			fd = cloneWithMergedExtUnknowns(fd, subFieldFileOptNums[name], subFieldFieldOptNums[name], subFieldMsgOptNums[name], subFieldEnumOptNums[name], subFieldSvcOptNums[name], subFieldMethodOptNums[name])
+			fd = cloneWithMergedExtUnknowns(fd, subFieldFileOptNums[name], subFieldFieldOptNums[name], subFieldMsgOptNums[name], subFieldEnumOptNums[name], subFieldSvcOptNums[name], subFieldMethodOptNums[name], subFieldOneofOptNums[name])
 		}
 		protoFiles = append(protoFiles, fd)
 		strippedMap[name] = fd
@@ -3444,12 +3444,17 @@ func hasSubFieldCustomOpts(pr *parser.ParseResult) bool {
 			return true
 		}
 	}
+	for _, opt := range pr.CustomOneofOptions {
+		if len(opt.SubFieldPath) > 0 {
+			return true
+		}
+	}
 	return false
 }
 
 // cloneWithMergedExtUnknowns clones fd and merges multiple unknown field entries
-// with the same tag (length-delimited) in FileOptions, FieldOptions, MessageOptions, EnumOptions, ServiceOptions, and MethodOptions into single entries.
-func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto, mergeableFileFields map[int32]bool, mergeableFieldOptFields map[int32]bool, mergeableMsgOptFields map[int32]bool, mergeableEnumOptFields map[int32]bool, mergeableSvcOptFields map[int32]bool, mergeableMethodOptFields map[int32]bool) *descriptorpb.FileDescriptorProto {
+// with the same tag (length-delimited) in FileOptions, FieldOptions, MessageOptions, EnumOptions, ServiceOptions, MethodOptions, and OneofOptions into single entries.
+func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto, mergeableFileFields map[int32]bool, mergeableFieldOptFields map[int32]bool, mergeableMsgOptFields map[int32]bool, mergeableEnumOptFields map[int32]bool, mergeableSvcOptFields map[int32]bool, mergeableMethodOptFields map[int32]bool, mergeableOneofOptFields map[int32]bool) *descriptorpb.FileDescriptorProto {
 	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
 	if fdCopy.Options != nil {
 		mergeUnknownExtensions(fdCopy.Options.ProtoReflect(), mergeableFileFields)
@@ -3460,6 +3465,7 @@ func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto, mergeableF
 	mergeEnumOptionsInMessages(fdCopy.GetMessageType(), mergeableEnumOptFields)
 	mergeServiceOptions(fdCopy.GetService(), mergeableSvcOptFields)
 	mergeMethodOptions(fdCopy.GetService(), mergeableMethodOptFields)
+	mergeOneofOptionsInMessages(fdCopy.GetMessageType(), mergeableOneofOptFields)
 	return fdCopy
 }
 
@@ -3527,6 +3533,19 @@ func mergeMethodOptions(services []*descriptorpb.ServiceDescriptorProto, mergeab
 				mergeUnknownExtensions(method.Options.ProtoReflect(), mergeableFields)
 			}
 		}
+	}
+}
+
+// mergeOneofOptionsInMessages recursively merges unknown extensions in OneofOptions
+// for all oneofs in the given messages and their nested types.
+func mergeOneofOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
+	for _, msg := range msgs {
+		for _, oneof := range msg.GetOneofDecl() {
+			if oneof.Options != nil {
+				mergeUnknownExtensions(oneof.Options.ProtoReflect(), mergeableFields)
+			}
+		}
+		mergeOneofOptionsInMessages(msg.GetNestedType(), mergeableFields)
 	}
 }
 
@@ -5334,7 +5353,8 @@ func collectEnumValueOptionsExtensions(msg *descriptorpb.DescriptorProto, parent
 
 // resolveCustomOneofOptions resolves parenthesized custom options on oneofs
 // (e.g., option (oneof_label) = "primary";) against extensions of OneofOptions.
-func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -5389,6 +5409,10 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 					continue
 				}
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -5480,7 +5504,7 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 				append(opt.Oneof.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectOneofOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
