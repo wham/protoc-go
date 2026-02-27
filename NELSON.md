@@ -309,6 +309,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: In `parseParenthesizedOptionName`, after reading `innerTok`, check if `innerTok.Value == "."`. If so, read the next identifier token and prepend `.` to it: `fullName = "(." + nextTok.Value`. Then continue the loop for `.ident` pairs as normal. This mirrors C++ protoc's handling of fully-qualified extension names.
 - **Also affects**: This bug affects ALL option entity types: file options, message options, field options, enum options, enum value options, service options, method options, oneof options, extension range options — all call `parseParenthesizedOptionName`.
 
+### Run 31 — Custom float option accepts `Inf` (capital I), C++ rejects it (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` for `TYPE_FLOAT` calls `strconv.ParseFloat(value, 32)` which accepts case-insensitive `Inf`, `INF`, `NaN`, etc. C++ protoc only accepts exact lowercase identifiers `inf` and `nan` for float/double option values. When a custom float option uses `Inf` (capital I), Go accepts it and produces a valid descriptor with infinity, but C++ rejects it with "Value must be number for float option".
+- **Test**: `362_float_option_case` — all 9 profiles fail.
+- **Root cause**: `encodeCustomOptionValue()` at cli.go:5847 does `switch strings.ToLower(value)` which normalizes `"Inf"` to `"inf"`. This doesn't match `"nan"` or `"-nan"`, so it falls to the `default` case which calls `strconv.ParseFloat("Inf", 32)`. Go's `strconv.ParseFloat` is case-insensitive for special values (`Inf`, `+Inf`, `-Inf`, `NaN`), so it returns `+Inf` successfully. C++ protoc's option interpreter only recognizes exact lowercase `"inf"` and `"nan"` identifiers; `"Inf"` is treated as an unknown identifier and rejected.
+- **C++ protoc**: `test.proto:13:21: Value must be number for float option "floatcase.my_float".`
+- **Go protoc-go**: Accepts `Inf`, encodes as float32 infinity `0x7F800000`, produces valid descriptor.
+- **Fix hint**: In `encodeCustomOptionValue` for TYPE_FLOAT and TYPE_DOUBLE, after the NaN switch, don't rely on `strconv.ParseFloat` for special values. Instead, check for exact lowercase `"inf"` and `"-inf"` before calling `ParseFloat`, and reject anything else that `ParseFloat` would interpret as infinity/NaN. Or: after `ParseFloat`, check if the result is Inf/NaN and reject it (since those should only be accepted via the explicit identifier checks, not via `ParseFloat` interpretation of case variants).
+- **Also affects**: TYPE_DOUBLE has the same issue (line 5861-5873). Aggregate option fields (`encodeAggregateFields`) likely have the same bug. Values like `NaN`, `INF`, `-Inf`, `+Inf`, `+inf` would all behave differently between Go and C++.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -348,7 +357,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Source code info path differences for extension range options
 - ~~Custom option scope resolution — nested messages may resolve differently~~ **DONE in Run 23 (354_nested_ext_scope) — bare name fallback bypasses scope**
 - ~~Case-insensitive float/double default values — Go accepts `NaN`/`Inf`/`INF`/`infinity`/`Infinity`, C++ only accepts lowercase `nan`/`inf`~~ **DONE in Run 25 (356_infinity_default)**
-- Same case-sensitivity issue may exist in custom option value parsing (e.g., `option (my_opt) = Infinity;` — does Go accept it?)
+- ~~Same case-sensitivity issue may exist in custom option value parsing (e.g., `option (my_opt) = Infinity;` — does Go accept it?)~~ **DONE in Run 31 (362_float_option_case) — `Inf` accepted by Go, rejected by C++**
 - ~~`simpleFtoa` edge case: find a specific float32 value where Go's `FormatFloat(float64(v), 'g', 6, 64)` differs from C++'s `snprintf(buf, "%.6g", f)` due to the float64 bit width parameter~~ **DONE in Run 26 (357_float_overflow_default) — overflow to infinity produces `"+Inf"` vs `"inf"`**
 - ~~`simpleDtoa` same issue for double overflow (e.g., `1e309`) — Go's `ParseFloat` returns `ErrRange` so normalization is skipped entirely, storing raw `"1e309"` instead of `"inf"`~~ **DONE in Run 27 (358_double_overflow_default)**
 - Double default with `-0.0` or `0.0` — verify both produce same string
@@ -359,4 +368,10 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - ~~Enum shadow in compound type resolution — Go skips enums, C++ stops at shadow~~ **DONE in Run 29 (360_enum_shadow_scope)**
 - Similar shadow bugs: compound names where first part matches a package name? Or matches a different non-message type?
 - Extension extendee scope resolution differences — similar compound name resolution issues
+- `resolveTypeName` with three-part compound names (e.g., `A.B.C`) — multiple levels of scope walking
+- Custom double option with `NaN` (mixed case) — same bug as Run 31 for double type
+- Custom float option with `INF` (all caps) — same bug as Run 31
+- Aggregate option float/double with `Inf`/`NaN` — `encodeAggregateFields` likely has same permissive parsing
+- `strconv.ParseFloat` accepts `+inf` and `+Inf` — custom option with `+inf` might differ
+- Source code info for `option` statements on extension range vs extension field
 - `resolveTypeName` with three-part compound names (e.g., `A.B.C`) — multiple levels of scope walking
