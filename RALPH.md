@@ -118,6 +118,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 45. [DONE] Fix `374_oneof_bool_option_case` — `resolveCustomOneofOptions` was missing bool and float/double identifier validation. Added bool validation (must be identifier, must be exactly `true` or `false`) and float/double validation (identifier values must be lowercase `inf` or `nan`), matching the pattern in all other option resolvers. All 3432/3432 tests pass.
 
+46. [DONE] Fix `375_field_dup_option` — C++ protoc rejects duplicate non-repeated field options with `Option "(name)" was already set.` but Go protoc-go silently accepted them. Added per-field duplicate tracking using `fieldOptKey{field, name}` map in `resolveCustomFieldOptions`, matching the pattern already in `resolveCustomMessageOptions`. All 3441/3441 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
