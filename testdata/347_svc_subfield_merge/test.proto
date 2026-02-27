@@ -1,0 +1,29 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package svcmerge;
+
+message ServiceMeta {
+  optional string label = 1;
+  optional int32 priority = 2;
+}
+
+extend google.protobuf.ServiceOptions {
+  optional ServiceMeta svc_cfg = 50001;
+}
+
+message Req {
+  optional string query = 1;
+}
+
+message Resp {
+  optional string result = 1;
+}
+
+service SearchService {
+  option (svc_cfg).label = "search";
+  option (svc_cfg).priority = 5;
+
+  rpc Search (Req) returns (Resp);
+}
