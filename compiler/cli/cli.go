@@ -4128,7 +4128,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 		repeatedIdx := map[int32]int32{}
 		seenCustomOpts := map[string]bool{}
 		for _, opt := range result.CustomFileOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -4145,6 +4145,20 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 					continue
 				}
 				seenCustomOpts[optKey] = true
+			}
+
+			// Validate boolean option values must be "true" or "false"
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
 			}
 
 			if len(opt.SubFieldPath) > 0 {
@@ -4424,8 +4438,13 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 
 			// Validate boolean option values must be identifiers
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
-				if opt.ValueType != tokenizer.TokenIdent || (opt.Value != "true" && opt.Value != "false") {
+				if opt.ValueType != tokenizer.TokenIdent {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.ValTok.Line+1, opt.ValTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
 						name, opt.ValTok.Line+1, opt.ValTok.Column+1, extFQN))
 					continue
 				}
@@ -5631,8 +5650,13 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 
 			// Validate boolean option values
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
-				if opt.ValueType != tokenizer.TokenIdent || (opt.Value != "true" && opt.Value != "false") {
+				if opt.ValueType != tokenizer.TokenIdent {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, extFQN))
 					continue
 				}
