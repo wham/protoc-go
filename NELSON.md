@@ -399,6 +399,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add the bool validation block to all 3 remaining resolvers: `resolveCustomEnumOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`. Same pattern as line 4922 in `resolveCustomServiceOptions`.
 - **Also affects**: Same bug for enum-value-level and oneof-level bool custom options — both missing the same check.
 
+### Run 41 — Subnormal float default value string differs (VICTORY)
+- **Bug**: Go's `simpleFtoa` produces a different string representation than C++'s `SimpleFtoa` for subnormal float32 values (values smaller than `FLT_MIN` ≈ 1.17549435e-38). The round-trip check (`format → parse → compare`) succeeds in Go but fails in C++, causing C++ to use 9 significant digits while Go uses 6.
+- **Test**: `372_subnormal_float_default` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `simpleFtoa(float32(1e-45))` in parser.go:6080 formats to `"1.4013e-45"` (6 sig digits), then `ParseFloat("1.4013e-45", 32)` returns a float32 that equals the original — round-trip succeeds. C++'s `SimpleFtoa` formats the same `"1.4013e-45"`, but `strtof("1.4013e-45")` returns a DIFFERENT float32 — round-trip fails, so it falls through to `"%.9g"` → `"1.40129846e-45"` (9 sig digits).
+- **C++ protoc**: `default_value: "1.40129846e-45"` (14 bytes).
+- **Go protoc-go**: `default_value: "1.4013e-45"` (10 bytes). 4-byte difference in descriptor.
+- **Fix hint**: The discrepancy is in `strtof` (C library) vs `ParseFloat` (Go stdlib) behavior for subnormal float32 values. Go's `ParseFloat` is correctly rounding the string back to the same float32, while C's `strtof` (on macOS) fails to round-trip. To match C++ behavior, Go would need to replicate C's less-precise `strtof` round-trip failure, which is platform-specific. One approach: for subnormal float32 values (abs(v) < FLT_MIN and v != 0), always use 9 significant digits (skip the 6-digit attempt). Or: use `FormatFloat(v64, 'g', 6, 32)` (32-bit precision) instead of `64` to match C's float formatting behavior more closely.
+- **Also affects**: Any subnormal float32 default value will trigger this. Examples: `1e-45`, `1.17549e-38`, `5e-40`, etc. The exact set of affected values depends on which ones fail the C `strtof` round-trip.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -467,4 +476,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Duplicate non-repeated custom option on enum/service/method/oneof/enum-value/ext-range — all missing seenCustomOpts check
 - Bool validation missing in message/field/enum/service/method/oneof/enum-value/ext-range resolvers — `True`/`False` accepted
 - Float/double identifier validation missing in message/field/enum/service/method/oneof/enum-value/ext-range resolvers — `Inf`/`NaN` accepted
-- Aggregate option with `True` bool value — `encodeCustomOptionValue` still accepts `True` at line 5969, bypasses simple option validation
+- Aggregate option with `True` bool value — `encodeCustomOptionValue` still accepts `True` at line 5969, bypasses simple option validation- ~~Subnormal float default value string differs~~ **DONE in Run 41 (372_subnormal_float_default)**
+- Same `simpleFtoa` issue with `simpleDtoa` for subnormal double values — might also differ
+- `simpleFtoa` with `FormatFloat(v64, 'g', 6, 32)` (32-bit) vs `FormatFloat(v64, 'g', 6, 64)` (64-bit) — changing bit width may fix some but break others
+- Enum-value-level bool option with `True` — still missing validation in `resolveCustomEnumValueOptions`
+- Oneof-level bool option with `True` — still missing validation in `resolveCustomOneofOptions`
+- Duplicate non-repeated custom option on field/enum/service/method/enum-value/oneof/ext-range — all missing `seenCustomOpts` check
+- Aggregate option bool with `True` — `encodeCustomOptionValue` still accepts `True`/`t`/`f` at line 6091
+- Aggregate option float/double with `Inf`/`NaN` (mixed case) — `strconv.ParseFloat` is case-insensitive

@@ -1,0 +1,7 @@
+syntax = "proto2";
+
+package subnormal;
+
+message Tiny {
+  optional float val = 1 [default = 1e-45];
+}
