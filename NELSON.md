@@ -354,6 +354,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Either (1) add range validation inside `encodeCustomOptionValue()` for TYPE_INT32, TYPE_SINT32, TYPE_UINT32, TYPE_SFIXED32, TYPE_FIXED32 (check result fits in 32-bit range after `ParseInt`/`ParseUint`), or (2) call `checkIntRangeOption()` from `encodeAggregateFields()` before calling `encodeCustomOptionValue()`. Option 1 is cleaner since it catches ALL callers.
 - **Also affects**: Same bug for TYPE_UINT32 (e.g., `0x100000000` in aggregate), TYPE_SINT32, TYPE_SFIXED32, TYPE_FIXED32 — all 32-bit integer types lack range validation in the aggregate encoding path. Negative values in aggregate int32 fields (e.g., `-2147483649`) would also overflow.
 
+### Run 36 — Duplicate non-repeated message-level custom option not rejected (VICTORY)
+- **Bug**: Go's `resolveCustomMessageOptions` (and all other `resolveCustom*Options` except `resolveCustomFileOptions`) does NOT check for duplicate non-repeated custom options. When a message has `option (msg_tag) = 42; option (msg_tag) = 99;` (same non-repeated option set twice), C++ protoc rejects the second one with "Option was already set", but Go silently accepts both and encodes two entries in the unknown fields.
+- **Test**: `367_msg_dup_option` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `resolveCustomFileOptions` at cli.go:4129-4147 has `seenCustomOpts` map that tracks which non-repeated, non-aggregate, non-subfield options have been set and emits "Option X was already set." for duplicates. None of the other resolvers (`resolveCustomFieldOptions`, `resolveCustomMessageOptions`, `resolveCustomEnumOptions`, `resolveCustomServiceOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`, `resolveCustomExtRangeOptions`) have this check.
+- **C++ protoc**: `test.proto:13:10: Option "(msg_tag)" was already set.`
+- **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in MessageOptions unknown fields.
+- **Fix hint**: Add the `seenCustomOpts` duplicate detection logic to each of the 8 other `resolveCustom*Options` functions. The pattern is: `seenCustomOpts := map[string]bool{}`, skip repeated/aggregate/subfield options, check `seenCustomOpts[extFQN]`, emit error if already set. Note: the `seenCustomOpts` scope should be per-entity (per message, per field, etc.), not per file.
+- **Also affects**: Same bug for field-level, enum-level, service-level, method-level, oneof-level, enum-value-level, and ext-range-level custom options. All non-file resolvers are missing the duplicate check.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -418,3 +427,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Aggregate bool with `True`/`t`/`f` — `encodeCustomOptionValue` still accepts case variants (line 5958)
 - Aggregate float/double with `Inf`/`NaN` (mixed case) — `strconv.ParseFloat` is case-insensitive
 - Source code info for extension declarations inside messages vs top-level
+- Duplicate non-repeated custom option on field-level — same bug as Run 36 but for FieldOptions
+- Duplicate non-repeated custom option on enum/service/method/oneof/enum-value/ext-range — all missing seenCustomOpts check
+- Bool validation missing in message/field/enum/service/method/oneof/enum-value/ext-range resolvers — `True`/`False` accepted
+- Float/double identifier validation missing in message/field/enum/service/method/oneof/enum-value/ext-range resolvers — `Inf`/`NaN` accepted
+- Aggregate option with `True` bool value — `encodeCustomOptionValue` still accepts `True` at line 5969, bypasses simple option validation
