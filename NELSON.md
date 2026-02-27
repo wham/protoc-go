@@ -336,6 +336,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: In `collectComments()`, add `'\f'` and `'\v'` to the whitespace checks at lines 120 and 160. E.g., change `currentChar == ' ' || currentChar == '\t' || currentChar == '\r'` to include `|| currentChar == '\f' || currentChar == '\v'`.
 - **Also affects**: `\v` (vertical tab, 0x0B) has the same bug — also not treated as whitespace.
 
+### Run 34 — Message-level int32 custom option missing range validation (VICTORY)
+- **Bug**: Go's `resolveCustomMessageOptions` (and all other `resolveCustom*Options` except `resolveCustomFileOptions`) does NOT call `checkIntRangeOption` to validate that int32/uint32 values fit in 32-bit range. When a message-level int32 custom option is set to `0x80000000` (= 2147483648, exceeds INT32_MAX = 2147483647), Go accepts it and produces a descriptor, while C++ rejects it with a range error.
+- **Test**: `365_msg_int32_overflow` — all 9 profiles fail.
+- **Root cause**: `checkIntRangeOption` is only called at cli.go:4179 inside `resolveCustomFileOptions`. The other functions — `resolveCustomFieldOptions`, `resolveCustomMessageOptions`, `resolveCustomServiceOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`, `resolveCustomExtRangeOptions` — all skip range validation for 32-bit types.
+- **C++ protoc**: `test.proto:15:22: Value out of range, -2147483648 to 2147483647, for int32 option "msgoverflow.msg_val".`
+- **Go protoc-go**: Silently accepts `0x80000000`, encodes as varint 2147483648, produces valid descriptor.
+- **Fix hint**: Add `checkIntRangeOption` calls in each `resolveCustom*Options` function, guarded by `opt.AggregateFields == nil && len(opt.SubFieldPath) == 0` (same guard as in file options). Copy the pattern from cli.go:4177-4184 to each of the 8 other functions.
+- **Also affects**: Same bug for uint32 overflow (e.g., `0x100000000` for uint32), sint32 overflow, fixed32 overflow (via ParseUint), sfixed32 overflow (via ParseInt). All 32-bit types on all non-file option entity types.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -394,3 +403,5 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Vertical tab (`\v`, 0x0B) as whitespace — same bug as Run 33 form feed, but for `\v` specifically
 - Source code info for `option` statements on extension range vs extension field
 - `resolveTypeName` with three-part compound names (e.g., `A.B.C`) — multiple levels of scope walking
+- Same int32/uint32 overflow bug for field-level, service-level, method-level, enum-level, enum-value-level, oneof-level, ext-range-level custom options (all missing `checkIntRangeOption`)
+- Same int32 overflow bug in aggregate option encoding (`encodeAggregateFields` → `encodeCustomOptionValue`) — no range check there either
