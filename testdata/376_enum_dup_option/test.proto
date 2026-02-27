@@ -1,0 +1,20 @@
+syntax = "proto2";
+
+package enumdup;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.EnumOptions {
+  optional int32 enum_tag = 50001;
+}
+
+enum Status {
+  option (enum_tag) = 42;
+  option (enum_tag) = 99;
+  UNKNOWN = 0;
+  ACTIVE = 1;
+}
+
+message Dummy {
+  optional Status s = 1;
+}
