@@ -1,0 +1,32 @@
+syntax = "proto2";
+
+package oneofmerge;
+
+import "google/protobuf/descriptor.proto";
+
+message OneofMeta {
+  optional string label = 1;
+  optional int32 priority = 2;
+}
+
+extend google.protobuf.OneofOptions {
+  optional OneofMeta oneof_cfg = 50001;
+}
+
+message Request {
+  optional string id = 1;
+}
+
+message Response {
+  optional string result = 1;
+}
+
+message MyMessage {
+  oneof choice {
+    option (oneof_cfg).label = "primary";
+    option (oneof_cfg).priority = 7;
+
+    string name = 1;
+    int32 value = 2;
+  }
+}
