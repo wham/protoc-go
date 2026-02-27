@@ -3477,6 +3477,12 @@ func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto, mergeableF
 	if fdCopy.Options != nil {
 		mergeUnknownExtensions(fdCopy.Options.ProtoReflect(), mergeableFileFields)
 	}
+	// Merge field options for top-level extensions (fd.Extension)
+	for _, ext := range fdCopy.GetExtension() {
+		if ext.Options != nil {
+			mergeUnknownExtensions(ext.Options.ProtoReflect(), mergeableFieldOptFields)
+		}
+	}
 	mergeFieldOptionsInMessages(fdCopy.GetMessageType(), mergeableFieldOptFields)
 	mergeMessageOptionsInMessages(fdCopy.GetMessageType(), mergeableMsgOptFields)
 	mergeEnumOptions(fdCopy.GetEnumType(), mergeableEnumOptFields)
