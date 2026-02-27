@@ -5936,6 +5936,12 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		if err != nil {
 			return nil, fmt.Errorf("invalid integer value: %s", value)
 		}
+		if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_INT32 ||
+			ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_SINT32 {
+			if v < math.MinInt32 || v > math.MaxInt32 {
+				return nil, &aggregateIntRangeError{rawValue: value}
+			}
+		}
 		if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_SINT32 ||
 			ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_SINT64 {
 			b = protowire.AppendTag(b, fieldNum, protowire.VarintType)
@@ -5949,6 +5955,11 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		v, err := strconv.ParseUint(value, 0, 64)
 		if err != nil {
 			return nil, fmt.Errorf("invalid unsigned integer value: %s", value)
+		}
+		if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_UINT32 {
+			if v > math.MaxUint32 {
+				return nil, &aggregateIntRangeError{rawValue: value}
+			}
 		}
 		b = protowire.AppendTag(b, fieldNum, protowire.VarintType)
 		b = protowire.AppendVarint(b, v)
@@ -6295,6 +6306,14 @@ func (e *aggregateBoolError) Error() string {
 	return fmt.Sprintf("Invalid value for boolean field \"%s\". Value: \"%s\".", e.fieldName, e.value)
 }
 
+type aggregateIntRangeError struct {
+	rawValue string
+}
+
+func (e *aggregateIntRangeError) Error() string {
+	return fmt.Sprintf("Integer out of range (%s)", e.rawValue)
+}
+
 type aggregatePositiveSignError struct {
 	fieldType descriptorpb.FieldDescriptorProto_Type
 }
@@ -6375,6 +6394,11 @@ func formatAggregateError(err error, filename string, braceTok tokenizer.Token, 
 	if errors.As(err, &posErr) {
 		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
 			filename, braceTok.Line+1, braceTok.Column+1, optName, posErr.Error())
+	}
+	var intRangeErr *aggregateIntRangeError
+	if errors.As(err, &intRangeErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, intRangeErr.Error())
 	}
 	return fmt.Sprintf("%s: error encoding custom option: %v", filename, err)
 }

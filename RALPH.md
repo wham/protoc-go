@@ -98,6 +98,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 35. [DONE] Fix `364_formfeed_whitespace` — Tokenizer's `collectComments()` only treated `' '`, `'\t'`, `'\r'` as non-newline whitespace, but C++ protoc also treats `'\f'` (form feed) and `'\v'` (vertical tab) as whitespace. Added `'\v'` and `'\f'` to all 4 whitespace-skipping loops in `collectComments`. All 3342/3342 tests pass.
 
+36. [DONE] Fix `365_msg_int32_overflow` — `checkIntRangeOption` was only called in `resolveCustomFileOptions`. Added it to all 8 other `resolveCustom*Options` functions (field, message, service, method, enum, enum value, oneof, ext range). Also set `AggregateBraceTok = valTok` for non-aggregate values in all option parsers (message, enum, service, method, oneof, field, enum value, ext range) so error line/column is correct. All 3351/3351 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
