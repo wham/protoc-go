@@ -1,0 +1,13 @@
+syntax = "proto2";
+
+package extrangestrconcat;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.ExtensionRangeOptions {
+  optional string range_label = 50001;
+}
+
+message Extendable {
+  extensions 100 to 199 [(range_label) = "hello" " " "world"];
+}
