@@ -4338,29 +4338,27 @@ func findFileOptionExtension(name string, currentPkg string, allExts []fileOptEx
 		return nil, ""
 	}
 
-	// Try current package scope first
-	if currentPkg != "" {
+	// Walk scopes from innermost (current package) to outermost (root),
+	// matching C++ protoc scope resolution for extension names.
+	scope := currentPkg
+	for {
+		candidate := name
+		if scope != "" {
+			candidate = scope + "." + name
+		}
 		for _, e := range allExts {
-			if e.field.GetName() == name && e.pkg == currentPkg {
+			if buildFQN(e) == candidate {
 				return e.field, buildFQN(e)
 			}
 		}
-	}
-
-	// Try bare name match
-	for _, e := range allExts {
-		if e.field.GetName() == name {
-			return e.field, buildFQN(e)
+		if scope == "" {
+			break
 		}
-	}
-
-	// Try dotted name as relative path
-	if strings.Contains(name, ".") {
-		for _, e := range allExts {
-			extFQN := buildFQN(e)
-			if strings.HasSuffix(extFQN, "."+name) || extFQN == name {
-				return e.field, extFQN
-			}
+		// Move to parent scope
+		if dot := strings.LastIndex(scope, "."); dot >= 0 {
+			scope = scope[:dot]
+		} else {
+			scope = ""
 		}
 	}
 
