@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package aggoverflow;
+
+import "google/protobuf/descriptor.proto";
+
+message Config {
+  optional int32 count = 1;
+}
+
+extend google.protobuf.FileOptions {
+  optional Config cfg = 50001;
+}
+
+option (cfg) = { count: 0x80000000 };
+
+message Dummy {
+  optional int32 id = 1;
+}

@@ -345,6 +345,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add `checkIntRangeOption` calls in each `resolveCustom*Options` function, guarded by `opt.AggregateFields == nil && len(opt.SubFieldPath) == 0` (same guard as in file options). Copy the pattern from cli.go:4177-4184 to each of the 8 other functions.
 - **Also affects**: Same bug for uint32 overflow (e.g., `0x100000000` for uint32), sint32 overflow, fixed32 overflow (via ParseUint), sfixed32 overflow (via ParseInt). All 32-bit types on all non-file option entity types.
 
+### Run 35 — int32 overflow inside aggregate option value not caught (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` for `TYPE_INT32` uses `strconv.ParseInt(value, 0, 64)` with 64-bit width and no range validation. For aggregate option values (message literal fields), `checkIntRangeOption` is never called — it's only called for simple (non-aggregate) options in the `resolveCustom*Options` functions. When an aggregate option has an int32 field with value `0x80000000` (2147483648, exceeds INT32_MAX), Go accepts it silently.
+- **Test**: `366_aggregate_int32_overflow` — all 9 profiles fail.
+- **Root cause**: `encodeAggregateFields()` at cli.go:6260 calls `encodeCustomOptionValue()` directly without any int32 range validation. `encodeCustomOptionValue()` at cli.go:5935 uses `ParseInt(value, 0, 64)` which accepts any value that fits in int64. The `checkIntRangeOption()` function exists but is only called in the `resolveCustom*Options` functions for simple options — the aggregate encoding path bypasses it entirely.
+- **C++ protoc**: `test.proto:15:16: Error while parsing option value for "cfg": Integer out of range (0x80000000)` — the text format parser validates int32 ranges.
+- **Go protoc-go**: Accepts `0x80000000` as a valid int32 value, encodes it as varint 2147483648, produces a descriptor.
+- **Fix hint**: Either (1) add range validation inside `encodeCustomOptionValue()` for TYPE_INT32, TYPE_SINT32, TYPE_UINT32, TYPE_SFIXED32, TYPE_FIXED32 (check result fits in 32-bit range after `ParseInt`/`ParseUint`), or (2) call `checkIntRangeOption()` from `encodeAggregateFields()` before calling `encodeCustomOptionValue()`. Option 1 is cleaner since it catches ALL callers.
+- **Also affects**: Same bug for TYPE_UINT32 (e.g., `0x100000000` in aggregate), TYPE_SINT32, TYPE_SFIXED32, TYPE_FIXED32 — all 32-bit integer types lack range validation in the aggregate encoding path. Negative values in aggregate int32 fields (e.g., `-2147483649`) would also overflow.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -404,4 +413,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Source code info for `option` statements on extension range vs extension field
 - `resolveTypeName` with three-part compound names (e.g., `A.B.C`) — multiple levels of scope walking
 - Same int32/uint32 overflow bug for field-level, service-level, method-level, enum-level, enum-value-level, oneof-level, ext-range-level custom options (all missing `checkIntRangeOption`)
-- Same int32 overflow bug in aggregate option encoding (`encodeAggregateFields` → `encodeCustomOptionValue`) — no range check there either
+- ~~Same int32 overflow bug in aggregate option encoding (`encodeAggregateFields` → `encodeCustomOptionValue`) — no range check there either~~ **DONE in Run 35 (366_aggregate_int32_overflow)**
+- Same aggregate overflow bug for uint32 (e.g., `0x100000000`), sint32, sfixed32, fixed32 — all 32-bit types in aggregate values
+- Aggregate bool with `True`/`t`/`f` — `encodeCustomOptionValue` still accepts case variants (line 5958)
+- Aggregate float/double with `Inf`/`NaN` (mixed case) — `strconv.ParseFloat` is case-insensitive
+- Source code info for extension declarations inside messages vs top-level
