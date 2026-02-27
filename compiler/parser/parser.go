@@ -5559,12 +5559,22 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 					return optLocs, nil
 				}
 			}
-			// Float/double fields reject string literal default values
-			if (field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE ||
-				field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT) && valTok.Type == tokenizer.TokenString {
-				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected number.", p.filename, valTok.Line+1, valTok.Column+1))
-				p.skipToToken("]")
-				return optLocs, nil
+			// Float/double fields reject string literal and non-inf/nan identifier default values
+			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE ||
+				field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT {
+				if valTok.Type == tokenizer.TokenString {
+					p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected number.", p.filename, valTok.Line+1, valTok.Column+1))
+					p.skipToToken("]")
+					return optLocs, nil
+				}
+				if valTok.Type == tokenizer.TokenIdent {
+					lower := strings.ToLower(valTok.Value)
+					if lower != "inf" && lower != "nan" {
+						p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected number.", p.filename, valTok.Line+1, valTok.Column+1))
+						p.skipToToken("]")
+						return optLocs, nil
+					}
+				}
 			}
 			// Integer fields reject string literal, float literal, and identifier default values
 			if isIntegerType(field.GetType()) && (valTok.Type == tokenizer.TokenString || valTok.Type == tokenizer.TokenFloat || valTok.Type == tokenizer.TokenIdent) {
@@ -5592,13 +5602,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE ||
 				field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT {
 				lower := strings.ToLower(defVal)
-				if lower == "inf" || lower == "-inf" || lower == "nan" || lower == "-nan" || lower == "infinity" || lower == "-infinity" {
+				if lower == "inf" || lower == "-inf" || lower == "nan" || lower == "-nan" {
 					defVal = lower
-					if defVal == "infinity" {
-						defVal = "inf"
-					} else if defVal == "-infinity" {
-						defVal = "-inf"
-					} else if defVal == "-nan" {
+					if defVal == "-nan" {
 						defVal = "nan"
 					}
 				} else if v, err := strconv.ParseFloat(defVal, 64); err == nil {
