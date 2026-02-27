@@ -5808,11 +5808,16 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 		}
 	}
 
-	// Wrap in length-delimited tag
 	fieldNum := protowire.Number(ext.GetNumber())
 	var b []byte
-	b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
-	b = protowire.AppendBytes(b, inner)
+	if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+		b = protowire.AppendTag(b, fieldNum, protowire.StartGroupType)
+		b = append(b, inner...)
+		b = protowire.AppendTag(b, fieldNum, protowire.EndGroupType)
+	} else {
+		b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
+		b = protowire.AppendBytes(b, inner)
+	}
 	return b, nil
 }
 
@@ -5895,8 +5900,14 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 
 	fieldNum := protowire.Number(field.GetNumber())
 	var b []byte
-	b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
-	b = protowire.AppendBytes(b, inner)
+	if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+		b = protowire.AppendTag(b, fieldNum, protowire.StartGroupType)
+		b = append(b, inner...)
+		b = protowire.AppendTag(b, fieldNum, protowire.EndGroupType)
+	} else {
+		b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
+		b = protowire.AppendBytes(b, inner)
+	}
 	return b, nil
 }
 
