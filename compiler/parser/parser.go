@@ -5356,6 +5356,13 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				valTok := p.tok.Next()
 				p.trackEnd(valTok)
 				custOpt.Value = valTok.Value
+				if valTok.Type == tokenizer.TokenString {
+					for p.tok.Peek().Type == tokenizer.TokenString {
+						nextStr := p.tok.Next()
+						p.trackEnd(nextStr)
+						custOpt.Value += nextStr.Value
+					}
+				}
 				if negative {
 					custOpt.Value = "-" + custOpt.Value
 				}
