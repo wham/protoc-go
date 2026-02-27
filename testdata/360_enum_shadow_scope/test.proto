@@ -1,0 +1,25 @@
+syntax = "proto2";
+
+package scopetest;
+
+// Outer message has a nested message named "Direction"
+message Outer {
+  message Direction {
+    message Sub {
+      optional int32 x = 1;
+    }
+  }
+
+  // Container has an enum named "Direction" — same name as the outer message.
+  // In C++ protoc, when resolving "Direction.Sub" inside Container,
+  // "Direction" matches the local enum (shadow) and C++ stops, reporting an error.
+  // Go skips the enum match and continues to outer scope, finding Outer.Direction.Sub.
+  message Container {
+    enum Direction {
+      NORTH = 0;
+      SOUTH = 1;
+    }
+
+    optional Direction.Sub ref = 1;
+  }
+}

@@ -291,6 +291,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Also affects**: Same bug for `"False"` (capital F), `"t"`, `"f"` — all accepted by Go, rejected by C++. This applies to ALL custom option types (file, message, field, enum, enum value, service, method, oneof, extension range) since they all use `encodeCustomOptionValue`.
 - **Also affects**: Aggregate option bool fields — `encodeAggregateFields` also uses the same switch for bool values.
 
+### Run 29 — Enum shadow in compound type name resolution bypassed by Go (VICTORY)
+- **Bug**: Go's `resolveTypeName` skips enum matches when resolving compound type names (like `Direction.Sub`) and continues searching outer scopes. C++ protoc stops at the first match of the first part — even if it's an enum — and reports a shadow error because the full compound doesn't exist within the enum.
+- **Test**: `360_enum_shadow_scope` — all 9 profiles fail.
+- **Root cause**: `resolveTypeName()` at parser.go:6675 has a comment "Non-aggregate (enum): skip, continue searching outer scopes". When the first part of a compound name (e.g., `Direction` in `Direction.Sub`) matches an enum in the current scope, Go skips it and continues to outer scopes. C++ treats ANY match of the first part as a shadow — it tries the full compound in that scope, fails, and reports: `"Direction.Sub" is resolved to "scopetest.Outer.Container.Direction.Sub", which is not defined. The innermost scope is searched first in name resolution.`
+- **C++ protoc**: `test.proto:23:14: "Direction.Sub" is resolved to "scopetest.Outer.Container.Direction.Sub", which is not defined. The innermost scope is searched first in name resolution. Consider using a leading '.'(i.e., ".Direction.Sub") to start from the outermost scope.`
+- **Go protoc-go**: Silently accepts the reference, resolves to `.scopetest.Outer.Direction.Sub`, and produces a valid descriptor.
+- **Fix hint**: In `resolveTypeName`, when the first part of a compound name matches an enum type, treat it the same as a message match: try the full compound in the current scope, fail (since enums don't have nested types), and return a shadow error. Replace the "skip, continue" logic at line 6675 with: `return "." + name, firstCandidate` (shadow error with the enum's full path).
+- **Also affects**: Any compound type reference where the first part matches an enum in an inner scope. This is a scope resolution correctness bug, not just an edge case.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -338,3 +347,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Custom bool option with `"f"` or `"t"` — same bug as Run 28 but different variant
 - Custom bool option in aggregate: `option (cfg) = { enabled: True }` — also accepts `True`
 - Aggregate option bool with `"t"` or `"f"` — `encodeAggregateFields` likely has same permissive bool handling
+- ~~Enum shadow in compound type resolution — Go skips enums, C++ stops at shadow~~ **DONE in Run 29 (360_enum_shadow_scope)**
+- Similar shadow bugs: compound names where first part matches a package name? Or matches a different non-message type?
+- Extension extendee scope resolution differences — similar compound name resolution issues
+- `resolveTypeName` with three-part compound names (e.g., `A.B.C`) — multiple levels of scope walking
