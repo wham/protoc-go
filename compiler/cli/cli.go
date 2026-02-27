@@ -489,7 +489,7 @@ func Run(args []string) error {
 	}
 
 	// Resolve custom options (parenthesized extension options)
-	customOptErrors := resolveCustomFileOptions(orderedFiles, parsed, parseResults)
+	customOptErrors, subFieldFileOptNums := resolveCustomFileOptions(orderedFiles, parsed, parseResults)
 	if len(customOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customOptErrors = formatErrorsMSVS(customOptErrors, srcTree)
@@ -656,7 +656,7 @@ func Run(args []string) error {
 		// If the file has sub-field custom options, clone and merge unknown fields
 		// so proto_file has merged entries (matching C++ protoc's linked descriptors)
 		if pr := parseResults[name]; pr != nil && hasSubFieldCustomOpts(pr) {
-			fd = cloneWithMergedExtUnknowns(fd)
+			fd = cloneWithMergedExtUnknowns(fd, subFieldFileOptNums[name])
 		}
 		protoFiles = append(protoFiles, fd)
 		strippedMap[name] = fd
@@ -3429,10 +3429,12 @@ func hasSubFieldCustomOpts(pr *parser.ParseResult) bool {
 
 // cloneWithMergedExtUnknowns clones fd and merges multiple unknown field entries
 // with the same tag (length-delimited) in FileOptions and FieldOptions into single entries.
-func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto) *descriptorpb.FileDescriptorProto {
+// mergeableFileFields specifies which FileOptions field numbers should be merged
+// (only sub-field option field numbers, not repeated scalars).
+func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto, mergeableFileFields map[int32]bool) *descriptorpb.FileDescriptorProto {
 	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
 	if fdCopy.Options != nil {
-		mergeUnknownExtensions(fdCopy.Options.ProtoReflect())
+		mergeUnknownExtensions(fdCopy.Options.ProtoReflect(), mergeableFileFields)
 	}
 	mergeFieldOptionsInMessages(fdCopy.GetMessageType())
 	return fdCopy
@@ -3444,12 +3446,12 @@ func mergeFieldOptionsInMessages(msgs []*descriptorpb.DescriptorProto) {
 	for _, msg := range msgs {
 		for _, field := range msg.GetField() {
 			if field.Options != nil {
-				mergeUnknownExtensions(field.Options.ProtoReflect())
+				mergeUnknownExtensions(field.Options.ProtoReflect(), nil)
 			}
 		}
 		for _, ext := range msg.GetExtension() {
 			if ext.Options != nil {
-				mergeUnknownExtensions(ext.Options.ProtoReflect())
+				mergeUnknownExtensions(ext.Options.ProtoReflect(), nil)
 			}
 		}
 		mergeFieldOptionsInMessages(msg.GetNestedType())
@@ -3457,8 +3459,9 @@ func mergeFieldOptionsInMessages(msgs []*descriptorpb.DescriptorProto) {
 }
 
 // mergeUnknownExtensions merges multiple unknown field entries with the same
-// field number (BytesType) into single entries.
-func mergeUnknownExtensions(m protoreflect.Message) {
+// field number (BytesType) into single entries. If mergeableFields is non-nil,
+// only field numbers in the set are merged; others are left as separate entries.
+func mergeUnknownExtensions(m protoreflect.Message, mergeableFields map[int32]bool) {
 	raw := m.GetUnknown()
 	if len(raw) == 0 {
 		return
@@ -3512,11 +3515,11 @@ func mergeUnknownExtensions(m protoreflect.Message) {
 		entries = append(entries, entry{num: num, wtyp: wtyp, payload: payload, raw: entryStart[:len(entryStart)-len(buf)]})
 	}
 
-	// Check if any BytesType field appears more than once
+	// Check if any BytesType field appears more than once and is mergeable
 	counts := make(map[protowire.Number]int)
 	needsMerge := false
 	for _, e := range entries {
-		if e.wtyp == protowire.BytesType {
+		if e.wtyp == protowire.BytesType && (mergeableFields == nil || mergeableFields[int32(e.num)]) {
 			counts[e.num]++
 			if counts[e.num] > 1 {
 				needsMerge = true
@@ -3529,14 +3532,14 @@ func mergeUnknownExtensions(m protoreflect.Message) {
 
 	merged := make(map[protowire.Number][]byte)
 	for _, e := range entries {
-		if e.wtyp == protowire.BytesType {
+		if e.wtyp == protowire.BytesType && (mergeableFields == nil || mergeableFields[int32(e.num)]) {
 			merged[e.num] = append(merged[e.num], e.payload...)
 		}
 	}
 	emitted := make(map[protowire.Number]bool)
 	var result []byte
 	for _, e := range entries {
-		if e.wtyp == protowire.BytesType {
+		if e.wtyp == protowire.BytesType && (mergeableFields == nil || mergeableFields[int32(e.num)]) {
 			if !emitted[e.num] {
 				emitted[e.num] = true
 				result = protowire.AppendTag(result, e.num, protowire.BytesType)
@@ -3927,7 +3930,9 @@ type fileOptExtInfo struct {
 // resolveCustomFileOptions resolves parenthesized custom file options against
 // extension definitions. It finds the matching extension field, encodes the
 // value, and sets it on the FileOptions proto as unknown (extension) fields.
-func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+// It also returns a map from filename to the set of extension field numbers
+// that have sub-field options (needed to know which fields to merge in proto_file).
+func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
 	// Build extension map: name → extension field for FileOptions extensions
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -3962,6 +3967,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
 	var errs []string
+	subFieldNums := map[string]map[int32]bool{}
 	for _, name := range orderedFiles {
 		result := parseResults[name]
 		if result == nil {
@@ -3993,6 +3999,10 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 
 			if len(opt.SubFieldPath) > 0 {
 				// Sub-field option: option (ext).sub1.sub2... = value;
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
 				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -4119,7 +4129,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 			}
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectEnumValueNumbers(enums []*descriptorpb.EnumDescriptorProto, prefix string, out map[string]map[string]int32) {
