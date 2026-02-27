@@ -513,7 +513,7 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customMsgOptErrors, "\n"))
 	}
 
-	customSvcOptErrors := resolveCustomServiceOptions(orderedFiles, parsed, parseResults)
+	customSvcOptErrors, subFieldSvcOptNums := resolveCustomServiceOptions(orderedFiles, parsed, parseResults)
 	if len(customSvcOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customSvcOptErrors = formatErrorsMSVS(customSvcOptErrors, srcTree)
@@ -656,7 +656,7 @@ func Run(args []string) error {
 		// If the file has sub-field custom options, clone and merge unknown fields
 		// so proto_file has merged entries (matching C++ protoc's linked descriptors)
 		if pr := parseResults[name]; pr != nil && hasSubFieldCustomOpts(pr) {
-			fd = cloneWithMergedExtUnknowns(fd, subFieldFileOptNums[name], subFieldFieldOptNums[name], subFieldMsgOptNums[name], subFieldEnumOptNums[name])
+			fd = cloneWithMergedExtUnknowns(fd, subFieldFileOptNums[name], subFieldFieldOptNums[name], subFieldMsgOptNums[name], subFieldEnumOptNums[name], subFieldSvcOptNums[name])
 		}
 		protoFiles = append(protoFiles, fd)
 		strippedMap[name] = fd
@@ -3434,16 +3434,22 @@ func hasSubFieldCustomOpts(pr *parser.ParseResult) bool {
 			return true
 		}
 	}
+	for _, opt := range pr.CustomServiceOptions {
+		if len(opt.SubFieldPath) > 0 {
+			return true
+		}
+	}
 	return false
 }
 
 // cloneWithMergedExtUnknowns clones fd and merges multiple unknown field entries
-// with the same tag (length-delimited) in FileOptions, FieldOptions, MessageOptions, and EnumOptions into single entries.
+// with the same tag (length-delimited) in FileOptions, FieldOptions, MessageOptions, EnumOptions, and ServiceOptions into single entries.
 // mergeableFileFields specifies which FileOptions field numbers should be merged.
 // mergeableFieldOptFields specifies which FieldOptions field numbers should be merged.
 // mergeableMsgOptFields specifies which MessageOptions field numbers should be merged.
 // mergeableEnumOptFields specifies which EnumOptions field numbers should be merged.
-func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto, mergeableFileFields map[int32]bool, mergeableFieldOptFields map[int32]bool, mergeableMsgOptFields map[int32]bool, mergeableEnumOptFields map[int32]bool) *descriptorpb.FileDescriptorProto {
+// mergeableSvcOptFields specifies which ServiceOptions field numbers should be merged.
+func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto, mergeableFileFields map[int32]bool, mergeableFieldOptFields map[int32]bool, mergeableMsgOptFields map[int32]bool, mergeableEnumOptFields map[int32]bool, mergeableSvcOptFields map[int32]bool) *descriptorpb.FileDescriptorProto {
 	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
 	if fdCopy.Options != nil {
 		mergeUnknownExtensions(fdCopy.Options.ProtoReflect(), mergeableFileFields)
@@ -3452,6 +3458,7 @@ func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto, mergeableF
 	mergeMessageOptionsInMessages(fdCopy.GetMessageType(), mergeableMsgOptFields)
 	mergeEnumOptions(fdCopy.GetEnumType(), mergeableEnumOptFields)
 	mergeEnumOptionsInMessages(fdCopy.GetMessageType(), mergeableEnumOptFields)
+	mergeServiceOptions(fdCopy.GetService(), mergeableSvcOptFields)
 	return fdCopy
 }
 
@@ -3499,6 +3506,15 @@ func mergeEnumOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableF
 	for _, msg := range msgs {
 		mergeEnumOptions(msg.GetEnumType(), mergeableFields)
 		mergeEnumOptionsInMessages(msg.GetNestedType(), mergeableFields)
+	}
+}
+
+// mergeServiceOptions merges unknown extensions in ServiceOptions for all services.
+func mergeServiceOptions(services []*descriptorpb.ServiceDescriptorProto, mergeableFields map[int32]bool) {
+	for _, svc := range services {
+		if svc.Options != nil {
+			mergeUnknownExtensions(svc.Options.ProtoReflect(), mergeableFields)
+		}
 	}
 }
 
@@ -4639,7 +4655,8 @@ func collectMessageOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQ
 
 // resolveCustomServiceOptions resolves parenthesized custom options on services
 // (e.g., option (service_label) = "primary";) against extensions of ServiceOptions.
-func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -4694,6 +4711,10 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 					continue
 				}
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -4785,7 +4806,7 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 				append(opt.Service.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectServiceOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
