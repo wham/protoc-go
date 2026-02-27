@@ -1149,6 +1149,16 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 					if valTok.RawLen > 0 {
 						endCol = valTok.Column + valTok.RawLen
 					}
+					// Adjacent string concatenation
+					for valTok.Type == tokenizer.TokenString && p.tok.Peek().Type == tokenizer.TokenString {
+						nextStr := p.tok.Next()
+						custOpt.Value += nextStr.Value
+						endCol = nextStr.Column + len(nextStr.Value)
+						if nextStr.RawLen > 0 {
+							endCol = nextStr.Column + nextStr.RawLen
+						}
+						valTok = nextStr
+					}
 					custOpt.ValEndLine = valTok.Line
 					custOpt.ValEndCol = endCol
 				}
