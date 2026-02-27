@@ -51,6 +51,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 4. [DONE] Fix `332_any_expansion_in_option` — handle Any type URL `[type.googleapis.com/...]` syntax in aggregate options. All 3054/3054 tests pass.
 5. [DONE] Fix `333_comment_eof_no_newline` — tokenizer's `readLineCommentText()` was always appending `\n` to line comments even when file ends without trailing newline. Now only appends `\n` when the newline is actually present. All 3063/3063 tests pass.
 6. [DONE] Fix `334_nan_custom_option` — Go's `math.NaN()` returns `0x7FF8000000000001` but C++ uses canonical NaN `0x7FF8000000000000`. Added NaN detection in double option encoding to use C++ bit pattern. All 3072/3072 tests pass.
+7. [DONE] Fix `335_field_subfield_neg_option` — Fixed double-negation bug in SubFieldPath blocks and sub-field option merging. C++ protoc merges sub-field options in `proto_file` (field 15) but keeps them separate in `source_file_descriptors` (field 17). All 3081/3081 tests pass.
 
 ## Notes
 
@@ -58,4 +59,6 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 - `compiler/cli/cli.go`: `encodeAggregateFields()` detects Any type URL expansion when parent type is `google.protobuf.Any` and field name contains `/`. Encodes `type_url` (field 1) as string, resolves message type from URL, serializes sub-fields into `value` (field 2) as bytes.
 - `io/tokenizer/tokenizer.go`: `readLineCommentText()` only appends `\n` when a newline character is actually present in the input. Files ending with a line comment and no trailing newline now produce the correct comment text (without spurious `\n`).
 - `compiler/cli/cli.go`: Double NaN encoding uses canonical C++ bit pattern `0x7FF8000000000000` instead of Go's `math.NaN()` (`0x7FF8000000000001`). Float32 NaN already matches C++ (`0x7FC00000`).
+- `compiler/cli/cli.go`: Sub-field options (e.g. `[(ext).lo = -40, (ext).hi = 85]`) produce SEPARATE entries in the original FileDescriptorProto (used for `source_file_descriptors`). `cloneWithMergedExtUnknowns` creates a clone with MERGED entries for `proto_file`. The function now handles both FileOptions and FieldOptions (recursively through messages).
+- Parser inconsistency: Field/Message/Enum/EnumValue/Service/Method/Oneof option parsers include `-` in `opt.Value` AND set `opt.Negative=true`. The SubFieldPath blocks in the CLI must NOT add another `-` prefix for these option types.
 - Run tests with `scripts/test` or `scripts/test --summary`.
