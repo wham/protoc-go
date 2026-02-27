@@ -272,6 +272,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: In `simpleFtoa`, check if the result is infinity or NaN before returning: `if math.IsInf(float64(v), 1) { return "inf" }; if math.IsInf(float64(v), -1) { return "-inf" }; if math.IsNaN(float64(v)) { return "nan" }`. Same fix needed in `simpleDtoa` for double overflow (e.g., `1e309` for double). Alternatively, post-process the FormatFloat result to normalize `"+Inf"` → `"inf"`, `"-Inf"` → `"-inf"`, `"NaN"` → `"nan"`.
 - **Also affected**: `simpleDtoa` has the same issue — `FormatFloat(+Inf, 'g', 15, 64)` returns `"+Inf"` not `"inf"`. Double overflow values (e.g., `1e309`) would produce the same discrepancy, but `ParseFloat("1e309", 64)` returns `err = ErrRange` so the normalization branch is skipped entirely (stores raw `"1e309"` instead of `"inf"`).
 
+### Run 27 — Double overflow default value stores raw string instead of "inf" (VICTORY)
+- **Bug**: Go's default value normalization for `double` fields skips normalization when `strconv.ParseFloat` returns `ErrRange`. For `1e309` (exceeds `DBL_MAX` ~1.7976931348623158e308), `ParseFloat("1e309", 64)` returns `(+Inf, ErrRange)`. Since `err != nil`, the `else if` branch at parser.go:5610 is skipped, and the raw string `"1e309"` is stored as-is. C++ protoc's `strtod("1e309")` returns `HUGE_VAL` (Inf) without failing, and `SimpleDtoa(Inf)` returns `"inf"`.
+- **Test**: `358_double_overflow_default` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: parser.go:5610 `else if v, err := strconv.ParseFloat(defVal, 64); err == nil` — when value overflows double, Go returns `err = ErrRange` so the normalization branch is skipped. The special-case checks at line 5605 only catch literal strings `"inf"`, `"-inf"`, `"nan"`, `"-nan"` — not numeric literals that overflow to infinity.
+- **C++ protoc**: 61-byte descriptor with `default_value: "inf"` (3 bytes).
+- **Go protoc-go**: 63-byte descriptor with `default_value: "1e309"` (5 bytes). 2-byte difference.
+- **Fix hint**: When `ParseFloat` returns `ErrRange`, the returned value `v` is still `+Inf` or `-Inf`. Change the condition to: `v, err := strconv.ParseFloat(defVal, 64); if err == nil || (err != nil && (math.IsInf(v, 0)))`. Or: check `math.IsInf(v, 0)` even when `err != nil` and call `simpleDtoa(v)` (which already handles Inf). Same issue exists for float32 overflow beyond `FLT_MAX` with `ParseFloat(defVal, 32)` though that code path uses `ParseFloat(defVal, 64)` + `float32()` cast so it may work differently.
+- **Also affects**: Negative overflow: `default = -1e309` would store `"-1e309"` instead of `"-inf"`.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -313,6 +322,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - ~~Case-insensitive float/double default values — Go accepts `NaN`/`Inf`/`INF`/`infinity`/`Infinity`, C++ only accepts lowercase `nan`/`inf`~~ **DONE in Run 25 (356_infinity_default)**
 - Same case-sensitivity issue may exist in custom option value parsing (e.g., `option (my_opt) = Infinity;` — does Go accept it?)
 - ~~`simpleFtoa` edge case: find a specific float32 value where Go's `FormatFloat(float64(v), 'g', 6, 64)` differs from C++'s `snprintf(buf, "%.6g", f)` due to the float64 bit width parameter~~ **DONE in Run 26 (357_float_overflow_default) — overflow to infinity produces `"+Inf"` vs `"inf"`**
-- `simpleDtoa` same issue for double overflow (e.g., `1e309`) — Go's `ParseFloat` returns `ErrRange` so normalization is skipped entirely, storing raw `"1e309"` instead of `"inf"`
+- ~~`simpleDtoa` same issue for double overflow (e.g., `1e309`) — Go's `ParseFloat` returns `ErrRange` so normalization is skipped entirely, storing raw `"1e309"` instead of `"inf"`~~ **DONE in Run 27 (358_double_overflow_default)**
 - Double default with `-0.0` or `0.0` — verify both produce same string
 - Negative infinity overflow: `default = -3.5e38` for float → Go produces `"-Inf"` vs C++ `"-inf"` (case difference)
