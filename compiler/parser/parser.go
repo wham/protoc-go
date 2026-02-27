@@ -1092,9 +1092,6 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 				if err != nil {
 					return err
 				}
-				if _, err := p.tok.Expect("="); err != nil {
-					return err
-				}
 
 				var custOpt CustomExtRangeOption
 				custOpt.ParenName = fullName
@@ -1105,11 +1102,15 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 				custOpt.InnerName = inner
 				custOpt.NameTok = nameTok
 
-				// Parse sub-field path
+				// Parse sub-field path before "="
 				for p.tok.Peek().Value == "." {
 					p.tok.Next() // consume "."
 					subTok := p.tok.Next()
 					custOpt.SubFieldPath = append(custOpt.SubFieldPath, subTok.Value)
+				}
+
+				if _, err := p.tok.Expect("="); err != nil {
+					return err
 				}
 
 				if p.tok.Peek().Value == "{" {
