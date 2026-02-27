@@ -49,3 +49,19 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **You can also add CLI error tests** by editing the `CLI_TESTS` array in `scripts/test`. These test error messages and exit codes for invalid invocations.
 
 ## Notes
+
+### Run 1 — Any type URL expansion in aggregate options (VICTORY)
+- **Bug**: Go parser can't handle `[type.googleapis.com/pkg.Type]` syntax in aggregate option values (message literals). The `/` character inside `[...]` is not parsed — the Go parser only handles `.`-separated identifiers in extension references, not the Any type URL expansion that uses `/`.
+- **Test**: `332_any_expansion_in_option` — all 9 profiles fail.
+- **Root cause**: `consumeAggregate()` in `parser.go:4909-4925` reads extension names as `ident(.ident)*` but the Any URL syntax uses `domain.tld/package.Type` with a `/` separator.
+- **C++ protoc**: Accepts it fine (libprotoc 33.4). Produces valid descriptor set.
+- **Go protoc-go**: Fails with `Error while parsing option value: Expected ":", found "anyexpand".`
+
+### Ideas for next time
+- Source code info accuracy for specific constructs (extend blocks, service methods, oneof fields)
+- CRLF line endings (Go tokenizer treats `\r` as column-incrementing whitespace, not newline)
+- Custom options with message-typed fields set to scalar values (error message differences)
+- Extension range validation for 19000-19999 reserved range
+- Proto2 groups nested 3+ levels deep (group in group in group)
+- Edition features + extensions interactions
+- Proto files importing the same file via different paths
