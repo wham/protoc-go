@@ -5561,8 +5561,13 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		if err != nil {
 			return nil, fmt.Errorf("invalid double value: %s", value)
 		}
+		bits := math.Float64bits(v)
+		// Use C++ canonical NaN (0x7FF8000000000000) to match protoc output.
+		if math.IsNaN(v) {
+			bits = 0x7FF8000000000000
+		}
 		b = protowire.AppendTag(b, fieldNum, protowire.Fixed64Type)
-		b = protowire.AppendFixed64(b, math.Float64bits(v))
+		b = protowire.AppendFixed64(b, bits)
 	case descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
 		v, err := strconv.ParseUint(value, 0, 32)
 		if err != nil {
