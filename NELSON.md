@@ -91,9 +91,21 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Fails with `error encoding custom option: invalid double value: -nan`.
 - **Fix hint**: Before calling `strconv.ParseFloat`, check if the value (after stripping `-`) is `nan`/`NaN` and handle it specially (NaN has no sign, so `-nan` == `nan`).
 
+### Run 6 — String concatenation missing in field-level custom options (VICTORY)
+- **Bug**: Go parser does NOT handle string concatenation for field-level custom options. When a field has `[(my_opt) = "hello" " " "world"]`, the Go parser only captures `"hello"` and then chokes on `" "` as unexpected.
+- **Test**: `337_field_option_string_concat` — all 9 profiles fail.
+- **Root cause**: `parseFieldOptions()` at parser.go:5355-5363 sets `custOpt.Value = valTok.Value` but never loops to concatenate adjacent string tokens. Compare with file-level custom options (parser.go:1699-1706), enum-level (parser.go:2951-2956), message-level, service-level, method-level, and oneof-level — all of which DO have the string concatenation loop.
+- **C++ protoc**: Accepts string concatenation in field options fine.
+- **Go protoc-go**: Fails with `Expected ";"` because the second string token is unexpected.
+- **Fix hint**: Add this after line 5363: `if valTok.Type == tokenizer.TokenString { for p.tok.Peek().Type == tokenizer.TokenString { next := p.tok.Next(); p.trackEnd(next); custOpt.Value += next.Value } }`
+- **Also missing**: Enum value custom options (parser.go:2574-2582) and extension range custom options (parser.go:1138-1153) also lack string concatenation handling. Those are separate bugs to test in future runs.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
+- ~~String concatenation in field-level custom options — Go parser doesn't concatenate adjacent strings~~ **DONE in Run 6 (337_field_option_string_concat)**
+- **String concatenation in enum VALUE custom options** (parser.go:2574-2582) — same bug as field-level, no concat loop
+- **String concatenation in extension range custom options** (parser.go:1138-1153) — same bug, no concat loop
 - `float` custom option with `nan` — float32 NaN bits may also differ across platforms
 - Source code info accuracy for specific constructs (extend blocks, service methods, oneof fields)
 - CRLF line endings — tested `\v` in block comments, both agree; `\r` as column-incrementing whitespace also matches C++
