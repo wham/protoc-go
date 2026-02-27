@@ -116,6 +116,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Fails with `Expected "]"` because the second string token is unexpected.
 - **Fix hint**: Add after line 1153: `if valTok.Type == tokenizer.TokenString { for p.tok.Peek().Type == tokenizer.TokenString { next := p.tok.Next(); p.trackEnd(next); custOpt.Value += next.Value } }`
 
+### Run 9 — Scalar sub-field option validation error message mismatch (VICTORY)
+- **Bug**: Go compiler produces a different error message than C++ protoc when a sub-field path is used on a scalar (non-message) custom option. C++ correctly identifies the problem as "Option is an atomic type, not a message" with line/column info. Go fails with a generic "unknown message type" error without proper location info.
+- **Test**: `340_scalar_subfield_option` — all 9 profiles fail.
+- **Root cause**: In `cli.go`, when resolving sub-field paths, the code looks up `msgFieldMap[currentTypeName]` where `currentTypeName` is derived from `ext.GetTypeName()`. For a scalar type like `int32`, `GetTypeName()` returns empty string, so the lookup fails with "unknown message type" instead of a proper "atomic type, not a message" error.
+- **C++ protoc**: `test.proto:11:8: Option "(my_scalar)" is an atomic type, not a message.`
+- **Go protoc-go**: `test.proto: unknown message type  for extension my_scalar`
+- **Fix hint**: Before attempting sub-field resolution, check if `ext.GetType()` is `TYPE_MESSAGE` or `TYPE_GROUP`. If not, emit an error like `Option "(name)" is an atomic type, not a message.` with proper line/column info from `opt.NameTok`.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -131,6 +139,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Edition features + extensions interactions
 - Proto files importing the same file via different paths
 - Custom option scope resolution (Go returns first match, not proper scope-based lookup)
-- Sub-field option type validation (Go doesn't check intermediate fields are MESSAGE type)
+- ~~Sub-field option type validation (Go doesn't check intermediate fields are MESSAGE type)~~ **DONE in Run 9 (340_scalar_subfield_option)**
 - Extension extendee type validation (Go doesn't check extendee is MESSAGE)
 - Block comment at EOF without trailing newline (similar bug to line comment?)
