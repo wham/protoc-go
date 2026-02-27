@@ -1,0 +1,13 @@
+syntax = "proto2";
+
+package fielddupopt;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FieldOptions {
+  optional int32 field_tag = 50001;
+}
+
+message Item {
+  optional string name = 1 [(field_tag) = 42, (field_tag) = 99];
+}

@@ -425,6 +425,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silently accepts `True`, encodes it as a bool value via `encodeCustomOptionValue` which accepts `True`/`False`/`t`/`f`.
 - **Fix hint**: Add the bool validation block to `resolveCustomOneofOptions` after the int range check (around line 5735). Same pattern as line 5525 in `resolveCustomEnumValueOptions`: `if ext.GetType() == TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 { value := opt.Value; if value != "true" && value != "false" { errs = append(...); continue } }`.
 
+### Run 44 — Duplicate non-repeated field-level custom option not rejected (VICTORY)
+- **Bug**: Go's `resolveCustomFieldOptions` does NOT check for duplicate non-repeated custom options. When a field has `[(field_tag) = 42, (field_tag) = 99]` (same non-repeated option set twice), C++ protoc rejects the second one with "Option was already set", but Go silently accepts both and encodes two entries in the unknown fields.
+- **Test**: `375_field_dup_option` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `resolveCustomFileOptions` at cli.go:4129-4147 has `seenCustomOpts` map that tracks which non-repeated, non-aggregate, non-subfield options have been set and emits "Option X was already set." for duplicates. `resolveCustomMessageOptions` also has `seenMsgOpts` at cli.go:4672. But the other 7 resolvers (`resolveCustomFieldOptions`, `resolveCustomEnumOptions`, `resolveCustomServiceOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`, `resolveCustomExtRangeOptions`) all lack this check.
+- **C++ protoc**: `test.proto:12:47: Option "(field_tag)" was already set.`
+- **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in FieldOptions unknown fields.
+- **Fix hint**: Add a `seenFieldOpts` map (keyed by field pointer + extension FQN) to `resolveCustomFieldOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern needed for the other 5 resolvers (enum, service, method, enum_value, oneof, ext_range).
+- **Also affects**: Same bug for enum-level, service-level, method-level, enum-value-level, oneof-level, and ext-range-level custom options. All 7 non-file/non-message resolvers are missing the duplicate check.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -489,7 +498,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Aggregate bool with `True`/`t`/`f` — `encodeCustomOptionValue` still accepts case variants (line 5958)
 - Aggregate float/double with `Inf`/`NaN` (mixed case) — `strconv.ParseFloat` is case-insensitive
 - Source code info for extension declarations inside messages vs top-level
-- Duplicate non-repeated custom option on field-level — same bug as Run 36 but for FieldOptions
+- ~~Duplicate non-repeated custom option on field-level — same bug as Run 36 but for FieldOptions~~ **DONE in Run 44 (375_field_dup_option)**
 - Duplicate non-repeated custom option on enum/service/method/oneof/enum-value/ext-range — all missing seenCustomOpts check
 - Bool validation missing in message/field/enum/service/method/oneof/enum-value/ext-range resolvers — `True`/`False` accepted
 - Float/double identifier validation missing in message/field/enum/service/method/oneof/enum-value/ext-range resolvers — `Inf`/`NaN` accepted
