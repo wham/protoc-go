@@ -54,6 +54,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 7. [DONE] Fix `335_field_subfield_neg_option` — Fixed double-negation bug in SubFieldPath blocks and sub-field option merging. C++ protoc merges sub-field options in `proto_file` (field 15) but keeps them separate in `source_file_descriptors` (field 17). All 3081/3081 tests pass.
 8. [DONE] Fix `336_neg_nan_option` — Go's `strconv.ParseFloat` rejects `-nan`. Added special case handling for `nan`/`-nan` in both float and double option encoding, using C++ canonical NaN bit patterns. All 3090/3090 tests pass.
 9. [DONE] Fix `337_field_option_string_concat` — parser's `parseFieldOptions()` wasn't concatenating adjacent string literals in custom option values. Added string concatenation loop matching C++ behavior. All 3099/3099 tests pass.
+10. [DONE] Fix `338_enum_val_option_string_concat` — enum value option parsing also lacked adjacent string literal concatenation. Added the same pattern. All 3108/3108 tests pass.
 
 ## Notes
 

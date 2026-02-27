@@ -2575,6 +2575,14 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 						valTok := p.tok.Next()
 						p.trackEnd(valTok)
 						custOpt.Value = valTok.Value
+						// Adjacent string concatenation
+						if valTok.Type == tokenizer.TokenString {
+							for p.tok.Peek().Type == tokenizer.TokenString {
+								nextTok := p.tok.Next()
+								p.trackEnd(nextTok)
+								custOpt.Value += nextTok.Value
+							}
+						}
 						if neg {
 							custOpt.Value = "-" + custOpt.Value
 						}
