@@ -3993,6 +3993,11 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 
 			if len(opt.SubFieldPath) > 0 {
 				// Sub-field option: option (ext).sub1.sub2... = value;
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
 				// Walk through the message type hierarchy for each path segment
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
@@ -4267,6 +4272,11 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 			}
 
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -4431,6 +4441,11 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 			}
 
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -4591,6 +4606,11 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 			}
 
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -4749,6 +4769,11 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 			}
 
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -4907,6 +4932,11 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 			}
 
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -5065,6 +5095,11 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 			}
 
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -5223,6 +5258,11 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 			}
 
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -5393,6 +5433,11 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 			}
 
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
