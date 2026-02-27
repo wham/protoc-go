@@ -358,7 +358,8 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 			}
 		case ";":
 			// Empty statement — consume and continue (C++ protoc allows these)
-			p.tok.Next()
+			semi := p.tok.Next()
+			p.trackEnd(semi)
 		case "}":
 			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected top-level statement (e.g. \"message\").", p.filename, tok.Line+1, tok.Column+1))
 			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Unmatched \"}\".", p.filename, tok.Line+1, tok.Column+1))
