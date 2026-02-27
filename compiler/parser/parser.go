@@ -6663,16 +6663,17 @@ func resolveTypeName(name string, scope string, types map[string]descriptorpb.Fi
 		firstCandidate := s + "." + firstPart
 		if tp, ok := types[firstCandidate]; ok {
 			if firstDot >= 0 {
-				// Compound name: first part found, check if aggregate (message)
+				// Compound name: first part found at this scope.
+				// C++ protoc commits to the innermost match regardless of type.
+				fullCandidate := s + "." + name
 				if tp == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
-					fullCandidate := s + "." + name
 					if _, ok := types[fullCandidate]; ok {
 						return fullCandidate, ""
 					}
-					// Shadowing: first part found but full compound doesn't exist
-					return "." + name, fullCandidate
 				}
-				// Non-aggregate (enum): skip, continue searching outer scopes
+				// Shadowing: first part found but full compound doesn't exist
+				// (or first part is non-aggregate like an enum)
+				return "." + name, fullCandidate
 			} else {
 				// Simple name: found
 				return firstCandidate, ""
