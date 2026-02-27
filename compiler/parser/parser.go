@@ -4903,6 +4903,12 @@ func (p *parser) parseParenthesizedOptionName(openTok tokenizer.Token) (string, 
 	innerTok := p.tok.Next()
 	p.trackEnd(innerTok)
 	fullName := "(" + innerTok.Value
+	// Handle leading dot for fully-qualified names like (.pkg.ext)
+	if innerTok.Value == "." {
+		partTok := p.tok.Next()
+		p.trackEnd(partTok)
+		fullName += partTok.Value
+	}
 	for p.tok.Peek().Value == "." {
 		dotTok := p.tok.Next()
 		p.trackEnd(dotTok)

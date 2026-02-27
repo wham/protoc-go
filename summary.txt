@@ -1,0 +1,14 @@
+files_to_generate: [test.proto]
+parameter: ""
+compiler_version: major:6 minor:33 patch:4 suffix:""
+proto_file_count: 1
+source_file_descriptor_count: 1
+
+proto_file[0]: test.proto (package="scitest", syntax="")
+  message: Outer
+    field: x (number=1, type=TYPE_INT32, label=LABEL_OPTIONAL)
+    field: a (number=2, type=TYPE_INT32, label=LABEL_OPTIONAL)
+    field: b (number=3, type=TYPE_STRING, label=LABEL_OPTIONAL)
+  service: MyService
+    rpc: Search(.scitest.Outer) returns (.scitest.Outer.Inner)
+  source_code_info_locations: 61
