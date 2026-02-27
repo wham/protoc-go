@@ -281,6 +281,16 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: When `ParseFloat` returns `ErrRange`, the returned value `v` is still `+Inf` or `-Inf`. Change the condition to: `v, err := strconv.ParseFloat(defVal, 64); if err == nil || (err != nil && (math.IsInf(v, 0)))`. Or: check `math.IsInf(v, 0)` even when `err != nil` and call `simpleDtoa(v)` (which already handles Inf). Same issue exists for float32 overflow beyond `FLT_MAX` with `ParseFloat(defVal, 32)` though that code path uses `ParseFloat(defVal, 64)` + `float32()` cast so it may work differently.
 - **Also affects**: Negative overflow: `default = -1e309` would store `"-1e309"` instead of `"-inf"`.
 
+### Run 28 — Custom bool option accepts "True" (capital T), C++ rejects it (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` for `TYPE_BOOL` accepts case-variant bool values like `"True"`, `"False"`, `"t"`, `"f"` in addition to `"true"`, `"false"`, `"0"`, `"1"`. C++ protoc's option resolver only accepts exact lowercase `"true"` and `"false"` (and integer `0`/`1`). When a custom bool option uses `True` (capital T), Go accepts it and produces a valid descriptor, but C++ rejects it with an error.
+- **Test**: `359_bool_option_case` — all 9 profiles fail.
+- **Root cause**: `encodeCustomOptionValue()` at cli.go:5813-5818 has `case "true", "True", "t", "1":` and `case "false", "False", "f", "0":`. C++ protoc's `OptionInterpreter::SetOption` only accepts `identifier_value == "true"` or `identifier_value == "false"` (exact match, case-sensitive). `"True"` doesn't match either.
+- **C++ protoc**: `test.proto:13:20: Value must be "true" or "false" for boolean option "boolcase.my_flag".`
+- **Go protoc-go**: Accepts `True` and encodes as varint 1 (true). Produces valid descriptor.
+- **Fix hint**: Change the bool case in `encodeCustomOptionValue` to only accept exact `"true"` and `"false"` (and `"0"`, `"1"` for integer literals). Remove `"True"`, `"False"`, `"t"`, `"f"` from the switch cases. Match C++ behavior exactly.
+- **Also affects**: Same bug for `"False"` (capital F), `"t"`, `"f"` — all accepted by Go, rejected by C++. This applies to ALL custom option types (file, message, field, enum, enum value, service, method, oneof, extension range) since they all use `encodeCustomOptionValue`.
+- **Also affects**: Aggregate option bool fields — `encodeAggregateFields` also uses the same switch for bool values.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -325,3 +335,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - ~~`simpleDtoa` same issue for double overflow (e.g., `1e309`) — Go's `ParseFloat` returns `ErrRange` so normalization is skipped entirely, storing raw `"1e309"` instead of `"inf"`~~ **DONE in Run 27 (358_double_overflow_default)**
 - Double default with `-0.0` or `0.0` — verify both produce same string
 - Negative infinity overflow: `default = -3.5e38` for float → Go produces `"-Inf"` vs C++ `"-inf"` (case difference)
+- Custom bool option with `"f"` or `"t"` — same bug as Run 28 but different variant
+- Custom bool option in aggregate: `option (cfg) = { enabled: True }` — also accepts `True`
+- Aggregate option bool with `"t"` or `"f"` — `encodeAggregateFields` likely has same permissive bool handling
