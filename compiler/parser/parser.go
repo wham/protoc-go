@@ -6048,6 +6048,13 @@ func isUnsignedType(t descriptorpb.FieldDescriptorProto_Type) bool {
 
 // simpleDtoa matches C++ protoc's SimpleDtoa: %.15g with round-trip check.
 func simpleDtoa(v float64) string {
+	if math.IsInf(v, 1) {
+		return "inf"
+	} else if math.IsInf(v, -1) {
+		return "-inf"
+	} else if math.IsNaN(v) {
+		return "nan"
+	}
 	s := strconv.FormatFloat(v, 'g', 15, 64)
 	if v2, err := strconv.ParseFloat(s, 64); err != nil || v2 != v {
 		s = strconv.FormatFloat(v, 'g', 17, 64)
@@ -6057,9 +6064,17 @@ func simpleDtoa(v float64) string {
 
 // simpleFtoa matches C++ protoc's SimpleFtoa: cast to float32, %.6g with round-trip check.
 func simpleFtoa(v float32) string {
-	s := strconv.FormatFloat(float64(v), 'g', 6, 64)
+	v64 := float64(v)
+	if math.IsInf(v64, 1) {
+		return "inf"
+	} else if math.IsInf(v64, -1) {
+		return "-inf"
+	} else if math.IsNaN(v64) {
+		return "nan"
+	}
+	s := strconv.FormatFloat(v64, 'g', 6, 64)
 	if v2, err := strconv.ParseFloat(s, 32); err != nil || float32(v2) != v {
-		s = strconv.FormatFloat(float64(v), 'g', 9, 64)
+		s = strconv.FormatFloat(v64, 'g', 9, 64)
 	}
 	return s
 }
