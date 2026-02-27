@@ -4907,19 +4907,19 @@ func (p *parser) consumeAggregate() ([]AggregateField, error) {
 		var fieldName string
 
 		if p.tok.Peek().Value == "[" {
-			// Extension field reference: [ext.name]
+			// Extension field reference or Any type URL: [ext.name] or [type.googleapis.com/pkg.Msg]
 			bracketTok := p.tok.Next() // consume '['
 			p.trackEnd(bracketTok)
 			isExtension = true
 			nameTok := p.tok.Next()
 			p.trackEnd(nameTok)
 			fieldName = nameTok.Value
-			for p.tok.Peek().Value == "." {
-				dotTok := p.tok.Next()
-				p.trackEnd(dotTok)
+			for p.tok.Peek().Value == "." || p.tok.Peek().Value == "/" {
+				sepTok := p.tok.Next()
+				p.trackEnd(sepTok)
 				partTok := p.tok.Next()
 				p.trackEnd(partTok)
-				fieldName += "." + partTok.Value
+				fieldName += sepTok.Value + partTok.Value
 			}
 			closeBracket := p.tok.Next() // consume ']'
 			p.trackEnd(closeBracket)
@@ -5089,12 +5089,12 @@ func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
 			nameTok := p.tok.Next()
 			p.trackEnd(nameTok)
 			fieldName = nameTok.Value
-			for p.tok.Peek().Value == "." {
-				dotTok := p.tok.Next()
-				p.trackEnd(dotTok)
+			for p.tok.Peek().Value == "." || p.tok.Peek().Value == "/" {
+				sepTok := p.tok.Next()
+				p.trackEnd(sepTok)
 				partTok := p.tok.Next()
 				p.trackEnd(partTok)
-				fieldName += "." + partTok.Value
+				fieldName += sepTok.Value + partTok.Value
 			}
 			closeBracket := p.tok.Next()
 			p.trackEnd(closeBracket)

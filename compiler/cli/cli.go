@@ -5761,6 +5761,29 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 	seenFields := map[string]bool{}
 	var inner []byte
 	for _, af := range aggFields {
+		// Any type URL expansion: [type.googleapis.com/pkg.MsgType]: { ... }
+		if af.IsExtension && typeName == "google.protobuf.Any" && strings.Contains(af.Name, "/") {
+			// Encode type_url (field 1)
+			inner = protowire.AppendTag(inner, 1, protowire.BytesType)
+			inner = protowire.AppendString(inner, af.Name)
+			// Extract message type from URL (part after last '/')
+			slashIdx := strings.LastIndex(af.Name, "/")
+			msgType := af.Name[slashIdx+1:]
+			// Create a synthetic field descriptor to recurse into
+			syntheticField := &descriptorpb.FieldDescriptorProto{
+				Name:     proto.String("value"),
+				Number:   proto.Int32(2),
+				Type:     descriptorpb.FieldDescriptorProto_TYPE_MESSAGE.Enum(),
+				TypeName: proto.String("." + msgType),
+				Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+			}
+			valBytes, err := encodeAggregateFields(syntheticField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
+			if err != nil {
+				return nil, err
+			}
+			inner = append(inner, valBytes...)
+			continue
+		}
 		var subField *descriptorpb.FieldDescriptorProto
 		if af.IsExtension {
 			if exts, ok := extByExtendee[typeName]; ok {
