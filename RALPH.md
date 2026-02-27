@@ -104,6 +104,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 38. [DONE] Fix `367_msg_dup_option` — C++ protoc rejects duplicate non-repeated message options with `Option "(name)" was already set.` but Go protoc-go silently accepted them. Added per-message duplicate tracking using `msgOptKey{msg, name}` map in `resolveCustomMessageOptions`, matching the pattern already in `resolveCustomFileOptions`. All 3369/3369 tests pass.
 
+39. [DONE] Fix `368_msg_bool_option_case` — `resolveCustomMessageOptions` was missing bool and float/double identifier validation. Added bool validation (must be identifier, must be exactly `true` or `false`) and float/double validation (identifier values must be lowercase `inf` or `nan`), matching the pattern in `resolveCustomFileOptions`, `resolveCustomFieldOptions`, and `resolveCustomExtRangeOptions`. All 3378/3378 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
