@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package partial;
+
+message Dependency {
+  string value = 1;
+  int32 id = 2;
+}
+
+message Helper {
+  string data = 1;
+}

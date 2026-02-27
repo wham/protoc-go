@@ -45,6 +45,10 @@ PROFILES=(
   "descriptor_set|descriptor|"
   "descriptor_set_src|descriptor|--include_source_info"
   "descriptor_set_full|descriptor|--include_imports --include_source_info"
+  "multi_plugin|multi_plugin|"
+  "multi_opt|multi_opt|"
+  "plugin_descriptor|plugin_descriptor|"
+  "colon_param|colon_param|"
 )
 
 # -- helpers --------------------------------------------------------------
@@ -273,6 +277,332 @@ run_descriptor_test() {
   fi
 }
 
+# -- multi-plugin profile test ---------------------------------------------
+# Runs TWO plugins (dump + dump2, same binary) and compares both outputs.
+
+run_multi_plugin_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local profile_name="$3"
+  local full_name="${test_name}@${profile_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local expected1="$result_dir/expected1"
+  local actual1="$result_dir/actual1"
+  local expected2="$result_dir/expected2"
+  local actual2="$result_dir/actual2"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$expected1" "$actual1" "$expected2" "$actual2"
+
+  local proto_files proto_basenames
+  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
+  if [ -z "$proto_files" ]; then
+    echo "PASS 0 0" > "$result_file"
+    return
+  fi
+  proto_basenames=""
+  for f in $proto_files; do
+    proto_basenames="$proto_basenames $(basename "$f")"
+  done
+
+  # Run C++ protoc with two plugins
+  local cpp_ok=true
+  local cpp_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --plugin="protoc-gen-dump2=$PROTOC_GEN_DUMP" \
+    --dump_out="$expected1" --dump_opt="$expected1" \
+    --dump2_out="$expected2" --dump2_opt="$expected2" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/cpp_error.txt" || cpp_ok=false
+  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
+  echo "$cpp_ok" > "$result_dir/cpp_ok.txt"
+
+  # Run Go protoc-go with two plugins
+  local go_ok=true
+  local go_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC_GO" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --plugin="protoc-gen-dump2=$PROTOC_GEN_DUMP" \
+    --dump_out="$actual1" --dump_opt="$actual1" \
+    --dump2_out="$actual2" --dump2_opt="$actual2" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/go_error.txt" || go_ok=false
+  local go_elapsed=$(( $(now_ms) - go_start ))
+  echo "$go_ok" > "$result_dir/go_ok.txt"
+
+  compare_results "$result_dir" "$result_file" "$failure_file" "$cpp_elapsed" "$go_elapsed"
+
+  # If both succeeded, compare both plugin outputs
+  if [ -f "$result_dir/both_ok.txt" ]; then
+    local diff_output=""
+
+    # Compare plugin 1 (dump)
+    if [ -f "$expected1/request.pb" ] && [ -f "$actual1/request.pb" ]; then
+      if ! cmp -s "$expected1/request.pb" "$actual1/request.pb"; then
+        diff_output="Plugin 1 (dump) binary differs"
+      fi
+    fi
+
+    # Compare plugin 2 (dump2)
+    if [ -z "$diff_output" ] && [ -f "$expected2/request.pb" ] && [ -f "$actual2/request.pb" ]; then
+      if ! cmp -s "$expected2/request.pb" "$actual2/request.pb"; then
+        diff_output="Plugin 2 (dump2) binary differs"
+      fi
+    fi
+
+    if [ -z "$diff_output" ]; then
+      echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
+    else
+      echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
+      echo "$diff_output" > "$failure_file"
+    fi
+  fi
+}
+
+# -- multi-opt profile test ------------------------------------------------
+# Tests multiple --dump_opt flags to verify parameter accumulation.
+
+run_multi_opt_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local profile_name="$3"
+  local full_name="${test_name}@${profile_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local expected_dir="$result_dir/expected"
+  local actual_dir="$result_dir/actual"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$expected_dir" "$actual_dir"
+
+  local proto_files proto_basenames
+  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
+  if [ -z "$proto_files" ]; then
+    echo "PASS 0 0" > "$result_file"
+    return
+  fi
+  proto_basenames=""
+  for f in $proto_files; do
+    proto_basenames="$proto_basenames $(basename "$f")"
+  done
+
+  # Run C++ protoc with multiple --dump_opt flags
+  local cpp_ok=true
+  local cpp_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$expected_dir" \
+    --dump_opt="$expected_dir" \
+    --dump_opt=key1=val1 \
+    --dump_opt=key2=val2 \
+    --dump_opt=flag_only \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/cpp_error.txt" || cpp_ok=false
+  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
+  echo "$cpp_ok" > "$result_dir/cpp_ok.txt"
+
+  # Run Go protoc-go with multiple --dump_opt flags
+  local go_ok=true
+  local go_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC_GO" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$actual_dir" \
+    --dump_opt="$actual_dir" \
+    --dump_opt=key1=val1 \
+    --dump_opt=key2=val2 \
+    --dump_opt=flag_only \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/go_error.txt" || go_ok=false
+  local go_elapsed=$(( $(now_ms) - go_start ))
+  echo "$go_ok" > "$result_dir/go_ok.txt"
+
+  compare_results "$result_dir" "$result_file" "$failure_file" "$cpp_elapsed" "$go_elapsed"
+
+  if [ -f "$result_dir/both_ok.txt" ]; then
+    # Compare the request JSON to verify parameter field matches
+    # The parameter field should show comma-separated accumulated params
+    local diff_output=""
+    if [ -f "$expected_dir/request.pb" ] && [ -f "$actual_dir/request.pb" ]; then
+      if ! cmp -s "$expected_dir/request.pb" "$actual_dir/request.pb"; then
+        diff_output="Binary CodeGeneratorRequest differs (multi-opt)"
+      fi
+    fi
+
+    if [ -z "$diff_output" ]; then
+      echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
+    else
+      echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
+      echo "$diff_output" > "$failure_file"
+    fi
+  fi
+}
+
+# -- plugin + descriptor combined profile test -----------------------------
+# Runs both a plugin AND --descriptor_set_out in a single invocation.
+
+run_plugin_descriptor_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local profile_name="$3"
+  local full_name="${test_name}@${profile_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local expected_dir="$result_dir/expected"
+  local actual_dir="$result_dir/actual"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$expected_dir" "$actual_dir"
+
+  local proto_files proto_basenames
+  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
+  if [ -z "$proto_files" ]; then
+    echo "PASS 0 0" > "$result_file"
+    return
+  fi
+  proto_basenames=""
+  for f in $proto_files; do
+    proto_basenames="$proto_basenames $(basename "$f")"
+  done
+
+  # Run C++ protoc with plugin + descriptor_set_out
+  local cpp_ok=true
+  local cpp_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$expected_dir" --dump_opt="$expected_dir" \
+    --descriptor_set_out="$expected_dir/descriptor.pb" \
+    --include_imports --include_source_info \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/cpp_error.txt" || cpp_ok=false
+  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
+  echo "$cpp_ok" > "$result_dir/cpp_ok.txt"
+
+  # Run Go protoc-go with plugin + descriptor_set_out
+  local go_ok=true
+  local go_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC_GO" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$actual_dir" --dump_opt="$actual_dir" \
+    --descriptor_set_out="$actual_dir/descriptor.pb" \
+    --include_imports --include_source_info \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/go_error.txt" || go_ok=false
+  local go_elapsed=$(( $(now_ms) - go_start ))
+  echo "$go_ok" > "$result_dir/go_ok.txt"
+
+  compare_results "$result_dir" "$result_file" "$failure_file" "$cpp_elapsed" "$go_elapsed"
+
+  if [ -f "$result_dir/both_ok.txt" ]; then
+    local diff_output=""
+
+    # Compare plugin output
+    if [ -f "$expected_dir/request.pb" ] && [ -f "$actual_dir/request.pb" ]; then
+      if ! cmp -s "$expected_dir/request.pb" "$actual_dir/request.pb"; then
+        diff_output="Plugin request.pb differs"
+      fi
+    fi
+
+    # Compare descriptor set output
+    if [ -z "$diff_output" ] && [ -f "$expected_dir/descriptor.pb" ] && [ -f "$actual_dir/descriptor.pb" ]; then
+      if ! cmp -s "$expected_dir/descriptor.pb" "$actual_dir/descriptor.pb"; then
+        diff_output="Descriptor set differs"
+      fi
+    fi
+
+    if [ -z "$diff_output" ]; then
+      echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
+    else
+      echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
+      echo "$diff_output" > "$failure_file"
+    fi
+  fi
+}
+
+# -- colon param syntax profile test ---------------------------------------
+# Tests --X_out=PARAM:DIR syntax (parameter passed via _out flag).
+
+run_colon_param_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local profile_name="$3"
+  local full_name="${test_name}@${profile_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local expected_dir="$result_dir/expected"
+  local actual_dir="$result_dir/actual"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$expected_dir" "$actual_dir"
+
+  local proto_files proto_basenames
+  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
+  if [ -z "$proto_files" ]; then
+    echo "PASS 0 0" > "$result_file"
+    return
+  fi
+  proto_basenames=""
+  for f in $proto_files; do
+    proto_basenames="$proto_basenames $(basename "$f")"
+  done
+
+  # The colon syntax: --dump_out=colon_test_param:DIR
+  # This passes "colon_test_param" as the parameter to the plugin.
+  # protoc-gen-dump uses the parameter as output dir, so we also need --dump_opt
+  # to set the actual output dir. The colon param becomes part of the parameter.
+
+  # Run C++ protoc with colon syntax
+  local cpp_ok=true
+  local cpp_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="colon_test_param:$expected_dir" \
+    --dump_opt="$expected_dir" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/cpp_error.txt" || cpp_ok=false
+  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
+  echo "$cpp_ok" > "$result_dir/cpp_ok.txt"
+
+  # Run Go protoc-go with colon syntax
+  local go_ok=true
+  local go_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC_GO" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="colon_test_param:$actual_dir" \
+    --dump_opt="$actual_dir" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/go_error.txt" || go_ok=false
+  local go_elapsed=$(( $(now_ms) - go_start ))
+  echo "$go_ok" > "$result_dir/go_ok.txt"
+
+  compare_results "$result_dir" "$result_file" "$failure_file" "$cpp_elapsed" "$go_elapsed"
+
+  if [ -f "$result_dir/both_ok.txt" ]; then
+    local diff_output=""
+    if [ -f "$expected_dir/request.pb" ] && [ -f "$actual_dir/request.pb" ]; then
+      if ! cmp -s "$expected_dir/request.pb" "$actual_dir/request.pb"; then
+        diff_output="Binary CodeGeneratorRequest differs (colon param)"
+      fi
+    fi
+
+    if [ -z "$diff_output" ]; then
+      echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
+    else
+      echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
+      echo "$diff_output" > "$failure_file"
+    fi
+  fi
+}
+
 # -- CLI error tests -------------------------------------------------------
 
 run_cli_test() {
@@ -374,6 +704,18 @@ for test_dir in "$TESTS_DIR"/*/; do
         descriptor)
           run_descriptor_test "$test_name" "$test_dir" "$profile_name" "$extra_flags" &
           ;;
+        multi_plugin)
+          run_multi_plugin_test "$test_name" "$test_dir" "$profile_name" &
+          ;;
+        multi_opt)
+          run_multi_opt_test "$test_name" "$test_dir" "$profile_name" &
+          ;;
+        plugin_descriptor)
+          run_plugin_descriptor_test "$test_name" "$test_dir" "$profile_name" &
+          ;;
+        colon_param)
+          run_colon_param_test "$test_name" "$test_dir" "$profile_name" &
+          ;;
       esac
 
       PIDS+=($!)
@@ -406,6 +748,12 @@ CLI_TESTS=(
   "decode_no_value|--decode"
   "encode_no_proto|--encode=foo.Message"
   "decode_no_proto|--decode=foo.Message"
+  "missing_plugin|--plugin=protoc-gen-fake=/nonexistent/plugin --fake_out=/tmp/test_missing_plugin -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "no_output_directive|-I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "output_bad_dir|--descriptor_set_out=/nonexistent/dir/out.pb -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "empty_proto|--descriptor_set_out=/tmp/test_empty.pb -I testdata/330_empty_proto testdata/330_empty_proto/empty.proto"
+  "dup_proto_path|--descriptor_set_out=/tmp/test_dup_path.pb -I testdata/01_basic_message -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "help|--help"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
@@ -414,6 +762,80 @@ for cli_spec in "${CLI_TESTS[@]}"; do
   PIDS+=($!)
   TEST_NAMES+=("cli@${cli_name}")
 done
+
+# -- partial generation test -----------------------------------------------
+# Tests that only a subset of .proto files are listed for generation.
+
+run_partial_gen_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local gen_file="$3"
+  local full_name="partial@${test_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local expected_dir="$result_dir/expected"
+  local actual_dir="$result_dir/actual"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$expected_dir" "$actual_dir"
+
+  # Run C++ protoc — only gen_file listed for generation, but -I includes the dir
+  local cpp_ok=true
+  local cpp_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$expected_dir" --dump_opt="$expected_dir" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    "$gen_file") 2>"$result_dir/cpp_error.txt" || cpp_ok=false
+  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
+  echo "$cpp_ok" > "$result_dir/cpp_ok.txt"
+
+  # Run Go protoc-go
+  local go_ok=true
+  local go_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC_GO" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$actual_dir" --dump_opt="$actual_dir" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    "$gen_file") 2>"$result_dir/go_error.txt" || go_ok=false
+  local go_elapsed=$(( $(now_ms) - go_start ))
+  echo "$go_ok" > "$result_dir/go_ok.txt"
+
+  compare_results "$result_dir" "$result_file" "$failure_file" "$cpp_elapsed" "$go_elapsed"
+
+  if [ -f "$result_dir/both_ok.txt" ]; then
+    local diff_output=""
+
+    if [ -f "$expected_dir/summary.txt" ] && [ -f "$actual_dir/summary.txt" ]; then
+      diff_output=$(diff -u "$expected_dir/summary.txt" "$actual_dir/summary.txt" 2>&1) || true
+    fi
+
+    if [ -z "$diff_output" ] && [ -f "$expected_dir/request.pb" ] && [ -f "$actual_dir/request.pb" ]; then
+      if ! cmp -s "$expected_dir/request.pb" "$actual_dir/request.pb"; then
+        diff_output="Binary CodeGeneratorRequest differs (partial gen)"
+      fi
+    fi
+
+    if [ -z "$diff_output" ]; then
+      echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
+    else
+      echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
+      echo "$diff_output" > "$failure_file"
+    fi
+  fi
+}
+
+# Test: generate only main.proto (dep.proto is a dependency, not a generation target)
+run_partial_gen_test "331_only_main" "$TESTS_DIR/331_partial_generation" "main.proto" &
+PIDS+=($!)
+TEST_NAMES+=("partial@331_only_main")
+
+# Test: generate only dep.proto (standalone, no imports needed)
+run_partial_gen_test "331_only_dep" "$TESTS_DIR/331_partial_generation" "dep.proto" &
+PIDS+=($!)
+TEST_NAMES+=("partial@331_only_dep")
 
 # -- stdin/stdout tests (decode_raw with real binary) ----------------------
 
