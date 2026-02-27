@@ -1,0 +1,18 @@
+syntax = "proto2";
+
+package hexoverflow;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional int32 small_val = 50001;
+}
+
+// 0x80000000 = 2147483648 > INT32_MAX (2147483647)
+// C++ protoc rejects: "Value out of range, -2147483648 to 2147483647"
+// Go accepts (ParseInt with 64-bit width succeeds) and encodes as varint
+option (small_val) = 0x80000000;
+
+message Placeholder {
+  optional int32 id = 1;
+}
