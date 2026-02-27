@@ -1,0 +1,27 @@
+syntax = "proto2";
+
+package extrangemerge;
+
+import "google/protobuf/descriptor.proto";
+
+message RangeMeta {
+  optional string label = 1;
+  optional int32 priority = 2;
+}
+
+extend google.protobuf.ExtensionRangeOptions {
+  optional RangeMeta range_cfg = 50001;
+}
+
+message Request {
+  optional string id = 1;
+}
+
+message Response {
+  optional string result = 1;
+}
+
+message Extensible {
+  optional string name = 1;
+  extensions 100 to 199 [(range_cfg).label = "primary", (range_cfg).priority = 5];
+}
