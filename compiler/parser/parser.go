@@ -102,6 +102,7 @@ type AggregateField struct {
 	Value       string
 	ValueType   tokenizer.TokenType
 	Negative    bool               // true if value was preceded by '-'
+	Positive    bool               // true if value was preceded by '+'
 	SubFields   []AggregateField   // nested message literal fields
 	IsExtension bool               // true if name was bracketed [ext.name]
 }
@@ -5024,10 +5025,15 @@ func (p *parser) consumeAggregate() ([]AggregateField, error) {
 					})
 				} else {
 					negative := false
+					positive := false
 					valTok := p.tok.Next()
 					p.trackEnd(valTok)
 					if valTok.Value == "-" {
 						negative = true
+						valTok = p.tok.Next()
+						p.trackEnd(valTok)
+					} else if valTok.Value == "+" {
+						positive = true
 						valTok = p.tok.Next()
 						p.trackEnd(valTok)
 					}
@@ -5044,6 +5050,7 @@ func (p *parser) consumeAggregate() ([]AggregateField, error) {
 						Value:       val,
 						ValueType:   valTok.Type,
 						Negative:    negative,
+						Positive:    positive,
 						IsExtension: isExtension,
 					})
 				}
@@ -5056,10 +5063,15 @@ func (p *parser) consumeAggregate() ([]AggregateField, error) {
 			p.trackEnd(closeBr)
 		} else {
 			negative := false
+			positive := false
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
 			if valTok.Value == "-" {
 				negative = true
+				valTok = p.tok.Next()
+				p.trackEnd(valTok)
+			} else if valTok.Value == "+" {
+				positive = true
 				valTok = p.tok.Next()
 				p.trackEnd(valTok)
 			}
@@ -5079,6 +5091,7 @@ func (p *parser) consumeAggregate() ([]AggregateField, error) {
 				Value:       val,
 				ValueType:   valTok.Type,
 				Negative:    negative,
+				Positive:    positive,
 				IsExtension: isExtension,
 			})
 		}
@@ -5199,10 +5212,15 @@ func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
 					})
 				} else {
 					negative := false
+					positive := false
 					valTok := p.tok.Next()
 					p.trackEnd(valTok)
 					if valTok.Value == "-" {
 						negative = true
+						valTok = p.tok.Next()
+						p.trackEnd(valTok)
+					} else if valTok.Value == "+" {
+						positive = true
 						valTok = p.tok.Next()
 						p.trackEnd(valTok)
 					}
@@ -5219,6 +5237,7 @@ func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
 						Value:       val,
 						ValueType:   valTok.Type,
 						Negative:    negative,
+						Positive:    positive,
 						IsExtension: isExtension,
 					})
 				}
@@ -5231,10 +5250,15 @@ func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
 			p.trackEnd(closeBr)
 		} else {
 			negative := false
+			positive := false
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
 			if valTok.Value == "-" {
 				negative = true
+				valTok = p.tok.Next()
+				p.trackEnd(valTok)
+			} else if valTok.Value == "+" {
+				positive = true
 				valTok = p.tok.Next()
 				p.trackEnd(valTok)
 			}
@@ -5254,6 +5278,7 @@ func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
 				Value:       val,
 				ValueType:   valTok.Type,
 				Negative:    negative,
+				Positive:    positive,
 				IsExtension: isExtension,
 			})
 		}

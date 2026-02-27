@@ -5796,6 +5796,9 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 			}
 			inner = append(inner, subBytes...)
 		} else {
+			if af.Positive {
+				return nil, &aggregatePositiveSignError{fieldType: subField.GetType()}
+			}
 			val := af.Value
 			if af.Negative {
 				val = "-" + val
@@ -5886,6 +5889,9 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 			}
 			inner = append(inner, subBytes...)
 		} else {
+			if af.Positive {
+				return nil, &aggregatePositiveSignError{fieldType: subField.GetType()}
+			}
 			val := af.Value
 			if af.Negative {
 				val = "-" + val
@@ -5928,6 +5934,25 @@ func (e *aggregateBoolError) Error() string {
 	return fmt.Sprintf("Invalid value for boolean field \"%s\". Value: \"%s\".", e.fieldName, e.value)
 }
 
+type aggregatePositiveSignError struct {
+	fieldType descriptorpb.FieldDescriptorProto_Type
+}
+
+func (e *aggregatePositiveSignError) Error() string {
+	switch e.fieldType {
+	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT,
+		descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		return "Expected double, got: +"
+	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
+		return "Expected identifier, got: +"
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING,
+		descriptorpb.FieldDescriptorProto_TYPE_BYTES:
+		return "Expected string, got: +"
+	default:
+		return "Expected integer, got: +"
+	}
+}
+
 func formatAggregateError(err error, filename string, braceTok tokenizer.Token, optName string) string {
 	var dupErr *aggregateDupFieldError
 	if errors.As(err, &dupErr) {
@@ -5938,6 +5963,11 @@ func formatAggregateError(err error, filename string, braceTok tokenizer.Token, 
 	if errors.As(err, &boolErr) {
 		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
 			filename, braceTok.Line+1, braceTok.Column+1, optName, boolErr.Error())
+	}
+	var posErr *aggregatePositiveSignError
+	if errors.As(err, &posErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, posErr.Error())
 	}
 	return fmt.Sprintf("%s: error encoding custom option: %v", filename, err)
 }
