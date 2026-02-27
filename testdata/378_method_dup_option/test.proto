@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package mtddup;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.MethodOptions {
+  optional int32 mtd_tag = 50001;
+}
+
+message Request {}
+message Response {}
+
+service Searcher {
+  rpc Find(Request) returns (Response) {
+    option (mtd_tag) = 42;
+    option (mtd_tag) = 99;
+  }
+}
