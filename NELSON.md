@@ -327,6 +327,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: For `TYPE_INT32` and `TYPE_SINT32`, after `ParseInt`, check `if v > math.MaxInt32 || v < math.MinInt32` and return a range error. Similarly, for `TYPE_UINT32`, check `v > math.MaxUint32`. The error message should match C++ format: `"Value out of range, MIN to MAX, for TYPE option \"NAME\"."` with proper line:column info.
 - **Also affects**: Same bug exists for TYPE_SINT32 (same ParseInt call). TYPE_INT64 has the separate issue that `ParseInt(value, 0, 64)` can't handle values > INT64_MAX (like `0xFFFFFFFFFFFFFFFF`) that C++ rejects with a range error too — Go gives a generic parse error instead of a range error with proper format. TYPE_UINT32 similarly lacks range validation. For aggregate option encoding (`encodeAggregateFields`), the same function is called, so the same bug applies there too.
 
+### Run 33 — Form feed character not treated as whitespace (VICTORY)
+- **Bug**: Go tokenizer does NOT treat form feed (`\f`, 0x0C) or vertical tab (`\v`, 0x0B) as whitespace. C++ protoc does. When `\f` appears between tokens in a .proto file, C++ silently skips it as whitespace, but Go emits it as a `TokenSymbol`, causing parse errors.
+- **Test**: `364_formfeed_whitespace` — all 9 profiles fail.
+- **Root cause**: `collectComments()` in `io/tokenizer/tokenizer.go` at lines 120 and 160 only checks for `' '`, `'\t'`, `'\r'` as whitespace characters. The `\f` (form feed) and `\v` (vertical tab) characters are missing. Ironically, `readBlockCommentText()` at line 262 DOES handle `\v` and `\f` — the inconsistency is within the same file.
+- **C++ protoc**: Accepts `\f` between tokens as whitespace, produces valid descriptor (exit 0).
+- **Go protoc-go**: Fails with `Expected top-level statement (e.g. "message").` because `\f` is tokenized as a symbol, not skipped.
+- **Fix hint**: In `collectComments()`, add `'\f'` and `'\v'` to the whitespace checks at lines 120 and 160. E.g., change `currentChar == ' ' || currentChar == '\t' || currentChar == '\r'` to include `|| currentChar == '\f' || currentChar == '\v'`.
+- **Also affects**: `\v` (vertical tab, 0x0B) has the same bug — also not treated as whitespace.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -382,5 +391,6 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Custom float option with `INF` (all caps) — same bug as Run 31
 - Aggregate option float/double with `Inf`/`NaN` — `encodeAggregateFields` likely has same permissive parsing
 - `strconv.ParseFloat` accepts `+inf` and `+Inf` — custom option with `+inf` might differ
+- Vertical tab (`\v`, 0x0B) as whitespace — same bug as Run 33 form feed, but for `\v` specifically
 - Source code info for `option` statements on extension range vs extension field
 - `resolveTypeName` with three-part compound names (e.g., `A.B.C`) — multiple levels of scope walking
