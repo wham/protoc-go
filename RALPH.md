@@ -120,6 +120,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 46. [DONE] Fix `375_field_dup_option` — C++ protoc rejects duplicate non-repeated field options with `Option "(name)" was already set.` but Go protoc-go silently accepted them. Added per-field duplicate tracking using `fieldOptKey{field, name}` map in `resolveCustomFieldOptions`, matching the pattern already in `resolveCustomMessageOptions`. All 3441/3441 tests pass.
 
+47. [DONE] Fix `376_enum_dup_option` — C++ protoc rejects duplicate non-repeated enum options with `Option "(name)" was already set.` but Go protoc-go silently accepted them. Added per-enum duplicate tracking using `enumOptKey{enum, name}` map in `resolveCustomEnumOptions`, matching the pattern in `resolveCustomMessageOptions`. All 3450/3450 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
