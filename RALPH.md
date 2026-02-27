@@ -45,4 +45,15 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
+1. [DONE] Fix `cli@missing_plugin` — match C++ error format for plugin not found
+2. [DONE] Fix `cli@output_bad_dir` — match C++ error format for descriptor_set_out write failure
+3. [DONE] All 3045/3045 tests pass
+4. [DONE] Fix `332_any_expansion_in_option` — handle Any type URL `[type.googleapis.com/...]` syntax in aggregate options. All 3054/3054 tests pass.
+5. [DONE] Fix `333_comment_eof_no_newline` — tokenizer's `readLineCommentText()` was always appending `\n` to line comments even when file ends without trailing newline. Now only appends `\n` when the newline is actually present. All 3063/3063 tests pass.
+
 ## Notes
+
+- `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
+- `compiler/cli/cli.go`: `encodeAggregateFields()` detects Any type URL expansion when parent type is `google.protobuf.Any` and field name contains `/`. Encodes `type_url` (field 1) as string, resolves message type from URL, serializes sub-fields into `value` (field 2) as bytes.
+- `io/tokenizer/tokenizer.go`: `readLineCommentText()` only appends `\n` when a newline character is actually present in the input. Files ending with a line comment and no trailing newline now produce the correct comment text (without spurious `\n`).
+- Run tests with `scripts/test` or `scripts/test --summary`.
