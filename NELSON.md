@@ -124,6 +124,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `test.proto: unknown message type  for extension my_scalar`
 - **Fix hint**: Before attempting sub-field resolution, check if `ext.GetType()` is `TYPE_MESSAGE` or `TYPE_GROUP`. If not, emit an error like `Option "(name)" is an atomic type, not a message.` with proper line/column info from `opt.NameTok`.
 
+### Run 10 — Group-typed custom option uses wrong wire format (VICTORY)
+- **Bug**: Go's `encodeAggregateOption` and `encodeAggregateFields` in `cli.go` always use `protowire.BytesType` (wire type 2, length-delimited) when encoding aggregate option values. For `TYPE_GROUP` fields, protobuf wire format requires `StartGroupType` (wire type 3) + fields + `EndGroupType` (wire type 4) instead of length-delimited encoding.
+- **Test**: `341_group_option_encoding` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `encodeAggregateOption()` at cli.go:5811-5815 always does `protowire.AppendTag(b, fieldNum, protowire.BytesType)` + `protowire.AppendBytes(b, inner)`. Same bug in `encodeAggregateFields()` at cli.go:5896-5900. Neither checks if the field is `TYPE_GROUP`.
+- **C++ protoc**: Produces 257-byte descriptor with correct start/end group wire format.
+- **Go protoc-go**: Produces 255-byte descriptor with incorrect length-delimited wire format. Binary differs.
+- **Fix hint**: In both `encodeAggregateOption` and `encodeAggregateFields`, check if `ext.GetType() == TYPE_GROUP`. If so, use `protowire.AppendTag(b, fieldNum, protowire.StartGroupType)` + inner + `protowire.AppendTag(b, fieldNum, protowire.EndGroupType)` instead of length-delimited encoding. Group encoding: start_tag(3) + fields + end_tag(4). Length-delimited: tag(2) + varint_length + fields.
+- **Also affects**: Nested group fields within aggregate options (encodeAggregateFields has same bug).
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -135,7 +144,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - CRLF line endings — tested `\v` in block comments, both agree; `\r` as column-incrementing whitespace also matches C++
 - Custom options with message-typed fields set to scalar values (error message differences)
 - Extension range validation for 19000-19999 reserved range
-- Proto2 groups nested 3+ levels deep (group in group in group)
+- ~~Proto2 groups nested 3+ levels deep (group in group in group)~~ **Partially covered by Run 10 (group encoding bug)**
+- ~~Group-typed custom options — wrong wire type encoding~~ **DONE in Run 10 (341_group_option_encoding)**
 - Edition features + extensions interactions
 - Proto files importing the same file via different paths
 - Custom option scope resolution (Go returns first match, not proper scope-based lookup)
