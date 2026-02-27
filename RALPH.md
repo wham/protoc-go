@@ -57,6 +57,7 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 10. [DONE] Fix `338_enum_val_option_string_concat` — enum value option parsing also lacked adjacent string literal concatenation. Added the same pattern. All 3108/3108 tests pass.
 11. [DONE] Fix `339_ext_range_option_string_concat` — extension range custom option parsing also lacked adjacent string literal concatenation. Added the same pattern in `parseExtensionRange()`. All 3117/3117 tests pass.
 12. [DONE] Fix `340_scalar_subfield_option` — when a sub-field path is used on a scalar (non-message) custom option, emit C++ error: `Option "(name)" is an atomic type, not a message.` with line/column info. Added check in all 9 option encoding blocks. All 3126/3126 tests pass.
+13. [DONE] Fix `341_group_option_encoding` — group-type extensions (TYPE_GROUP) must use wire type 3 (StartGroup) and 4 (EndGroup) instead of wire type 2 (length-delimited). Fixed both `encodeAggregateOption` and `encodeAggregateFields`. All 3135/3135 tests pass.
 
 ## Notes
 
@@ -68,4 +69,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 - Parser inconsistency: Field/Message/Enum/EnumValue/Service/Method/Oneof option parsers include `-` in `opt.Value` AND set `opt.Negative=true`. The SubFieldPath blocks in the CLI must NOT add another `-` prefix for these option types.
 - `compiler/parser/parser.go`: `parseFieldOptions()` now concatenates adjacent string literal tokens in custom option values (e.g., `"hello" " " "world"` → `"hello world"`), matching C++ protoc's behavior.
 - `compiler/cli/cli.go`: All 9 option encoding blocks (file, message, field, enum, enum_value, service, method, oneof, extension_range) now check `ext.GetType()` before sub-field resolution. If not `TYPE_MESSAGE`/`TYPE_GROUP`, emit `Option "(name)" is an atomic type, not a message.` with line/column info.
+- `compiler/cli/cli.go`: `encodeAggregateOption()` and `encodeAggregateFields()` now check if the field is `TYPE_GROUP` and use `protowire.StartGroupType`/`protowire.EndGroupType` (wire types 3/4) instead of `protowire.BytesType` (wire type 2) for group encoding. This matches C++ protoc's group wire format.
 - Run tests with `scripts/test` or `scripts/test --summary`.
