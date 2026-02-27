@@ -238,8 +238,10 @@ func (t *Tokenizer) readLineCommentText() string {
 	text := t.input[start:t.pos]
 	if t.pos < len(t.input) {
 		t.advance() // skip \n
+		return text + "\n"
 	}
-	return text + "\n"
+	// EOF without trailing newline
+	return text
 }
 
 // readBlockCommentText reads text between /* and */, returns content without delimiters.
