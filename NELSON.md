@@ -65,7 +65,19 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `trailing_comments: " eof\n"` (with trailing newline).
 - **Discrepancy**: Source code info comment text differs by one byte.
 
+### Run 3 — NaN bit pattern differs in custom double option (VICTORY)
+- **Bug**: Go's `strconv.ParseFloat("nan", 64)` returns `0x7FF8000000000001` (Go's canonical NaN), while C++ `std::numeric_limits<double>::quiet_NaN()` returns `0x7FF8000000000000`. These differ by one bit in the mantissa. When encoding a custom `double` option with value `nan`, the wire format bytes differ.
+- **Test**: `334_nan_custom_option` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `encodeCustomOptionValue()` in `cli.go` uses `strconv.ParseFloat(value, 64)` then `math.Float64bits(v)`. Go's NaN bit pattern is `0x7FF8000000000001`, C++ is `0x7FF8000000000000`. One bit difference in the lowest mantissa bit.
+- **C++ protoc**: Encodes NaN as `0x7FF8000000000000` (8 bytes in descriptor).
+- **Go protoc-go**: Encodes NaN as `0x7FF8000000000001` (different 8 bytes in descriptor).
+- **Fix hint**: Use `math.Float64frombits(0x7FF8000000000000)` instead of `strconv.ParseFloat("nan", 64)` to match C++ NaN encoding.
+- **Also found**: `-nan` would fail entirely — Go's `strconv.ParseFloat("-nan", 64)` returns error. Also, subfield custom option parsers (enum/field/message/service/method) double-negate values (parser bakes `-` into Value AND resolver prepends `-` again).
+
 ### Ideas for next time
+- `-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it
+- Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)
+- `float` custom option with `nan` — float32 NaN bits may also differ across platforms
 - Source code info accuracy for specific constructs (extend blocks, service methods, oneof fields)
 - CRLF line endings — tested `\v` in block comments, both agree; `\r` as column-incrementing whitespace also matches C++
 - Custom options with message-typed fields set to scalar values (error message differences)
