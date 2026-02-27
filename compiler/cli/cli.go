@@ -4503,6 +4503,15 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 				opt.SCILoc.Path = newPath
 			}
 
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
+			}
+
 			if len(opt.SubFieldPath) > 0 {
 if subFieldNums[name] == nil {
 subFieldNums[name] = map[int32]bool{}
@@ -4665,7 +4674,7 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomMessageOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -4675,6 +4684,15 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 			// Update SCI path with actual field number
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
+			}
+
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
 			}
 
 			if len(opt.SubFieldPath) > 0 {
@@ -4836,7 +4854,7 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomServiceOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -4845,6 +4863,15 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
+			}
+
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
 			}
 
 			if len(opt.SubFieldPath) > 0 {
@@ -5004,7 +5031,7 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomMethodOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -5013,6 +5040,15 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
+			}
+
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
 			}
 
 			if len(opt.SubFieldPath) > 0 {
@@ -5172,7 +5208,7 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomEnumOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -5181,6 +5217,15 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
+			}
+
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
 			}
 
 			if len(opt.SubFieldPath) > 0 {
@@ -5340,7 +5385,7 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomEnumValueOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -5349,6 +5394,15 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
+			}
+
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
 			}
 
 			if len(opt.SubFieldPath) > 0 {
@@ -5508,7 +5562,7 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomOneofOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -5517,6 +5571,15 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
+			}
+
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
 			}
 
 			if len(opt.SubFieldPath) > 0 {
@@ -5706,6 +5769,15 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 					}
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
 					continue
 				}
 			}

@@ -1145,6 +1145,7 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 						negative = true
 					}
 					valTok := p.tok.Next()
+					custOpt.AggregateBraceTok = valTok
 					custOpt.Value = valTok.Value
 					custOpt.ValueType = valTok.Type
 					custOpt.Negative = negative
@@ -1703,6 +1704,7 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
+			custOpt.AggregateBraceTok = valTok
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -2587,6 +2589,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 					} else {
 						valTok := p.tok.Next()
 						p.trackEnd(valTok)
+						custOpt.AggregateBraceTok = valTok
 						custOpt.Value = valTok.Value
 						// Adjacent string concatenation
 						if valTok.Type == tokenizer.TokenString {
@@ -2962,6 +2965,7 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
+			custOpt.AggregateBraceTok = valTok
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -3459,6 +3463,7 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
+			custOpt.AggregateBraceTok = valTok
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -3706,6 +3711,7 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
+			custOpt.AggregateBraceTok = valTok
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -4208,6 +4214,7 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
+			custOpt.AggregateBraceTok = valTok
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -5406,6 +5413,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			} else {
 				valTok := p.tok.Next()
 				p.trackEnd(valTok)
+				custOpt.AggregateBraceTok = valTok
 				custOpt.Value = valTok.Value
 				if valTok.Type == tokenizer.TokenString {
 					for p.tok.Peek().Type == tokenizer.TokenString {
