@@ -96,6 +96,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 34. [DONE] Fix `363_int32_hex_overflow` — `encodeCustomOptionValue` parsed int32/uint32 values with 64-bit width (`strconv.ParseInt(value, 0, 64)`) so values like `0x80000000` (2147483648 > INT32_MAX) were accepted. Added `checkIntRangeOption` helper that validates 32-bit range for TYPE_INT32/TYPE_SINT32 (`-2147483648 to 2147483647`) and TYPE_UINT32 (`0 to 4294967295`). Error matches C++ format: `Value out of range, MIN to MAX, for TYPE option "NAME".` All 3333/3333 tests pass.
 
+35. [DONE] Fix `364_formfeed_whitespace` — Tokenizer's `collectComments()` only treated `' '`, `'\t'`, `'\r'` as non-newline whitespace, but C++ protoc also treats `'\f'` (form feed) and `'\v'` (vertical tab) as whitespace. Added `'\v'` and `'\f'` to all 4 whitespace-skipping loops in `collectComments`. All 3342/3342 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
