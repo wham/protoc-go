@@ -4918,6 +4918,33 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 				}
 			}
 
+			// Validate boolean option values must be "true" or "false"
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				if opt.Value != "inf" && opt.Value != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
 			if len(opt.SubFieldPath) > 0 {
 				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
