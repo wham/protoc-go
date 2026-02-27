@@ -1,0 +1,29 @@
+syntax = "proto2";
+
+package methodmerge;
+
+import "google/protobuf/descriptor.proto";
+
+message MethodMeta {
+  optional string label = 1;
+  optional int32 priority = 2;
+}
+
+extend google.protobuf.MethodOptions {
+  optional MethodMeta method_cfg = 50001;
+}
+
+message SearchRequest {
+  optional string query = 1;
+}
+
+message SearchResponse {
+  optional string result = 1;
+}
+
+service SearchService {
+  rpc Search (SearchRequest) returns (SearchResponse) {
+    option (method_cfg).label = "search";
+    option (method_cfg).priority = 5;
+  }
+}
