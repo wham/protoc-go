@@ -4161,6 +4161,19 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 				}
 			}
 
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				if opt.Value != "inf" && opt.Value != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
 			if len(opt.SubFieldPath) > 0 {
 				// Sub-field option: option (ext).sub1.sub2... = value;
 				if subFieldNums[name] == nil {
@@ -4446,6 +4459,19 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 				if opt.Value != "true" && opt.Value != "false" {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
 						name, opt.ValTok.Line+1, opt.ValTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				if opt.Value != "inf" && opt.Value != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.ValTok.Line+1, opt.ValTok.Column+1, typeName, extFQN))
 					continue
 				}
 			}
@@ -5658,6 +5684,19 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 				if opt.Value != "true" && opt.Value != "false" {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				if opt.Value != "inf" && opt.Value != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, typeName, extFQN))
 					continue
 				}
 			}
