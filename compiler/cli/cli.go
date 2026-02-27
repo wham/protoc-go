@@ -497,7 +497,7 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customOptErrors, "\n"))
 	}
 
-	customFieldOptErrors := resolveCustomFieldOptions(orderedFiles, parsed, parseResults)
+	customFieldOptErrors, subFieldFieldOptNums := resolveCustomFieldOptions(orderedFiles, parsed, parseResults)
 	if len(customFieldOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customFieldOptErrors = formatErrorsMSVS(customFieldOptErrors, srcTree)
@@ -656,7 +656,7 @@ func Run(args []string) error {
 		// If the file has sub-field custom options, clone and merge unknown fields
 		// so proto_file has merged entries (matching C++ protoc's linked descriptors)
 		if pr := parseResults[name]; pr != nil && hasSubFieldCustomOpts(pr) {
-			fd = cloneWithMergedExtUnknowns(fd, subFieldFileOptNums[name])
+			fd = cloneWithMergedExtUnknowns(fd, subFieldFileOptNums[name], subFieldFieldOptNums[name])
 		}
 		protoFiles = append(protoFiles, fd)
 		strippedMap[name] = fd
@@ -3429,32 +3429,32 @@ func hasSubFieldCustomOpts(pr *parser.ParseResult) bool {
 
 // cloneWithMergedExtUnknowns clones fd and merges multiple unknown field entries
 // with the same tag (length-delimited) in FileOptions and FieldOptions into single entries.
-// mergeableFileFields specifies which FileOptions field numbers should be merged
-// (only sub-field option field numbers, not repeated scalars).
-func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto, mergeableFileFields map[int32]bool) *descriptorpb.FileDescriptorProto {
+// mergeableFileFields specifies which FileOptions field numbers should be merged.
+// mergeableFieldOptFields specifies which FieldOptions field numbers should be merged.
+func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto, mergeableFileFields map[int32]bool, mergeableFieldOptFields map[int32]bool) *descriptorpb.FileDescriptorProto {
 	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
 	if fdCopy.Options != nil {
 		mergeUnknownExtensions(fdCopy.Options.ProtoReflect(), mergeableFileFields)
 	}
-	mergeFieldOptionsInMessages(fdCopy.GetMessageType())
+	mergeFieldOptionsInMessages(fdCopy.GetMessageType(), mergeableFieldOptFields)
 	return fdCopy
 }
 
 // mergeFieldOptionsInMessages recursively merges unknown extensions in FieldOptions
 // for all fields in the given messages and their nested types.
-func mergeFieldOptionsInMessages(msgs []*descriptorpb.DescriptorProto) {
+func mergeFieldOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
 	for _, msg := range msgs {
 		for _, field := range msg.GetField() {
 			if field.Options != nil {
-				mergeUnknownExtensions(field.Options.ProtoReflect(), nil)
+				mergeUnknownExtensions(field.Options.ProtoReflect(), mergeableFields)
 			}
 		}
 		for _, ext := range msg.GetExtension() {
 			if ext.Options != nil {
-				mergeUnknownExtensions(ext.Options.ProtoReflect(), nil)
+				mergeUnknownExtensions(ext.Options.ProtoReflect(), mergeableFields)
 			}
 		}
-		mergeFieldOptionsInMessages(msg.GetNestedType())
+		mergeFieldOptionsInMessages(msg.GetNestedType(), mergeableFields)
 	}
 }
 
@@ -4219,7 +4219,8 @@ func findFileOptionExtension(name string, currentPkg string, allExts []fileOptEx
 
 // resolveCustomFieldOptions resolves parenthesized custom options on fields
 // (e.g., [(my_ext) = "value"]) against extension definitions for FieldOptions.
-func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	subFieldNums := map[string]map[int32]bool{}
 	// Build extension map for FieldOptions extensions
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -4252,6 +4253,12 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
+	type fieldRepKey struct {
+		field *descriptorpb.FieldDescriptorProto
+		num   int32
+	}
+	fieldRepeatIdx := map[fieldRepKey]int32{}
+
 	var errs []string
 	for _, name := range orderedFiles {
 		result := parseResults[name]
@@ -4281,7 +4288,24 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
 			}
 
+			// For repeated extensions, append an index to the SCI path
+			if ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED && opt.SCILoc != nil {
+				key := fieldRepKey{opt.Field, ext.GetNumber()}
+				idx := fieldRepeatIdx[key]
+				fieldRepeatIdx[key]++
+				insertPos := len(opt.SCILoc.Path) - len(opt.SubFieldPath)
+				newPath := make([]int32, len(opt.SCILoc.Path)+1)
+				copy(newPath, opt.SCILoc.Path[:insertPos])
+				newPath[insertPos] = idx
+				copy(newPath[insertPos+1:], opt.SCILoc.Path[insertPos:])
+				opt.SCILoc.Path = newPath
+			}
+
 			if len(opt.SubFieldPath) > 0 {
+if subFieldNums[name] == nil {
+subFieldNums[name] = map[int32]bool{}
+}
+subFieldNums[name][ext.GetNumber()] = true
 				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -4380,7 +4404,7 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 				append(opt.Field.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectFieldOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
