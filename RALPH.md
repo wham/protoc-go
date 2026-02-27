@@ -90,6 +90,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 30. [DONE] Fix `359_bool_option_case` — C++ protoc rejects non-lowercase boolean values for custom extension options. Added bool validation to `resolveCustomFileOptions` (was missing). Split error into two cases: non-identifier values get `Value must be identifier for boolean option`, wrong identifiers (e.g., "True") get `Value must be "true" or "false" for boolean option`. Applied same fix to field and ext-range option resolvers. All 3297/3297 tests pass.
 31. [DONE] Fix `360_enum_shadow_scope` — `resolveTypeName` was skipping enum matches for compound names (e.g., `Direction.Sub`) and continuing to outer scopes. C++ protoc commits to the innermost match regardless of type (message or enum). If the first component resolves to an enum, the full compound can't exist, so it reports a shadow error. Fixed by removing the enum-skip branch and always committing to the innermost match. All 3306/3306 tests pass.
 
+32. [DONE] Fix `361_fqn_option_name` — `parseParenthesizedOptionName` didn't handle leading dot in option names like `(.fqnopt.my_label)`. The first token after `(` was `.`, which was treated as the entire name part. Added handling: when `innerTok.Value == "."`, consume the next identifier token before entering the dot-loop. `findFileOptionExtension` already handled `.`-prefixed names for fully-qualified lookup. All 3315/3315 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
