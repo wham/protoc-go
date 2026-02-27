@@ -408,6 +408,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: The discrepancy is in `strtof` (C library) vs `ParseFloat` (Go stdlib) behavior for subnormal float32 values. Go's `ParseFloat` is correctly rounding the string back to the same float32, while C's `strtof` (on macOS) fails to round-trip. To match C++ behavior, Go would need to replicate C's less-precise `strtof` round-trip failure, which is platform-specific. One approach: for subnormal float32 values (abs(v) < FLT_MIN and v != 0), always use 9 significant digits (skip the 6-digit attempt). Or: use `FormatFloat(v64, 'g', 6, 32)` (32-bit precision) instead of `64` to match C's float formatting behavior more closely.
 - **Also affects**: Any subnormal float32 default value will trigger this. Examples: `1e-45`, `1.17549e-38`, `5e-40`, etc. The exact set of affected values depends on which ones fail the C `strtof` round-trip.
 
+### Run 42 — Enum-value-level bool option accepts `True` (case mismatch) (VICTORY)
+- **Bug**: Go's `resolveCustomEnumValueOptions` is missing bool validation. When an enum value has `[(val_flag) = True]` (capital T), C++ protoc rejects it with `Value must be "true" or "false"`, but Go accepts it and encodes it as a valid bool option. Ralph fixed file/field/message/service/method/enum/ext-range bool validation in previous runs but never added it to `resolveCustomEnumValueOptions` or `resolveCustomOneofOptions`.
+- **Test**: `373_enumval_bool_option_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Bool validation exists in 7 of 9 `resolveCustom*Options` functions (file at 4151, field at 4462, message at 4716, service at 4922, method at 5126, enum at 5321, ext-range at 5875). The other 2 resolvers — `resolveCustomEnumValueOptions` (around 5512) and `resolveCustomOneofOptions` — are BOTH missing the `TYPE_BOOL` check that validates `value == "true" || value == "false"`.
+- **C++ protoc**: `test.proto:12:23: Value must be "true" or "false" for boolean option "evboolcase.val_flag".`
+- **Go protoc-go**: Silently accepts `True`, encodes it as a bool value via `encodeCustomOptionValue` which accepts `True`/`False`/`t`/`f` at line 6091.
+- **Fix hint**: Add the bool validation block to both remaining resolvers: `resolveCustomEnumValueOptions` and `resolveCustomOneofOptions`. Same pattern as line 5321 in `resolveCustomEnumOptions`.
+- **Also affects**: Same bug for oneof-level bool custom options — `resolveCustomOneofOptions` is missing the same check.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -479,7 +488,7 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Aggregate option with `True` bool value — `encodeCustomOptionValue` still accepts `True` at line 5969, bypasses simple option validation- ~~Subnormal float default value string differs~~ **DONE in Run 41 (372_subnormal_float_default)**
 - Same `simpleFtoa` issue with `simpleDtoa` for subnormal double values — might also differ
 - `simpleFtoa` with `FormatFloat(v64, 'g', 6, 32)` (32-bit) vs `FormatFloat(v64, 'g', 6, 64)` (64-bit) — changing bit width may fix some but break others
-- Enum-value-level bool option with `True` — still missing validation in `resolveCustomEnumValueOptions`
+- ~~Enum-value-level bool option with `True` — still missing validation in `resolveCustomEnumValueOptions`~~ **DONE in Run 42 (373_enumval_bool_option_case)**
 - Oneof-level bool option with `True` — still missing validation in `resolveCustomOneofOptions`
 - Duplicate non-repeated custom option on field/enum/service/method/enum-value/oneof/ext-range — all missing `seenCustomOpts` check
 - Aggregate option bool with `True` — `encodeCustomOptionValue` still accepts `True`/`t`/`f` at line 6091

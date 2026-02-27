@@ -1,0 +1,14 @@
+syntax = "proto2";
+
+package evboolcase;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.EnumValueOptions {
+  optional bool val_flag = 50001;
+}
+
+enum Priority {
+  LOW = 0 [(val_flag) = True];
+  HIGH = 1;
+}
