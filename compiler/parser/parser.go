@@ -5607,7 +5607,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 					if defVal == "-nan" {
 						defVal = "nan"
 					}
-				} else if v, err := strconv.ParseFloat(defVal, 64); err == nil {
+				} else if v, err := strconv.ParseFloat(defVal, 64); err == nil || (errors.Is(err, strconv.ErrRange) && (math.IsInf(v, 0) || math.IsNaN(v))) {
 					if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT {
 						defVal = simpleFtoa(float32(v))
 					} else {

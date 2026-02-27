@@ -84,6 +84,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 27. [DONE] Fix `356_infinity_default` — C++ protoc only accepts `inf` and `nan` as identifier defaults for float/double fields, not `infinity`. Added identifier validation in `parseFieldOptions` that rejects non-inf/nan identifiers with "Expected number." error. Removed dead `infinity`/`-infinity` normalization code. All 3270/3270 tests pass.
 
+28. [DONE] Fix `357_float_overflow_default` — Go's `strconv.FormatFloat` produces `+Inf` for positive infinity, but C++ `SimpleFtoa`/`SimpleDtoa` produce `inf`. Added special-case handling in `simpleFtoa` and `simpleDtoa` for `±Inf` and `NaN` to return C++-compatible strings (`inf`, `-inf`, `nan`). All 3279/3279 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
@@ -110,3 +112,4 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 - `compiler/cli/cli.go`: `cloneWithMergedExtUnknowns` now also merges FieldOptions unknown fields for top-level extensions (`fd.Extension`), not just fields/extensions within messages. Previously only `mergeFieldOptionsInMessages` was called which handled message-level fields and nested extensions, but top-level extensions were missed.
 - `compiler/cli/cli.go`: `findFileOptionExtension` now uses proper C++ scope walking instead of a broad "bare name match". For a name like `nested_opt` in package `scope_test`, it tries `scope_test.nested_opt` then `nested_opt` (root). This prevents matching extensions nested inside messages (e.g., `scope_test.Container.nested_opt`) when only the bare field name is used.
 - Run tests with `scripts/test` or `scripts/test --summary`.- `compiler/parser/parser.go`: Top-level empty statement (`case ";"`) must call `p.trackEnd()` on the consumed semicolon token so that `p.lastLine`/`p.lastCol` (used for the file-level span `path=[]`) includes the trailing `;`. Without this, files like `};\n` would report the span ending at `}` instead of `;`.
+- `compiler/parser/parser.go`: `simpleFtoa` and `simpleDtoa` now handle `±Inf` and `NaN` special values, returning C++-compatible strings (`inf`, `-inf`, `nan`) instead of Go's default formatting (`+Inf`, `-Inf`, `NaN`). This matters when float values overflow `float32` (e.g., `3.5e38` → `inf` not `+Inf`).
