@@ -5557,21 +5557,33 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 			return nil, &aggregateBoolError{fieldName: ext.GetName(), value: value}
 		}
 	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
-		v, err := strconv.ParseFloat(value, 32)
-		if err != nil {
-			return nil, fmt.Errorf("invalid float value: %s", value)
+		var floatBits uint32
+		switch strings.ToLower(value) {
+		case "nan", "-nan":
+			floatBits = 0x7FC00000 // C++ canonical float NaN
+		default:
+			v, err := strconv.ParseFloat(value, 32)
+			if err != nil {
+				return nil, fmt.Errorf("invalid float value: %s", value)
+			}
+			floatBits = math.Float32bits(float32(v))
 		}
 		b = protowire.AppendTag(b, fieldNum, protowire.Fixed32Type)
-		b = protowire.AppendFixed32(b, math.Float32bits(float32(v)))
+		b = protowire.AppendFixed32(b, floatBits)
 	case descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
-		v, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid double value: %s", value)
-		}
-		bits := math.Float64bits(v)
-		// Use C++ canonical NaN (0x7FF8000000000000) to match protoc output.
-		if math.IsNaN(v) {
-			bits = 0x7FF8000000000000
+		var bits uint64
+		switch strings.ToLower(value) {
+		case "nan", "-nan":
+			bits = 0x7FF8000000000000 // C++ canonical double NaN
+		default:
+			v, err := strconv.ParseFloat(value, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid double value: %s", value)
+			}
+			bits = math.Float64bits(v)
+			if math.IsNaN(v) {
+				bits = 0x7FF8000000000000
+			}
 		}
 		b = protowire.AppendTag(b, fieldNum, protowire.Fixed64Type)
 		b = protowire.AppendFixed64(b, bits)
