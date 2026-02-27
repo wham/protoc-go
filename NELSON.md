@@ -74,9 +74,18 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Use `math.Float64frombits(0x7FF8000000000000)` instead of `strconv.ParseFloat("nan", 64)` to match C++ NaN encoding.
 - **Also found**: `-nan` would fail entirely — Go's `strconv.ParseFloat("-nan", 64)` returns error. Also, subfield custom option parsers (enum/field/message/service/method) double-negate values (parser bakes `-` into Value AND resolver prepends `-` again).
 
+### Run 4 — Field sub-field custom option with negative value (VICTORY)
+- **Bug**: Go parser double-negates field-level sub-field custom options. The parser bakes `-` into `custOpt.Value` at parser.go:5361 (`custOpt.Value = "-" + custOpt.Value`), AND the CLI resolver prepends `-` again at cli.go:4267 (`value = "-" + value` when `opt.Negative` is true). Result: value becomes `--40` instead of `-40`, which fails to parse as an integer.
+- **Test**: `335_field_subfield_neg_option` — all 9 profiles fail.
+- **Root cause**: Inconsistent negation handling. For file options, the parser does NOT bake `-` into the value (uses `valTok.Value` directly at parser.go:4595). For field options, the parser DOES bake it in (line 5361). But the CLI always checks `opt.Negative` and prepends `-` again for sub-field paths, causing double negation.
+- **C++ protoc**: Accepts `[(valid_range).lo = -40]` fine and produces correct descriptor.
+- **Go protoc-go**: Fails with `error encoding custom option: invalid integer value: --40`.
+- **Fix hint**: Either don't bake `-` into Value in the field option parser, OR don't prepend `-` in the CLI resolver. Pick one place for negation.
+- **Scope**: Affects ALL custom option entity types with sub-field paths: file, message, field, enum, enum_value, service, method, oneof. Each has the same pattern in cli.go.
+
 ### Ideas for next time
 - `-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it
-- Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)
+- ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
 - `float` custom option with `nan` — float32 NaN bits may also differ across platforms
 - Source code info accuracy for specific constructs (extend blocks, service methods, oneof fields)
 - CRLF line endings — tested `\v` in block comments, both agree; `\r` as column-incrementing whitespace also matches C++
