@@ -1,0 +1,20 @@
+syntax = "proto2";
+
+package aggpos;
+
+import "google/protobuf/descriptor.proto";
+
+message MyOpts {
+  optional int32 count = 1;
+  optional double ratio = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyOpts my_opts = 50001;
+}
+
+option (my_opts) = { count: +42 ratio: +1.5 };
+
+message Foo {
+  optional int32 id = 1;
+}
