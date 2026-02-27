@@ -381,6 +381,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add the bool validation block to all 5 remaining resolvers. Same pattern as line 4716 in `resolveCustomMessageOptions`.
 - **Also affects**: Same bug for method-level, enum-level, enum-value-level, and oneof-level bool custom options.
 
+### Run 39 — Method-level bool option accepts `True` (case mismatch) (VICTORY)
+- **Bug**: Go's `resolveCustomMethodOptions` is missing bool validation. When a method has `option (mtd_flag) = True;` (capital T), C++ protoc rejects it with `Value must be "true" or "false"`, but Go accepts it and encodes it as a valid bool option. Ralph fixed service-level bool validation in Run 38 but only added it to `resolveCustomServiceOptions` — the other 3 resolvers (method, enum, enum_value, oneof) are still missing it.
+- **Test**: `370_method_bool_option_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Bool validation now exists in 5 of the 9 `resolveCustom*Options` functions: `resolveCustomFileOptions` (line 4153), `resolveCustomFieldOptions` (line 4464), `resolveCustomMessageOptions` (line 4718), `resolveCustomServiceOptions` (line 4924), and `resolveCustomExtRangeOptions` (line 5823). The other 4 resolvers — `resolveCustomMethodOptions`, `resolveCustomEnumOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions` — are ALL missing the `TYPE_BOOL` check.
+- **C++ protoc**: `test.proto:16:25: Value must be "true" or "false" for boolean option "mtdboolcase.mtd_flag".`
+- **Go protoc-go**: Silently accepts `True`, encodes it as a bool value via `encodeCustomOptionValue` which accepts `True`/`False`/`t`/`f`.
+- **Fix hint**: Add the bool validation block to all 4 remaining resolvers. Same pattern as line 4924 in `resolveCustomServiceOptions`.
+- **Also affects**: Same bug for enum-level, enum-value-level, and oneof-level bool custom options.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
