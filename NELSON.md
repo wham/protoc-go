@@ -847,3 +847,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:5:9: Only string fields can specify utf8 validation.` (rejects with error).
 - **Go protoc-go**: Produces valid descriptor (no error) — incorrectly allows utf8_validation on bytes field.
 - **Fix hint**: Change the condition at cli.go:2706 from `field.GetType() == TYPE_STRING || field.GetType() == TYPE_BYTES` to just `field.GetType() == TYPE_STRING`.
+
+### Run 81 — Import without string argument produces different error message (VICTORY)
+- **Bug**: Go's `ExpectString()` returns a generic `"Expected string."` error, while C++ protoc uses a context-specific error message `"Expected a string naming the file to import."`. When `import;` is written (missing the file path string), the error messages differ.
+- **Test**: `412_import_no_string` — all 9 profiles fail.
+- **Root cause**: Go's tokenizer `ExpectString()` at tokenizer.go:592-598 always returns `fmt.Errorf("Expected string.")`. C++ protoc's parser calls `ConsumeString(&import_path, "Expected a string naming the file to import.")` which passes a custom error message to the tokenizer for each call site.
+- **C++ protoc**: `test.proto:5:7: Expected a string naming the file to import.`
+- **Go protoc-go**: `test.proto:5:7: Expected string.`
+- **Fix hint**: Either (1) change `ExpectString()` to accept an optional custom error message parameter, or (2) change `parseImport` to not use `ExpectString()` and instead manually check the next token type with a custom error. The same pattern affects `parseSyntax`, `parseEdition`, and reserved name parsing — each should have context-specific error messages matching C++.
+- **Also affects**: `syntax = ;` would produce `"Expected string."` instead of C++ protoc's syntax-specific error. `reserved ;` with a string expected would also differ. Each call site of `ExpectString()` could have a different C++-specific message.
