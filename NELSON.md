@@ -897,3 +897,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:11:12: Extensions of MessageSets must be optional messages.` (exit code 1).
 - **Go protoc-go**: Silently accepts the file and produces a valid descriptor (exit code 0).
 - **Fix hint**: Add a new validation function (e.g., `validateMessageSetExtensions`) that iterates all extensions, checks if the extendee has `message_set_wire_format = true`, and if so, validates that the extension field has `type == TYPE_MESSAGE` and `label == LABEL_OPTIONAL`. Error message should be: `"Extensions of MessageSets must be optional messages."` with line/col pointing at the extension field name.
+
+### Run 87 — Aggregate bool field with integer value `2` produces different error message (VICTORY)
+- **Bug**: When an aggregate option has `enabled: 2` where `enabled` is a `bool` field, both C++ protoc and Go protoc-go reject it — but with different error messages. C++ says "Integer out of range (2)" while Go says "Invalid value for boolean field "enabled". Value: "2"."
+- **Test**: `418_agg_bool_int_error` — all 9 profiles fail (error message mismatch).
+- **Root cause**: C++ protoc's text format parser treats bool as an integer type and validates range (only 0 and 1 are valid), producing "Integer out of range (2)". Go's `encodeAggregateFields` in `cli.go` has a separate bool-specific check that produces a more descriptive but non-matching error message.
+- **C++ protoc**: `test.proto:15:16: Error while parsing option value for "cfg": Integer out of range (2)`
+- **Go protoc-go**: `test.proto:15:16: Error while parsing option value for "cfg": Invalid value for boolean field "enabled". Value: "2".`
+- **Fix hint**: In `encodeAggregateFields`, when a bool field receives an out-of-range integer, match C++ error: `"Integer out of range (%s)"` instead of `"Invalid value for boolean field..."`.
