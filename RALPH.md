@@ -132,6 +132,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 52. [DONE] Fix `381_extrange_dup_option` — C++ protoc rejects duplicate non-repeated extension range options with `Option "(range_tag)" was already set.` but Go protoc-go silently accepted them. Added per-range duplicate tracking using `extRangeOptKey{rng, name}` map in `resolveCustomExtRangeOptions`. Since one CustomExtRangeOption can apply to multiple ranges, checks all ranges for duplicates. All 3495/3495 tests pass.
 
+53. [DONE] Fix `382_inf_default_case` — C++ protoc only accepts lowercase `inf` and `nan` as float/double field default identifiers. The validation in `parseFieldOptions` was using `strings.ToLower()`, allowing `Inf`, `NaN`, etc. Removed case-insensitive comparison so only exact lowercase `inf`/`nan` are accepted. All 3504/3504 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
@@ -167,4 +169,4 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 - `compiler/cli/cli.go`: `encodeCustomOptionValue` now validates int32/sint32 range (MinInt32..MaxInt32) and uint32 range (0..MaxUint32) for aggregate option values. Returns `aggregateIntRangeError` with `Integer out of range (<value>)` message, which `formatAggregateError` formats as `Error while parsing option value for "<name>": Integer out of range (<value>)`.
 - `compiler/cli/cli.go`: `resolveCustomMethodOptions` now validates bool options (must be identifier, must be exactly `true` or `false`) and float/double identifier values (must be lowercase `inf` or `nan`), matching C++ protoc behavior. This completes bool/float validation across all 9 option resolver functions.
 - `compiler/cli/cli.go`: `resolveCustomEnumOptions` now validates bool options (must be identifier, must be exactly `true` or `false`) and float/double identifier values (must be lowercase `inf` or `nan`), matching C++ protoc behavior. This completes bool/float validation across all 9 option resolver functions (file, field, message, enum, enum value, service, method, oneof, ext range).
-- `compiler/parser/parser.go`: `simpleFtoa` now detects subnormal float32 values (exponent bits == 0, value != 0) and immediately uses 9-digit precision instead of trying 6-digit first. This matches C++ `SimpleFtoa` behavior where C's `strtof` fails to round-trip 6-digit subnormal representations, triggering the 9-digit fallback.
+- `compiler/parser/parser.go`: Float/double default identifier validation now checks for exact lowercase `inf` and `nan` only (no `strings.ToLower`). C++ protoc rejects `Inf`, `NaN`, `INF`, etc. with `Expected number.` error. Previously item 27 (`356_infinity_default`) already rejected non-inf/nan identifiers like `infinity`, but case-insensitively accepted `Inf`, `NaN` etc.
