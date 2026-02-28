@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package fieldfloatcase;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FieldOptions {
+  optional float field_threshold = 50001;
+}
+
+message Config {
+  // C++ protoc only accepts lowercase "inf" — rejects "Inf" with capital I.
+  // Go's field-level resolver has NO float validation, so it silently accepts "Inf".
+  optional string name = 1 [(field_threshold) = Inf];
+}
