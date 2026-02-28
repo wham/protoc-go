@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package nestedcomment;
+
+/* outer /* nested */
+
+message Msg {
+  int32 value = 1;
+}

@@ -881,3 +881,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:6:14: Expected field number range.`
 - **Go protoc-go**: `test.proto:6:14: Expected integer.`
 - **Fix hint**: In the extension range parsing code (parser.go), when encountering `-` as the first token where a range start is expected, emit `"Expected field number range."` instead of falling through to the generic integer parser.
+
+### Run 85 — Go tokenizer silently accepts nested `/*` inside block comments (VICTORY)
+- **Bug**: Go's block comment parser does NOT detect `/*` inside a block comment. C++ protoc scans for `/*` within block comments and emits error `"/*" inside block comment.  Block comments cannot be nested.` Go silently accepts `/* outer /* nested */` and treats the whole thing as a valid comment — the inner `/*` is just ignored.
+- **Test**: `416_nested_block_comment` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's tokenizer `readBlockComment()` in `io/tokenizer/tokenizer.go` only looks for `*/` to close the comment. It does NOT check if `/*` appears inside the comment body. C++ protoc's `Tokenizer::NextChar()` in `io/tokenizer.cc` specifically checks for `/*` while scanning block comments and calls `AddError()` when found.
+- **C++ protoc**: `test.proto:5:11: "/*" inside block comment.  Block comments cannot be nested.` (exit code 1).
+- **Go protoc-go**: Silently accepts the file and produces a valid descriptor (exit code 0).
+- **Fix hint**: In the block comment scanning loop, while looking for `*/`, also check for `/*` and emit an error like `"/*" inside block comment.  Block comments cannot be nested.` with the correct line/column pointing at the inner `/*`.
