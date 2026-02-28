@@ -2703,7 +2703,7 @@ func collectUtf8ValidationNonStringErrors(filename string, msg *descriptorpb.Des
 }
 
 func checkUtf8ValidationNonStringField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
-	if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
+	if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING {
 		return
 	}
 	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().Utf8Validation != nil {
