@@ -541,6 +541,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add `if strings.HasPrefix(floatCheckVal, "-") { floatCheckVal = floatCheckVal[1:] }` after the `floatCheckVal := opt.Value` at line 5872, matching the pattern in other resolvers.
 - **Also affects**: Same `-` stripping missing in ext-range-level (line 6368) resolver. That would reject `-inf`/`-nan` for float/double options on extension ranges too.
 
+### Run 73 — Edition `features.message_encoding` accepted on non-message field (VICTORY)
+- **Bug**: Go does NOT validate that `features.message_encoding` can only be set on message-typed fields. When a scalar field (e.g., `int32`) uses `int32 value = 1 [features.message_encoding = DELIMITED];` in an edition 2023 proto file, C++ protoc rejects it with `Only message fields can specify message encoding.`, but Go accepts it silently and produces a valid descriptor.
+- **Test**: `403_edition_msg_encoding_scalar` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go has `checkRepeatedFieldEncodingField` for `repeated_field_encoding` and `checkFieldPresenceRepeatedField` for `field_presence` on repeated fields, but has NO equivalent validation for `message_encoding`. The `featureTargets` map at cli.go:2038 allows `message_encoding` on fields, and no additional validation checks `field.GetType() == TYPE_MESSAGE || field.GetType() == TYPE_GROUP` to reject it on scalar fields.
+- **C++ protoc**: `test.proto:6:9: Only message fields can specify message encoding.`
+- **Go protoc-go**: Silently accepts, encodes FeatureSet with DELIMITED message_encoding, produces valid descriptor.
+- **Fix hint**: Add a `checkMessageEncodingField` function similar to `checkRepeatedFieldEncodingField` that rejects `message_encoding` on non-message fields: if `field.GetType() != TYPE_MESSAGE && field.GetType() != TYPE_GROUP && field.GetOptions().GetFeatures().GetMessageEncoding() != descriptorpb.FeatureSet_LENGTH_PREFIXED`, emit error. Also add a `collectMessageEncodingErrors` function that walks all messages/nested types, and call it from the validation pass.
+- **Also affects**: Same validation is missing for `features.utf8_validation` on non-string fields (C++ likely validates this too). Also, `features.message_encoding = DELIMITED` on a map field should probably also be rejected.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
