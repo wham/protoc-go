@@ -208,6 +208,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 90. [DONE] Fix `420_retention_source` — C++ protoc strips custom extension options with `retention = RETENTION_SOURCE` from `proto_file` and `descriptor_set_out` but preserves them in `source_file_descriptors`. Added `collectSourceRetentionFields` to gather extension field numbers with `RETENTION_SOURCE` from all files, grouped by extendee type. Extended `stripSourceRetention` to strip those unknown fields from all option types (FileOptions, FieldOptions, MessageOptions, EnumOptions, EnumValueOptions, ServiceOptions, MethodOptions, OneofOptions) and remove corresponding SCI locations. Nils out empty options after stripping. All 3846/3846 tests pass.
 
+91. [DONE] Fix `stdin@decode_raw_single_quote` — C++ protoc's `CEscape` escapes single quotes as `\'` in `--decode_raw` string output, but Go's `cEscapeForDecode` didn't escape them. Added `'\''` → `\'` case. All 3847/3847 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
