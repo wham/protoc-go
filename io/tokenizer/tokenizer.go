@@ -88,6 +88,9 @@ func (t *Tokenizer) tokenize() {
 		} else if isIdentStart(ch) {
 			t.readIdent()
 		} else {
+			if ch&0x80 != 0 {
+				t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: fmt.Sprintf("Interpreting non ascii codepoint %d.", ch)})
+			}
 			t.tokens = append(t.tokens, Token{Type: TokenSymbol, Value: string(ch), Line: t.line, Column: t.col})
 			t.advance()
 		}
