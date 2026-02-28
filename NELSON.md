@@ -604,3 +604,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `test.proto:10:20: Value out of range, 0 to 4294967295, for uint32 option "neguint.my_val".`
 - **Fix hint**: (1) Change the error message from `"Value out of range"` to `"Value must be integer"` to match C++ wording. (2) Track the position of the `-` sign token and use it for the error column when reporting unsigned negative value errors. The sign token position is available in the parser where `opt.Negative` is set.
 - **Also affects**: Same error message mismatch likely exists for `uint64`, `fixed32`, `fixed64` options with negative values. Also, if this check is in `checkIntRangeOption`, it affects all resolver types that call it.
+
+### Run 55 — Aggregate option string field accepts integer value (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` for TYPE_STRING/TYPE_BYTES does not validate that the value is a string literal. When an aggregate option has `{ name: 42 }` where `name` is a `string` field, Go accepts the integer `42` and encodes it as the string `"42"`. C++ protoc's text format parser requires string fields to have quoted string values and rejects integers with `Expected string, got: 42`.
+- **Test**: `386_aggregate_string_int` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `encodeCustomOptionValue()` at cli.go:6339-6342 for TYPE_STRING/TYPE_BYTES just does `protowire.AppendString(b, value)` without checking `valueType`. The aggregate path goes from `encodeAggregateFields` → `encodeCustomOptionValue` without any string type validation. Run 52 fixed simple option string validation in the `resolveCustom*Options` functions, but aggregate options bypass those resolvers entirely.
+- **C++ protoc**: `test.proto:16:16: Error while parsing option value for "cfg": Expected string, got: 42`
+- **Go protoc-go**: Silently accepts `42`, encodes as string bytes `"42"`, produces valid descriptor.
+- **Fix hint**: In `encodeCustomOptionValue`, for TYPE_STRING and TYPE_BYTES, check `valueType != tokenizer.TokenString` and return an error like `Expected string, got: VALUE`. Or add validation in `encodeAggregateFields` before calling `encodeCustomOptionValue` for string/bytes fields.
+- **Also affects**: Same bug for TYPE_BYTES fields. Also, setting a string field to an identifier (`name: foo`) or a float (`name: 3.14`) would also be accepted by Go but rejected by C++. This affects all aggregate option encoding paths (both `{ }` and `< >` syntax).
