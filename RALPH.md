@@ -204,6 +204,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 88. [DONE] Fix `417_msgset_scalar_ext` — C++ protoc rejects extensions of messages with `message_set_wire_format = true` that are not optional messages with `Extensions of MessageSets must be optional messages.` Go protoc-go silently accepted scalar extensions. Added `validateMessageSetExtensions` that builds a set of MessageSet message FQNs, then checks all extensions (file-level and message-level) to ensure they are TYPE_MESSAGE + LABEL_OPTIONAL. Error location uses SCI path field 5 (type), matching C++ protoc's column position. All 3819/3819 tests pass.
 
+89. [DONE] Fix `418_agg_bool_int_error` — C++ protoc rejects out-of-range integers (e.g., `2`) on bool fields in aggregate options with `Integer out of range (2)`, but Go used `Invalid value for boolean field "enabled". Value: "2".` Modified `encodeCustomOptionValue` TYPE_BOOL case to check if the value is a parseable integer before falling through to the `aggregateBoolError`. Out-of-range integers now return `aggregateIntRangeError`. All 3828/3828 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.

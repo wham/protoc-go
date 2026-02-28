@@ -649,6 +649,9 @@ func Run(args []string) error {
 		return nil
 	}
 
+	// Collect source-retention extension field numbers (grouped by extendee type)
+	srcRetentionFields := collectSourceRetentionFields(orderedFiles, parsed)
+
 	// Build ordered list of FileDescriptorProtos (strip source-retention options only for source files)
 	relFileSet := make(map[string]bool)
 	for _, name := range relFiles {
@@ -659,7 +662,7 @@ func Run(args []string) error {
 	for _, name := range orderedFiles {
 		fd := parsed[name]
 		if relFileSet[name] {
-			fd = stripSourceRetention(fd)
+			fd = stripSourceRetention(fd, srcRetentionFields)
 		}
 		// If the file has sub-field custom options, clone and merge unknown fields
 		// so proto_file has merged entries (matching C++ protoc's linked descriptors)
@@ -685,7 +688,7 @@ func Run(args []string) error {
 			for _, name := range orderedFiles {
 				fd := strippedMap[name]
 				if !relFileSet[name] {
-					fd = stripSourceRetention(parsed[name])
+					fd = stripSourceRetention(parsed[name], srcRetentionFields)
 				}
 				fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
 				if !cfg.includeSourceInfo {
@@ -4067,20 +4070,69 @@ func mergeUnknownExtensions(m protoreflect.Message, mergeableFields map[int32]bo
 	m.SetUnknown(result)
 }
 
+// sourceRetentionFields maps extendee type name (e.g., ".google.protobuf.FieldOptions")
+// to the set of extension field numbers that have retention = RETENTION_SOURCE.
+type sourceRetentionFields map[string]map[int32]bool
+
+// collectSourceRetentionFields builds a map of extension field numbers with RETENTION_SOURCE,
+// grouped by the option type they extend.
+func collectSourceRetentionFields(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) sourceRetentionFields {
+	result := make(sourceRetentionFields)
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, ext := range fd.GetExtension() {
+			if ext.GetOptions().GetRetention() == descriptorpb.FieldOptions_RETENTION_SOURCE {
+				extendee := ext.GetExtendee()
+				if result[extendee] == nil {
+					result[extendee] = make(map[int32]bool)
+				}
+				result[extendee][ext.GetNumber()] = true
+			}
+		}
+		for _, msg := range fd.GetMessageType() {
+			collectSourceRetentionFieldsInMsg(msg, result)
+		}
+	}
+	return result
+}
+
+func collectSourceRetentionFieldsInMsg(msg *descriptorpb.DescriptorProto, result sourceRetentionFields) {
+	for _, ext := range msg.GetExtension() {
+		if ext.GetOptions().GetRetention() == descriptorpb.FieldOptions_RETENTION_SOURCE {
+			extendee := ext.GetExtendee()
+			if result[extendee] == nil {
+				result[extendee] = make(map[int32]bool)
+			}
+			result[extendee][ext.GetNumber()] = true
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectSourceRetentionFieldsInMsg(nested, result)
+	}
+}
+
 // stripSourceRetention returns a copy of fd with source-retention-only options removed.
 // If the descriptor has no such options, returns the original to avoid cloning.
-func stripSourceRetention(fd *descriptorpb.FileDescriptorProto) *descriptorpb.FileDescriptorProto {
-	if !hasExtRangeOpts(fd.GetMessageType()) {
+func stripSourceRetention(fd *descriptorpb.FileDescriptorProto, srcRetFields sourceRetentionFields) *descriptorpb.FileDescriptorProto {
+	needsClone := hasExtRangeOpts(fd.GetMessageType())
+	if !needsClone && len(srcRetFields) > 0 {
+		needsClone = fdHasSourceRetentionOpts(fd, srcRetFields)
+	}
+	if !needsClone {
 		return fd
 	}
 	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
 	// Collect paths of ext ranges whose options become nil after stripping verification.
 	var emptyOptsPaths [][]int32
 	clearExtRangeOptsCollect(fdCopy.GetMessageType(), []int32{4}, &emptyOptsPaths)
+	// Strip source-retention custom option unknown fields
+	var strippedOptsPaths [][]int32
+	stripSourceRetentionOpts(fdCopy, srcRetFields, &strippedOptsPaths)
 	if fdCopy.SourceCodeInfo != nil {
 		var filtered []*descriptorpb.SourceCodeInfo_Location
 		for _, loc := range fdCopy.SourceCodeInfo.Location {
-			if !isStrippedExtRangeOptsPath(loc.Path, emptyOptsPaths) {
+			if !isStrippedExtRangeOptsPath(loc.Path, emptyOptsPaths) &&
+				!isStrippedSourceRetentionPath(loc.Path, strippedOptsPaths) {
 				filtered = append(filtered, loc)
 			}
 		}
@@ -4165,6 +4217,262 @@ func isVerificationPath(path []int32) bool {
 			i += 2 // nested_type
 		} else {
 			return false
+		}
+	}
+	return false
+}
+
+// fdHasSourceRetentionOpts checks if any options in fd have unknown fields
+// that correspond to source-retention extensions.
+func fdHasSourceRetentionOpts(fd *descriptorpb.FileDescriptorProto, srcRetFields sourceRetentionFields) bool {
+	if hasSourceRetUnknowns(fd.GetOptions(), srcRetFields[".google.protobuf.FileOptions"]) {
+		return true
+	}
+	for _, msg := range fd.GetMessageType() {
+		if msgHasSourceRetentionOpts(msg, srcRetFields) {
+			return true
+		}
+	}
+	for _, svc := range fd.GetService() {
+		if hasSourceRetUnknowns(svc.GetOptions(), srcRetFields[".google.protobuf.ServiceOptions"]) {
+			return true
+		}
+		for _, mtd := range svc.GetMethod() {
+			if hasSourceRetUnknowns(mtd.GetOptions(), srcRetFields[".google.protobuf.MethodOptions"]) {
+				return true
+			}
+		}
+	}
+	for _, ext := range fd.GetExtension() {
+		if hasSourceRetUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"]) {
+			return true
+		}
+	}
+	for _, en := range fd.GetEnumType() {
+		if enumHasSourceRetentionOpts(en, srcRetFields) {
+			return true
+		}
+	}
+	return false
+}
+
+func msgHasSourceRetentionOpts(msg *descriptorpb.DescriptorProto, srcRetFields sourceRetentionFields) bool {
+	if hasSourceRetUnknowns(msg.GetOptions(), srcRetFields[".google.protobuf.MessageOptions"]) {
+		return true
+	}
+	for _, f := range msg.GetField() {
+		if hasSourceRetUnknowns(f.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"]) {
+			return true
+		}
+	}
+	for _, oo := range msg.GetOneofDecl() {
+		if hasSourceRetUnknowns(oo.GetOptions(), srcRetFields[".google.protobuf.OneofOptions"]) {
+			return true
+		}
+	}
+	for _, ext := range msg.GetExtension() {
+		if hasSourceRetUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"]) {
+			return true
+		}
+	}
+	for _, en := range msg.GetEnumType() {
+		if enumHasSourceRetentionOpts(en, srcRetFields) {
+			return true
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		if msgHasSourceRetentionOpts(nested, srcRetFields) {
+			return true
+		}
+	}
+	return false
+}
+
+func enumHasSourceRetentionOpts(en *descriptorpb.EnumDescriptorProto, srcRetFields sourceRetentionFields) bool {
+	if hasSourceRetUnknowns(en.GetOptions(), srcRetFields[".google.protobuf.EnumOptions"]) {
+		return true
+	}
+	for _, ev := range en.GetValue() {
+		if hasSourceRetUnknowns(ev.GetOptions(), srcRetFields[".google.protobuf.EnumValueOptions"]) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSourceRetUnknowns(opts proto.Message, retFieldNums map[int32]bool) bool {
+	if opts == nil || len(retFieldNums) == 0 {
+		return false
+	}
+	unknowns := opts.ProtoReflect().GetUnknown()
+	buf := unknowns
+	for len(buf) > 0 {
+		num, _, n := protowire.ConsumeField(buf)
+		if n < 0 {
+			break
+		}
+		if retFieldNums[int32(num)] {
+			return true
+		}
+		buf = buf[n:]
+	}
+	return false
+}
+
+// stripSourceRetentionOpts strips unknown fields for source-retention extensions
+// from all options in the FileDescriptorProto and collects paths of stripped options.
+func stripSourceRetentionOpts(fd *descriptorpb.FileDescriptorProto, srcRetFields sourceRetentionFields, strippedPaths *[][]int32) {
+	if len(srcRetFields) == 0 {
+		return
+	}
+
+	// File options (path: [8])
+	if stripOptsUnknowns(fd.GetOptions(), srcRetFields[".google.protobuf.FileOptions"], []int32{8}, strippedPaths) {
+		fd.Options = nil
+	}
+
+	// Messages (path: [4, i])
+	for mi, msg := range fd.GetMessageType() {
+		stripMsgSourceRetention(msg, srcRetFields, []int32{4, int32(mi)}, strippedPaths)
+	}
+
+	// Enums (path: [5, i])
+	for ei, en := range fd.GetEnumType() {
+		stripEnumSourceRetention(en, srcRetFields, []int32{5, int32(ei)}, strippedPaths)
+	}
+
+	// Services (path: [6, i])
+	for si, svc := range fd.GetService() {
+		svcPath := []int32{6, int32(si)}
+		// Service options (path: [6, i, 3])
+		if stripOptsUnknowns(svc.GetOptions(), srcRetFields[".google.protobuf.ServiceOptions"], append(append([]int32{}, svcPath...), 3), strippedPaths) {
+			svc.Options = nil
+		}
+		// Methods (path: [6, i, 2, j])
+		for mi, mtd := range svc.GetMethod() {
+			if stripOptsUnknowns(mtd.GetOptions(), srcRetFields[".google.protobuf.MethodOptions"], append(append([]int32{}, svcPath...), 2, int32(mi), 3), strippedPaths) {
+				mtd.Options = nil
+			}
+		}
+	}
+
+	// Top-level extensions (path: [7, i])
+	for ei, ext := range fd.GetExtension() {
+		if stripOptsUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"], []int32{7, int32(ei), 8}, strippedPaths) {
+			ext.Options = nil
+		}
+	}
+}
+
+func stripMsgSourceRetention(msg *descriptorpb.DescriptorProto, srcRetFields sourceRetentionFields, msgPath []int32, strippedPaths *[][]int32) {
+	// Message options (path: [..., 7])
+	if stripOptsUnknowns(msg.GetOptions(), srcRetFields[".google.protobuf.MessageOptions"], append(append([]int32{}, msgPath...), 7), strippedPaths) {
+		msg.Options = nil
+	}
+
+	// Fields (path: [..., 2, i, 8])
+	for fi, f := range msg.GetField() {
+		if stripOptsUnknowns(f.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"], append(append([]int32{}, msgPath...), 2, int32(fi), 8), strippedPaths) {
+			f.Options = nil
+		}
+	}
+
+	// Oneofs (path: [..., 8, i, 2])
+	for oi, oo := range msg.GetOneofDecl() {
+		if stripOptsUnknowns(oo.GetOptions(), srcRetFields[".google.protobuf.OneofOptions"], append(append([]int32{}, msgPath...), 8, int32(oi), 2), strippedPaths) {
+			oo.Options = nil
+		}
+	}
+
+	// Extensions (path: [..., 6, i, 8])
+	for ei, ext := range msg.GetExtension() {
+		if stripOptsUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"], append(append([]int32{}, msgPath...), 6, int32(ei), 8), strippedPaths) {
+			ext.Options = nil
+		}
+	}
+
+	// Nested enums (path: [..., 4, i])
+	for ei, en := range msg.GetEnumType() {
+		stripEnumSourceRetention(en, srcRetFields, append(append([]int32{}, msgPath...), 4, int32(ei)), strippedPaths)
+	}
+
+	// Nested messages (path: [..., 3, i])
+	for ni, nested := range msg.GetNestedType() {
+		stripMsgSourceRetention(nested, srcRetFields, append(append([]int32{}, msgPath...), 3, int32(ni)), strippedPaths)
+	}
+}
+
+func stripEnumSourceRetention(en *descriptorpb.EnumDescriptorProto, srcRetFields sourceRetentionFields, enumPath []int32, strippedPaths *[][]int32) {
+	// Enum options (path: [..., 3])
+	if stripOptsUnknowns(en.GetOptions(), srcRetFields[".google.protobuf.EnumOptions"], append(append([]int32{}, enumPath...), 3), strippedPaths) {
+		en.Options = nil
+	}
+
+	// Enum values (path: [..., 2, i, 3])
+	for vi, ev := range en.GetValue() {
+		if stripOptsUnknowns(ev.GetOptions(), srcRetFields[".google.protobuf.EnumValueOptions"], append(append([]int32{}, enumPath...), 2, int32(vi), 3), strippedPaths) {
+			ev.Options = nil
+		}
+	}
+}
+
+// stripOptsUnknowns removes unknown fields with source-retention field numbers
+// from the given options message. Returns true if options should be nilled out
+// (all fields removed). Collects stripped paths for SCI filtering.
+func stripOptsUnknowns(opts proto.Message, retFieldNums map[int32]bool, optsPath []int32, strippedPaths *[][]int32) bool {
+	if opts == nil || len(retFieldNums) == 0 {
+		return false
+	}
+	ref := opts.ProtoReflect()
+	unknowns := ref.GetUnknown()
+	if len(unknowns) == 0 {
+		return false
+	}
+
+	var kept []byte
+	stripped := false
+	var strippedNums []int32
+	buf := unknowns
+	for len(buf) > 0 {
+		num, _, n := protowire.ConsumeField(buf)
+		if n < 0 {
+			break
+		}
+		if retFieldNums[int32(num)] {
+			stripped = true
+			strippedNums = append(strippedNums, int32(num))
+		} else {
+			kept = append(kept, buf[:n]...)
+		}
+		buf = buf[n:]
+	}
+
+	if !stripped {
+		return false
+	}
+
+	ref.SetUnknown(kept)
+
+	// Collect stripped SCI paths: the specific field number paths
+	for _, fn := range strippedNums {
+		p := append(append([]int32{}, optsPath...), fn)
+		*strippedPaths = append(*strippedPaths, p)
+	}
+
+	// If options is now empty (no known fields set, no unknown fields), nil it out
+	if len(kept) == 0 && proto.Size(opts) == 0 {
+		*strippedPaths = append(*strippedPaths, append([]int32{}, optsPath...))
+		return true
+	}
+	return false
+}
+
+// isStrippedSourceRetentionPath checks if a SCI path should be stripped because
+// it belongs to a source-retention option that was removed.
+func isStrippedSourceRetentionPath(path []int32, strippedPaths [][]int32) bool {
+	for _, sp := range strippedPaths {
+		if len(path) >= len(sp) && pathPrefix(path, sp) {
+			return true
 		}
 	}
 	return false
