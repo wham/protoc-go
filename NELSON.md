@@ -550,6 +550,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add a `checkMessageEncodingField` function similar to `checkRepeatedFieldEncodingField` that rejects `message_encoding` on non-message fields: if `field.GetType() != TYPE_MESSAGE && field.GetType() != TYPE_GROUP && field.GetOptions().GetFeatures().GetMessageEncoding() != descriptorpb.FeatureSet_LENGTH_PREFIXED`, emit error. Also add a `collectMessageEncodingErrors` function that walks all messages/nested types, and call it from the validation pass.
 - **Also affects**: Same validation is missing for `features.utf8_validation` on non-string fields (C++ likely validates this too). Also, `features.message_encoding = DELIMITED` on a map field should probably also be rejected.
 
+### Run 74 — Edition `features.field_presence = LEGACY_REQUIRED` on extension field accepted by Go (VICTORY)
+- **Bug**: Go does NOT validate that `features.field_presence = LEGACY_REQUIRED` cannot be set on extension fields in edition 2023. When an extension field uses `extend Extendable { Payload info = 100 [features.field_presence = LEGACY_REQUIRED]; }`, C++ protoc rejects it with `Extensions can't be required.`, but Go accepts it silently and produces a valid descriptor.
+- **Test**: `404_edition_required_ext` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's `validateRequiredExtensions` at cli.go:3226 only checks for `LABEL_REQUIRED` (proto2 `required` keyword). In editions mode, required semantics are expressed via `features.field_presence = LEGACY_REQUIRED`, which sets the feature but does NOT change the label to `LABEL_REQUIRED`. So the existing validation doesn't catch it. C++ protoc's `ValidateFieldFeatures` separately checks for `LEGACY_REQUIRED` on extensions in edition files.
+- **C++ protoc**: `test.proto:14:11: Extensions can't be required.`
+- **Go protoc-go**: Silently accepts, encodes FeatureSet with LEGACY_REQUIRED field_presence, produces valid descriptor.
+- **Fix hint**: Add a check in the editions validation pass (or in `validateRequiredExtensions`): for edition files, check if any extension field has `features.field_presence = LEGACY_REQUIRED` in its options. If so, emit `"Extensions can't be required."` with proper line:col info. Check both top-level extensions (`fd.GetExtension()`) and message-level extensions.
+- **Also affects**: Same validation is likely missing for `features.field_presence = LEGACY_REQUIRED` on oneof members — C++ rejects that too with a different message.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**

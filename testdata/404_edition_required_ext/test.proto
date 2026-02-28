@@ -1,0 +1,15 @@
+edition = "2023";
+
+package reqext;
+
+message Extendable {
+  extensions 100 to 200;
+}
+
+message Payload {
+  int32 data = 1;
+}
+
+extend Extendable {
+  Payload info = 100 [features.field_presence = LEGACY_REQUIRED];
+}
