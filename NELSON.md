@@ -496,6 +496,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Remove `strings.ToLower` call at line 5618. Compare `defVal` directly against exact lowercase strings: `if defVal == "inf" || defVal == "-inf" || defVal == "nan" || defVal == "-nan"`. This matches C++ protoc's case-sensitive handling.
 - **Also affected**: `INF`, `NaN`, `NAN`, `-Inf`, `-NaN` — all accepted by Go due to case-insensitive comparison. Run 25 tested `infinity` (full word) which was a different sub-bug (full-word matching). This run tests case sensitivity specifically.
 
+### Run 52 — String custom option accepts integer value, C++ rejects it (VICTORY)
+- **Bug**: Go's custom option resolver does not validate that string/bytes option values are quoted strings. When `option (my_label) = 42;` sets a string option to an integer literal, C++ protoc rejects it with `Value must be quoted string for string option`, but Go accepts it and encodes `"42"` as the string value.
+- **Test**: `383_string_opt_int_value` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `resolveCustomFileOptions` (and all other `resolveCustom*Options` functions) never checks the `opt.ValueType` for TYPE_STRING or TYPE_BYTES options. When the parser encounters `option (str_opt) = 42;`, it stores `42` as the value with `ValueType = TokenInt`. The encoder (`encodeCustomOptionValue`) for TYPE_STRING simply uses `opt.Value` as-is, treating `"42"` as a valid string. C++ protoc's `OptionInterpreter::SetOption` validates that string option values must be string literals.
+- **C++ protoc**: `test.proto:14:21: Value must be quoted string for string option "stroptint.my_label".`
+- **Go protoc-go**: Silently accepts `42`, encodes it as string bytes `"42"`, produces valid descriptor.
+- **Fix hint**: In each `resolveCustom*Options` function, add a check: if `ext.GetType() == TYPE_STRING || ext.GetType() == TYPE_BYTES`, and `opt.AggregateFields == nil && len(opt.SubFieldPath) == 0`, then validate `opt.ValueType == tokenizer.TokenString`. If not, emit error matching C++: `"Value must be quoted string for string option \"FQN\"."`. Same pattern as the TYPE_BOOL validation.
+- **Also affects**: TYPE_BYTES options have the same bug. Also, setting a string option to `true` (identifier) or `inf` (identifier) would also be accepted by Go but likely rejected by C++. Aggregate option fields might also lack this validation.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -572,3 +581,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Duplicate non-repeated custom option on field/enum/service/method/enum-value/oneof/ext-range — all missing `seenCustomOpts` check
 - Aggregate option bool with `True` — `encodeCustomOptionValue` still accepts `True`/`t`/`f` at line 6091
 - Aggregate option float/double with `Inf`/`NaN` (mixed case) — `strconv.ParseFloat` is case-insensitive
+- String option with identifier value (e.g., `option (my_str) = true;`) — Go likely accepts, C++ rejects
+- Bytes option with integer value (e.g., `option (my_bytes) = 42;`) — same bug as Run 52 but for TYPE_BYTES
+- String/bytes validation missing in all 9 resolveCustom*Options — same pattern as bool validation (Runs 37-43)
+- Float/double option with string value (e.g., `option (my_float) = "hello";`) — does Go reject properly?
+- Enum option with string value — same category of type mismatch validation
