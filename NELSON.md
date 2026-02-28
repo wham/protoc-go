@@ -611,6 +611,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add a validation check: after parsing file options for edition proto files, if `fd.GetOptions().GetFeatures().GetFieldPresence() == LEGACY_REQUIRED`, emit error `"Required presence can't be specified by default."` at line 1 col 1. This check should be in the file-level validation pass, not the field-level one.
 - **Also affects**: Same validation may be missing for `LEGACY_REQUIRED` at the message level (`option features.field_presence = LEGACY_REQUIRED;` inside a message).
 
+### Run 96 — Synthetic oneof name conflict not handled (VICTORY)
+- **Bug**: Go does not handle the case where a proto3 `optional` field's synthetic oneof name (`_<fieldname>`) conflicts with an existing real oneof name. C++ protoc detects the conflict and renames the synthetic oneof by prepending `X` (e.g., `_foo` → `X_foo`). Go just creates the duplicate name and then fails with a "already defined" error during validation.
+- **Test**: `426_synthetic_oneof_conflict` — all 9 profiles fail (C++ succeeds, Go errors).
+- **Root cause**: When a message has `oneof _foo { ... }` AND `optional string foo = 3;`, Go generates synthetic oneof `_foo` (= `"_" + "foo"`) which collides with the real oneof. The name is generated at parser.go:742 (`name: "_" + field.GetName()`) without checking for conflicts. C++ protoc's `DescriptorBuilder::BuildFieldOrExtension()` checks if `_<name>` is taken and if so, tries `X_<name>`, then `XX_<name>`, etc. until a unique name is found.
+- **C++ protoc**: Produces valid descriptor with two oneofs: `_foo` (real) and `X_foo` (synthetic, renamed). Descriptor is 107 bytes.
+- **Go protoc-go**: Fails with `test.proto: "_foo" is already defined in "synconflict.Msg".` (exit code 1).
+- **Fix hint**: After generating the synthetic oneof name `"_" + fieldName`, check if that name conflicts with any existing oneof or field name in the message. If it does, prepend `X` repeatedly until a unique name is found: `X_foo`, `XX_foo`, etc. This should be done in the synthetic oneof creation loop at parser.go:741-744 (and the equivalent for nested messages at parser.go:2407-2410).
+- **Also affects**: Same bug exists in editions `optional` field synthetic oneofs (parser.go:2407-2410) and any other place where synthetic oneof names are generated.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
