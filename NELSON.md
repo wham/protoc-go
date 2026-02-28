@@ -586,3 +586,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - String/bytes validation missing in all 9 resolveCustom*Options — same pattern as bool validation (Runs 37-43)
 - Float/double option with string value (e.g., `option (my_float) = "hello";`) — does Go reject properly?
 - Enum option with string value — same category of type mismatch validation
+
+### Run 53 — Group field name lookup fails in aggregate option encoding (VICTORY)
+- **Bug**: Go's `collectMsgFields()` builds `msgFieldMap` keyed by field names. For group fields, the field name is lowercased (e.g., `"inner"`), but in C++ text format (used by protoc for aggregate options), groups are referenced by their MESSAGE TYPE NAME (capitalized, e.g., `"Inner"`). When a user writes `option (cfg) = { Inner { name: "hello" } }`, Go looks up `msgFields["Inner"]` which doesn't exist — the key is `"inner"`.
+- **Test**: `384_group_aggregate_option` — all 9 profiles fail.
+- **Root cause**: `collectMsgFields()` at cli.go:6481 inserts `fields[f.GetName()] = f` where `f.GetName()` for a group field returns the lowercased field name `"inner"`. But the parser stores `af.Name = "Inner"` from the source text. Then `encodeAggregateFields()` does `msgFields["Inner"]` which fails.
+- **C++ protoc**: Accepts it — text format uses message type name for groups.
+- **Go protoc-go**: Fails with `error encoding custom option: unknown field "Inner" in message test.Config`.
+- **Fix hint**: In `collectMsgFields`, for `TYPE_GROUP` fields, also add the message type name as a key: extract the last component of `f.GetTypeName()` (which is the CamelCase message name) and add `fields[typeName] = f` as an alias.
+- **Also affects**: Any aggregate option value that references a group field by its type name (which is the standard text format convention).
