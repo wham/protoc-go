@@ -7225,7 +7225,7 @@ func (e *aggregateEnumError) Error() string {
 // Returns an error string if out of range, empty string if OK.
 func checkIntRangeOption(ext *descriptorpb.FieldDescriptorProto, value string, negative bool, extFQN string) string {
 	switch ext.GetType() {
-	case descriptorpb.FieldDescriptorProto_TYPE_INT32, descriptorpb.FieldDescriptorProto_TYPE_SINT32:
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32, descriptorpb.FieldDescriptorProto_TYPE_SINT32, descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
 		s := value
 		if negative {
 			s = "-" + s
@@ -7242,7 +7242,7 @@ func checkIntRangeOption(ext *descriptorpb.FieldDescriptorProto, value string, n
 			return fmt.Sprintf("Value out of range, %d to %d, for %s option \"%s\".",
 				int64(math.MinInt32), int64(math.MaxInt32), typeName, extFQN)
 		}
-	case descriptorpb.FieldDescriptorProto_TYPE_UINT32:
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32, descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
 		s := value
 		if negative {
 			s = "-" + s
