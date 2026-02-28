@@ -577,6 +577,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add a validation check in the editions validation pass: iterate all messages, then for each message iterate its fields, check if `field.GetOneofIndex() != nil` (field is in a oneof), and if so, check if `field.GetOptions().GetFeatures().FieldPresence != nil`. If both true, emit error: `"Oneof fields can't specify field presence."` with proper line:col info from the field's SCI name path.
 - **Also affects**: Same validation is missing for `features.field_presence = EXPLICIT` and `features.field_presence = IMPLICIT` on oneof members — C++ rejects ALL field_presence overrides on oneof members, not just LEGACY_REQUIRED. Also, `features.field_presence` on map field entries might need similar validation (C++ rejects with "Repeated fields can't specify field presence" since map fields are repeated).
 
+### Run 78 — Bytes option error message says "bytes" instead of "string" (VICTORY)
+- **Bug**: Go's custom option resolver correctly distinguishes between `TYPE_STRING` and `TYPE_BYTES` in the error message when a non-string value is given, saying "bytes option". But C++ protoc uses `CPPTYPE_STRING` which covers both types and always says "string option". The error messages differ.
+- **Test**: `409_bytes_option_int_error` — all 9 profiles fail.
+- **Root cause**: In `resolveCustomFileOptions` (cli.go:4470-4476), Go checks `ext.GetType() == TYPE_BYTES` and sets `typeName = "bytes"`. In C++, both `TYPE_STRING` and `TYPE_BYTES` map to `CPPTYPE_STRING`, so the error always says `"string option"`. Same pattern exists in all 9 `resolveCustom*Options` functions.
+- **C++ protoc**: `test.proto:11:21: Value must be quoted string for string option "bytesopterr.my_bytes".`
+- **Go protoc-go**: `test.proto:11:21: Value must be quoted string for bytes option "bytesopterr.my_bytes".`
+- **Fix hint**: Change the check at line 4470-4472 (and all 8 other resolver functions) to always use `typeName := "string"` regardless of whether it's TYPE_STRING or TYPE_BYTES, matching C++ behavior.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
