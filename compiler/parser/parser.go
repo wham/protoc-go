@@ -5817,6 +5817,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				maxVal := intDefaultMaxValue(field.GetType(), negative)
 				n, err := strconv.ParseUint(valTok.Value, 0, 64)
 				if err != nil || n > maxVal {
+					if octalErr := invalidOctalError(p.filename, valTok); octalErr != "" {
+						p.errors = append(p.errors, octalErr)
+					}
 					p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Integer out of range.", p.filename, valTok.Line+1, valTok.Column+1))
 				}
 			}
