@@ -166,6 +166,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 69. [DONE] Fix `398_field_float_inf_case` — `resolveCustomFieldOptions` had a comment for float/double identifier validation but the actual check code was missing. Added the validation block that rejects non-lowercase identifiers (e.g., `Inf`, `NaN`) with `Value must be number for float option "name".` error, matching C++ protoc behavior. All 3648/3648 tests pass.
 
+70. [DONE] Fix `399_field_neg_inf_option` — `resolveCustomFieldOptions` float/double identifier validation was checking `opt.Value` directly without stripping `-` prefix. The field option parser stores `-inf` as `"-inf"` in `opt.Value`, so `"-inf" != "inf"` caused rejection. Added `strings.HasPrefix` stripping of `-` prefix before comparing, matching the pattern in message/service/method/enum/oneof resolvers (item 68). All 3657/3657 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
