@@ -196,6 +196,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 84. [DONE] Fix `413_group_proto3` — In proto3 where field labels are optional, `group` appears as the first token without a label prefix. `isGroupField()` only matched label+group, so label-less groups fell through to `parseField()` which failed with `Expected ";"`. Added `parseGroupFieldNoLabel` (reuses `parseGroupFieldInOneof`) and `parseGroupFieldNoLabelInExtend` for all 4 parsing contexts (message body, group body, top-level extend, nested extend). The existing `collectProto3GroupErrors` validation then correctly reports `Groups are not supported in proto3 syntax.` All 3783/3783 tests pass.
 
+85. [DONE] Fix `414_sfixed32_overflow` — `checkIntRangeOption` only handled TYPE_INT32/TYPE_SINT32 and TYPE_UINT32 but not TYPE_SFIXED32 and TYPE_FIXED32. C++ protoc validates sfixed32 with int32 range and fixed32 with uint32 range. Added TYPE_SFIXED32 to the int32 case and TYPE_FIXED32 to the uint32 case. C++ uses "int32" as the type name for sfixed32 in the error message. All 3792/3792 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
