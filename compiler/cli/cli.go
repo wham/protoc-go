@@ -4559,6 +4559,19 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 			}
 
 			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				floatCheckVal := opt.Value
+				if floatCheckVal != "inf" && floatCheckVal != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
 			}
