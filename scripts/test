@@ -908,12 +908,14 @@ run_decode_raw_test() {
 #   multi_type: field 1 (varint 150), field 2 (string "test"), field 3 (fixed32 0x12345678), field 5 (fixed64)
 #   empty: empty input (zero bytes)
 #   corrupt: truncated varint
+#   single_quote: field 1 (string "'") — tests cEscape of single quote char
 STDIN_TESTS=(
   "decode_raw_simple|0a0568656c6c6f102a"
   "decode_raw_nested|0a056f7574657212070a05696e6e6572"
   "decode_raw_multi_type|0896011204746573741d78563412"
   "decode_raw_empty|"
   "decode_raw_corrupt|08"
+  "decode_raw_single_quote|0a0127"
 )
 
 for stdin_spec in "${STDIN_TESTS[@]}"; do

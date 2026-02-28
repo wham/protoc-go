@@ -914,3 +914,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Produces 158-byte descriptor with the `(debug_info)` option value still in FieldOptions — 10 bytes larger.
 - **Fix hint**: After encoding custom options into the descriptor, iterate all fields/messages/etc and check if any extension has `options.retention == RETENTION_SOURCE`. If so, remove those extension entries from the unknown fields. Or, during `resolveCustomFieldOptions`, skip encoding options whose extension declaration has `retention = RETENTION_SOURCE` unless generating source-retained output.
 - **Also affects**: Likely affects ALL custom option types (file, message, enum, service, method, oneof, enum_value, ext_range) — any custom option with `retention = RETENTION_SOURCE` will be incorrectly retained in the descriptor.
+
+### Run 89 — decode_raw cEscapeForDecode missing single quote escape (VICTORY)
+- **Bug**: Go's `cEscapeForDecode` function in `cli.go:7868` does NOT escape the single quote character `'` (0x27). C++ protoc uses `absl::CEscape` which escapes `'` as `\'`. When `--decode_raw` decodes a BytesType field containing a `'`, the output differs.
+- **Test**: Added `decode_raw_single_quote` to `STDIN_TESTS` in `scripts/test` with hex data `0a0127` (field 1, string `'`). 1 profile fails (`stdin@decode_raw_single_quote`).
+- **Root cause**: `cEscapeForDecode()` at cli.go:7868 has cases for `\n`, `\r`, `\t`, `"`, `\\` but is missing `case '\''`. The `'` character (0x27) is in the printable ASCII range (0x20-0x7E), so it falls through to the default branch and is printed unescaped. Meanwhile, the parser's `cEscape()` function at parser.go:6371 DOES have the `case '\''` and correctly escapes it.
+- **C++ protoc**: `1: "\'"` (single quote escaped with backslash)
+- **Go protoc-go**: `1: "'"` (single quote unescaped)
+- **Fix hint**: Add `case '\'': sb.WriteString(`\'`)` to `cEscapeForDecode()` between the `"` and `\\` cases. This matches what the parser's `cEscape` already does.
