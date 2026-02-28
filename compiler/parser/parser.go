@@ -4976,7 +4976,7 @@ func (p *parser) parseParenthesizedOptionName(openTok tokenizer.Token) (string, 
 // consumeAggregate reads key:value pairs inside a message literal { ... }.
 // Called after consuming '{'. Stops before '}'.
 func (p *parser) consumeAggregate() ([]AggregateField, error) {
-	var fields []AggregateField
+	fields := []AggregateField{}
 	for p.tok.Peek().Value != "}" && p.tok.Peek().Type != tokenizer.TokenEOF {
 		isExtension := false
 		var fieldName string
@@ -5164,7 +5164,7 @@ func (p *parser) consumeAggregate() ([]AggregateField, error) {
 // consumeAggregateAngle reads key:value pairs inside a message literal < ... >.
 // Called after consuming '<'. Stops before '>'.
 func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
-	var fields []AggregateField
+	fields := []AggregateField{}
 	for p.tok.Peek().Value != ">" && p.tok.Peek().Type != tokenizer.TokenEOF {
 		isExtension := false
 		var fieldName string
