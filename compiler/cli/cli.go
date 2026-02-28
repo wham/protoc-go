@@ -4807,6 +4807,10 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
 			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_FILE, "file"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
 
 			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
 
@@ -5179,6 +5183,10 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
 			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_FIELD, "field"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
 
 			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
 			if !isRepeated && len(opt.SubFieldPath) == 0 {
@@ -5445,6 +5453,10 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
 			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_MESSAGE, "message"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
 
 			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
 			if !isRepeated && len(opt.SubFieldPath) == 0 {
@@ -5691,6 +5703,10 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
 			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_SERVICE, "service"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
 
 			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
 			if !isRepeated && len(opt.SubFieldPath) == 0 {
@@ -5932,6 +5948,10 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+				continue
+			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_METHOD, "method"); terr != "" {
+				errs = append(errs, terr)
 				continue
 			}
 
@@ -6177,6 +6197,10 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
 			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_ENUM, "enum"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
 
 			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
 			if !isRepeated && len(opt.SubFieldPath) == 0 {
@@ -6418,6 +6442,10 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+				continue
+			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_ENUM_ENTRY, "enum entry"); terr != "" {
+				errs = append(errs, terr)
 				continue
 			}
 
@@ -6663,6 +6691,10 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
 			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_ONEOF, "oneof"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
 
 			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
 			if !isRepeated && len(opt.SubFieldPath) == 0 {
@@ -6904,6 +6936,10 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+				continue
+			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_EXTENSION_RANGE, "extension range"); terr != "" {
+				errs = append(errs, terr)
 				continue
 			}
 
@@ -7606,6 +7642,20 @@ type aggregateEnumError struct {
 
 func (e *aggregateEnumError) Error() string {
 	return fmt.Sprintf("Unknown enumeration value of \"%s\" for field \"%s\".", e.enumValue, e.fieldName)
+}
+
+// checkOptionTargets validates that a custom option's targets allow it on the given entity type.
+func checkOptionTargets(ext *descriptorpb.FieldDescriptorProto, extFQN string, filename string, entityType descriptorpb.FieldOptions_OptionTargetType, entityName string) string {
+	targets := ext.GetOptions().GetTargets()
+	if len(targets) == 0 {
+		return ""
+	}
+	for _, t := range targets {
+		if t == entityType {
+			return ""
+		}
+	}
+	return fmt.Sprintf("%s: Option %s cannot be set on an entity of type `%s`.", filename, extFQN, entityName)
 }
 
 // checkIntRangeOption validates that integer values fit in 32-bit types.
