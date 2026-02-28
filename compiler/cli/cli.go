@@ -126,6 +126,7 @@ Parse PROTO_FILES and generate output based on the options given:
                               quotes, wildcards, escapes, commands, etc.).
                               Each line corresponds to a single argument,
                               even if it contains spaces.`
+
 var noticesText = `Protoc uses the following open source libraries:
 
 Abseil
@@ -379,6 +380,7 @@ type config struct {
 	includeSourceInfo     bool
 	printFreeFieldNumbers bool
 	decodeRaw             bool
+	decodeType            string
 	notices               bool
 	errorFormat           string // "gcc" (default) or "msvs"
 	protoFiles            []string
@@ -426,7 +428,7 @@ func Run(args []string) error {
 	}
 
 	// Validate we have output directives
-	if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers {
+	if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers && cfg.decodeType == "" {
 		return fmt.Errorf("Missing output directives.")
 	}
 
@@ -648,6 +650,11 @@ func Run(args []string) error {
 			}
 		}
 		return nil
+	}
+
+	// Handle --decode mode
+	if cfg.decodeType != "" {
+		return runDecode(cfg.decodeType, parsed, orderedFiles)
 	}
 
 	// Collect source-retention extension field numbers (grouped by extendee type)
@@ -1018,7 +1025,12 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		if strings.HasPrefix(arg, "--encode=") || strings.HasPrefix(arg, "--decode=") {
+		if strings.HasPrefix(arg, "--encode=") {
+			continue
+		}
+
+		if strings.HasPrefix(arg, "--decode=") {
+			cfg.decodeType = arg[len("--decode="):]
 			continue
 		}
 
@@ -1995,40 +2007,40 @@ type jsonNameEntry struct {
 
 func collectJsonNameConflictErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, useCustom bool, errs *[]string) {
 	if !msg.GetOptions().GetDeprecatedLegacyJsonFieldConflicts() {
-	seen := make(map[string]jsonNameEntry)
-	for i, field := range msg.GetField() {
-		defaultJsonName := tokenizer.ToJSONName(field.GetName())
-		isCustom := false
-		jsonName := defaultJsonName
-		if useCustom && explicitJsonNames[field] && field.GetJsonName() != defaultJsonName {
-			jsonName = field.GetJsonName()
-			isCustom = true
+		seen := make(map[string]jsonNameEntry)
+		for i, field := range msg.GetField() {
+			defaultJsonName := tokenizer.ToJSONName(field.GetName())
+			isCustom := false
+			jsonName := defaultJsonName
+			if useCustom && explicitJsonNames[field] && field.GetJsonName() != defaultJsonName {
+				jsonName = field.GetJsonName()
+				isCustom = true
+			}
+			if match, ok := seen[jsonName]; ok {
+				if useCustom && !isCustom && !match.isCustom {
+					// Both are default names — already reported by the non-custom pass
+					continue
+				}
+				namePath := append(append([]int32{}, msgPath...), 2, int32(i), 1)
+				line, col := findLocationByPath(namePath, sci)
+				thisType := "default"
+				if isCustom {
+					thisType = "custom"
+				}
+				existingType := "default"
+				if match.isCustom {
+					existingType = "custom"
+				}
+				nameSuffix := ""
+				if jsonName != match.jsonName {
+					nameSuffix = fmt.Sprintf(" (\"%s\")", match.jsonName)
+				}
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: The %s JSON name of field \"%s\" (\"%s\") conflicts with the %s JSON name of field \"%s\"%s.",
+					filename, line, col, thisType, field.GetName(), jsonName, existingType, match.fieldName, nameSuffix))
+			} else {
+				seen[jsonName] = jsonNameEntry{fieldName: field.GetName(), jsonName: jsonName, isCustom: isCustom}
+			}
 		}
-		if match, ok := seen[jsonName]; ok {
-			if useCustom && !isCustom && !match.isCustom {
-				// Both are default names — already reported by the non-custom pass
-				continue
-			}
-			namePath := append(append([]int32{}, msgPath...), 2, int32(i), 1)
-			line, col := findLocationByPath(namePath, sci)
-			thisType := "default"
-			if isCustom {
-				thisType = "custom"
-			}
-			existingType := "default"
-			if match.isCustom {
-				existingType = "custom"
-			}
-			nameSuffix := ""
-			if jsonName != match.jsonName {
-				nameSuffix = fmt.Sprintf(" (\"%s\")", match.jsonName)
-			}
-			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: The %s JSON name of field \"%s\" (\"%s\") conflicts with the %s JSON name of field \"%s\"%s.",
-				filename, line, col, thisType, field.GetName(), jsonName, existingType, match.fieldName, nameSuffix))
-		} else {
-			seen[jsonName] = jsonNameEntry{fieldName: field.GetName(), jsonName: jsonName, isCustom: isCustom}
-		}
-	}
 	}
 	for i, nested := range msg.GetNestedType() {
 		if nested.GetOptions().GetMapEntry() {
@@ -2041,22 +2053,22 @@ func collectJsonNameConflictErrors(filename string, msg *descriptorpb.Descriptor
 
 // featureTargets maps FeatureSet field names to the entity types where they can be used.
 var featureTargets = map[string]map[string]bool{
-	"field_presence":         {"file": true, "field": true},
-	"enum_type":              {"file": true, "enum": true},
+	"field_presence":          {"file": true, "field": true},
+	"enum_type":               {"file": true, "enum": true},
 	"repeated_field_encoding": {"file": true, "field": true},
-	"utf8_validation":        {"file": true, "field": true},
-	"message_encoding":       {"file": true, "field": true},
-	"json_format":            {"file": true, "message": true, "enum": true},
+	"utf8_validation":         {"file": true, "field": true},
+	"message_encoding":        {"file": true, "field": true},
+	"json_format":             {"file": true, "message": true, "enum": true},
 }
 
 // featureProtoNames maps FeatureSet field names to their full proto path names.
 var featureProtoNames = map[string]string{
-	"field_presence":         "google.protobuf.FeatureSet.field_presence",
-	"enum_type":              "google.protobuf.FeatureSet.enum_type",
+	"field_presence":          "google.protobuf.FeatureSet.field_presence",
+	"enum_type":               "google.protobuf.FeatureSet.enum_type",
 	"repeated_field_encoding": "google.protobuf.FeatureSet.repeated_field_encoding",
-	"utf8_validation":        "google.protobuf.FeatureSet.utf8_validation",
-	"message_encoding":       "google.protobuf.FeatureSet.message_encoding",
-	"json_format":            "google.protobuf.FeatureSet.json_format",
+	"utf8_validation":         "google.protobuf.FeatureSet.utf8_validation",
+	"message_encoding":        "google.protobuf.FeatureSet.message_encoding",
+	"json_format":             "google.protobuf.FeatureSet.json_format",
 }
 
 func validateFeaturesEditions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
@@ -2147,7 +2159,6 @@ func collectFeaturesEditionsInEnum(name string, enumPath []int32, e *descriptorp
 		}
 	}
 }
-
 
 func validateFeatureTargets(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
@@ -4855,7 +4866,6 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 				}
 			}
 
-
 			// Validate enum option values must be identifiers
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenIdent {
@@ -5230,7 +5240,6 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 				}
 			}
 
-
 			// Validate enum option values must be identifiers
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenIdent {
@@ -5292,10 +5301,10 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 			}
 
 			if len(opt.SubFieldPath) > 0 {
-if subFieldNums[name] == nil {
-subFieldNums[name] = map[int32]bool{}
-}
-subFieldNums[name][ext.GetNumber()] = true
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
 				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -5513,7 +5522,6 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 					continue
 				}
 			}
-
 
 			// Validate enum option values must be identifiers
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
@@ -5763,7 +5771,6 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 				}
 			}
 
-
 			// Validate enum option values must be identifiers
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenIdent {
@@ -6010,7 +6017,6 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 				}
 			}
 
-
 			// Validate enum option values must be identifiers
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenIdent {
@@ -6247,7 +6253,6 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 					continue
 				}
 			}
-
 
 			// Validate enum option values must be identifiers
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
@@ -6494,7 +6499,6 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 					continue
 				}
 			}
-
 
 			// Validate enum option values must be identifiers
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
@@ -6751,7 +6755,6 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 				}
 			}
 
-
 			// Validate enum option values must be identifiers
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenIdent {
@@ -6994,7 +6997,6 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 					continue
 				}
 			}
-
 
 			// Validate enum option values must be identifiers
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
@@ -8154,3 +8156,449 @@ func sortProtoUnknown(m proto.Message) {
 	ref.SetUnknown(sorted)
 }
 
+// runDecode implements --decode mode: reads binary protobuf from stdin and
+// prints text format using the schema from parsed proto files.
+func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles []string) error {
+	// Find the message descriptor
+	msgDesc, allMsgs := findMessageType(msgTypeName, parsed)
+	if msgDesc == nil {
+		return fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)
+	}
+
+	// Read binary data from stdin
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("Failed to read input.")
+	}
+
+	// Try to parse the data to validate it
+	if err := validateProtoWithSchema(data, msgDesc, allMsgs); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to parse input.")
+		os.Exit(1)
+	}
+
+	// Print in text format
+	printTextProto(os.Stdout, data, msgDesc, allMsgs, 0)
+	return nil
+}
+
+// findMessageType searches all parsed FileDescriptorProtos for a message
+// with the given fully-qualified name. Returns the descriptor and a map of
+// all message FQNs to their descriptors.
+func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescriptorProto) (*descriptorpb.DescriptorProto, map[string]*descriptorpb.DescriptorProto) {
+	allMsgs := make(map[string]*descriptorpb.DescriptorProto)
+	for _, fd := range parsed {
+		pkg := fd.GetPackage()
+		for _, msg := range fd.GetMessageType() {
+			collectMsgsForDecode(pkg, "", msg, allMsgs)
+		}
+	}
+	return allMsgs[fullName], allMsgs
+}
+
+func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto, out map[string]*descriptorpb.DescriptorProto) {
+	var fqn string
+	if pkg != "" {
+		fqn = pkg + "." + prefix + msg.GetName()
+	} else {
+		fqn = prefix + msg.GetName()
+	}
+	out[fqn] = msg
+	for _, nested := range msg.GetNestedType() {
+		collectMsgsForDecode(pkg, prefix+msg.GetName()+".", nested, out)
+	}
+}
+
+// validateProtoWithSchema validates that binary data can be parsed as the
+// given message type. Returns nil on success.
+func validateProtoWithSchema(data []byte, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto) error {
+	fieldMap := buildFieldMap(msgDesc)
+	pos := 0
+	for pos < len(data) {
+		num, wtype, n := protowire.ConsumeTag(data[pos:])
+		if n < 0 || num < 1 {
+			return fmt.Errorf("invalid tag")
+		}
+		pos += n
+		switch wtype {
+		case protowire.VarintType:
+			_, vn := protowire.ConsumeVarint(data[pos:])
+			if vn < 0 {
+				return fmt.Errorf("invalid varint")
+			}
+			pos += vn
+		case protowire.Fixed64Type:
+			if pos+8 > len(data) {
+				return fmt.Errorf("invalid fixed64")
+			}
+			pos += 8
+		case protowire.Fixed32Type:
+			if pos+4 > len(data) {
+				return fmt.Errorf("invalid fixed32")
+			}
+			pos += 4
+		case protowire.BytesType:
+			v, vn := protowire.ConsumeBytes(data[pos:])
+			if vn < 0 {
+				return fmt.Errorf("invalid bytes")
+			}
+			pos += vn
+			fd := fieldMap[int32(num)]
+			if fd != nil && isMessageField(fd) {
+				subMsg := resolveFieldMsgType(fd, allMsgs)
+				if subMsg != nil {
+					if err := validateProtoWithSchema(v, subMsg, allMsgs); err != nil {
+						return err
+					}
+				}
+			}
+		case protowire.StartGroupType:
+			// Skip to EndGroup
+			for pos < len(data) {
+				gNum, gType, gn := protowire.ConsumeTag(data[pos:])
+				if gn < 0 {
+					return fmt.Errorf("invalid tag in group")
+				}
+				pos += gn
+				if gType == protowire.EndGroupType && gNum == num {
+					break
+				}
+				// Consume the field value
+				switch gType {
+				case protowire.VarintType:
+					_, vn := protowire.ConsumeVarint(data[pos:])
+					if vn < 0 {
+						return fmt.Errorf("invalid varint in group")
+					}
+					pos += vn
+				case protowire.Fixed64Type:
+					pos += 8
+				case protowire.Fixed32Type:
+					pos += 4
+				case protowire.BytesType:
+					_, vn := protowire.ConsumeBytes(data[pos:])
+					if vn < 0 {
+						return fmt.Errorf("invalid bytes in group")
+					}
+					pos += vn
+				default:
+					return fmt.Errorf("unknown wire type in group")
+				}
+			}
+		default:
+			return fmt.Errorf("unknown wire type %d", wtype)
+		}
+	}
+	return nil
+}
+
+func buildFieldMap(msg *descriptorpb.DescriptorProto) map[int32]*descriptorpb.FieldDescriptorProto {
+	m := make(map[int32]*descriptorpb.FieldDescriptorProto)
+	for _, f := range msg.GetField() {
+		m[f.GetNumber()] = f
+	}
+	return m
+}
+
+func isMessageField(fd *descriptorpb.FieldDescriptorProto) bool {
+	t := fd.GetType()
+	return t == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE || t == descriptorpb.FieldDescriptorProto_TYPE_GROUP
+}
+
+func resolveFieldMsgType(fd *descriptorpb.FieldDescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto) *descriptorpb.DescriptorProto {
+	tn := fd.GetTypeName()
+	if strings.HasPrefix(tn, ".") {
+		tn = tn[1:]
+	}
+	return allMsgs[tn]
+}
+
+// printTextProto prints binary protobuf data in text format using the message
+// schema. Known fields are printed by name, unknown fields by number.
+// This matches C++ protoc's TextFormat::Print behavior for --decode.
+func printTextProto(w *os.File, data []byte, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, indent int) {
+	fieldMap := buildFieldMap(msgDesc)
+
+	// Build enum value maps for known enum fields
+	enumsByTypeName := make(map[string]map[int32]string)
+
+	// Collect all known and unknown field entries in wire order
+	type fieldEntry struct {
+		num     protowire.Number
+		wtype   protowire.Type
+		known   *descriptorpb.FieldDescriptorProto
+		varint  uint64
+		fixed32 uint32
+		fixed64 uint64
+		bytes   []byte
+		group   []byte
+	}
+
+	var knownEntries []fieldEntry
+	var unknownEntries []fieldEntry
+
+	pos := 0
+	for pos < len(data) {
+		num, wtype, n := protowire.ConsumeTag(data[pos:])
+		if n < 0 || num < 1 {
+			break
+		}
+		pos += n
+		fd := fieldMap[int32(num)]
+		entry := fieldEntry{num: num, wtype: wtype, known: fd}
+
+		switch wtype {
+		case protowire.VarintType:
+			v, vn := protowire.ConsumeVarint(data[pos:])
+			if vn < 0 {
+				break
+			}
+			pos += vn
+			entry.varint = v
+		case protowire.Fixed64Type:
+			v, vn := protowire.ConsumeFixed64(data[pos:])
+			if vn < 0 {
+				break
+			}
+			pos += vn
+			entry.fixed64 = v
+		case protowire.Fixed32Type:
+			v, vn := protowire.ConsumeFixed32(data[pos:])
+			if vn < 0 {
+				break
+			}
+			pos += vn
+			entry.fixed32 = v
+		case protowire.BytesType:
+			v, vn := protowire.ConsumeBytes(data[pos:])
+			if vn < 0 {
+				break
+			}
+			pos += vn
+			entry.bytes = v
+		case protowire.StartGroupType:
+			// Consume until EndGroup
+			start := pos
+			depth := 1
+			for pos < len(data) && depth > 0 {
+				gNum, gType, gn := protowire.ConsumeTag(data[pos:])
+				if gn < 0 {
+					break
+				}
+				if gType == protowire.EndGroupType && gNum == num {
+					pos += gn
+					depth--
+					continue
+				}
+				pos += gn
+				switch gType {
+				case protowire.VarintType:
+					_, vn := protowire.ConsumeVarint(data[pos:])
+					if vn < 0 {
+						break
+					}
+					pos += vn
+				case protowire.Fixed64Type:
+					pos += 8
+				case protowire.Fixed32Type:
+					pos += 4
+				case protowire.BytesType:
+					_, vn := protowire.ConsumeBytes(data[pos:])
+					if vn < 0 {
+						break
+					}
+					pos += vn
+				case protowire.StartGroupType:
+					depth++
+				}
+			}
+			entry.group = data[start : pos-protowire.SizeTag(num)]
+		default:
+			continue
+		}
+
+		if fd != nil {
+			knownEntries = append(knownEntries, entry)
+		} else {
+			unknownEntries = append(unknownEntries, entry)
+		}
+	}
+
+	prefix := strings.Repeat("  ", indent)
+
+	// Print known fields first (sorted by field number)
+	sort.Slice(knownEntries, func(i, j int) bool {
+		return knownEntries[i].num < knownEntries[j].num
+	})
+	for _, e := range knownEntries {
+		printKnownField(w, e, prefix, allMsgs, enumsByTypeName, indent)
+	}
+
+	// Print unknown fields (in wire order)
+	for _, e := range unknownEntries {
+		printUnknownField(w, e, prefix, indent, allMsgs)
+	}
+}
+
+func printKnownField(w *os.File, e struct {
+	num     protowire.Number
+	wtype   protowire.Type
+	known   *descriptorpb.FieldDescriptorProto
+	varint  uint64
+	fixed32 uint32
+	fixed64 uint64
+	bytes   []byte
+	group   []byte
+}, prefix string, allMsgs map[string]*descriptorpb.DescriptorProto, enumsByTypeName map[string]map[int32]string, indent int) {
+	fd := e.known
+	name := fd.GetName()
+	t := fd.GetType()
+
+	switch t {
+	case descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		if e.wtype == protowire.Fixed64Type {
+			v := math.Float64frombits(e.fixed64)
+			fmt.Fprintf(w, "%s%s: %s\n", prefix, name, formatTextDouble(v))
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
+		if e.wtype == protowire.Fixed32Type {
+			v := math.Float32frombits(e.fixed32)
+			fmt.Fprintf(w, "%s%s: %s\n", prefix, name, formatTextFloat(v))
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_INT64,
+		descriptorpb.FieldDescriptorProto_TYPE_UINT64:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, e.varint)
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int32(e.varint))
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, uint32(e.varint))
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED64:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, e.fixed64)
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, uint32(e.fixed32))
+	case descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int64(e.fixed64))
+	case descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int32(e.fixed32))
+	case descriptorpb.FieldDescriptorProto_TYPE_SINT32:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, protowire.DecodeZigZag(e.varint))
+	case descriptorpb.FieldDescriptorProto_TYPE_SINT64:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, protowire.DecodeZigZag(e.varint))
+	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
+		if e.varint != 0 {
+			fmt.Fprintf(w, "%s%s: true\n", prefix, name)
+		} else {
+			fmt.Fprintf(w, "%s%s: false\n", prefix, name)
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING:
+		fmt.Fprintf(w, "%s%s: \"%s\"\n", prefix, name, cEscapeForDecode(e.bytes))
+	case descriptorpb.FieldDescriptorProto_TYPE_BYTES:
+		fmt.Fprintf(w, "%s%s: \"%s\"\n", prefix, name, cEscapeForDecode(e.bytes))
+	case descriptorpb.FieldDescriptorProto_TYPE_ENUM:
+		tn := fd.GetTypeName()
+		if strings.HasPrefix(tn, ".") {
+			tn = tn[1:]
+		}
+		valMap, ok := enumsByTypeName[tn]
+		if !ok {
+			valMap = buildEnumValueMap(tn, allMsgs)
+			enumsByTypeName[tn] = valMap
+		}
+		if valName, ok := valMap[int32(e.varint)]; ok {
+			fmt.Fprintf(w, "%s%s: %s\n", prefix, name, valName)
+		} else {
+			fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int32(e.varint))
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_MESSAGE:
+		subMsg := resolveFieldMsgType(fd, allMsgs)
+		if subMsg != nil {
+			fmt.Fprintf(w, "%s%s {\n", prefix, name)
+			printTextProto(w, e.bytes, subMsg, allMsgs, indent+1)
+			fmt.Fprintf(w, "%s}\n", prefix)
+		} else {
+			fmt.Fprintf(w, "%s%s {\n", prefix, name)
+			decodeRawProto(w, e.bytes, indent+1)
+			fmt.Fprintf(w, "%s}\n", prefix)
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_GROUP:
+		subMsg := resolveFieldMsgType(fd, allMsgs)
+		groupName := fd.GetTypeName()
+		if idx := strings.LastIndex(groupName, "."); idx >= 0 {
+			groupName = groupName[idx+1:]
+		}
+		if strings.HasPrefix(groupName, ".") {
+			groupName = groupName[1:]
+		}
+		if subMsg != nil {
+			fmt.Fprintf(w, "%s%s {\n", prefix, groupName)
+			printTextProto(w, e.group, subMsg, allMsgs, indent+1)
+			fmt.Fprintf(w, "%s}\n", prefix)
+		} else {
+			fmt.Fprintf(w, "%s%s {\n", prefix, groupName)
+			decodeRawProto(w, e.group, indent+1)
+			fmt.Fprintf(w, "%s}\n", prefix)
+		}
+	default:
+		// Fallback: print raw
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, e.varint)
+	}
+}
+
+// printUnknownField prints an unknown field in C++ TextFormat style.
+func printUnknownField(w *os.File, e struct {
+	num     protowire.Number
+	wtype   protowire.Type
+	known   *descriptorpb.FieldDescriptorProto
+	varint  uint64
+	fixed32 uint32
+	fixed64 uint64
+	bytes   []byte
+	group   []byte
+}, prefix string, indent int, allMsgs map[string]*descriptorpb.DescriptorProto) {
+	switch e.wtype {
+	case protowire.VarintType:
+		fmt.Fprintf(w, "%s%d: %d\n", prefix, e.num, e.varint)
+	case protowire.Fixed64Type:
+		fmt.Fprintf(w, "%s%d: 0x%016x\n", prefix, e.num, e.fixed64)
+	case protowire.Fixed32Type:
+		fmt.Fprintf(w, "%s%d: 0x%08x\n", prefix, e.num, e.fixed32)
+	case protowire.BytesType:
+		if tryErr := validateRawProto(e.bytes); tryErr == nil && len(e.bytes) > 0 {
+			fmt.Fprintf(w, "%s%d {\n", prefix, e.num)
+			decodeRawProto(w, e.bytes, indent+1)
+			fmt.Fprintf(w, "%s}\n", prefix)
+		} else {
+			fmt.Fprintf(w, "%s%d: \"%s\"\n", prefix, e.num, cEscapeForDecode(e.bytes))
+		}
+	case protowire.StartGroupType:
+		fmt.Fprintf(w, "%s%d {\n", prefix, e.num)
+		decodeRawProto(w, e.group, indent+1)
+		fmt.Fprintf(w, "%s}\n", prefix)
+	}
+}
+
+func buildEnumValueMap(enumFQN string, allMsgs map[string]*descriptorpb.DescriptorProto) map[int32]string {
+	// Return empty map - enum lookup not needed for unknown fields
+	return make(map[int32]string)
+}
+
+func formatTextDouble(v float64) string {
+	if math.IsInf(v, 1) {
+		return "inf"
+	}
+	if math.IsInf(v, -1) {
+		return "-inf"
+	}
+	if math.IsNaN(v) {
+		return "nan"
+	}
+	s := strconv.FormatFloat(v, 'g', -1, 64)
+	if !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E") {
+		s += "."
+	}
+	return s
+}
+
+func formatTextFloat(v float32) string {
+	return formatTextDouble(float64(v))
+}

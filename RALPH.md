@@ -218,6 +218,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 95. [DONE] Fix `425_file_level_legacy_required` — C++ protoc rejects `features.field_presence = LEGACY_REQUIRED` at the file level with `Required presence can't be specified by default.` at line 1 col 1, but Go protoc-go silently accepted it. Added `validateFileLevelLegacyRequired` that checks editions files for file-level `FieldPresence == LEGACY_REQUIRED` in options features. All 3883/3883 tests pass.
 
+96. [DONE] Fix `cli@decode_with_file` — Implemented `--decode=MESSAGE_TYPE` mode. Parses proto files, finds the specified message type in parsed FileDescriptorProtos, reads binary protobuf from stdin, and prints text format output matching C++ protoc's TextFormat::Print. Known fields are printed by name with proper type formatting, unknown fields by number (same format as --decode_raw). Added `runDecode`, `findMessageType`, `printTextProto`, `printKnownField`, `printUnknownField`, and supporting functions. All 3884/3884 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
