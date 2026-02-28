@@ -290,6 +290,17 @@ func (t *Tokenizer) readBlockCommentText(startLine, startCol int) string {
 			continue
 		}
 
+		if ch == '/' && t.pos+1 < len(t.input) && t.input[t.pos+1] == '*' {
+			// Nested block comment — consume '/' but not '*' (so '*/' can end comment).
+			t.advance()
+			t.Errors = append(t.Errors, TokenError{
+				Line: t.line, Column: t.col,
+				Message: `"/*" inside block comment.  Block comments cannot be nested.`,
+			})
+			buf.WriteByte(ch)
+			continue
+		}
+
 		buf.WriteByte(ch)
 		t.advance()
 	}
