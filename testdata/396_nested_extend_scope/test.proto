@@ -1,0 +1,15 @@
+syntax = "proto2";
+package nestedscope;
+
+import "google/protobuf/descriptor.proto";
+
+message Outer {
+  extend google.protobuf.MessageOptions {
+    optional string msg_label = 50001;
+  }
+
+  message Inner {
+    option (msg_label) = "inner_value";
+    optional int32 x = 1;
+  }
+}
