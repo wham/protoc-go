@@ -190,6 +190,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 81. [DONE] Fix `410_extend_enum_type` — C++ protoc rejects extending an enum type with `"Status" is not a message type.` but Go protoc-go fell through to extension number validation, producing a misleading error. Added `TYPE_ENUM` check in both top-level and message-level extension extendee resolution (in `resolveFileTypes` and `resolveMessageFieldsWithErrorsPath`), matching the pattern already used for service method input/output types. All 3756/3756 tests pass.
 
+82. [DONE] Fix `411_utf8_bytes_field` — C++ protoc rejects `features.utf8_validation` on bytes fields with `Only string fields can specify utf8 validation.` but Go protoc-go skipped both TYPE_STRING and TYPE_BYTES. Fixed `checkUtf8ValidationNonStringField` to only skip TYPE_STRING, not TYPE_BYTES. All 3765/3765 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.

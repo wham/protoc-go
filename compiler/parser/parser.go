@@ -613,9 +613,9 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 		isWeak = true
 	}
 
-	pathTok, err := p.tok.ExpectString()
-	if err != nil {
-		return err
+	pathTok := p.tok.Next()
+	if pathTok.Type != tokenizer.TokenString {
+		return fmt.Errorf("%d:%d: Expected a string naming the file to import.", pathTok.Line+1, pathTok.Column+1)
 	}
 	// Adjacent string literal concatenation (like C/C++)
 	importPath := pathTok.Value
