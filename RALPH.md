@@ -192,6 +192,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 82. [DONE] Fix `411_utf8_bytes_field` — C++ protoc rejects `features.utf8_validation` on bytes fields with `Only string fields can specify utf8 validation.` but Go protoc-go skipped both TYPE_STRING and TYPE_BYTES. Fixed `checkUtf8ValidationNonStringField` to only skip TYPE_STRING, not TYPE_BYTES. All 3765/3765 tests pass.
 
+83. [DONE] Fix `412_import_no_string` — C++ protoc emits `Expected a string naming the file to import.` for `import;` (no path), but Go emitted generic `Expected string.`. Changed `parseImport` to check token type directly instead of using `ExpectString()`, with the C++-specific error message. All 3774/3774 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
