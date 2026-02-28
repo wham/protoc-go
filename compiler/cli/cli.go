@@ -614,6 +614,7 @@ func Run(args []string) error {
 	valErrors = append(valErrors, validateProto3(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateEditionGroups(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateRepeatedFieldEncoding(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateFieldPresenceRepeated(orderedFiles, parsed)...)
 	featEditionErrs := validateFeaturesEditions(orderedFiles, parsed)
 	valErrors = append(valErrors, featEditionErrs...)
 	if len(featEditionErrs) == 0 {
@@ -2459,6 +2460,49 @@ func checkRepeatedFieldEncodingField(filename string, field *descriptorpb.FieldD
 	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().RepeatedFieldEncoding != nil {
 		line, col := findLocationByPath(namePath, sci)
 		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Only repeated fields can specify repeated field encoding.", filename, line, col))
+	}
+}
+
+func validateFieldPresenceRepeated(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectFieldPresenceRepeatedErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		for i, ext := range fd.GetExtension() {
+			checkFieldPresenceRepeatedField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectFieldPresenceRepeatedErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	for i, field := range msg.GetField() {
+		checkFieldPresenceRepeatedField(filename, field, append(clonePath(msgPath), 2, int32(i), 1), sci, errs)
+	}
+	for i, ext := range msg.GetExtension() {
+		checkFieldPresenceRepeatedField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectFieldPresenceRepeatedErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
+	}
+}
+
+func checkFieldPresenceRepeatedField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if field.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
+		return
+	}
+	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().FieldPresence != nil {
+		line, col := findLocationByPath(namePath, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Repeated fields can't specify field presence.", filename, line, col))
 	}
 }
 
