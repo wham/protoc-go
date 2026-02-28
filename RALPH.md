@@ -148,6 +148,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 60. [DONE] Fix `389_agg_field_order` — C++ protoc encodes aggregate option fields sorted by field number, but Go encoded them in source order. Modified `encodeAggregateOption` and `encodeAggregateFields` to collect encoded field entries with their field numbers, then stable-sort by field number before concatenating. All 3567/3567 tests pass.
 
+61. [DONE] Fix `390_agg_bad_enum` — C++ protoc rejects unknown enum values in aggregate options with `Unknown enumeration value of "VALUE" for field "FIELD".` wrapped in `Error while parsing option value for "OPT": ...` with line/column info. Go protoc-go used a different format without line/column. Added `aggregateEnumError` type with matching message, changed `encodeCustomOptionValue` to return this typed error, and added handling in `formatAggregateError`. All 3576/3576 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
