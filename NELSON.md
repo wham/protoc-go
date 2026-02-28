@@ -505,6 +505,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: In each `resolveCustom*Options` function, add a check: if `ext.GetType() == TYPE_STRING || ext.GetType() == TYPE_BYTES`, and `opt.AggregateFields == nil && len(opt.SubFieldPath) == 0`, then validate `opt.ValueType == tokenizer.TokenString`. If not, emit error matching C++: `"Value must be quoted string for string option \"FQN\"."`. Same pattern as the TYPE_BOOL validation.
 - **Also affects**: TYPE_BYTES options have the same bug. Also, setting a string option to `true` (identifier) or `inf` (identifier) would also be accepted by Go but likely rejected by C++. Aggregate option fields might also lack this validation.
 
+### Run 56 — Enum custom option accepts integer value, C++ requires identifier (VICTORY)
+- **Bug**: Go's custom option resolver accepts integer values for TYPE_ENUM options. When `option (my_level) = 1;` sets an enum option to an integer literal, C++ protoc rejects it with `Value must be identifier for enum-valued option`, but Go accepts it and encodes the integer as a varint.
+- **Test**: `387_enum_opt_int_value` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `encodeCustomOptionValue()` at cli.go:6450 for TYPE_ENUM first tries `strconv.ParseInt(value, 0, 32)`. When the value is an integer literal like `"1"`, this succeeds and the integer is encoded directly as a varint. C++ protoc's `OptionInterpreter::SetOption` validates that enum option values must be identifiers (enum value names), not integer literals.
+- **C++ protoc**: `test.proto:17:21: Value must be identifier for enum-valued option "enumoptint.my_level".`
+- **Go protoc-go**: Silently accepts `1`, encodes as varint 1, produces valid descriptor.
+- **Fix hint**: In each `resolveCustom*Options` function, add a check: if `ext.GetType() == TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0`, then validate `opt.ValueType == tokenizer.TokenIdent`. If not, emit error: `"Value must be identifier for enum-valued option \"FQN\"."`. The integer encoding in `encodeCustomOptionValue` is correct for aggregate option values (text format allows integers for enum fields), so the validation should be at the resolver level, not the encoder level.
+- **Also affects**: All 9 `resolveCustom*Options` functions (file, field, message, service, method, enum, enum_value, oneof, ext_range) are likely missing this validation. Also, hex integers like `0x01` and negative integers like `-1` would also be accepted by Go but rejected by C++ for enum options.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
@@ -586,6 +595,9 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - String/bytes validation missing in all 9 resolveCustom*Options — same pattern as bool validation (Runs 37-43)
 - Float/double option with string value (e.g., `option (my_float) = "hello";`) — does Go reject properly?
 - Enum option with string value — same category of type mismatch validation
+- Enum option with integer value on message/field/service/method/enum/enum_value/oneof/ext_range — same bug as Run 56, all resolvers likely missing validation
+- Aggregate option enum field validation — `encodeCustomOptionValue` correctly accepts integers for enum in aggregate (text format), but does it match C++ for invalid enum value names?
+- Float/double option with identifier value other than `inf`/`nan` (e.g., `option (my_float) = FOO;`) — does Go reject properly?
 
 ### Run 53 — Group field name lookup fails in aggregate option encoding (VICTORY)
 - **Bug**: Go's `collectMsgFields()` builds `msgFieldMap` keyed by field names. For group fields, the field name is lowercased (e.g., `"inner"`), but in C++ text format (used by protoc for aggregate options), groups are referenced by their MESSAGE TYPE NAME (capitalized, e.g., `"Inner"`). When a user writes `option (cfg) = { Inner { name: "hello" } }`, Go looks up `msgFields["Inner"]` which doesn't exist — the key is `"inner"`.
