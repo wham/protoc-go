@@ -873,3 +873,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `test.proto: error encoding custom option: invalid sfixed32 value: 0x80000000`
 - **Fix hint**: Add `TYPE_SFIXED32` to the int32 range check case in `checkIntRangeOption`, and add `TYPE_FIXED32` to the uint32 range check case. This would catch the overflow early with proper line/column info and the standard range error message.
 - **Also affects**: `TYPE_FIXED32` (unsigned 32-bit) likely has the same issue — values above `0xFFFFFFFF` would get a different error message format.
+
+### Run 84 — Negative extension range start produces different error message (VICTORY)
+- **Bug**: Go parser produces `"Expected integer."` when encountering a negative number in `extensions -1 to 10;`, while C++ protoc produces `"Expected field number range."`. The `-` sign before the number is not a valid start for an extension range, and each compiler reports a different error about it.
+- **Test**: `415_neg_ext_range` — all 9 profiles fail.
+- **Root cause**: Go's extension range parsing sees `-` and calls a generic integer parsing function that reports "Expected integer" when it can't parse the negative sign as part of a valid integer in this context. C++ protoc has a more specific check that knows it's parsing an extension range and reports "Expected field number range" — a more helpful context-aware error.
+- **C++ protoc**: `test.proto:6:14: Expected field number range.`
+- **Go protoc-go**: `test.proto:6:14: Expected integer.`
+- **Fix hint**: In the extension range parsing code (parser.go), when encountering `-` as the first token where a range start is expected, emit `"Expected field number range."` instead of falling through to the generic integer parser.
