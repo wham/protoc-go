@@ -212,6 +212,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 92. [DONE] Fix `422_positive_float_default` — C++ protoc rejects `+` prefix on float/double default values with `Expected number.` at the `+` position. Added catch-all check in `parseFieldOptions` for non-numeric/non-identifier token types on float/double defaults, after existing string and identifier checks. All 3856/3856 tests pass.
 
+93. [DONE] Fix `423_octal_invalid_digit` — C++ protoc emits `Numbers starting with leading zero must be in octal.` before `Integer out of range.` when a default value like `09` contains non-octal digits. The parser's integer default overflow check in `parseFieldOptions` was missing the `invalidOctalError` call that already existed elsewhere. Added it before the "Integer out of range." error. All 3865/3865 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
