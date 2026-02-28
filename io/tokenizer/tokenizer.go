@@ -146,8 +146,10 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 				t.advance()
 			}
 		} else if t.input[t.pos] == '\n' {
+			// C++ protoc: after consuming the newline, can_attach_to_prev_
+			// stays true. A comment on the next line (before a blank line)
+			// is still considered trailing of the previous token.
 			t.advance()
-			canAttachToPrev = false
 		} else {
 			// Next token on same line, no comments
 			return result
