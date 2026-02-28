@@ -657,7 +657,13 @@ func assembleUTF16(head, trail uint32) uint32 {
 }
 
 func appendUTF8(sb *strings.Builder, cp uint32) {
-	if cp <= 0x10FFFF {
+	if cp >= 0xD800 && cp <= 0xDFFF {
+		// Surrogate codepoints: Go's utf8.EncodeRune replaces these with U+FFFD,
+		// but C++ protoc encodes them as raw UTF-8 bytes. Manually encode.
+		sb.WriteByte(byte(0xE0 | (cp >> 12)))
+		sb.WriteByte(byte(0x80 | ((cp >> 6) & 0x3F)))
+		sb.WriteByte(byte(0x80 | (cp & 0x3F)))
+	} else if cp <= 0x10FFFF {
 		var buf [4]byte
 		n := utf8.EncodeRune(buf[:], rune(cp))
 		sb.Write(buf[:n])
