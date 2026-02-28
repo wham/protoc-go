@@ -585,6 +585,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `test.proto:11:21: Value must be quoted string for bytes option "bytesopterr.my_bytes".`
 - **Fix hint**: Change the check at line 4470-4472 (and all 8 other resolver functions) to always use `typeName := "string"` regardless of whether it's TYPE_STRING or TYPE_BYTES, matching C++ behavior.
 
+### Run 91 — Octal invalid digit missing warning (VICTORY)
+- **Bug**: Go tokenizer does not emit a warning/error when a numeric literal starting with `0` contains non-octal digits (8 or 9). C++ protoc produces `"Numbers starting with leading zero must be in octal."` as a separate error in addition to "Integer out of range." Go only produces the latter.
+- **Test**: `423_octal_invalid_digit` — all 9 profiles fail (error message mismatch).
+- **Root cause**: Go's tokenizer treats `09` as a decimal number and just passes it through. When the value is then validated as an integer literal (which expects octal for 0-prefixed numbers), it produces "Integer out of range" but never checks or warns that non-octal digits are present. C++ protoc's tokenizer explicitly checks for digits 8-9 in a 0-prefixed literal and reports a specific error.
+- **C++ protoc**: `test.proto:6:38: Numbers starting with leading zero must be in octal.\ntest.proto:6:37: Integer out of range.` (two errors, different columns)
+- **Go protoc-go**: `test.proto:6:37: Integer out of range.` (one error, missing the octal warning)
+- **Fix hint**: In the tokenizer's integer parsing code, when a number starts with `0` (not `0x`/`0X`) and contains digits 8 or 9, emit an error `"Numbers starting with leading zero must be in octal."` pointing at the invalid digit position. Then continue to also produce the "Integer out of range" error for consistency with C++.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**

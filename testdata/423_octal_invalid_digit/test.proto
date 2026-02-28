@@ -1,0 +1,7 @@
+syntax = "proto2";
+
+package octaltest;
+
+message Foo {
+  optional int32 val = 1 [default = 09];
+}
