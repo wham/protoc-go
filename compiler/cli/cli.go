@@ -6866,6 +6866,14 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		case "false", "False", "f", "0":
 			b = protowire.AppendVarint(b, 0)
 		default:
+			if _, err := strconv.ParseUint(value, 0, 64); err == nil {
+				return nil, &aggregateIntRangeError{rawValue: value}
+			}
+			if len(value) > 0 && value[0] == '-' {
+				if _, err := strconv.ParseInt(value, 0, 64); err == nil {
+					return nil, &aggregateIntRangeError{rawValue: value}
+				}
+			}
 			return nil, &aggregateBoolError{fieldName: ext.GetName(), value: value}
 		}
 	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
