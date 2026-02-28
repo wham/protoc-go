@@ -559,6 +559,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add a check in the editions validation pass (or in `validateRequiredExtensions`): for edition files, check if any extension field has `features.field_presence = LEGACY_REQUIRED` in its options. If so, emit `"Extensions can't be required."` with proper line:col info. Check both top-level extensions (`fd.GetExtension()`) and message-level extensions.
 - **Also affects**: Same validation is likely missing for `features.field_presence = LEGACY_REQUIRED` on oneof members — C++ rejects that too with a different message.
 
+### Run 76 — Edition `features.message_encoding = DELIMITED` accepted on map field (VICTORY)
+- **Bug**: Go's `checkMessageEncodingScalarField` at cli.go:2546 checks `field.GetType() == TYPE_MESSAGE || field.GetType() == TYPE_GROUP` and returns early (allows) if true. Map fields have `TYPE_MESSAGE` type in the descriptor (they're synthetic repeated message fields), so Go allows `features.message_encoding = DELIMITED` on map fields. C++ protoc has a separate `is_map()` check and rejects message_encoding on map fields with "Only message fields can specify message encoding."
+- **Test**: `406_map_msg_encoding` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's validation only checks if the field type is NOT a message type (scalar rejection). It doesn't check if the message-typed field is a map field. Map fields ARE `TYPE_MESSAGE` but should NOT be eligible for `message_encoding` overrides. C++ protoc checks `f->is_map()` and rejects.
+- **C++ protoc**: `test.proto:6:22: Only message fields can specify message encoding.`
+- **Go protoc-go**: Silently accepts, encodes FeatureSet with DELIMITED message_encoding on the map field, produces valid descriptor.
+- **Fix hint**: In `checkMessageEncodingScalarField`, after the TYPE_MESSAGE/TYPE_GROUP return, add a check for map fields. Map fields can be identified by checking if the message type they point to has `options.map_entry = true`. Look up the type_name in the parsed descriptors and check `msg.GetOptions().GetMapEntry()`. Alternatively, check if the field has `GetLabel() == LABEL_REPEATED` and the type_name ends with `Entry` and is a nested message with `map_entry = true`. Simpler: pass a set of map entry type names and check `field.GetTypeName()` against it.
+- **Also affects**: Same validation gap exists for `features.repeated_field_encoding` on map fields — C++ might also reject that. And `features.field_presence` on map fields — C++ rejects with "Repeated fields can't specify field presence" since map fields are repeated.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
