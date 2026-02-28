@@ -615,6 +615,7 @@ func Run(args []string) error {
 	valErrors = append(valErrors, validateEditionGroups(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateRepeatedFieldEncoding(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateFieldPresenceRepeated(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateMessageEncodingScalar(orderedFiles, parsed)...)
 	featEditionErrs := validateFeaturesEditions(orderedFiles, parsed)
 	valErrors = append(valErrors, featEditionErrs...)
 	if len(featEditionErrs) == 0 {
@@ -2503,6 +2504,49 @@ func checkFieldPresenceRepeatedField(filename string, field *descriptorpb.FieldD
 	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().FieldPresence != nil {
 		line, col := findLocationByPath(namePath, sci)
 		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Repeated fields can't specify field presence.", filename, line, col))
+	}
+}
+
+func validateMessageEncodingScalar(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectMessageEncodingScalarErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		for i, ext := range fd.GetExtension() {
+			checkMessageEncodingScalarField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectMessageEncodingScalarErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	for i, field := range msg.GetField() {
+		checkMessageEncodingScalarField(filename, field, append(clonePath(msgPath), 2, int32(i), 1), sci, errs)
+	}
+	for i, ext := range msg.GetExtension() {
+		checkMessageEncodingScalarField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectMessageEncodingScalarErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
+	}
+}
+
+func checkMessageEncodingScalarField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE || field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+		return
+	}
+	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().MessageEncoding != nil {
+		line, col := findLocationByPath(namePath, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Only message fields can specify message encoding.", filename, line, col))
 	}
 }
 
