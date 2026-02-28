@@ -856,3 +856,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `test.proto:5:7: Expected string.`
 - **Fix hint**: Either (1) change `ExpectString()` to accept an optional custom error message parameter, or (2) change `parseImport` to not use `ExpectString()` and instead manually check the next token type with a custom error. The same pattern affects `parseSyntax`, `parseEdition`, and reserved name parsing — each should have context-specific error messages matching C++.
 - **Also affects**: `syntax = ;` would produce `"Expected string."` instead of C++ protoc's syntax-specific error. `reserved ;` with a string expected would also differ. Each call site of `ExpectString()` could have a different C++-specific message.
+
+### Run 82 — Group syntax in proto3 produces different error message (VICTORY)
+- **Bug**: Go parser doesn't recognize the `group` keyword in proto3 at all — it treats `group` as a type name and fails with a generic parse error. C++ protoc recognizes the group syntax but rejects it with a clear semantic error "Groups are not supported in proto3 syntax." pointing at the `group` keyword.
+- **Test**: `413_group_proto3` — all 9 profiles fail.
+- **Root cause**: Go's `parseField()` in parser.go handles `group` keyword only in proto2 mode. When parsing proto3, `group` is not recognized as a keyword, so the parser sees `group Inner = 1 {` and treats `group` as a type name, `Inner` as the field name, then chokes at `{` expecting `;`.
+- **C++ protoc**: `test.proto:6:3: Groups are not supported in proto3 syntax.`
+- **Go protoc-go**: `test.proto:6:19: Expected ";".`
+- **Fix hint**: In the proto3 parsing path, check for `group` keyword and emit a clear error like "Groups are not supported in proto3 syntax." at the correct position (column 3, where `group` starts) before bailing out. This matches C++ protoc's behavior of recognizing the syntax but rejecting it semantically.
