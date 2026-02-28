@@ -4377,6 +4377,31 @@ func collectFileOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN s
 	}
 }
 
+// buildMsgFQNMap builds a map from *DescriptorProto to its fully-qualified name
+// for all messages in the given file descriptors.
+func buildMsgFQNMap(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) map[*descriptorpb.DescriptorProto]string {
+	m := map[*descriptorpb.DescriptorProto]string{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		for _, msg := range fd.GetMessageType() {
+			buildMsgFQNMapRecursive(msg, pkg, m)
+		}
+	}
+	return m
+}
+
+func buildMsgFQNMapRecursive(msg *descriptorpb.DescriptorProto, parentFQN string, m map[*descriptorpb.DescriptorProto]string) {
+	fqn := parentFQN + "." + msg.GetName()
+	if parentFQN == "" {
+		fqn = msg.GetName()
+	}
+	m[msg] = fqn
+	for _, nested := range msg.GetNestedType() {
+		buildMsgFQNMapRecursive(nested, fqn, m)
+	}
+}
+
 // findFileOptionExtension looks up an extension field by name, considering package scope.
 func findFileOptionExtension(name string, currentPkg string, allExts []fileOptExtInfo) (*descriptorpb.FieldDescriptorProto, string) {
 	buildFQN := func(e fileOptExtInfo) string {
@@ -4712,6 +4737,7 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
+	msgFQNMap := buildMsgFQNMap(orderedFiles, parsed)
 
 	type msgOptKey struct {
 		msg  *descriptorpb.DescriptorProto
@@ -4728,7 +4754,11 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomMessageOptions {
-			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			scope := fd.GetPackage()
+			if fqn, ok := msgFQNMap[opt.Message]; ok {
+				scope = fqn
+			}
+			ext, extFQN := findFileOptionExtension(opt.InnerName, scope, allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))

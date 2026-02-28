@@ -158,6 +158,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 65. [DONE] Fix `394_group_comment_sci` — C++ protoc attaches leading comments on group declarations to the nested message type location (path `[4,x,3,y]`), not the field location (path `[4,x,2,y]`). Moved `attachComments` from `fieldLocIdx` to `nestedLocIdx` in all three group parsing functions: `parseGroupField`, `parseGroupFieldInExtend`, and `parseGroupFieldInOneof`. All 3612/3612 tests pass.
 
+66. [DONE] Fix `395_multi_reserved_name` — `parseMessageReserved` and `parseEnumReserved` SCI reorder logic used `*nameIdx` (accumulated total across all reserved statements) instead of per-call count. When multiple `reserved` statements existed, the second statement's reorder shifted too far, corrupting entry order. Fixed by saving `startNameCount` at call start and using `namesAdded = *nameIdx - startNameCount` for the reorder. Applied to message string names, editions identifier names, and enum string names. All 3621/3621 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
