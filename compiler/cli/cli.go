@@ -6012,6 +6012,12 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
+	type extRangeOptKey struct {
+		rng  *descriptorpb.DescriptorProto_ExtensionRange
+		name string
+	}
+	seenExtRangeOpts := map[extRangeOptKey]bool{}
+
 	var errs []string
 	for _, name := range orderedFiles {
 		result := parseResults[name]
@@ -6025,6 +6031,27 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
+			}
+
+			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+			if !isRepeated && len(opt.SubFieldPath) == 0 {
+				dup := false
+				for _, rng := range opt.Ranges {
+					k := extRangeOptKey{rng, opt.ParenName}
+					if seenExtRangeOpts[k] {
+						dup = true
+						break
+					}
+				}
+				if dup {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" was already set.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				for _, rng := range opt.Ranges {
+					k := extRangeOptKey{rng, opt.ParenName}
+					seenExtRangeOpts[k] = true
+				}
 			}
 
 			// Validate boolean option values

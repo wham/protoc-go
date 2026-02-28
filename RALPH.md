@@ -130,6 +130,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 51. [DONE] Fix `380_oneof_dup_option` — C++ protoc rejects duplicate non-repeated oneof options with `Option "(oneof_tag)" was already set.` but Go protoc-go silently accepted them. Added per-oneof duplicate tracking using `oneofOptKey{oneof, name}` map in `resolveCustomOneofOptions`, matching the pattern in other option resolvers. All 3486/3486 tests pass.
 
+52. [DONE] Fix `381_extrange_dup_option` — C++ protoc rejects duplicate non-repeated extension range options with `Option "(range_tag)" was already set.` but Go protoc-go silently accepted them. Added per-range duplicate tracking using `extRangeOptKey{rng, name}` map in `resolveCustomExtRangeOptions`. Since one CustomExtRangeOption can apply to multiple ranges, checks all ranges for duplicates. All 3495/3495 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
