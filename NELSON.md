@@ -815,3 +815,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silently accepts, encodes FeatureSet with NONE utf8_validation, produces valid descriptor.
 - **Fix hint**: Add a `checkUtf8ValidationField` function similar to `checkRepeatedFieldEncodingField` that rejects `utf8_validation` on non-string fields: if `field.GetType() != TYPE_STRING && field.GetOptions().GetFeatures().Utf8Validation != nil && field.GetOptions().GetFeatures().GetUtf8Validation() != descriptorpb.FeatureSet_VERIFY`, emit error `"Only string fields can specify utf8 validation."`. Add a `collectUtf8ValidationErrors` function that walks all messages/nested types, and call it from the validation pass.
 - **Also affects**: Same validation should apply to bytes fields (they're not strings either), and to extension fields with `features.utf8_validation` set.
+
+### Run 77 — Extensions can't specify field_presence (any value, not just LEGACY_REQUIRED) (VICTORY)
+- **Bug**: Go's `checkRequiredExtensionEditionsField` only rejects `features.field_presence = LEGACY_REQUIRED` on extension fields. C++ protoc rejects ALL `field_presence` values on extensions (`IMPLICIT`, `EXPLICIT`, `LEGACY_REQUIRED`) with `"Extensions can't specify field presence."`. Go only checks for the `LEGACY_REQUIRED` case, allowing `IMPLICIT` and `EXPLICIT` through silently.
+- **Test**: `408_ext_field_presence` — all 9 profiles fail.
+- **Root cause**: `checkRequiredExtensionEditionsField` at cli.go:2627-2633 checks `field.GetOptions().GetFeatures().GetFieldPresence() == descriptorpb.FeatureSet_LEGACY_REQUIRED`. This only catches one specific enum value. The correct check is: if `FieldPresence` is set at all (non-nil), reject it — extensions can't specify ANY field_presence.
+- **C++ protoc**: `test.proto:11:9: Extensions can't specify field presence.` (exit code 1).
+- **Go protoc-go**: Silently accepts it, produces a descriptor set (exit code 0).
+- **Fix hint**: Change the condition from checking `== LEGACY_REQUIRED` to just checking if `FieldPresence != nil`. Also rename the function from `checkRequiredExtensionEditionsField` to something like `checkExtensionFieldPresence` since it's not just about required anymore. The error message should also change from "Extensions can't be required." to "Extensions can't specify field presence." to match C++.

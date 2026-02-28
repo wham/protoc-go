@@ -1,0 +1,12 @@
+edition = "2023";
+
+package extpresence;
+
+message Base {
+  int32 id = 1;
+  extensions 100 to 200;
+}
+
+extend Base {
+  int32 ext_val = 100 [features.field_presence = IMPLICIT];
+}
