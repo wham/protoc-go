@@ -4161,6 +4161,15 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 				}
 			}
 
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
@@ -4502,6 +4511,15 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 				}
 			}
 
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.ValTok.Line+1, opt.ValTok.Column+1, extFQN))
+					continue
+				}
+			}
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
@@ -4756,6 +4774,15 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 				}
 			}
 
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
@@ -4992,6 +5019,15 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 				}
 			}
 
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
@@ -5226,6 +5262,15 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 				}
 			}
 
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
@@ -5451,6 +5496,15 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 				}
 			}
 
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
@@ -5685,6 +5739,15 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 				}
 			}
 
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
@@ -5928,6 +5991,15 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 				}
 			}
 
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
@@ -6159,6 +6231,15 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 				}
 			}
 
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, extFQN))
+					continue
+				}
+			}
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
