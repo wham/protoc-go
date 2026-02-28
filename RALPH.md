@@ -150,8 +150,11 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 61. [DONE] Fix `390_agg_bad_enum` — C++ protoc rejects unknown enum values in aggregate options with `Unknown enumeration value of "VALUE" for field "FIELD".` wrapped in `Error while parsing option value for "OPT": ...` with line/column info. Go protoc-go used a different format without line/column. Added `aggregateEnumError` type with matching message, changed `encodeCustomOptionValue` to return this typed error, and added handling in `formatAggregateError`. All 3576/3576 tests pass.
 
+62. [DONE] Fix `391_surrogate_escape` — Go's `utf8.EncodeRune` replaces surrogate codepoints (U+D800-U+DFFF) with U+FFFD (replacement character), but C++ protoc encodes them as raw UTF-8 bytes. Modified `appendUTF8` in the tokenizer to manually encode surrogates using the standard 3-byte UTF-8 encoding instead of relying on Go's `utf8.EncodeRune`. All 3585/3585 tests pass.
+
 ## Notes
 
+- `io/tokenizer/tokenizer.go`: `appendUTF8` now manually encodes surrogate codepoints (U+D800-U+DFFF) as raw UTF-8 bytes instead of using Go's `utf8.EncodeRune`, which replaces them with U+FFFD. C++ protoc encodes surrogates as-is (e.g., U+D800 → `\xED\xA0\x80`). This affects `\U` and `\u` escape sequences in string/bytes literals containing surrogate codepoints.
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
 - `compiler/cli/cli.go`: `encodeAggregateFields()` detects Any type URL expansion when parent type is `google.protobuf.Any` and field name contains `/`. Encodes `type_url` (field 1) as string, resolves message type from URL, serializes sub-fields into `value` (field 2) as bytes.
 - `io/tokenizer/tokenizer.go`: `readLineCommentText()` only appends `\n` when a newline character is actually present in the input. Files ending with a line comment and no trailing newline now produce the correct comment text (without spurious `\n`).
