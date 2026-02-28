@@ -146,6 +146,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 59. [DONE] Fix `388_empty_aggregate_option` — `consumeAggregate()` and `consumeAggregateAngle()` returned `nil` for empty aggregates (`{}` / `<>`), causing `AggregateFields == nil` check to fail in resolvers and fall through to scalar encoding (which doesn't handle TYPE_MESSAGE). Changed both functions to return initialized empty slices (`[]AggregateField{}`) so the aggregate encoding path is taken. All 3558/3558 tests pass.
 
+60. [DONE] Fix `389_agg_field_order` — C++ protoc encodes aggregate option fields sorted by field number, but Go encoded them in source order. Modified `encodeAggregateOption` and `encodeAggregateFields` to collect encoded field entries with their field numbers, then stable-sort by field number before concatenating. All 3567/3567 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
