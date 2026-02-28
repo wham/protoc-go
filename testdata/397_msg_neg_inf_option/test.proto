@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package test;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.MessageOptions {
+  optional double msg_threshold = 50001;
+}
+
+message Config {
+  option (msg_threshold) = -inf;
+
+  optional string name = 1;
+}
