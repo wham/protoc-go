@@ -1,0 +1,10 @@
+syntax = "proto2";
+
+package groupcomment;
+
+message Container {
+  // Leading comment on group
+  optional group MyGroup = 1 {
+    optional int32 value = 1;
+  }
+}
