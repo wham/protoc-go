@@ -775,6 +775,16 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 				msg.NestedType = append(msg.NestedType, nested)
 				fieldIdx++
 				nestedMsgIdx++
+			} else if tok.Value == "group" {
+				// Label-less group (proto3/editions)
+				field, nested, err := p.parseGroupFieldNoLabel(path, fieldIdx, nestedMsgIdx)
+				if err != nil {
+					return nil, err
+				}
+				msg.Field = append(msg.Field, field)
+				msg.NestedType = append(msg.NestedType, nested)
+				fieldIdx++
+				nestedMsgIdx++
 			} else {
 				field, err := p.parseField(append(copyPath(path), 2, fieldIdx))
 				if err != nil {
@@ -1391,6 +1401,16 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 			fd.MessageType = append(fd.MessageType, nested)
 			continue
 		}
+		if peek.Value == "group" {
+			nestedMsgIdx := int32(len(fd.MessageType))
+			field, nested, err := p.parseGroupFieldNoLabelInExtend(fieldPath, []int32{4, nestedMsgIdx}, extendeeName, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
+			if err != nil {
+				return err
+			}
+			fd.Extension = append(fd.Extension, field)
+			fd.MessageType = append(fd.MessageType, nested)
+			continue
+		}
 
 		// Track location count before parseField to insert extendee span right after field span
 		locCountBefore := len(p.locations)
@@ -1603,6 +1623,18 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 		if isGroupField(peek.Value, p.tok.PeekAt(1).Value) {
 			nestedPath := append(copyPath(msgPath), 3, *nestedMsgIdx)
 			field, nested, err := p.parseGroupFieldInExtend(fieldPath, nestedPath, extendeeName, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
+			if err != nil {
+				return err
+			}
+			msg.Extension = append(msg.Extension, field)
+			msg.NestedType = append(msg.NestedType, nested)
+			*extIdx++
+			*nestedMsgIdx++
+			continue
+		}
+		if peek.Value == "group" {
+			nestedPath := append(copyPath(msgPath), 3, *nestedMsgIdx)
+			field, nested, err := p.parseGroupFieldNoLabelInExtend(fieldPath, nestedPath, extendeeName, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
 			if err != nil {
 				return err
 			}
@@ -2197,6 +2229,121 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	return field, nested, nil
 }
 
+// parseGroupFieldNoLabel parses a group field without a label (for proto3/editions).
+// "group" Name "=" Number "{" fields... "}"
+func (p *parser) parseGroupFieldNoLabel(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
+	return p.parseGroupFieldInOneof(msgPath, fieldIdx, nestedMsgIdx)
+}
+
+// parseGroupFieldNoLabelInExtend parses a group field without a label inside an extend block.
+func (p *parser) parseGroupFieldNoLabelInExtend(fieldPath, nestedPath []int32, extendeeName string, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol int) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
+	firstIdx := p.tok.CurrentIndex()
+	field := &descriptorpb.FieldDescriptorProto{}
+	field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+
+	// "group" keyword
+	groupTok := p.tok.Next()
+
+	// Group name (must start with uppercase)
+	nameTok, err := p.tok.ExpectIdent()
+	if err != nil {
+		return nil, nil, err
+	}
+	groupName := nameTok.Value
+	if len(groupName) == 0 || groupName[0] < 'A' || groupName[0] > 'Z' {
+		return nil, nil, fmt.Errorf("%d:%d: Group names must start with a capital letter.", nameTok.Line+1, nameTok.Column+1)
+	}
+	fieldName := strings.ToLower(groupName)
+
+	field.Name = proto.String(fieldName)
+	field.JsonName = proto.String(tokenizer.ToJSONName(fieldName))
+	field.Type = descriptorpb.FieldDescriptorProto_TYPE_GROUP.Enum()
+	field.TypeName = proto.String(groupName)
+	field.Extendee = proto.String(extendeeName)
+
+	// = number
+	if _, err := p.tok.Expect("="); err != nil {
+		return nil, nil, err
+	}
+	numTok, err := p.tok.ExpectInt()
+	if err != nil {
+		return nil, nil, err
+	}
+	num, parseErr := parseIntLenient(numTok.Value, 0, 64)
+	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
+		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
+	}
+	field.Number = proto.Int32(int32(num))
+
+	// Optional field options [deprecated = true, etc.]
+	var optionLocs []*descriptorpb.SourceCodeInfo_Location
+	if p.tok.Peek().Value == "[" {
+		var err error
+		optionLocs, err = p.parseFieldOptions(field, fieldPath)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if _, err := p.tok.Expect("{"); err != nil {
+		return nil, nil, err
+	}
+
+	// SCI: field placeholder (no comments — C++ attaches them to nested type)
+	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
+
+	// SCI: extendee (right after field span)
+	p.addLocationSpan(append(copyPath(fieldPath), 2),
+		extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
+
+	// No label span for label-less group fields
+
+	// SCI: type ("group" keyword)
+	p.addLocationSpan(append(copyPath(fieldPath), 5),
+		groupTok.Line, groupTok.Column, groupTok.Line, groupTok.Column+len(groupTok.Value))
+
+	// SCI: name
+	p.addLocationSpan(append(copyPath(fieldPath), 1),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// SCI: number
+	p.addLocationSpan(append(copyPath(fieldPath), 3),
+		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+
+	// Append deferred option SCI locations after number span
+	p.locations = append(p.locations, optionLocs...)
+
+	// SCI: nested message placeholder (comments attach here for groups)
+	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
+	p.attachComments(nestedLocIdx, firstIdx)
+
+	// SCI: nested message name
+	p.addLocationSpan(append(copyPath(nestedPath), 1),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// SCI: type_name
+	p.addLocationSpan(append(copyPath(fieldPath), 6),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// Parse group body
+	nested := &descriptorpb.DescriptorProto{
+		Name: proto.String(groupName),
+	}
+	if err := p.parseGroupBody(nested, nestedPath); err != nil {
+		return nil, nil, err
+	}
+
+	endTok := p.tok.Next() // consume "}"
+	p.trackEnd(endTok)
+
+	// Update field and nested type spans
+	groupSpan := multiSpan(groupTok.Line, groupTok.Column, endTok.Line, endTok.Column+1)
+	p.locations[fieldLocIdx].Span = groupSpan
+	p.locations[nestedLocIdx].Span = groupSpan
+
+	return field, nested, nil
+}
+
 // parseGroupBody parses the contents of a group body (between { and }),
 // handling all message body constructs: fields, enums, nested messages, etc.
 func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath []int32) error {
@@ -2286,6 +2433,15 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 		default:
 			if isGroupField(tok.Value, p.tok.PeekAt(1).Value) {
 				field, nestedType, err := p.parseGroupField(nestedPath, fieldIdx, nestedMsgIdx)
+				if err != nil {
+					return err
+				}
+				nested.Field = append(nested.Field, field)
+				nested.NestedType = append(nested.NestedType, nestedType)
+				fieldIdx++
+				nestedMsgIdx++
+			} else if tok.Value == "group" {
+				field, nestedType, err := p.parseGroupFieldNoLabel(nestedPath, fieldIdx, nestedMsgIdx)
 				if err != nil {
 					return err
 				}
