@@ -598,6 +598,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Enum option with integer value on message/field/service/method/enum/enum_value/oneof/ext_range — same bug as Run 56, all resolvers likely missing validation
 - Aggregate option enum field validation — `encodeCustomOptionValue` correctly accepts integers for enum in aggregate (text format), but does it match C++ for invalid enum value names?
 - Float/double option with identifier value other than `inf`/`nan` (e.g., `option (my_float) = FOO;`) — does Go reject properly?
+- ~~Surrogate code point in `\U` escape — Go replaces with U+FFFD, C++ encodes raw bytes~~ **DONE in Run 60 (391_surrogate_escape)**
+- Lone surrogate via `\u` (not paired) — Go tokenizer's `\u` path checks for head/trail surrogate pairing but a lone head surrogate without trail might also get replaced; and a lone trail surrogate (0xDC00-0xDFFF) with no preceding head surrogate goes straight to `appendUTF8` which would also replace it
+- Other invalid Unicode code points via `\U` — e.g., `\U0000FFFE` (non-character), `\U0000FFFF` — does Go treat these as valid?
+- ~~Subnormal double default value — `simpleDtoa` has no subnormal check unlike `simpleFtoa`~~ **TESTED Run 60 — C++ and Go agree on subnormal double formatting, no bug**
+- ~~Aggregate bool `True` — C++ text format also accepts `True`, not a bug~~ **TESTED Run 60 — both accept**
+- ~~Aggregate float `Inf`/`INF` — C++ text format also case-insensitive~~ **TESTED Run 60 — both accept**
+- ~~CRLF `\r\n` in comments — C++ also preserves `\r` in comment text~~ **TESTED Run 60 — both match**
 
 ### Run 53 — Group field name lookup fails in aggregate option encoding (VICTORY)
 - **Bug**: Go's `collectMsgFields()` builds `msgFieldMap` keyed by field names. For group fields, the field name is lowercased (e.g., `"inner"`), but in C++ text format (used by protoc for aggregate options), groups are referenced by their MESSAGE TYPE NAME (capitalized, e.g., `"Inner"`). When a user writes `option (cfg) = { Inner { name: "hello" } }`, Go looks up `msgFields["Inner"]` which doesn't exist — the key is `"inner"`.
@@ -652,3 +659,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `test.proto: error encoding custom option: field level: enum type ".agetest.Level" has no value named "NONEXISTENT"`
 - **Fix hint**: (1) Change the enum lookup error message to match C++'s wording: `Unknown enumeration value of "VALUE" for field "FIELD"`. (2) Wrap aggregate encoding errors with the option name context: `Error while parsing option value for "OPT_NAME": ...`. (3) Include line/column info from the source token positions.
 - **Also affects**: Other aggregate option encoding errors (type mismatches, unknown fields) likely have similar message format differences.
+
+### Run 60 — Surrogate code point in \U escape produces different bytes (VICTORY)
+- **Bug**: Go's `appendUTF8` function in `io/tokenizer/tokenizer.go:659` uses `utf8.EncodeRune` to encode Unicode code points from `\U` escape sequences. `utf8.EncodeRune` replaces surrogate code points (0xD800–0xDFFF) with U+FFFD (replacement character). C++ protobuf's `AppendUTF8` does raw UTF-8 encoding without surrogate validation, producing the (invalid but byte-accurate) 3-byte UTF-8 sequence for the surrogate.
+- **Test**: `391_surrogate_escape` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `appendUTF8(sb, 0xD800)` calls `utf8.EncodeRune(buf, rune(0xD800))`. Go's `utf8.ValidRune(0xD800)` returns false (surrogate range), so `EncodeRune` substitutes `RuneError` (U+FFFD = 0xEF 0xBF 0xBD). C++ just encodes 0xD800 as 3-byte UTF-8: 0xED 0xA0 0x80. The decoded string bytes differ, so `cEscape` produces different octal representations in the default value.
+- **C++ protoc**: default_value = `\355\240\200` (bytes ED A0 80, raw encoding of 0xD800)
+- **Go protoc-go**: default_value = `\357\277\275` (bytes EF BF BD, encoding of U+FFFD)
+- **Fix hint**: In `appendUTF8`, bypass `utf8.EncodeRune` for surrogate code points and do raw UTF-8 encoding manually: `if cp >= 0xD800 && cp <= 0xDFFF { sb.WriteByte(byte(0xE0 | (cp >> 12))); sb.WriteByte(byte(0x80 | ((cp >> 6) & 0x3F))); sb.WriteByte(byte(0x80 | (cp & 0x3F))); return }`. Or use a custom UTF-8 encoder that doesn't validate surrogates.
+- **Also affects**: Any string/bytes literal containing `\U` escapes with surrogate code points (0xD800–0xDFFF). Also affects `\u` escapes for lone surrogates (not part of a surrogate pair), if the Go tokenizer can produce lone surrogates through the `\u` path.
