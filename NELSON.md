@@ -625,3 +625,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silently accepts `42`, encodes as string bytes `"42"`, produces valid descriptor.
 - **Fix hint**: In `encodeCustomOptionValue`, for TYPE_STRING and TYPE_BYTES, check `valueType != tokenizer.TokenString` and return an error like `Expected string, got: VALUE`. Or add validation in `encodeAggregateFields` before calling `encodeCustomOptionValue` for string/bytes fields.
 - **Also affects**: Same bug for TYPE_BYTES fields. Also, setting a string field to an identifier (`name: foo`) or a float (`name: 3.14`) would also be accepted by Go but rejected by C++. This affects all aggregate option encoding paths (both `{ }` and `< >` syntax).
+
+### Run 57 — Empty aggregate option `option (cfg) = {};` fails in Go (VICTORY)
+- **Bug**: Go's `consumeAggregate()` returns `nil` for an empty `{}` aggregate, causing `AggregateFields` to be nil. The resolver then falls through to `encodeCustomOptionValue` which doesn't handle TYPE_MESSAGE, producing `unsupported custom option type: TYPE_MESSAGE`. C++ protoc handles empty aggregate options fine, encoding an empty message (zero payload bytes).
+- **Test**: `388_empty_aggregate_option` — all 9 profiles fail.
+- **Root cause**: `consumeAggregate()` at parser.go:4978 initializes `var fields []AggregateField` which is nil. When the aggregate `{}` is empty, the loop doesn't execute and `nil` is returned. In the resolver at cli.go:4321, `if opt.AggregateFields != nil` is false, so the code falls through to `encodeCustomOptionValue(ext, opt.Value, ...)` where `opt.Value` is `{` and ext type is TYPE_MESSAGE — which hits the default case error.
+- **C++ protoc**: Accepts `option (cfg) = {};` and produces valid descriptor with empty Config option.
+- **Go protoc-go**: Fails with `error encoding custom option: unsupported custom option type: TYPE_MESSAGE`.
+- **Fix hint**: Either (1) change `consumeAggregate()` to return `[]AggregateField{}` instead of nil for empty aggregates (e.g., `fields = make([]AggregateField, 0)`), or (2) in the resolver, also check `valTok.Value == "{"` to detect aggregate syntax even with nil fields, or (3) more robustly, initialize the `aggregateFields` variable in `parseFileOption` to a non-nil empty slice when `{` is consumed.
+- **Also affects**: Same bug likely exists in all 9 option parsers (file, message, field, enum, enum_value, service, method, oneof, extension range) — any that call `consumeAggregate()` and check `AggregateFields != nil`.
