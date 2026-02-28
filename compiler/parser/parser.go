@@ -1485,9 +1485,8 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 		return nil, nil, err
 	}
 
-	// SCI: field placeholder
+	// SCI: field placeholder (no comments — C++ attaches them to nested type)
 	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
-	p.attachComments(fieldLocIdx, firstIdx)
 
 	// SCI: extendee (right after field span)
 	p.addLocationSpan(append(copyPath(fieldPath), 2),
@@ -1512,8 +1511,9 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 	// Append deferred option SCI locations after number span
 	p.locations = append(p.locations, optionLocs...)
 
-	// SCI: nested message placeholder
+	// SCI: nested message placeholder (comments attach here for groups)
 	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
+	p.attachComments(nestedLocIdx, firstIdx)
 
 	// SCI: nested message name
 	p.addLocationSpan(append(copyPath(nestedPath), 1),
@@ -2142,9 +2142,8 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 		return nil, nil, err
 	}
 
-	// Source code info for the field
+	// Source code info for the field (no comments — C++ attaches them to nested type)
 	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
-	p.attachComments(fieldLocIdx, firstIdx)
 
 	// No label span for oneof group fields
 
@@ -2163,8 +2162,9 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	// Append deferred option SCI locations after number span
 	p.locations = append(p.locations, optionLocs...)
 
-	// Nested message type placeholder
+	// Nested message type placeholder (comments attach here for groups)
 	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
+	p.attachComments(nestedLocIdx, firstIdx)
 
 	// Nested type name span
 	p.addLocationSpan(append(copyPath(nestedPath), 1),
@@ -2392,9 +2392,8 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 		return nil, nil, err
 	}
 
-	// Source code info for the field
+	// Source code info for the field (no comments — C++ attaches them to nested type)
 	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
-	p.attachComments(fieldLocIdx, firstIdx)
 
 	// Label span
 	p.addLocationSpan(append(copyPath(fieldPath), 4),
@@ -2415,8 +2414,9 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 	// Append deferred option SCI locations after number span
 	p.locations = append(p.locations, optionLocs...)
 
-	// Nested message type placeholder
+	// Nested message type placeholder (comments attach here for groups)
 	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
+	p.attachComments(nestedLocIdx, firstIdx)
 
 	// Nested type name span
 	p.addLocationSpan(append(copyPath(nestedPath), 1),
