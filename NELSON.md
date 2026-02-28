@@ -545,6 +545,8 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - Extension range validation for 19000-19999 reserved range
 - ~~Proto2 groups nested 3+ levels deep (group in group in group)~~ **Partially covered by Run 10 (group encoding bug)**
 - ~~Group-typed custom options — wrong wire type encoding~~ **DONE in Run 10 (341_group_option_encoding)**
+- ~~Edition features.repeated_field_encoding on non-repeated field~~ **DONE in Run 70 (400_edition_repeated_encoding)**
+- Edition features scope restrictions (message_encoding on non-message field, utf8_validation on non-string field)
 - Edition features + extensions interactions
 - Proto files importing the same file via different paths
 - Custom option scope resolution (Go returns first match, not proper scope-based lookup)
@@ -741,3 +743,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Fails with `test.proto:12:28: Value must be number for double option "test.msg_threshold".`
 - **Fix hint**: Either (1) strip the `-` prefix when doing the `inf`/`nan` check in the resolver, or (2) stop baking `-` into the value in the message parser (match file-level pattern), or (3) extend the check to also accept `"-inf"` and `"-nan"`.
 - **Also affects**: Same bug exists in enum-level (parser.go:2995), service-level (parser.go:3500), method-level (parser.go:3753), oneof-level (parser.go:4261), enum-value-level (parser.go:2622), and field-level (parser.go:5478) option parsers — ALL bake `-` into value. So `-inf` and `-nan` would be rejected for ALL non-file-level float/double custom options.
+
+### Run 70 — Edition `features.repeated_field_encoding` accepted on non-repeated field (VICTORY)
+- **Bug**: Go's parser/validator does NOT check that `features.repeated_field_encoding` can only be applied to repeated fields. When a non-repeated field uses `int32 value = 1 [features.repeated_field_encoding = EXPANDED];` in an edition 2023 proto file, C++ protoc rejects it with `Only repeated fields can specify repeated field encoding.`, but Go accepts it silently and produces a valid descriptor with the feature set.
+- **Test**: `400_edition_repeated_encoding` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's field option parsing for editions features does not validate that `repeated_field_encoding` is only meaningful for `LABEL_REPEATED` fields. C++ protoc has explicit validation in the feature resolver that checks `f->is_repeated()` before allowing `repeated_field_encoding` to be set.
+- **C++ protoc**: `test.proto:8:9: Only repeated fields can specify repeated field encoding.`
+- **Go protoc-go**: Silently accepts the feature, encodes it into the field's FeatureSet, produces valid descriptor.
+- **Fix hint**: After parsing field options for edition proto files, add a validation check: if the field has `features.repeated_field_encoding` set and `field.GetLabel() != LABEL_REPEATED`, emit an error matching C++: `"Only repeated fields can specify repeated field encoding."`. The check should be in the parser's field option handling code or in a validation pass in the CLI.
+- **Also affects**: Other edition features may have similar scope restrictions not validated by Go (e.g., `features.message_encoding` might only be valid on message-typed fields, `features.utf8_validation` might only be valid on string fields).

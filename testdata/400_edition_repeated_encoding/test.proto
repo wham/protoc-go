@@ -1,0 +1,9 @@
+edition = "2023";
+
+package edrepeat;
+
+// C++ protoc rejects repeated_field_encoding on non-repeated fields.
+// Go protoc-go silently accepts it.
+message Msg {
+  int32 value = 1 [features.repeated_field_encoding = EXPANDED];
+}
