@@ -1018,9 +1018,9 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 	locsBefore := len(p.locations)
 
 	for {
-		numTok, err := p.tok.ExpectInt()
-		if err != nil {
-			return err
+		numTok := p.tok.Next()
+		if numTok.Type != tokenizer.TokenInt {
+			return fmt.Errorf("%d:%d: Expected field number range.", numTok.Line+1, numTok.Column+1)
 		}
 		startNum, parseErr := parseIntLenient(numTok.Value, 0, 64)
 		if parseErr != nil || startNum > math.MaxInt32 || startNum < math.MinInt32 {
@@ -1045,9 +1045,9 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 				endNumCol = maxTok.Column
 				endNumLen = len(maxTok.Value)
 			} else {
-				endNumTok, err := p.tok.ExpectInt()
-				if err != nil {
-					return err
+				endNumTok := p.tok.Next()
+				if endNumTok.Type != tokenizer.TokenInt {
+					return fmt.Errorf("%d:%d: Expected field number range.", endNumTok.Line+1, endNumTok.Column+1)
 				}
 				e, parseErr := parseIntLenient(endNumTok.Value, 0, 64)
 				if parseErr != nil || e > math.MaxInt32 || e < math.MinInt32 {
