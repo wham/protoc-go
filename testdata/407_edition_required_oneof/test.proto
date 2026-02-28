@@ -1,0 +1,10 @@
+edition = "2023";
+
+package reqoneof;
+
+message Container {
+  oneof choice {
+    string name = 1 [features.field_presence = LEGACY_REQUIRED];
+    int32 id = 2;
+  }
+}
