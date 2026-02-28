@@ -617,6 +617,7 @@ func Run(args []string) error {
 	valErrors = append(valErrors, validateFieldPresenceRepeated(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateFieldPresenceOneof(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateMessageEncodingScalar(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateFieldPresenceExtension(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateRequiredExtensionEditions(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateUtf8ValidationNonString(orderedFiles, parsed)...)
 	featEditionErrs := validateFeaturesEditions(orderedFiles, parsed)
@@ -2629,6 +2630,42 @@ func checkRequiredExtensionEditionsField(filename string, field *descriptorpb.Fi
 		field.GetOptions().GetFeatures().GetFieldPresence() == descriptorpb.FeatureSet_LEGACY_REQUIRED {
 		line, col := findLocationByPath(namePath, sci)
 		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extensions can't be required.", filename, line, col))
+	}
+}
+
+func validateFieldPresenceExtension(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectFieldPresenceExtensionErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		for i, ext := range fd.GetExtension() {
+			checkFieldPresenceExtensionField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectFieldPresenceExtensionErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, ext := range msg.GetExtension() {
+		checkFieldPresenceExtensionField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectFieldPresenceExtensionErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
+	}
+}
+
+func checkFieldPresenceExtensionField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil &&
+		field.GetOptions().GetFeatures().FieldPresence != nil &&
+		field.GetOptions().GetFeatures().GetFieldPresence() != descriptorpb.FeatureSet_LEGACY_REQUIRED {
+		line, col := findLocationByPath(namePath, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extensions can't specify field presence.", filename, line, col))
 	}
 }
 

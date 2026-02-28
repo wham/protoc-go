@@ -184,6 +184,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 78. [DONE] Fix `407_edition_required_oneof` — C++ protoc rejects `features.field_presence` on oneof fields with `Oneof fields can't specify field presence.` but Go protoc-go silently accepted it. Added `validateFieldPresenceOneof` validator that checks editions files for oneof fields (fields with `OneofIndex` set) that have `features.field_presence` specified. Recursively handles nested messages. All 3729/3729 tests pass.
 
+79. [DONE] Fix `408_ext_field_presence` — C++ protoc rejects any explicitly-set `features.field_presence` on extensions (not just `LEGACY_REQUIRED`) with `Extensions can't specify field presence.` Added `validateFieldPresenceExtension` validator that checks editions files for extension fields with `FieldPresence` explicitly set to a non-LEGACY_REQUIRED value (LEGACY_REQUIRED is already caught by `validateRequiredExtensionEditions` with a different error message). Handles top-level and message-level extensions. All 3738/3738 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
