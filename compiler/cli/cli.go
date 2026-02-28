@@ -7875,6 +7875,8 @@ func cEscapeForDecode(data []byte) string {
 			sb.WriteString(`\r`)
 		case '\t':
 			sb.WriteString(`\t`)
+		case '\'':
+			sb.WriteString(`\'`)
 		case '"':
 			sb.WriteString(`\"`)
 		case '\\':

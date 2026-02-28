@@ -1,0 +1,7 @@
+syntax = "proto2";
+
+package cesctest;
+
+message Payload {
+  optional bytes bell = 1 [default = "\a"];
+}
