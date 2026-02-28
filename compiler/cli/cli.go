@@ -615,6 +615,7 @@ func Run(args []string) error {
 	valErrors = append(valErrors, validateEditionGroups(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateRepeatedFieldEncoding(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateFieldPresenceRepeated(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateFieldPresenceOneof(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateMessageEncodingScalar(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateRequiredExtensionEditions(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateUtf8ValidationNonString(orderedFiles, parsed)...)
@@ -2506,6 +2507,34 @@ func checkFieldPresenceRepeatedField(filename string, field *descriptorpb.FieldD
 	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().FieldPresence != nil {
 		line, col := findLocationByPath(namePath, sci)
 		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Repeated fields can't specify field presence.", filename, line, col))
+	}
+}
+
+func validateFieldPresenceOneof(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectFieldPresenceOneofErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectFieldPresenceOneofErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, field := range msg.GetField() {
+		if field.OneofIndex != nil && field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().FieldPresence != nil {
+			namePath := append(clonePath(msgPath), 2, int32(i), 1)
+			line, col := findLocationByPath(namePath, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Oneof fields can't specify field presence.", filename, line, col))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectFieldPresenceOneofErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
 	}
 }
 
