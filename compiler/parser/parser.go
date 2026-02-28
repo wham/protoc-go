@@ -828,6 +828,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 	if p.tok.Peek().Type == tokenizer.TokenString {
 		// reserved "name1", "name2";
 		stmtPath := append(copyPath(msgPath), 10) // field 10 = reserved_name
+		startNameCount := *nameIdx
 		for {
 			nameTok, err := p.tok.ExpectString()
 			if err != nil {
@@ -862,14 +863,16 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 		p.trackEnd(endTok)
 		// Statement-level span
 		p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
-		// Move statement span before individual names
+		// Move statement span before individual names added in this call
+		namesAdded := int(*nameIdx - startNameCount)
 		stmtLoc := p.locations[len(p.locations)-1]
-		copy(p.locations[len(p.locations)-int(*nameIdx):], p.locations[len(p.locations)-int(*nameIdx)-1:len(p.locations)-1])
-		p.locations[len(p.locations)-int(*nameIdx)-1] = stmtLoc
-		p.attachComments(len(p.locations)-int(*nameIdx)-1, firstIdx)
+		copy(p.locations[len(p.locations)-namesAdded:], p.locations[len(p.locations)-namesAdded-1:len(p.locations)-1])
+		p.locations[len(p.locations)-namesAdded-1] = stmtLoc
+		p.attachComments(len(p.locations)-namesAdded-1, firstIdx)
 	} else if p.tok.Peek().Type == tokenizer.TokenIdent && p.syntax == "editions" {
 		// Editions supports bare identifier reserved names: reserved foo, bar;
 		stmtPath := append(copyPath(msgPath), 10) // field 10 = reserved_name
+		startNameCount := *nameIdx
 		for {
 			nameTok := p.tok.Next() // consume identifier
 			nameVal := nameTok.Value
@@ -893,11 +896,12 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 		p.trackEnd(endTok)
 		// Statement-level span
 		p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
-		// Move statement span before individual names
+		// Move statement span before individual names added in this call
+		namesAdded := int(*nameIdx - startNameCount)
 		stmtLoc := p.locations[len(p.locations)-1]
-		copy(p.locations[len(p.locations)-int(*nameIdx):], p.locations[len(p.locations)-int(*nameIdx)-1:len(p.locations)-1])
-		p.locations[len(p.locations)-int(*nameIdx)-1] = stmtLoc
-		p.attachComments(len(p.locations)-int(*nameIdx)-1, firstIdx)
+		copy(p.locations[len(p.locations)-namesAdded:], p.locations[len(p.locations)-namesAdded-1:len(p.locations)-1])
+		p.locations[len(p.locations)-namesAdded-1] = stmtLoc
+		p.attachComments(len(p.locations)-namesAdded-1, firstIdx)
 	} else {
 		// reserved 2, 15, 9 to 11;
 		stmtPath := append(copyPath(msgPath), 9) // field 9 = reserved_range
@@ -3194,6 +3198,7 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 	if p.tok.Peek().Type == tokenizer.TokenString {
 		// reserved "NAME1", "NAME2";
 		stmtPath := append(copyPath(enumPath), 5) // field 5 = reserved_name
+		startNameCount := *nameIdx
 		for {
 			nameTok, err := p.tok.ExpectString()
 			if err != nil {
@@ -3226,11 +3231,12 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 		}
 		p.trackEnd(endTok)
 		p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
-		// Move statement span before individual names
+		// Move statement span before individual names added in this call
+		namesAdded := int(*nameIdx - startNameCount)
 		stmtLoc := p.locations[len(p.locations)-1]
-		copy(p.locations[len(p.locations)-int(*nameIdx):], p.locations[len(p.locations)-int(*nameIdx)-1:len(p.locations)-1])
-		p.locations[len(p.locations)-int(*nameIdx)-1] = stmtLoc
-		p.attachComments(len(p.locations)-int(*nameIdx)-1, firstIdx)
+		copy(p.locations[len(p.locations)-namesAdded:], p.locations[len(p.locations)-namesAdded-1:len(p.locations)-1])
+		p.locations[len(p.locations)-namesAdded-1] = stmtLoc
+		p.attachComments(len(p.locations)-namesAdded-1, firstIdx)
 	} else {
 		// reserved 2, 3, 10 to 20;
 		stmtPath := append(copyPath(enumPath), 4) // field 4 = reserved_range
