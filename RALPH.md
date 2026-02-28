@@ -210,6 +210,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 91. [DONE] Fix `stdin@decode_raw_single_quote` — C++ protoc's `CEscape` escapes single quotes as `\'` in `--decode_raw` string output, but Go's `cEscapeForDecode` didn't escape them. Added `'\''` → `\'` case. All 3847/3847 tests pass.
 
+92. [DONE] Fix `422_positive_float_default` — C++ protoc rejects `+` prefix on float/double default values with `Expected number.` at the `+` position. Added catch-all check in `parseFieldOptions` for non-numeric/non-identifier token types on float/double defaults, after existing string and identifier checks. All 3856/3856 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
