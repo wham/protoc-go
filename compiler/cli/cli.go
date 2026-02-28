@@ -614,6 +614,7 @@ func Run(args []string) error {
 	valErrors = append(valErrors, validateEnumDefaultValues(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateProto3(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateEditionGroups(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateFileLevelLegacyRequired(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateRepeatedFieldEncoding(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateFieldPresenceRepeated(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateFieldPresenceOneof(orderedFiles, parsed)...)
@@ -2427,6 +2428,22 @@ func collectEditionGroupErrors(filename string, msg *descriptorpb.DescriptorProt
 		}
 		collectEditionGroupErrors(filename, nested, append(append([]int32{}, msgPath...), 3, int32(i)), sci, errs)
 	}
+}
+
+func validateFileLevelLegacyRequired(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		if fd.GetOptions() != nil && fd.GetOptions().GetFeatures() != nil &&
+			fd.GetOptions().GetFeatures().FieldPresence != nil &&
+			fd.GetOptions().GetFeatures().GetFieldPresence() == descriptorpb.FeatureSet_LEGACY_REQUIRED {
+			errs = append(errs, fmt.Sprintf("%s:1:1: Required presence can't be specified by default.", fd.GetName()))
+		}
+	}
+	return errs
 }
 
 func validateRepeatedFieldEncoding(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
