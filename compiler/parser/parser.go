@@ -5582,8 +5582,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 					return optLocs, nil
 				}
 				if valTok.Type == tokenizer.TokenIdent {
-					lower := strings.ToLower(valTok.Value)
-					if lower != "inf" && lower != "nan" {
+					if valTok.Value != "inf" && valTok.Value != "nan" {
 						p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected number.", p.filename, valTok.Line+1, valTok.Column+1))
 						p.skipToToken("]")
 						return optLocs, nil
