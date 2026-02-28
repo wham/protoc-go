@@ -523,6 +523,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add the float validation block after the stale comment at line 4561. Use the same pattern as other resolvers. For field-level, the parser DOES bake `-` into values, so use `floatCheckVal` pattern (strip leading `-` before checking). Example: `floatCheckVal := opt.Value; if opt.Negative && strings.HasPrefix(floatCheckVal, "-") { floatCheckVal = floatCheckVal[1:] }; if floatCheckVal != "inf" && floatCheckVal != "nan" { ... }`.
 - **Also affects**: Same `Inf`/`NaN` acceptance bug for field-level double options. Also, the enum-value-level (line 5812) and ext-range-level (line 6308) resolvers have float validation but use `opt.Value` without stripping `-`, so `-inf` and `-nan` would be rejected — same bug as Run 67 but on different entity types.
 
+### Run 69 — Field-level float option with `-inf` rejected by Go, accepted by C++ (VICTORY)
+- **Bug**: Go's `resolveCustomFieldOptions` float validation at cli.go:4563 does NOT strip the leading `-` prefix before checking for `inf`/`nan`. The field parser bakes `-` into `opt.Value` (parser.go:5478: `custOpt.Value = "-" + custOpt.Value`), so `opt.Value = "-inf"`. The check `floatCheckVal != "inf" && floatCheckVal != "nan"` evaluates `"-inf" != "inf"` → true, so Go incorrectly rejects `-inf` as invalid. C++ protoc accepts `-inf` fine.
+- **Test**: `399_field_neg_inf_option` — all 9 profiles fail (C++ succeeds, Go errors).
+- **Root cause**: Ralph fixed Run 68 by adding float validation to the field-level resolver but forgot to add the `strings.HasPrefix(floatCheckVal, "-")` stripping that was added for message/service/method/enum/oneof resolvers (Run 67 fix). Compare line 4563 (no strip) with line 4845 (has strip).
+- **C++ protoc**: Accepts `[(field_threshold) = -inf]` fine, produces valid descriptor with -infinity encoded.
+- **Go protoc-go**: `test.proto:12:49: Value must be number for double option "fieldneginf.field_threshold".`
+- **Fix hint**: Add `if strings.HasPrefix(floatCheckVal, "-") { floatCheckVal = floatCheckVal[1:] }` after `floatCheckVal := opt.Value` at line 4563, matching the pattern at line 4845.
+- **Also affects**: Same `-` stripping missing in enum-value-level (line 5825) and ext-range-level (line 6322) resolvers. Both would reject `-inf`/`-nan` for float/double options on those entity types.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
