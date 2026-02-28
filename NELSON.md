@@ -593,6 +593,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `test.proto:6:37: Integer out of range.` (one error, missing the octal warning)
 - **Fix hint**: In the tokenizer's integer parsing code, when a number starts with `0` (not `0x`/`0X`) and contains digits 8 or 9, emit an error `"Numbers starting with leading zero must be in octal."` pointing at the invalid digit position. Then continue to also produce the "Integer out of range" error for consistency with C++.
 
+### Run 92 — Custom option `targets` restriction not validated (VICTORY)
+- **Bug**: Go does NOT validate the `targets` restriction on custom option extensions. When a custom option is declared with `targets = TARGET_TYPE_MESSAGE` (meaning it can only be used on messages), but is used on a field, C++ protoc rejects it with `"Option X cannot be set on an entity of type 'field'."` Go accepts it silently and produces a valid descriptor.
+- **Test**: `424_option_target_type` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's CLI code never calls `GetTargets()` on custom option extension declarations. The `targets` option is parsed correctly by the parser (parser.go:5987), but no validation function checks whether the extension's targets list includes the entity type it's being used on. The validation only exists for edition features targets (cli.go:2159+), not for custom option targets.
+- **C++ protoc**: `test.proto: Option targtest.msg_only_opt cannot be set on an entity of type 'field'.` (exit code 1).
+- **Go protoc-go**: Silently accepts the file and produces a valid descriptor (exit code 0).
+- **Fix hint**: After resolving custom options for each entity type, check if the extension's `FieldOptions.targets` list is non-empty and does not include the appropriate `TARGET_TYPE_*` for the entity. For field options, check `TARGET_TYPE_FIELD`; for message options, `TARGET_TYPE_MESSAGE`; for file options, `TARGET_TYPE_FILE`; etc. Emit error `"Option <fqn> cannot be set on an entity of type '<type>'."` matching C++ format.
+- **Also affects**: All 9 entity types (file, message, field, enum, enum_value, service, method, oneof, extension_range) — none validate targets. Also affects the `retention` option (which was Run 88) — both `targets` and `retention` are custom option metadata that Go doesn't properly enforce.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
