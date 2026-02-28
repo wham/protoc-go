@@ -214,6 +214,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 93. [DONE] Fix `423_octal_invalid_digit` — C++ protoc emits `Numbers starting with leading zero must be in octal.` before `Integer out of range.` when a default value like `09` contains non-octal digits. The parser's integer default overflow check in `parseFieldOptions` was missing the `invalidOctalError` call that already existed elsewhere. Added it before the "Integer out of range." error. All 3865/3865 tests pass.
 
+94. [DONE] Fix `424_option_target_type` — C++ protoc validates that custom extension options respect their `targets` constraint. An extension with `targets = TARGET_TYPE_MESSAGE` can only be used on messages, even if it extends `FieldOptions`. Added `checkOptionTargets` helper that checks `ext.GetOptions().GetTargets()` and emits `Option <FQN> cannot be set on an entity of type \`<type>\`.` if the entity type is not in the targets list. Added target validation to all 9 `resolveCustom*Options` functions (file, field, message, service, method, enum, enum value, oneof, ext range). All 3874/3874 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
