@@ -967,3 +967,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Discrepancy**: Exit code mismatch (C++ 0 vs Go 1) and stderr mismatch (C++ empty vs Go "Missing output directives.").
 - **Fix hint**: Implement `--decode` mode: (1) add `decodeType string` field to config, (2) parse `--decode=TYPE` in `parseArgs`, (3) skip "Missing output directives" check when decode/encode mode is active, (4) after building descriptor pool, read stdin, decode binary proto using the specified message type, print text format to stdout.
 - **Also affects**: `--encode=MESSAGE_TYPE` is similarly unimplemented (same `continue` skip).
+
+### Run 95 — decode_raw fails on group wire types (VICTORY)
+- **Bug**: Go's `--decode_raw` mode fails to parse protobuf data containing group wire types (wire type 3 = start group, wire type 4 = end group). C++ protoc correctly decodes groups and prints them with `{ }` notation. Go fails with "Failed to parse input." exit code 1.
+- **Test**: Added `decode_raw_group` to `STDIN_TESTS` in `scripts/test` with hex data `0b0a0568656c6c6f0c` (field 1 start group, field 1 string "hello", field 1 end group). 1 profile fails (`stdin@decode_raw_group`).
+- **Root cause**: `validateRawProto()` at cli.go:7870-7880 has a `StartGroupType` case that doesn't actually validate group contents. After consuming the start tag, it checks the first inner tag — if it's NOT the matching end group tag, it immediately returns `"group validation not implemented"` instead of actually parsing/skipping the inner fields. The validation failure at line 413 (`if err := validateRawProto(data); err != nil`) blocks `decodeRawProto()` (which DOES handle groups correctly at line 7819-7835) from ever being called.
+- **C++ protoc**: Decodes group correctly, prints `1 {\n  1: "hello"\n}` (exit 0).
+- **Go protoc-go**: `Failed to parse input.` (exit 1).
+- **Fix hint**: In `validateRawProto`, the `StartGroupType` case needs to recursively validate inner fields (like `decodeRawField` does in `decodeRawProto`). Instead of `return fmt.Errorf("group validation not implemented")`, it should consume each inner field by calling itself recursively or by using a helper that skips fields based on wire type, until it finds the matching `EndGroupType` tag.
+- **Also affects**: Any protobuf binary data containing group wire types (proto2 groups, MessageSet wire format) will fail `--decode_raw`.

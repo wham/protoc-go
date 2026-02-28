@@ -917,6 +917,7 @@ STDIN_TESTS=(
   "decode_raw_empty|"
   "decode_raw_corrupt|08"
   "decode_raw_single_quote|0a0127"
+  "decode_raw_group|0b0a0568656c6c6f0c"
 )
 
 for stdin_spec in "${STDIN_TESTS[@]}"; do
