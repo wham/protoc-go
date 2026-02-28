@@ -186,6 +186,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 79. [DONE] Fix `408_ext_field_presence` — C++ protoc rejects any explicitly-set `features.field_presence` on extensions (not just `LEGACY_REQUIRED`) with `Extensions can't specify field presence.` Added `validateFieldPresenceExtension` validator that checks editions files for extension fields with `FieldPresence` explicitly set to a non-LEGACY_REQUIRED value (LEGACY_REQUIRED is already caught by `validateRequiredExtensionEditions` with a different error message). Handles top-level and message-level extensions. All 3738/3738 tests pass.
 
+80. [DONE] Fix `409_bytes_option_int_error` — C++ protoc uses `"string option"` in the error message for both TYPE_STRING and TYPE_BYTES custom extension options, but Go used `"bytes option"` for TYPE_BYTES. Removed the bytes-specific branch in all 9 `resolveCustom*Options` functions so the error always says `Value must be quoted string for string option "FQN".` All 3747/3747 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
