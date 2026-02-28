@@ -7866,7 +7866,8 @@ func validateRawProto(data []byte) error {
 			}
 			data = data[vn:]
 		case protowire.StartGroupType:
-			// skip group contents
+			// recursively validate group contents until matching EndGroup
+			found := false
 			for len(data) > 0 {
 				gNum, gType, gn := protowire.ConsumeTag(data)
 				if gn < 0 {
@@ -7874,15 +7875,82 @@ func validateRawProto(data []byte) error {
 				}
 				if gType == protowire.EndGroupType && gNum == num {
 					data = data[gn:]
+					found = true
 					break
 				}
-				return fmt.Errorf("group validation not implemented")
+				// validate the inner field (recursion handles nested groups)
+				innerData := data
+				innerN := validateRawField(innerData)
+				if innerN < 0 {
+					return fmt.Errorf("invalid")
+				}
+				data = data[innerN:]
+			}
+			if !found {
+				return fmt.Errorf("invalid")
 			}
 		default:
 			return fmt.Errorf("invalid")
 		}
 	}
 	return nil
+}
+
+// validateRawField validates a single protobuf field and returns bytes consumed, or -1 on error.
+func validateRawField(data []byte) int {
+	num, wtype, n := protowire.ConsumeTag(data)
+	if n < 0 || num < 1 {
+		return -1
+	}
+	consumed := n
+	rest := data[n:]
+	switch wtype {
+	case protowire.VarintType:
+		_, vn := protowire.ConsumeVarint(rest)
+		if vn < 0 {
+			return -1
+		}
+		consumed += vn
+	case protowire.Fixed64Type:
+		if len(rest) < 8 {
+			return -1
+		}
+		consumed += 8
+	case protowire.Fixed32Type:
+		if len(rest) < 4 {
+			return -1
+		}
+		consumed += 4
+	case protowire.BytesType:
+		_, vn := protowire.ConsumeBytes(rest)
+		if vn < 0 {
+			return -1
+		}
+		consumed += vn
+	case protowire.StartGroupType:
+		rest2 := rest
+		for {
+			if len(rest2) == 0 {
+				return -1
+			}
+			gNum, gType, gn := protowire.ConsumeTag(rest2)
+			if gn < 0 {
+				return -1
+			}
+			if gType == protowire.EndGroupType && gNum == num {
+				consumed += (len(rest) - len(rest2)) + gn
+				break
+			}
+			innerN := validateRawField(rest2)
+			if innerN < 0 {
+				return -1
+			}
+			rest2 = rest2[innerN:]
+		}
+	default:
+		return -1
+	}
+	return consumed
 }
 
 func decodeRawField(w *os.File, data []byte, indent int) (int, error) {
@@ -7928,6 +7996,26 @@ func decodeRawField(w *os.File, data []byte, indent int) (int, error) {
 		} else {
 			fmt.Fprintf(w, "%s%d: \"%s\"\n", prefix, num, cEscapeForDecode(v))
 		}
+	case protowire.StartGroupType:
+		fmt.Fprintf(w, "%s%d {\n", prefix, num)
+		for len(rest) > 0 {
+			peekNum, peekType, peekN := protowire.ConsumeTag(rest)
+			if peekN < 0 {
+				return 0, fmt.Errorf("invalid tag in group")
+			}
+			if peekType == protowire.EndGroupType && peekNum == num {
+				consumed += (len(data) - n - len(rest)) + peekN
+				rest = rest[peekN:]
+				break
+			}
+			innerConsumed, err := decodeRawField(w, rest, indent+1)
+			if err != nil {
+				return 0, err
+			}
+			rest = rest[innerConsumed:]
+		}
+		consumed = len(data) - len(rest)
+		fmt.Fprintf(w, "%s}\n", prefix)
 	default:
 		return 0, fmt.Errorf("unknown wire type")
 	}

@@ -220,6 +220,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 96. [DONE] Fix `cli@decode_with_file` — Implemented `--decode=MESSAGE_TYPE` mode. Parses proto files, finds the specified message type in parsed FileDescriptorProtos, reads binary protobuf from stdin, and prints text format output matching C++ protoc's TextFormat::Print. Known fields are printed by name with proper type formatting, unknown fields by number (same format as --decode_raw). Added `runDecode`, `findMessageType`, `printTextProto`, `printKnownField`, `printUnknownField`, and supporting functions. All 3884/3884 tests pass.
 
+97. [DONE] Fix `stdin@decode_raw_group` — `validateRawProto` returned `"group validation not implemented"` for StartGroupType wire type, causing group-encoded data to fail validation. Replaced with recursive `validateRawField` helper that properly validates group contents. Also added StartGroupType handling to `decodeRawField` so groups inside sub-messages are decoded correctly. All 3885/3885 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
