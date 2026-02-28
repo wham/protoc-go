@@ -922,3 +922,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `1: "\'"` (single quote escaped with backslash)
 - **Go protoc-go**: `1: "'"` (single quote unescaped)
 - **Fix hint**: Add `case '\'': sb.WriteString(`\'`)` to `cEscapeForDecode()` between the `"` and `\\` cases. This matches what the parser's `cEscape` already does.
+
+### Run 90 — Positive sign `+` in float/double default value produces different error (VICTORY)
+- **Bug**: Go parser does not handle the `+` sign before default values for float/double fields. When `[default = +inf]` is used, Go consumes `+` as the value token (a symbol), then treats `inf` as unexpected. C++ protoc recognizes `+` at the position and produces a clear "Expected number" error.
+- **Test**: `422_positive_float_default` — all 9 profiles fail.
+- **Root cause**: `parseFieldOptions()` at parser.go:5737 only checks for `-` sign before default values (`if optName == "default" && p.tok.Peek().Value == "-"`), not `+`. When `+` is encountered, it becomes `valTok` with `valTok.Value = "+"`, then the float validation code at line 5792-5798 sees `valTok.Type == TokenIdent` with value `"inf"` is never reached (because `valTok` is `+` not `inf`). Go then fails at subsequent parsing.
+- **C++ protoc**: `test.proto:6:39: Expected number.` — error at column of `+`
+- **Go protoc-go**: `test.proto:6:40: Expected ";".\ntest.proto:6:40: Expected "]".` — error at column of `inf`, wrong error message
+- **Fix hint**: Add `+` handling alongside `-` handling: `if optName == "default" && (p.tok.Peek().Value == "-" || p.tok.Peek().Value == "+")`. When `+`, just consume it and skip (positive sign is no-op for the value). Or, replicate C++ behavior and reject `+` with "Expected number" error.
+- **Hex escape side note**: Also tested `\x4142` hex escape (testdata/421_hex_escape_length) — both C++ and Go limit `\x` to 2 hex digits, so no bug there. Test removed.

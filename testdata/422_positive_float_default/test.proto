@@ -1,0 +1,7 @@
+syntax = "proto2";
+
+package plusdef;
+
+message Cfg {
+  optional float ratio = 1 [default = +inf];
+}
