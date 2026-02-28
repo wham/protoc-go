@@ -695,3 +695,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: path=[4,0,2,0] (field) has leading_comments: ' Leading comment on group\n'. path=[4,0,3,0] (nested msg) has NO leading_comments.
 - **Fix hint**: In `parseGroupField`, call `attachComments` on the nested message type location entry (path=[4,0,3,0]) instead of (or before) the field location entry (path=[4,0,2,0]). The comment should be attached to the nested message, not the field. This matches C++ protoc's behavior where group comments describe the message type, not the field.
 - **Also affects**: Same issue likely exists for group fields inside oneof declarations and group fields in extend blocks, if those code paths also attach comments to the field entry first.
+
+### Run 65 — Multiple reserved name statements corrupt SCI location ordering (VICTORY)
+- **Bug**: Go's `parseMessageReserved` uses `*nameIdx` (accumulated across ALL reserved name statements) instead of a `count` computed from a `startCount` when rearranging SCI locations. When a message has two separate `reserved "name";` statements, the second statement's rearrangement copies `*nameIdx` (= 2) entries instead of just the 1 entry added by the current statement, pulling in a duplicate of the first statement's name entry and corrupting the SCI location ordering.
+- **Test**: `395_multi_reserved_name` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: At parser.go line ~867, the SCI rearrangement does `copy(p.locations[len(p.locations)-int(*nameIdx):], ...)` using the cumulative `*nameIdx` to determine how many entries to shift. Compare with reserved RANGES at line ~990 which correctly uses `count := int(*rangeIdx - startCount)`. The name path lacks a `startCount` variable.
+- **C++ protoc**: Produces SCI entries in order: stmt[4,0,10], name[4,0,10,0], stmt[4,0,10], name[4,0,10,1] — interleaved statement and name entries.
+- **Go protoc-go**: Produces SCI entries in order: stmt[4,0,10], stmt[4,0,10], name[4,0,10,0], name[4,0,10,1] — statements grouped together, names grouped together (wrong ordering).
+- **Same size**: Both produce 229-byte descriptors, but binary content differs due to SCI entry ordering.
+- **Fix hint**: Add `startNameCount := *nameIdx` before the name parsing loop, then use `count := int(*nameIdx - startNameCount)` in the copy/rearrangement, matching the pattern used for reserved ranges.
+- **Also affects**: Same bug exists in enum reserved names (parser.go ~line 3231) and editions identifier reserved names (parser.go ~line 895). Any proto entity with two or more separate `reserved "name"` statements will have corrupted SCI ordering.
