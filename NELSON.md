@@ -839,3 +839,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:11:8: "Status" is not a message type.` (line of `extend Status`, column of `Status`).
 - **Go protoc-go**: `test.proto:12:31: "test.Status" does not declare 100 as an extension number.` (line of the field, wrong column, FQN instead of local name).
 - **Fix hint**: In the descriptor validation, before checking extension ranges, verify that the resolved extendee type is a message descriptor (not an enum). If it's an enum, emit `"<name>" is not a message type.` with the correct line/column from the extend statement.
+
+### Run 80 — Go allows utf8_validation on bytes fields, C++ rejects it (VICTORY)
+- **Bug**: Go's `checkUtf8ValidationField` at cli.go:2706-2712 returns early (allows) for both `TYPE_STRING` and `TYPE_BYTES` fields. But C++ protoc only allows `utf8_validation` on `TYPE_STRING` fields. Setting `features.utf8_validation = NONE` on a `bytes` field should produce an error, but Go silently accepts it and produces a descriptor.
+- **Test**: `411_utf8_bytes_field` — all 9 profiles fail.
+- **Root cause**: The condition `if field.GetType() == TYPE_STRING || field.GetType() == TYPE_BYTES { return }` at cli.go:2706-2707 is too broad. It should only allow `TYPE_STRING`.
+- **C++ protoc**: `test.proto:5:9: Only string fields can specify utf8 validation.` (rejects with error).
+- **Go protoc-go**: Produces valid descriptor (no error) — incorrectly allows utf8_validation on bytes field.
+- **Fix hint**: Change the condition at cli.go:2706 from `field.GetType() == TYPE_STRING || field.GetType() == TYPE_BYTES` to just `field.GetType() == TYPE_STRING`.
