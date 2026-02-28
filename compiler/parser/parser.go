@@ -658,6 +658,15 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 	return nil
 }
 
+// syntheticOneofName generates the synthetic oneof name for a proto3 optional field,
+// matching C++ GenerateSyntheticOneofs: prepend "_" only if the name doesn't already start with "_".
+func syntheticOneofName(fieldName string) string {
+	if len(fieldName) == 0 || fieldName[0] != '_' {
+		return "_" + fieldName
+	}
+	return fieldName
+}
+
 func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, error) {
 	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "message"
@@ -740,7 +749,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 				if field.Proto3Optional != nil && *field.Proto3Optional {
 					syntheticOneofs = append(syntheticOneofs, syntheticOneof{
 						field: field,
-						name:  "_" + field.GetName(),
+						name:  syntheticOneofName(field.GetName()),
 					})
 				}
 				msg.Field = append(msg.Field, field)
@@ -793,7 +802,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 				if field.Proto3Optional != nil && *field.Proto3Optional {
 					syntheticOneofs = append(syntheticOneofs, syntheticOneof{
 						field: field,
-						name:  "_" + field.GetName(),
+						name:  syntheticOneofName(field.GetName()),
 					})
 				}
 				msg.Field = append(msg.Field, field)
@@ -803,12 +812,27 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 	}
 
 	// Append synthetic oneofs after all declared oneofs (C++ protoc ordering)
-	for _, so := range syntheticOneofs {
-		so.field.OneofIndex = proto.Int32(oneofIdx)
-		msg.OneofDecl = append(msg.OneofDecl, &descriptorpb.OneofDescriptorProto{
-			Name: proto.String(so.name),
-		})
-		oneofIdx++
+	// Match C++ GenerateSyntheticOneofs: resolve name conflicts by prepending "X"
+	if len(syntheticOneofs) > 0 {
+		names := make(map[string]bool)
+		for _, f := range msg.Field {
+			names[f.GetName()] = true
+		}
+		for _, o := range msg.OneofDecl {
+			names[o.GetName()] = true
+		}
+		for _, so := range syntheticOneofs {
+			oneofName := so.name
+			for names[oneofName] {
+				oneofName = "X" + oneofName
+			}
+			names[oneofName] = true
+			so.field.OneofIndex = proto.Int32(oneofIdx)
+			msg.OneofDecl = append(msg.OneofDecl, &descriptorpb.OneofDescriptorProto{
+				Name: proto.String(oneofName),
+			})
+			oneofIdx++
+		}
 	}
 
 	endTok := p.tok.Next() // consume "}"
@@ -2406,7 +2430,7 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 				if field.Proto3Optional != nil && *field.Proto3Optional {
 					syntheticOneofs = append(syntheticOneofs, syntheticOneof{
 						field: field,
-						name:  "_" + field.GetName(),
+						name:  syntheticOneofName(field.GetName()),
 					})
 				}
 				nested.Field = append(nested.Field, field)
@@ -2457,7 +2481,7 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 				if field.Proto3Optional != nil && *field.Proto3Optional {
 					syntheticOneofs = append(syntheticOneofs, syntheticOneof{
 						field: field,
-						name:  "_" + field.GetName(),
+						name:  syntheticOneofName(field.GetName()),
 					})
 				}
 				nested.Field = append(nested.Field, field)
@@ -2466,12 +2490,26 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 		}
 	}
 
-	for _, so := range syntheticOneofs {
-		so.field.OneofIndex = proto.Int32(oneofIdx)
-		nested.OneofDecl = append(nested.OneofDecl, &descriptorpb.OneofDescriptorProto{
-			Name: proto.String(so.name),
-		})
-		oneofIdx++
+	if len(syntheticOneofs) > 0 {
+		names := make(map[string]bool)
+		for _, f := range nested.Field {
+			names[f.GetName()] = true
+		}
+		for _, o := range nested.OneofDecl {
+			names[o.GetName()] = true
+		}
+		for _, so := range syntheticOneofs {
+			oneofName := so.name
+			for names[oneofName] {
+				oneofName = "X" + oneofName
+			}
+			names[oneofName] = true
+			so.field.OneofIndex = proto.Int32(oneofIdx)
+			nested.OneofDecl = append(nested.OneofDecl, &descriptorpb.OneofDescriptorProto{
+				Name: proto.String(oneofName),
+			})
+			oneofIdx++
+		}
 	}
 
 	if nested.GetOptions().GetMessageSetWireFormat() {
