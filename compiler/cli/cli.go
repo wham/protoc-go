@@ -6638,9 +6638,13 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 		return nil, fmt.Errorf("unknown message type %s for aggregate option", ext.GetTypeName())
 	}
 
-	// Encode each field of the aggregate
+	// Encode each field of the aggregate, then sort by field number (C++ protoc order)
 	seenFields := map[string]bool{}
-	var inner []byte
+	type encodedEntry struct {
+		fieldNum int32
+		data     []byte
+	}
+	var entries []encodedEntry
 	for _, af := range aggFields {
 		var subField *descriptorpb.FieldDescriptorProto
 		if af.IsExtension {
@@ -6670,7 +6674,7 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 			if err != nil {
 				return nil, err
 			}
-			inner = append(inner, subBytes...)
+			entries = append(entries, encodedEntry{subField.GetNumber(), subBytes})
 		} else {
 			if af.Positive {
 				return nil, &aggregatePositiveSignError{fieldType: subField.GetType()}
@@ -6683,8 +6687,15 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 			if err != nil {
 				return nil, fmt.Errorf("field %s: %w", af.Name, err)
 			}
-			inner = append(inner, encoded...)
+			entries = append(entries, encodedEntry{subField.GetNumber(), encoded})
 		}
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].fieldNum < entries[j].fieldNum
+	})
+	var inner []byte
+	for _, e := range entries {
+		inner = append(inner, e.data...)
 	}
 
 	fieldNum := protowire.Number(ext.GetNumber())
@@ -6712,13 +6723,18 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 	}
 
 	seenFields := map[string]bool{}
-	var inner []byte
+	type encodedEntry struct {
+		fieldNum int32
+		data     []byte
+	}
+	var entries []encodedEntry
 	for _, af := range aggFields {
 		// Any type URL expansion: [type.googleapis.com/pkg.MsgType]: { ... }
 		if af.IsExtension && typeName == "google.protobuf.Any" && strings.Contains(af.Name, "/") {
 			// Encode type_url (field 1)
-			inner = protowire.AppendTag(inner, 1, protowire.BytesType)
-			inner = protowire.AppendString(inner, af.Name)
+			var anyBytes []byte
+			anyBytes = protowire.AppendTag(anyBytes, 1, protowire.BytesType)
+			anyBytes = protowire.AppendString(anyBytes, af.Name)
 			// Extract message type from URL (part after last '/')
 			slashIdx := strings.LastIndex(af.Name, "/")
 			msgType := af.Name[slashIdx+1:]
@@ -6734,7 +6750,9 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 			if err != nil {
 				return nil, err
 			}
-			inner = append(inner, valBytes...)
+			anyBytes = append(anyBytes, valBytes...)
+			// Any expansion uses field numbers 1 and 2, treat as field 1 for sorting
+			entries = append(entries, encodedEntry{1, anyBytes})
 			continue
 		}
 		var subField *descriptorpb.FieldDescriptorProto
@@ -6763,7 +6781,7 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 			if err != nil {
 				return nil, err
 			}
-			inner = append(inner, subBytes...)
+			entries = append(entries, encodedEntry{subField.GetNumber(), subBytes})
 		} else {
 			if af.Positive {
 				return nil, &aggregatePositiveSignError{fieldType: subField.GetType()}
@@ -6776,8 +6794,15 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 			if err != nil {
 				return nil, fmt.Errorf("field %s: %w", af.Name, err)
 			}
-			inner = append(inner, encoded...)
+			entries = append(entries, encodedEntry{subField.GetNumber(), encoded})
 		}
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].fieldNum < entries[j].fieldNum
+	})
+	var inner []byte
+	for _, e := range entries {
+		inner = append(inner, e.data...)
 	}
 
 	fieldNum := protowire.Number(field.GetNumber())
