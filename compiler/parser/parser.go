@@ -6519,7 +6519,7 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 			origName := ext.GetExtendee()
 			resolved, shadow := resolveTypeName(origName, prefix, types)
 			ext.Extendee = proto.String(resolved)
-			if _, ok := types[resolved]; !ok {
+			if tp, ok := types[resolved]; !ok {
 				path := []int32{7, int32(extIdx), 2}
 				if line, col, ok := findSCISpanStart(fd, path); ok {
 					if shadow != "" {
@@ -6527,6 +6527,11 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 					} else {
 						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
 					}
+				}
+			} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+				path := []int32{7, int32(extIdx), 2}
+				if line, col, ok := findSCISpanStart(fd, path); ok {
+					errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not a message type.", filename, line, col, origName))
 				}
 			}
 		}
@@ -6678,7 +6683,7 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 				origName := ext.GetExtendee()
 				resolved, shadow := resolveTypeName(origName, msgPrefix, types)
 				ext.Extendee = proto.String(resolved)
-				if _, ok := types[resolved]; !ok {
+				if tp, ok := types[resolved]; !ok {
 					path := append(copyPath(msgPath), 6, int32(extIdx), 2)
 					if line, col, ok := findSCISpanStart(fd, path); ok {
 						if shadow != "" {
@@ -6686,6 +6691,11 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 						} else {
 							*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
 						}
+					}
+				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+					path := append(copyPath(msgPath), 6, int32(extIdx), 2)
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not a message type.", filename, line, col, origName))
 					}
 				}
 			}
