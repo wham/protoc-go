@@ -168,6 +168,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 70. [DONE] Fix `399_field_neg_inf_option` — `resolveCustomFieldOptions` float/double identifier validation was checking `opt.Value` directly without stripping `-` prefix. The field option parser stores `-inf` as `"-inf"` in `opt.Value`, so `"-inf" != "inf"` caused rejection. Added `strings.HasPrefix` stripping of `-` prefix before comparing, matching the pattern in message/service/method/enum/oneof resolvers (item 68). All 3657/3657 tests pass.
 
+71. [DONE] Fix `400_edition_repeated_encoding` — C++ protoc rejects `features.repeated_field_encoding` on non-repeated fields with `Only repeated fields can specify repeated field encoding.` but Go protoc-go silently accepted it. Added `validateRepeatedFieldEncoding` function that checks editions files for non-repeated fields with `RepeatedFieldEncoding` set. Uses field name SCI path for line/column. Handles fields in messages (including nested), extensions in messages, and top-level extensions. All 3666/3666 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
