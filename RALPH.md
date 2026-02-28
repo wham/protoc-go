@@ -174,6 +174,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 73. [DONE] Fix `402_field_presence_repeated` — C++ protoc rejects `features.field_presence` on repeated fields with `Repeated fields can't specify field presence.` but Go protoc-go silently accepted it. Added `validateFieldPresenceRepeated` following the same pattern as `validateRepeatedFieldEncoding` (inverse check: triggers on LABEL_REPEATED instead of non-repeated). All 3684/3684 tests pass.
 
+74. [DONE] Fix `403_edition_msg_encoding_scalar` — C++ protoc rejects `features.message_encoding` on non-message fields with `Only message fields can specify message encoding.` but Go protoc-go silently accepted it. Added `validateMessageEncodingScalar` following the same pattern as `validateRepeatedFieldEncoding` (checks TYPE_MESSAGE/TYPE_GROUP and skips those; errors on all others with MessageEncoding set). Handles fields in messages (including nested), extensions in messages, and top-level extensions. All 3693/3693 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.

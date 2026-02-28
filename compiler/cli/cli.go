@@ -616,6 +616,7 @@ func Run(args []string) error {
 	valErrors = append(valErrors, validateRepeatedFieldEncoding(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateFieldPresenceRepeated(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateMessageEncodingScalar(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateRequiredExtensionEditions(orderedFiles, parsed)...)
 	featEditionErrs := validateFeaturesEditions(orderedFiles, parsed)
 	valErrors = append(valErrors, featEditionErrs...)
 	if len(featEditionErrs) == 0 {
@@ -2547,6 +2548,42 @@ func checkMessageEncodingScalarField(filename string, field *descriptorpb.FieldD
 	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().MessageEncoding != nil {
 		line, col := findLocationByPath(namePath, sci)
 		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Only message fields can specify message encoding.", filename, line, col))
+	}
+}
+
+func validateRequiredExtensionEditions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectRequiredExtensionEditionsErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		for i, ext := range fd.GetExtension() {
+			checkRequiredExtensionEditionsField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectRequiredExtensionEditionsErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, ext := range msg.GetExtension() {
+		checkRequiredExtensionEditionsField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectRequiredExtensionEditionsErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
+	}
+}
+
+func checkRequiredExtensionEditionsField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil &&
+		field.GetOptions().GetFeatures().FieldPresence != nil &&
+		field.GetOptions().GetFeatures().GetFieldPresence() == descriptorpb.FeatureSet_LEGACY_REQUIRED {
+		line, col := findLocationByPath(namePath, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extensions can't be required.", filename, line, col))
 	}
 }
 
