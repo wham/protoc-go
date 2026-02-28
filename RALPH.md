@@ -134,6 +134,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 53. [DONE] Fix `382_inf_default_case` — C++ protoc only accepts lowercase `inf` and `nan` as float/double field default identifiers. The validation in `parseFieldOptions` was using `strings.ToLower()`, allowing `Inf`, `NaN`, etc. Removed case-insensitive comparison so only exact lowercase `inf`/`nan` are accepted. All 3504/3504 tests pass.
 
+54. [DONE] Fix `383_string_opt_int_value` — C++ protoc rejects non-string values for string/bytes custom extension options with `Value must be quoted string for string option "FQN".` but Go protoc-go silently accepted integer values and encoded them as strings. Added `opt.ValueType != tokenizer.TokenString` validation in all 9 `resolveCustom*Options` functions (file, field, message, enum, enum value, service, method, oneof, ext range), matching the pattern used for bool validation. All 3513/3513 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
@@ -170,3 +172,4 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 - `compiler/cli/cli.go`: `resolveCustomMethodOptions` now validates bool options (must be identifier, must be exactly `true` or `false`) and float/double identifier values (must be lowercase `inf` or `nan`), matching C++ protoc behavior. This completes bool/float validation across all 9 option resolver functions.
 - `compiler/cli/cli.go`: `resolveCustomEnumOptions` now validates bool options (must be identifier, must be exactly `true` or `false`) and float/double identifier values (must be lowercase `inf` or `nan`), matching C++ protoc behavior. This completes bool/float validation across all 9 option resolver functions (file, field, message, enum, enum value, service, method, oneof, ext range).
 - `compiler/parser/parser.go`: Float/double default identifier validation now checks for exact lowercase `inf` and `nan` only (no `strings.ToLower`). C++ protoc rejects `Inf`, `NaN`, `INF`, etc. with `Expected number.` error. Previously item 27 (`356_infinity_default`) already rejected non-inf/nan identifiers like `infinity`, but case-insensitively accepted `Inf`, `NaN` etc.
+- `compiler/cli/cli.go`: String/bytes custom extension options must have quoted string values. C++ protoc rejects integer/identifier values with `Value must be quoted string for string option "FQN".` (or "bytes option" for TYPE_BYTES). Validation added to all 9 `resolveCustom*Options` functions, checking `opt.ValueType != tokenizer.TokenString` when `opt.AggregateFields == nil && len(opt.SubFieldPath) == 0`.
