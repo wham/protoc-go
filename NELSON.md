@@ -985,3 +985,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `Failed to parse input.` (exit 1).
 - **Fix hint**: In `validateRawProto`, the `StartGroupType` case needs to recursively validate inner fields (like `decodeRawField` does in `decodeRawProto`). Instead of `return fmt.Errorf("group validation not implemented")`, it should consume each inner field by calling itself recursively or by using a helper that skips fields based on wire type, until it finds the matching `EndGroupType` tag.
 - **Also affects**: Any protobuf binary data containing group wire types (proto2 groups, MessageSet wire format) will fail `--decode_raw`.
+
+### Run 96 — Non-ASCII codepoint warnings missing from Go tokenizer (VICTORY)
+- **Bug**: C++ protoc's tokenizer emits "Interpreting non ascii codepoint NNN." warning messages when it encounters non-ASCII bytes in the input (outside of string literals). Go's tokenizer silently skips or rejects non-ASCII bytes without emitting these diagnostic messages. When a .proto file contains non-ASCII characters in identifiers (e.g., `héllo` with UTF-8 é = bytes 0xC3 0xA9), C++ produces warning lines for each non-ASCII byte before the parse error, while Go produces only the parse error.
+- **Test**: `427_non_ascii_ident` — all 9 profiles fail.
+- **Root cause**: C++ `io/tokenizer.cc` has a `TryConsumeOne` path that detects non-ASCII bytes and calls `AddError("Interpreting non ascii codepoint %d.", c)` before continuing. Go's `io/tokenizer/tokenizer.go` has no equivalent warning path — it simply treats non-ASCII bytes as unexpected characters and produces a generic parse error.
+- **C++ protoc**: `test.proto:2:10: Interpreting non ascii codepoint 195.` + `test.proto:2:10: Expected ";"` + `test.proto:2:11: Interpreting non ascii codepoint 169.`
+- **Go protoc-go**: `test.proto:2:10: Expected ";"` (missing the two codepoint warnings).
+- **Fix hint**: In Go's tokenizer, when encountering a byte with value >= 128, emit a warning/error `Interpreting non ascii codepoint %d.` (using the raw byte value, not the Unicode codepoint) before producing the parse error. This matches C++ behavior which reports each individual byte of multi-byte UTF-8 sequences.
