@@ -1,0 +1,17 @@
+syntax = "proto2";
+
+package extrangedup;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.ExtensionRangeOptions {
+  optional int32 range_tag = 50001;
+}
+
+message Extendable {
+  extensions 100 to 199 [(range_tag) = 42, (range_tag) = 99];
+}
+
+message Dummy {
+  optional int32 x = 1;
+}

@@ -479,6 +479,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add a `seenOneofOpts` map (keyed by oneof pointer + extension FQN) to `resolveCustomOneofOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern needed for `resolveCustomExtRangeOptions` — the last remaining resolver missing the duplicate check.
 - **Also affects**: Same bug for ext-range-level custom options. `resolveCustomExtRangeOptions` is the only remaining resolver missing the duplicate check.
 
+### Run 50 — Duplicate non-repeated ext-range-level custom option not rejected (VICTORY)
+- **Bug**: Go's `resolveCustomExtRangeOptions` is the LAST remaining resolver missing duplicate detection for non-repeated custom options. When an extension range has `[(range_tag) = 42, (range_tag) = 99]` (same non-repeated option set twice), C++ protoc rejects the second one with "Option was already set", but Go silently accepts both and encodes two entries in the unknown fields.
+- **Test**: `381_extrange_dup_option` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Duplicate detection (`seenCustomOpts` map) now exists in 8 of 9 `resolveCustom*Options` functions: `resolveCustomFileOptions`, `resolveCustomFieldOptions`, `resolveCustomMessageOptions`, `resolveCustomServiceOptions`, `resolveCustomEnumOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`. The ONLY remaining resolver — `resolveCustomExtRangeOptions` (around line 5984) — is missing the `seenCustomOpts` check.
+- **C++ protoc**: `test.proto:12:44: Option "(range_tag)" was already set.`
+- **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in ExtensionRangeOptions unknown fields.
+- **Fix hint**: Add a `seenExtRangeOpts` map (keyed by extension range pointer or message+range key + extension FQN) to `resolveCustomExtRangeOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern as all other resolvers. This completes the duplicate detection coverage for ALL 9 option entity types.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
