@@ -4467,12 +4467,8 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
-					typeName := "string"
-					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
-						typeName = "bytes"
-					}
-					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for %s option \"%s\".",
-						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
 					continue
 				}
 			}
@@ -4842,12 +4838,8 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
-					typeName := "string"
-					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
-						typeName = "bytes"
-					}
-					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for %s option \"%s\".",
-						name, opt.ValTok.Line+1, opt.ValTok.Column+1, typeName, extFQN))
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.ValTok.Line+1, opt.ValTok.Column+1, extFQN))
 					continue
 				}
 			}
@@ -5126,12 +5118,8 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
-					typeName := "string"
-					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
-						typeName = "bytes"
-					}
-					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for %s option \"%s\".",
-						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
 					continue
 				}
 			}
@@ -5375,12 +5363,8 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
-					typeName := "string"
-					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
-						typeName = "bytes"
-					}
-					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for %s option \"%s\".",
-						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
 					continue
 				}
 			}
@@ -5622,12 +5606,8 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
-					typeName := "string"
-					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
-						typeName = "bytes"
-					}
-					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for %s option \"%s\".",
-						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
 					continue
 				}
 			}
@@ -5860,12 +5840,8 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
-					typeName := "string"
-					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
-						typeName = "bytes"
-					}
-					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for %s option \"%s\".",
-						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
 					continue
 				}
 			}
@@ -6107,12 +6083,8 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
-					typeName := "string"
-					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
-						typeName = "bytes"
-					}
-					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for %s option \"%s\".",
-						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
 					continue
 				}
 			}
@@ -6363,12 +6335,8 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
-					typeName := "string"
-					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
-						typeName = "bytes"
-					}
-					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for %s option \"%s\".",
-						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
 					continue
 				}
 			}
@@ -6607,12 +6575,8 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 			// Validate string/bytes option values must be quoted strings
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
 				if opt.ValueType != tokenizer.TokenString {
-					typeName := "string"
-					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
-						typeName = "bytes"
-					}
-					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for %s option \"%s\".",
-						name, opt.NameTok.Line+1, opt.NameTok.Column+1, typeName, extFQN))
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, extFQN))
 					continue
 				}
 			}
