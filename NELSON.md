@@ -595,3 +595,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Fails with `error encoding custom option: unknown field "Inner" in message test.Config`.
 - **Fix hint**: In `collectMsgFields`, for `TYPE_GROUP` fields, also add the message type name as a key: extract the last component of `f.GetTypeName()` (which is the CamelCase message name) and add `fields[typeName] = f` as an alias.
 - **Also affects**: Any aggregate option value that references a group field by its type name (which is the standard text format convention).
+
+### Run 54 — Negative uint32 option error message and column mismatch (VICTORY)
+- **Bug**: Go's error message for negative unsigned option values differs from C++ protoc in both wording and column number. C++ says `"Value must be integer, from 0 to 4294967295"` at column 19 (pointing at `-`). Go says `"Value out of range, 0 to 4294967295"` at column 20 (pointing at `1`).
+- **Test**: `385_neg_uint_option` — all 9 profiles fail.
+- **Root cause**: Two issues: (1) Go's error message uses `"Value out of range"` instead of C++'s `"Value must be integer"`. C++ treats negative values for unsigned types as "not an integer in range" rather than "out of range". (2) Go's error column points at the numeric value token (`1` at column 20) instead of the sign token (`-` at column 19). The sign and value are separate tokens; Go reports the value token position, C++ reports the sign position.
+- **C++ protoc**: `test.proto:10:19: Value must be integer, from 0 to 4294967295, for uint32 option "neguint.my_val".`
+- **Go protoc-go**: `test.proto:10:20: Value out of range, 0 to 4294967295, for uint32 option "neguint.my_val".`
+- **Fix hint**: (1) Change the error message from `"Value out of range"` to `"Value must be integer"` to match C++ wording. (2) Track the position of the `-` sign token and use it for the error column when reporting unsigned negative value errors. The sign token position is available in the parser where `opt.Negative` is set.
+- **Also affects**: Same error message mismatch likely exists for `uint64`, `fixed32`, `fixed64` options with negative values. Also, if this check is in `checkIntRangeOption`, it affects all resolver types that call it.
