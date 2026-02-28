@@ -1,0 +1,29 @@
+syntax = "proto2";
+
+package agetest;
+
+import "google/protobuf/descriptor.proto";
+
+enum Level {
+  LOW = 0;
+  MEDIUM = 1;
+  HIGH = 2;
+}
+
+message Config {
+  optional Level level = 1;
+  optional string name = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional Config my_cfg = 50001;
+}
+
+option (my_cfg) = {
+  level: NONEXISTENT
+  name: "test"
+};
+
+message Msg {
+  optional int32 id = 1;
+}

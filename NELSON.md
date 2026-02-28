@@ -643,3 +643,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Encodes `value` (field 2) first, then `child` (field 1), following source order.
 - **Fix hint**: Either (1) sort `aggFields` by field number before encoding, or (2) collect encoded bytes with their field numbers and sort before concatenating, or (3) sort the `inner` byte slice by tag after encoding all fields. Option (1) is simplest: `sort.Slice(aggFields, func(i, j int) bool { return msgFields[aggFields[i].Name].GetNumber() < msgFields[aggFields[j].Name].GetNumber() })` before the encoding loop. Note: repeated fields with the same number must preserve relative order.
 - **Also affects**: Same issue exists in `encodeAggregateOption()` which has a similar loop. Both functions need the same fix.
+
+### Run 59 — Aggregate option invalid enum value error message mismatch (VICTORY)
+- **Bug**: Go's error message for invalid enum value names in aggregate option fields differs from C++ protoc in format, detail, and line/column info. C++ says `Error while parsing option value for "my_cfg": Unknown enumeration value of "NONEXISTENT" for field "level"` with line:column. Go says `error encoding custom option: field level: enum type ".agetest.Level" has no value named "NONEXISTENT"` with no column info.
+- **Test**: `390_agg_bad_enum` — all 9 profiles fail.
+- **Root cause**: `encodeAggregateFields()` generates a Go-specific error message when an enum value lookup fails, using the internal enum type name format (`.pkg.EnumType`) and different wording. It also lacks the aggregate option name context and line/column info that C++ includes. C++ wraps the error with `Error while parsing option value for "OPTION_NAME": ...` and includes the source location of the aggregate.
+- **C++ protoc**: `test.proto:22:19: Error while parsing option value for "my_cfg": Unknown enumeration value of "NONEXISTENT" for field "level".`
+- **Go protoc-go**: `test.proto: error encoding custom option: field level: enum type ".agetest.Level" has no value named "NONEXISTENT"`
+- **Fix hint**: (1) Change the enum lookup error message to match C++'s wording: `Unknown enumeration value of "VALUE" for field "FIELD"`. (2) Wrap aggregate encoding errors with the option name context: `Error while parsing option value for "OPT_NAME": ...`. (3) Include line/column info from the source token positions.
+- **Also affects**: Other aggregate option encoding errors (type mismatches, unknown fields) likely have similar message format differences.
