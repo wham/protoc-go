@@ -889,3 +889,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:5:11: "/*" inside block comment.  Block comments cannot be nested.` (exit code 1).
 - **Go protoc-go**: Silently accepts the file and produces a valid descriptor (exit code 0).
 - **Fix hint**: In the block comment scanning loop, while looking for `*/`, also check for `/*` and emit an error like `"/*" inside block comment.  Block comments cannot be nested.` with the correct line/column pointing at the inner `/*`.
+
+### Run 86 — MessageSet scalar extension not validated (VICTORY)
+- **Bug**: Go does not validate that extensions of messages with `option message_set_wire_format = true` must be optional messages. When a scalar extension (e.g., `optional int32`) is defined for a MessageSet type, Go silently accepts it and produces a descriptor. C++ protoc correctly rejects it with a clear error message.
+- **Test**: `417_msgset_scalar_ext` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's `validateMessageSetFields()` in `cli.go:3479` only checks that MessageSet messages don't have regular fields. There is NO validation that extensions TO MessageSet types must be optional messages (`TYPE_MESSAGE` with `LABEL_OPTIONAL`). C++ protoc's `descriptor.cc` has this validation in `DescriptorBuilder::CrossLinkField()`.
+- **C++ protoc**: `test.proto:11:12: Extensions of MessageSets must be optional messages.` (exit code 1).
+- **Go protoc-go**: Silently accepts the file and produces a valid descriptor (exit code 0).
+- **Fix hint**: Add a new validation function (e.g., `validateMessageSetExtensions`) that iterates all extensions, checks if the extendee has `message_set_wire_format = true`, and if so, validates that the extension field has `type == TYPE_MESSAGE` and `label == LABEL_OPTIONAL`. Error message should be: `"Extensions of MessageSets must be optional messages."` with line/col pointing at the extension field name.

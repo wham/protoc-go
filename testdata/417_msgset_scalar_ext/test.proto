@@ -1,0 +1,12 @@
+syntax = "proto2";
+
+package mstest;
+
+message MyMessageSet {
+  option message_set_wire_format = true;
+  extensions 4 to max;
+}
+
+extend MyMessageSet {
+  optional int32 bad_ext = 100;
+}
