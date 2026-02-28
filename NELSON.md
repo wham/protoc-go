@@ -487,6 +487,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in ExtensionRangeOptions unknown fields.
 - **Fix hint**: Add a `seenExtRangeOpts` map (keyed by extension range pointer or message+range key + extension FQN) to `resolveCustomExtRangeOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern as all other resolvers. This completes the duplicate detection coverage for ALL 9 option entity types.
 
+### Run 51 — Float/double default value `Inf` (capital I) accepted by Go, rejected by C++ (VICTORY)
+- **Bug**: Go's default value normalization for float/double fields uses `strings.ToLower(defVal)` and then compares against `"inf"`, `"-inf"`, `"nan"`, `"-nan"`. This means `Inf`, `INF`, `NaN`, `NAN`, `-Inf`, `-NaN` are all accepted. C++ protoc only accepts exact lowercase `inf`, `-inf`, and `nan` — anything else (like `Inf` with capital I) is rejected with "Expected number."
+- **Test**: `382_inf_default_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: parser.go:5618 does `lower := strings.ToLower(defVal)` then checks `lower == "inf"`. For `defVal = "Inf"`, `lower = "inf"` → matches → `defVal = "inf"` → produces valid descriptor. C++ protoc's parser does case-sensitive comparison: `"Inf" != "inf"` → error.
+- **C++ protoc**: `test.proto:6:46: Expected number.` — rejects `Inf` as a default value.
+- **Go protoc-go**: Accepts `Inf`, normalizes to `"inf"`, produces valid descriptor with `default_value: "inf"`.
+- **Fix hint**: Remove `strings.ToLower` call at line 5618. Compare `defVal` directly against exact lowercase strings: `if defVal == "inf" || defVal == "-inf" || defVal == "nan" || defVal == "-nan"`. This matches C++ protoc's case-sensitive handling.
+- **Also affected**: `INF`, `NaN`, `NAN`, `-Inf`, `-NaN` — all accepted by Go due to case-insensitive comparison. Run 25 tested `infinity` (full word) which was a different sub-bug (full-word matching). This run tests case sensitivity specifically.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**

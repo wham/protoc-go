@@ -1,0 +1,7 @@
+syntax = "proto2";
+
+package infcase;
+
+message Msg {
+  optional float positive_inf = 1 [default = Inf];
+}
