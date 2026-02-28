@@ -6481,6 +6481,14 @@ func collectMsgFields(msgs []*descriptorpb.DescriptorProto, prefix string, out m
 		fields := map[string]*descriptorpb.FieldDescriptorProto{}
 		for _, f := range msg.GetField() {
 			fields[f.GetName()] = f
+			// Group fields are referenced by message type name in text format
+			if f.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+				tn := f.GetTypeName()
+				if idx := strings.LastIndex(tn, "."); idx >= 0 {
+					tn = tn[idx+1:]
+				}
+				fields[tn] = f
+			}
 		}
 		out[fqn] = fields
 		collectMsgFields(msg.GetNestedType(), fqn, out)
