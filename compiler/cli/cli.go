@@ -2521,7 +2521,7 @@ func validateMessageEncodingScalar(orderedFiles []string, parsed map[string]*des
 			collectMessageEncodingScalarErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
 		}
 		for i, ext := range fd.GetExtension() {
-			checkMessageEncodingScalarField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs)
+			checkMessageEncodingScalarField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs, false)
 		}
 	}
 	return errs
@@ -2531,19 +2531,34 @@ func collectMessageEncodingScalarErrors(filename string, msg *descriptorpb.Descr
 	if msg.GetOptions().GetMapEntry() {
 		return
 	}
+	// Build set of map entry nested type names
+	mapEntryNames := make(map[string]bool)
+	for _, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			mapEntryNames[nested.GetName()] = true
+		}
+	}
 	for i, field := range msg.GetField() {
-		checkMessageEncodingScalarField(filename, field, append(clonePath(msgPath), 2, int32(i), 1), sci, errs)
+		isMap := false
+		if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
+			tn := field.GetTypeName()
+			if idx := strings.LastIndex(tn, "."); idx >= 0 {
+				tn = tn[idx+1:]
+			}
+			isMap = mapEntryNames[tn]
+		}
+		checkMessageEncodingScalarField(filename, field, append(clonePath(msgPath), 2, int32(i), 1), sci, errs, isMap)
 	}
 	for i, ext := range msg.GetExtension() {
-		checkMessageEncodingScalarField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs)
+		checkMessageEncodingScalarField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs, false)
 	}
 	for i, nested := range msg.GetNestedType() {
 		collectMessageEncodingScalarErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
 	}
 }
 
-func checkMessageEncodingScalarField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
-	if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE || field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+func checkMessageEncodingScalarField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string, isMapField bool) {
+	if !isMapField && (field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE || field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP) {
 		return
 	}
 	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().MessageEncoding != nil {
