@@ -6791,7 +6791,11 @@ func checkIntRangeOption(ext *descriptorpb.FieldDescriptorProto, value string, n
 			}
 			return ""
 		}
-		if v < 0 || v > math.MaxUint32 {
+		if v < 0 {
+			return fmt.Sprintf("Value must be integer, from 0 to %d, for uint32 option \"%s\".",
+				uint64(math.MaxUint32), extFQN)
+		}
+		if v > math.MaxUint32 {
 			return fmt.Sprintf("Value out of range, 0 to %d, for uint32 option \"%s\".",
 				uint64(math.MaxUint32), extFQN)
 		}

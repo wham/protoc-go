@@ -1140,12 +1140,17 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 					}
 				} else {
 					negative := false
+					var negTok tokenizer.Token
 					if p.tok.Peek().Value == "-" {
-						p.tok.Next()
+						negTok = p.tok.Next()
 						negative = true
 					}
 					valTok := p.tok.Next()
-					custOpt.AggregateBraceTok = valTok
+					if negative {
+						custOpt.AggregateBraceTok = negTok
+					} else {
+						custOpt.AggregateBraceTok = valTok
+					}
 					custOpt.Value = valTok.Value
 					custOpt.ValueType = valTok.Type
 					custOpt.Negative = negative
@@ -1685,8 +1690,9 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		}
 
 		// Read value
+		var msgNegTok tokenizer.Token
 		if p.tok.Peek().Value == "-" {
-			p.tok.Next()
+			msgNegTok = p.tok.Next()
 			custOpt.Negative = true
 		}
 
@@ -1704,7 +1710,11 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
-			custOpt.AggregateBraceTok = valTok
+			if custOpt.Negative {
+				custOpt.AggregateBraceTok = msgNegTok
+			} else {
+				custOpt.AggregateBraceTok = valTok
+			}
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -2569,8 +2579,9 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 					}
 
 					neg := false
+					var evNegTok tokenizer.Token
 					if p.tok.Peek().Value == "-" {
-						p.tok.Next()
+						evNegTok = p.tok.Next()
 						neg = true
 					}
 					custOpt.Negative = neg
@@ -2589,7 +2600,11 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 					} else {
 						valTok := p.tok.Next()
 						p.trackEnd(valTok)
-						custOpt.AggregateBraceTok = valTok
+						if neg {
+							custOpt.AggregateBraceTok = evNegTok
+						} else {
+							custOpt.AggregateBraceTok = valTok
+						}
 						custOpt.Value = valTok.Value
 						// Adjacent string concatenation
 						if valTok.Type == tokenizer.TokenString {
@@ -2946,8 +2961,9 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		}
 
 		// Read value
+		var enumNegTok tokenizer.Token
 		if p.tok.Peek().Value == "-" {
-			p.tok.Next()
+			enumNegTok = p.tok.Next()
 			custOpt.Negative = true
 		}
 
@@ -2965,7 +2981,11 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
-			custOpt.AggregateBraceTok = valTok
+			if custOpt.Negative {
+				custOpt.AggregateBraceTok = enumNegTok
+			} else {
+				custOpt.AggregateBraceTok = valTok
+			}
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -3444,8 +3464,9 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 		custOpt.NameTok = nameTok
 		custOpt.Service = svc
 
+		var negTok tokenizer.Token
 		if p.tok.Peek().Value == "-" {
-			p.tok.Next()
+			negTok = p.tok.Next()
 			custOpt.Negative = true
 		}
 
@@ -3463,7 +3484,11 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
-			custOpt.AggregateBraceTok = valTok
+			if custOpt.Negative {
+				custOpt.AggregateBraceTok = negTok
+			} else {
+				custOpt.AggregateBraceTok = valTok
+			}
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -3692,8 +3717,9 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 			return nil
 		}
 
+		var negTok tokenizer.Token
 		if p.tok.Peek().Value == "-" {
-			p.tok.Next()
+			negTok = p.tok.Next()
 			custOpt.Negative = true
 		}
 
@@ -3711,7 +3737,11 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
-			custOpt.AggregateBraceTok = valTok
+			if custOpt.Negative {
+				custOpt.AggregateBraceTok = negTok
+			} else {
+				custOpt.AggregateBraceTok = valTok
+			}
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -4195,8 +4225,9 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 			return errBreakOneof
 		}
 
+		var negTok tokenizer.Token
 		if p.tok.Peek().Value == "-" {
-			p.tok.Next()
+			negTok = p.tok.Next()
 			custOpt.Negative = true
 		}
 
@@ -4214,7 +4245,11 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
-			custOpt.AggregateBraceTok = valTok
+			if custOpt.Negative {
+				custOpt.AggregateBraceTok = negTok
+			} else {
+				custOpt.AggregateBraceTok = valTok
+			}
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -4563,9 +4598,11 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 
 		var aggregateFields []AggregateField
 		negative := false
+		var negFileTok tokenizer.Token
 
 		if valTok.Value == "-" {
 			negative = true
+			negFileTok = valTok
 			valTok = p.tok.Next()
 			p.trackEnd(valTok)
 		}
@@ -4620,6 +4657,10 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		})
 		p.attachComments(len(p.locations)-1, firstIdx)
 
+		braceTok := valTok
+		if negative {
+			braceTok = negFileTok
+		}
 		p.customFileOptions = append(p.customFileOptions, CustomFileOption{
 			ParenName:         fullName,
 			InnerName:         innerName,
@@ -4630,7 +4671,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 			SCIIndex:          sciIdx,
 			NameTok:           nameTok,
 			AggregateFields:   aggregateFields,
-			AggregateBraceTok: valTok,
+			AggregateBraceTok: braceTok,
 		})
 		return nil
 	}
@@ -5392,8 +5433,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			}
 
 			negative := false
+			var fieldNegTok tokenizer.Token
 			if p.tok.Peek().Value == "-" {
-				p.tok.Next()
+				fieldNegTok = p.tok.Next()
 				negative = true
 			}
 			custOpt.Negative = negative
@@ -5413,7 +5455,11 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			} else {
 				valTok := p.tok.Next()
 				p.trackEnd(valTok)
-				custOpt.AggregateBraceTok = valTok
+				if negative {
+					custOpt.AggregateBraceTok = fieldNegTok
+				} else {
+					custOpt.AggregateBraceTok = valTok
+				}
 				custOpt.Value = valTok.Value
 				if valTok.Type == tokenizer.TokenString {
 					for p.tok.Peek().Type == tokenizer.TokenString {
