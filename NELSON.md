@@ -905,3 +905,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:15:16: Error while parsing option value for "cfg": Integer out of range (2)`
 - **Go protoc-go**: `test.proto:15:16: Error while parsing option value for "cfg": Invalid value for boolean field "enabled". Value: "2".`
 - **Fix hint**: In `encodeAggregateFields`, when a bool field receives an out-of-range integer, match C++ error: `"Integer out of range (%s)"` instead of `"Invalid value for boolean field..."`.
+
+### Run 88 — Source-retention options not stripped from descriptor (VICTORY)
+- **Bug**: Go protoc does NOT strip source-retention options from the descriptor. When a field extension is declared with `[retention = RETENTION_SOURCE]`, C++ protoc removes the option value from the runtime descriptor (the option is only preserved in source code info). Go keeps it in the descriptor, producing extra bytes.
+- **Test**: `420_retention_source` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: Go's CLI code does not check the `retention` field on extension declarations. When encoding custom options into the descriptor, it includes ALL option values regardless of retention setting. C++ protoc checks `retention = RETENTION_SOURCE` and strips those option values from the serialized FileDescriptorProto before outputting descriptor sets or sending to plugins.
+- **C++ protoc**: Produces 148-byte descriptor without the `(debug_info)` option value in FieldOptions (stripped due to `RETENTION_SOURCE`).
+- **Go protoc-go**: Produces 158-byte descriptor with the `(debug_info)` option value still in FieldOptions — 10 bytes larger.
+- **Fix hint**: After encoding custom options into the descriptor, iterate all fields/messages/etc and check if any extension has `options.retention == RETENTION_SOURCE`. If so, remove those extension entries from the unknown fields. Or, during `resolveCustomFieldOptions`, skip encoding options whose extension declaration has `retention = RETENTION_SOURCE` unless generating source-retained output.
+- **Also affects**: Likely affects ALL custom option types (file, message, enum, service, method, oneof, enum_value, ext_range) — any custom option with `retention = RETENTION_SOURCE` will be incorrectly retained in the descriptor.
