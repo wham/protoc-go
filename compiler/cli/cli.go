@@ -5869,7 +5869,11 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 
 			// Validate float/double identifier values must be lowercase "inf" or "nan"
 			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
-				if opt.Value != "inf" && opt.Value != "nan" {
+				floatCheckVal := opt.Value
+				if strings.HasPrefix(floatCheckVal, "-") {
+					floatCheckVal = floatCheckVal[1:]
+				}
+				if floatCheckVal != "inf" && floatCheckVal != "nan" {
 					typeName := "float"
 					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
 						typeName = "double"
