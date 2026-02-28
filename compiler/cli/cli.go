@@ -593,6 +593,7 @@ func Run(args []string) error {
 	buildErrors = append(buildErrors, validateRequiredExtensions(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateExtensionJsonName(orderedFiles, parsed, explicitJsonNames)...)
 	buildErrors = append(buildErrors, validateMessageSetFields(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateMessageSetExtensions(orderedFiles, parsed)...)
 	if len(buildErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			buildErrors = formatErrorsMSVS(buildErrors, srcTree)
@@ -3504,6 +3505,76 @@ func collectMessageSetFieldErrors(filename string, msg *descriptorpb.DescriptorP
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectMessageSetFieldErrors(filename, nested, nestedPath, sci, errs)
+	}
+}
+
+// validateMessageSetExtensions checks that extensions of messages with
+// message_set_wire_format must be optional messages.
+func validateMessageSetExtensions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	// Build set of message FQNs that have message_set_wire_format = true.
+	msgSetMsgs := map[string]bool{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		for _, msg := range fd.GetMessageType() {
+			collectMessageSetMsgs(msg, pkg, msgSetMsgs)
+		}
+	}
+
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		// File-level extensions
+		for i, ext := range fd.GetExtension() {
+			extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+			if msgSetMsgs[extendee] {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE || ext.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL {
+					line, col := findLocationByPath([]int32{7, int32(i), 5}, sci)
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Extensions of MessageSets must be optional messages.",
+						fd.GetName(), line, col))
+				}
+			}
+		}
+		// Message-level extensions
+		for i, msg := range fd.GetMessageType() {
+			collectMessageSetExtErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, msgSetMsgs, &errs)
+		}
+	}
+	return errs
+}
+
+func collectMessageSetMsgs(msg *descriptorpb.DescriptorProto, prefix string, out map[string]bool) {
+	fqn := msg.GetName()
+	if prefix != "" {
+		fqn = prefix + "." + fqn
+	}
+	if msg.GetOptions().GetMessageSetWireFormat() {
+		out[fqn] = true
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectMessageSetMsgs(nested, fqn, out)
+	}
+}
+
+func collectMessageSetExtErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, msgSetMsgs map[string]bool, errs *[]string) {
+	for i, ext := range msg.GetExtension() {
+		extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+		if msgSetMsgs[extendee] {
+			if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE || ext.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL {
+				path := append(append([]int32{}, msgPath...), 6, int32(i), 5)
+				line, col := findLocationByPath(path, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extensions of MessageSets must be optional messages.",
+					filename, line, col))
+			}
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectMessageSetExtErrors(filename, nested, nestedPath, sci, msgSetMsgs, errs)
 	}
 }
 
