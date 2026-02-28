@@ -6338,6 +6338,9 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 	switch ext.GetType() {
 	case descriptorpb.FieldDescriptorProto_TYPE_STRING,
 		descriptorpb.FieldDescriptorProto_TYPE_BYTES:
+		if valueType != tokenizer.TokenString {
+			return nil, &aggregateStringExpectedError{gotValue: value}
+		}
 		b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
 		b = protowire.AppendString(b, value)
 	case descriptorpb.FieldDescriptorProto_TYPE_INT32,
@@ -6753,6 +6756,14 @@ func (e *aggregatePositiveSignError) Error() string {
 	}
 }
 
+type aggregateStringExpectedError struct {
+	gotValue string
+}
+
+func (e *aggregateStringExpectedError) Error() string {
+	return fmt.Sprintf("Expected string, got: %s", e.gotValue)
+}
+
 // checkIntRangeOption validates that integer values fit in 32-bit types.
 // Returns an error string if out of range, empty string if OK.
 func checkIntRangeOption(ext *descriptorpb.FieldDescriptorProto, value string, negative bool, extFQN string) string {
@@ -6823,6 +6834,11 @@ func formatAggregateError(err error, filename string, braceTok tokenizer.Token, 
 	if errors.As(err, &intRangeErr) {
 		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
 			filename, braceTok.Line+1, braceTok.Column+1, optName, intRangeErr.Error())
+	}
+	var strErr *aggregateStringExpectedError
+	if errors.As(err, &strErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, strErr.Error())
 	}
 	return fmt.Sprintf("%s: error encoding custom option: %v", filename, err)
 }
