@@ -144,6 +144,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 58. [DONE] Fix `387_enum_opt_int_value` — C++ protoc rejects non-identifier values (e.g., integers) for enum-typed custom extension options with `Value must be identifier for enum-valued option "FQN".` Added `opt.ValueType != tokenizer.TokenIdent` validation for `TYPE_ENUM` in all 9 `resolveCustom*Options` functions. All 3549/3549 tests pass.
 
+59. [DONE] Fix `388_empty_aggregate_option` — `consumeAggregate()` and `consumeAggregateAngle()` returned `nil` for empty aggregates (`{}` / `<>`), causing `AggregateFields == nil` check to fail in resolvers and fall through to scalar encoding (which doesn't handle TYPE_MESSAGE). Changed both functions to return initialized empty slices (`[]AggregateField{}`) so the aggregate encoding path is taken. All 3558/3558 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
