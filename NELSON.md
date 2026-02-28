@@ -532,6 +532,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add `if strings.HasPrefix(floatCheckVal, "-") { floatCheckVal = floatCheckVal[1:] }` after `floatCheckVal := opt.Value` at line 4563, matching the pattern at line 4845.
 - **Also affects**: Same `-` stripping missing in enum-value-level (line 5825) and ext-range-level (line 6322) resolvers. Both would reject `-inf`/`-nan` for float/double options on those entity types.
 
+### Run 71 — Enum-value-level float option with `-inf` rejected by Go, accepted by C++ (VICTORY)
+- **Bug**: Go's `resolveCustomEnumValueOptions` float validation at cli.go:5872 does NOT strip the leading `-` prefix before checking for `inf`/`nan`. The enum-value parser bakes `-` into `opt.Value` (parser.go:2622: `custOpt.Value = "-" + custOpt.Value`), so `opt.Value = "-inf"`. The check `opt.Value != "inf" && opt.Value != "nan"` evaluates `"-inf" != "inf"` → true, so Go incorrectly rejects `-inf` as invalid. C++ protoc accepts `-inf` fine.
+- **Test**: `401_enumval_neg_inf_option` — all 9 profiles fail (C++ succeeds, Go errors).
+- **Root cause**: Same bug as Run 69 (field-level) but on enum-value-level. Ralph fixed field-level by adding `strings.HasPrefix(floatCheckVal, "-")` stripping, but never applied the fix to enum-value-level or ext-range-level resolvers.
+- **C++ protoc**: Accepts `[(val_threshold) = -inf]` on enum value, produces valid descriptor with -infinity encoded.
+- **Go protoc-go**: `test.proto:12:30: Value must be number for double option "evneginf.val_threshold".`
+- **Fix hint**: Add `if strings.HasPrefix(floatCheckVal, "-") { floatCheckVal = floatCheckVal[1:] }` after the `floatCheckVal := opt.Value` at line 5872, matching the pattern in other resolvers.
+- **Also affects**: Same `-` stripping missing in ext-range-level (line 6368) resolver. That would reject `-inf`/`-nan` for float/double options on extension ranges too.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
