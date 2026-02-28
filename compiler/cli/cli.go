@@ -617,6 +617,7 @@ func Run(args []string) error {
 	valErrors = append(valErrors, validateFieldPresenceRepeated(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateMessageEncodingScalar(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateRequiredExtensionEditions(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateUtf8ValidationNonString(orderedFiles, parsed)...)
 	featEditionErrs := validateFeaturesEditions(orderedFiles, parsed)
 	valErrors = append(valErrors, featEditionErrs...)
 	if len(featEditionErrs) == 0 {
@@ -2584,6 +2585,49 @@ func checkRequiredExtensionEditionsField(filename string, field *descriptorpb.Fi
 		field.GetOptions().GetFeatures().GetFieldPresence() == descriptorpb.FeatureSet_LEGACY_REQUIRED {
 		line, col := findLocationByPath(namePath, sci)
 		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extensions can't be required.", filename, line, col))
+	}
+}
+
+func validateUtf8ValidationNonString(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectUtf8ValidationNonStringErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		for i, ext := range fd.GetExtension() {
+			checkUtf8ValidationNonStringField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectUtf8ValidationNonStringErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	for i, field := range msg.GetField() {
+		checkUtf8ValidationNonStringField(filename, field, append(clonePath(msgPath), 2, int32(i), 1), sci, errs)
+	}
+	for i, ext := range msg.GetExtension() {
+		checkUtf8ValidationNonStringField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectUtf8ValidationNonStringErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
+	}
+}
+
+func checkUtf8ValidationNonStringField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
+		return
+	}
+	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().Utf8Validation != nil {
+		line, col := findLocationByPath(namePath, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Only string fields can specify utf8 validation.", filename, line, col))
 	}
 }
 
