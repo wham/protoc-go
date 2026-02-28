@@ -6542,7 +6542,7 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 			}
 			num, found := vals[value]
 			if !found {
-				return nil, fmt.Errorf("enum type %q has no value named %q", ext.GetTypeName(), value)
+				return nil, &aggregateEnumError{enumValue: value, fieldName: ext.GetName()}
 			}
 			v = int64(num)
 		}
@@ -6870,6 +6870,15 @@ func (e *aggregateStringExpectedError) Error() string {
 	return fmt.Sprintf("Expected string, got: %s", e.gotValue)
 }
 
+type aggregateEnumError struct {
+	enumValue string
+	fieldName string
+}
+
+func (e *aggregateEnumError) Error() string {
+	return fmt.Sprintf("Unknown enumeration value of \"%s\" for field \"%s\".", e.enumValue, e.fieldName)
+}
+
 // checkIntRangeOption validates that integer values fit in 32-bit types.
 // Returns an error string if out of range, empty string if OK.
 func checkIntRangeOption(ext *descriptorpb.FieldDescriptorProto, value string, negative bool, extFQN string) string {
@@ -6945,6 +6954,11 @@ func formatAggregateError(err error, filename string, braceTok tokenizer.Token, 
 	if errors.As(err, &strErr) {
 		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
 			filename, braceTok.Line+1, braceTok.Column+1, optName, strErr.Error())
+	}
+	var enumErr *aggregateEnumError
+	if errors.As(err, &enumErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, enumErr.Error())
 	}
 	return fmt.Sprintf("%s: error encoding custom option: %v", filename, err)
 }
