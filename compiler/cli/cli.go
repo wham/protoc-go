@@ -6470,6 +6470,9 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 			return nil, &aggregateBoolError{fieldName: ext.GetName(), value: value}
 		}
 	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
+		if valueType == tokenizer.TokenString {
+			return nil, &aggregateFloatExpectedError{gotValue: "\"" + value + "\""}
+		}
 		var floatBits uint32
 		switch strings.ToLower(value) {
 		case "nan", "-nan":
@@ -6484,6 +6487,9 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		b = protowire.AppendTag(b, fieldNum, protowire.Fixed32Type)
 		b = protowire.AppendFixed32(b, floatBits)
 	case descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		if valueType == tokenizer.TokenString {
+			return nil, &aggregateFloatExpectedError{gotValue: "\"" + value + "\""}
+		}
 		var bits uint64
 		switch strings.ToLower(value) {
 		case "nan", "-nan":
@@ -6870,6 +6876,14 @@ func (e *aggregateStringExpectedError) Error() string {
 	return fmt.Sprintf("Expected string, got: %s", e.gotValue)
 }
 
+type aggregateFloatExpectedError struct {
+	gotValue string
+}
+
+func (e *aggregateFloatExpectedError) Error() string {
+	return fmt.Sprintf("Expected double, got: %s", e.gotValue)
+}
+
 type aggregateEnumError struct {
 	enumValue string
 	fieldName string
@@ -6954,6 +6968,11 @@ func formatAggregateError(err error, filename string, braceTok tokenizer.Token, 
 	if errors.As(err, &strErr) {
 		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
 			filename, braceTok.Line+1, braceTok.Column+1, optName, strErr.Error())
+	}
+	var floatErr *aggregateFloatExpectedError
+	if errors.As(err, &floatErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, floatErr.Error())
 	}
 	var enumErr *aggregateEnumError
 	if errors.As(err, &enumErr) {
