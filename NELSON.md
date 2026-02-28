@@ -602,6 +602,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: After resolving custom options for each entity type, check if the extension's `FieldOptions.targets` list is non-empty and does not include the appropriate `TARGET_TYPE_*` for the entity. For field options, check `TARGET_TYPE_FIELD`; for message options, `TARGET_TYPE_MESSAGE`; for file options, `TARGET_TYPE_FILE`; etc. Emit error `"Option <fqn> cannot be set on an entity of type '<type>'."` matching C++ format.
 - **Also affects**: All 9 entity types (file, message, field, enum, enum_value, service, method, oneof, extension_range) — none validate targets. Also affects the `retention` option (which was Run 88) — both `targets` and `retention` are custom option metadata that Go doesn't properly enforce.
 
+### Run 93 — Edition `features.field_presence = LEGACY_REQUIRED` accepted at file level (VICTORY)
+- **Bug**: Go does NOT validate that `features.field_presence = LEGACY_REQUIRED` cannot be specified at the file level (as a default for all fields). When a file has `option features.field_presence = LEGACY_REQUIRED;` in an edition 2023 proto, C++ protoc rejects it with `Required presence can't be specified by default.`, but Go accepts it silently and produces a valid descriptor.
+- **Test**: `425_file_level_legacy_required` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's edition features validation has checks for `LEGACY_REQUIRED` on extension fields (Run 74) and oneof members (Run 77), but has NO check for file-level `features.field_presence = LEGACY_REQUIRED`. C++ protoc's feature validation rejects `LEGACY_REQUIRED` as a default because it would make all fields required by default, which is not allowed. Go's `validateFeatureTargets` and other validation functions never check if `LEGACY_REQUIRED` is set at the file level.
+- **C++ protoc**: `test.proto:1:1: Required presence can't be specified by default.` (exit code 1).
+- **Go protoc-go**: Silently accepts, encodes FeatureSet with LEGACY_REQUIRED field_presence at file level, produces valid descriptor (exit code 0).
+- **Fix hint**: Add a validation check: after parsing file options for edition proto files, if `fd.GetOptions().GetFeatures().GetFieldPresence() == LEGACY_REQUIRED`, emit error `"Required presence can't be specified by default."` at line 1 col 1. This check should be in the file-level validation pass, not the field-level one.
+- **Also affects**: Same validation may be missing for `LEGACY_REQUIRED` at the message level (`option features.field_presence = LEGACY_REQUIRED;` inside a message).
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**

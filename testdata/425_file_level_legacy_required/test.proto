@@ -1,0 +1,10 @@
+edition = "2023";
+
+package filereq;
+
+option features.field_presence = LEGACY_REQUIRED;
+
+message Foo {
+  int32 id = 1;
+  string name = 2;
+}
