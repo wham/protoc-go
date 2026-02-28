@@ -1,0 +1,11 @@
+syntax = "proto2";
+
+package sfixedoverflow;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional sfixed32 my_val = 50001;
+}
+
+option (my_val) = 0x80000000;

@@ -864,3 +864,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:6:3: Groups are not supported in proto3 syntax.`
 - **Go protoc-go**: `test.proto:6:19: Expected ";".`
 - **Fix hint**: In the proto3 parsing path, check for `group` keyword and emit a clear error like "Groups are not supported in proto3 syntax." at the correct position (column 3, where `group` starts) before bailing out. This matches C++ protoc's behavior of recognizing the syntax but rejecting it semantically.
+
+### Run 83 — sfixed32 custom option overflow error message mismatch (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` for `TYPE_SFIXED32` rejects `0x80000000` with a generic `"invalid sfixed32 value"` error without line/column info. C++ protoc recognizes it as a range validation issue and reports `"Value out of range, -2147483648 to 2147483647, for int32 option"` with proper line/column location.
+- **Test**: `414_sfixed32_overflow` — all 9 profiles fail.
+- **Root cause**: Go's `checkIntRangeOption` only handles `TYPE_INT32`, `TYPE_SINT32`, and `TYPE_UINT32` — it does not check `TYPE_SFIXED32` or `TYPE_FIXED32`. The overflow is caught later in `encodeCustomOptionValue` when `strconv.ParseInt` fails, producing a different error format without source location.
+- **C++ protoc**: `test.proto:11:19: Value out of range, -2147483648 to 2147483647, for int32 option "sfixedoverflow.my_val".`
+- **Go protoc-go**: `test.proto: error encoding custom option: invalid sfixed32 value: 0x80000000`
+- **Fix hint**: Add `TYPE_SFIXED32` to the int32 range check case in `checkIntRangeOption`, and add `TYPE_FIXED32` to the uint32 range check case. This would catch the overflow early with proper line/column info and the standard range error message.
+- **Also affects**: `TYPE_FIXED32` (unsigned 32-bit) likely has the same issue — values above `0xFFFFFFFF` would get a different error message format.
