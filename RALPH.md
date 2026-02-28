@@ -142,6 +142,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 57. [DONE] Fix `386_aggregate_string_int` — C++ protoc rejects non-string values (e.g., integers) for string/bytes fields in aggregate options with `Expected string, got: <value>`. Added `aggregateStringExpectedError` type and valueType validation in `encodeCustomOptionValue` for TYPE_STRING/TYPE_BYTES. Added error handling in `formatAggregateError`. All 3540/3540 tests pass.
 
+58. [DONE] Fix `387_enum_opt_int_value` — C++ protoc rejects non-identifier values (e.g., integers) for enum-typed custom extension options with `Value must be identifier for enum-valued option "FQN".` Added `opt.ValueType != tokenizer.TokenIdent` validation for `TYPE_ENUM` in all 9 `resolveCustom*Options` functions. All 3549/3549 tests pass.
+
 ## Notes
 
 - `compiler/parser/parser.go`: `consumeAggregate()` and `consumeAggregateAngle()` now handle `/` in extension names inside `[...]` brackets, supporting Any type URL syntax like `[type.googleapis.com/pkg.Msg]`.
@@ -182,3 +184,4 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 - `compiler/cli/cli.go`: `collectMsgFields` now also registers TYPE_GROUP fields under the short message type name (last component of `type_name`), in addition to the lowercased field name. C++ protoc's TextFormat parser references group fields by their message type name (e.g., `Inner`), not the field name (`inner`). This allows aggregate options with group fields to be correctly resolved.
 - `compiler/cli/cli.go`: `checkIntRangeOption` now uses different error messages for negative vs overflow on unsigned types. Negative values get `Value must be integer, from 0 to MAX` (matching C++), while overflow values get `Value out of range, 0 to MAX`. All 9 option parsers now save the `-` token and use it for `AggregateBraceTok` so error column points at the minus sign, not the digit.
 - `compiler/cli/cli.go`: `encodeCustomOptionValue` now validates that string/bytes fields in aggregate options receive string-typed tokens. Non-string values (e.g., integers like `42`) are rejected with `Expected string, got: <value>`. The `aggregateStringExpectedError` type is handled by `formatAggregateError` to produce C++-compatible error messages.
+- `compiler/cli/cli.go`: Enum-typed custom extension options must have identifier values (enum value names). C++ protoc rejects integer values with `Value must be identifier for enum-valued option "FQN".` Validation added to all 9 `resolveCustom*Options` functions, checking `opt.ValueType != tokenizer.TokenIdent` when `ext.GetType() == TYPE_ENUM`.
