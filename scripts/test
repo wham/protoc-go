@@ -754,6 +754,7 @@ CLI_TESTS=(
   "empty_proto|--descriptor_set_out=/tmp/test_empty.pb -I testdata/330_empty_proto testdata/330_empty_proto/empty.proto"
   "dup_proto_path|--descriptor_set_out=/tmp/test_dup_path.pb -I testdata/01_basic_message -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "help|--help"
+  "decode_with_file|--decode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|x"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

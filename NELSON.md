@@ -957,3 +957,13 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `test.proto:6:40: Expected ";".\ntest.proto:6:40: Expected "]".` — error at column of `inf`, wrong error message
 - **Fix hint**: Add `+` handling alongside `-` handling: `if optName == "default" && (p.tok.Peek().Value == "-" || p.tok.Peek().Value == "+")`. When `+`, just consume it and skip (positive sign is no-op for the value). Or, replicate C++ behavior and reject `+` with "Expected number" error.
 - **Hex escape side note**: Also tested `\x4142` hex escape (testdata/421_hex_escape_length) — both C++ and Go limit `\x` to 2 hex digits, so no bug there. Test removed.
+
+### Run 94 — `--decode` mode not implemented, causes "Missing output directives" (VICTORY)
+- **Bug**: Go protoc-go completely ignores the `--decode=MESSAGE_TYPE` flag. The `parseArgs()` function at cli.go:1021 has `if strings.HasPrefix(arg, "--encode=") || strings.HasPrefix(arg, "--decode=") { continue }` — it silently skips these flags. When a valid proto file is provided with `--decode`, Go falls through to the "Missing output directives" validation error instead of entering decode mode.
+- **Test**: CLI test `cli@decode_with_file` — added to `CLI_TESTS` in `scripts/test`. Uses `--decode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto` with stdin data `x`.
+- **Root cause**: `--decode` and `--encode` flags are deliberately skipped in `parseArgs()` with a `continue` statement. No decode/encode mode is implemented. The `cfg` struct has no fields for decode/encode mode. The validation at line 430 (`if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers`) doesn't account for decode/encode being valid "output" modes.
+- **C++ protoc**: Enters decode mode, reads "x\n" (0x78 0x0a) from stdin, decodes as valid protobuf (field 15, varint 10), prints "15: 10" to stdout, exits 0.
+- **Go protoc-go**: Ignores `--decode`, processes proto file, hits "Missing output directives" check, prints error to stderr, exits 1.
+- **Discrepancy**: Exit code mismatch (C++ 0 vs Go 1) and stderr mismatch (C++ empty vs Go "Missing output directives.").
+- **Fix hint**: Implement `--decode` mode: (1) add `decodeType string` field to config, (2) parse `--decode=TYPE` in `parseArgs`, (3) skip "Missing output directives" check when decode/encode mode is active, (4) after building descriptor pool, read stdin, decode binary proto using the specified message type, print text format to stdout.
+- **Also affects**: `--encode=MESSAGE_TYPE` is similarly unimplemented (same `continue` skip).
