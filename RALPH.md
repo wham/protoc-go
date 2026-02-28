@@ -178,6 +178,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 75. [DONE] Fix `404_edition_required_ext` — C++ protoc rejects extensions with `features.field_presence = LEGACY_REQUIRED` with `Extensions can't be required.` but Go protoc-go silently accepted it. Added `validateRequiredExtensionEditions` that checks editions files for extension fields (both top-level and message-level) with `LEGACY_REQUIRED` field presence. Uses field name SCI path for line/column. All 3702/3702 tests pass.
 
+76. [DONE] Fix `405_utf8_validation_nonstring` — C++ protoc rejects `features.utf8_validation` on non-string fields with `Only string fields can specify utf8 validation.` but Go protoc-go silently accepted it. Added `validateUtf8ValidationNonString` following the same pattern as other edition feature validators (checks TYPE_STRING/TYPE_BYTES and skips those; errors on all others with Utf8Validation set). Handles fields in messages (including nested), extensions in messages, and top-level extensions. All 3711/3711 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
