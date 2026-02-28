@@ -831,3 +831,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:11:9: Extensions can't specify field presence.` (exit code 1).
 - **Go protoc-go**: Silently accepts it, produces a descriptor set (exit code 0).
 - **Fix hint**: Change the condition from checking `== LEGACY_REQUIRED` to just checking if `FieldPresence != nil`. Also rename the function from `checkRequiredExtensionEditionsField` to something like `checkExtensionFieldPresence` since it's not just about required anymore. The error message should also change from "Extensions can't be required." to "Extensions can't specify field presence." to match C++.
+
+### Run 79 — Extending an enum type produces wrong error message (VICTORY)
+- **Bug**: Go doesn't check that the extendee of an `extend` block is a message type. When extending an enum, C++ protoc correctly says `"Status" is not a message type` at the extend statement. Go skips this validation and instead falls through to the extension range check, producing a misleading error about extension numbers not being declared.
+- **Test**: `410_extend_enum_type` — all 9 profiles fail.
+- **Root cause**: In the descriptor validation path, Go doesn't check whether the resolved extendee type is actually a message (vs an enum). It proceeds to check if the extension number falls within the extendee's declared extension ranges, which fails for enums since they don't have extension ranges, giving a confusing error.
+- **C++ protoc**: `test.proto:11:8: "Status" is not a message type.` (line of `extend Status`, column of `Status`).
+- **Go protoc-go**: `test.proto:12:31: "test.Status" does not declare 100 as an extension number.` (line of the field, wrong column, FQN instead of local name).
+- **Fix hint**: In the descriptor validation, before checking extension ranges, verify that the resolved extendee type is a message descriptor (not an enum). If it's an enum, emit `"<name>" is not a message type.` with the correct line/column from the extend statement.
