@@ -7665,7 +7665,7 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		descriptorpb.FieldDescriptorProto_TYPE_SINT64:
 		v, err := strconv.ParseInt(value, 0, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid integer value: %s", value)
+			return nil, &aggregateIntExpectedError{gotValue: value}
 		}
 		if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_INT32 ||
 			ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_SINT32 {
@@ -7685,7 +7685,7 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		descriptorpb.FieldDescriptorProto_TYPE_UINT64:
 		v, err := strconv.ParseUint(value, 0, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid unsigned integer value: %s", value)
+			return nil, &aggregateIntExpectedError{gotValue: value}
 		}
 		if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_UINT32 {
 			if v > math.MaxUint32 {
@@ -8133,6 +8133,14 @@ func (e *aggregateFloatExpectedError) Error() string {
 	return fmt.Sprintf("Expected double, got: %s", e.gotValue)
 }
 
+type aggregateIntExpectedError struct {
+	gotValue string
+}
+
+func (e *aggregateIntExpectedError) Error() string {
+	return fmt.Sprintf("Expected integer, got: %s", e.gotValue)
+}
+
 type aggregateEnumError struct {
 	enumValue string
 	fieldName string
@@ -8236,6 +8244,11 @@ func formatAggregateError(err error, filename string, braceTok tokenizer.Token, 
 	if errors.As(err, &floatErr) {
 		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
 			filename, braceTok.Line+1, braceTok.Column+1, optName, floatErr.Error())
+	}
+	var intExpErr *aggregateIntExpectedError
+	if errors.As(err, &intExpErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, intExpErr.Error())
 	}
 	var enumErr *aggregateEnumError
 	if errors.As(err, &enumErr) {
