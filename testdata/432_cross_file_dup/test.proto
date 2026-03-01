@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package crossdup;
+
+import "dep.proto";
+
+message Shared {
+  string name = 1;
+}
