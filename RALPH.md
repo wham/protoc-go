@@ -230,6 +230,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 101. [DONE] Fix `429_edition_open_enum_zero` — C++ protoc requires the first enum value to be zero for open enums. In edition 2023, enums default to OPEN. Added `validateEditionOpenEnumZero` that checks editions files for open enums with non-zero first value. `isEnumOpen` resolves effective enum type by checking enum-level features → file-level features → default (OPEN for 2023). Recursively handles nested message enums via `collectEditionOpenEnumZeroInMsg`. Reuses existing `collectProto3EnumZeroErrors` for the actual error. All 3921/3921 tests pass.
 
+102. [DONE] Fix `430_edition_reserved_string_lit` — C++ protoc rejects `reserved "name"` (string literals) in editions files with `Reserved names must be identifiers in editions, not string literals.` but Go protoc-go silently accepted them. Added editions check at the top of the string literal branch in both `parseMessageReserved` and `parseEnumReserved`. All 3930/3930 tests pass.
+
 ## Notes
 
 - `io/tokenizer/tokenizer.go`: In `collectComments`, Phase 1's newline branch no longer sets `canAttachToPrev = false`. This matches C++ protoc's `NextWithComments()` where consuming a newline in Phase 1 does NOT reset `can_attach_to_prev_`. A comment on the line after a `{` or `;` (before a blank line) is still considered trailing of the previous token. The blank line's `Flush()` handles the actual trailing/detached classification.
