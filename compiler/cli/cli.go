@@ -10081,6 +10081,41 @@ func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorp
 		}
 	}
 
+	// For map entries, C++ protoc always prints both key (field 1) and value (field 2),
+	// even if they're missing from the wire data. Add default entries for missing fields.
+	if msgDesc != nil && msgDesc.GetOptions().GetMapEntry() {
+		presentFields := make(map[int32]bool)
+		for _, e := range knownEntries {
+			presentFields[int32(e.num)] = true
+		}
+		for _, f := range msgDesc.GetField() {
+			if !presentFields[f.GetNumber()] {
+				e := fieldEntry{num: protowire.Number(f.GetNumber()), known: f}
+				switch f.GetType() {
+				case descriptorpb.FieldDescriptorProto_TYPE_STRING,
+					descriptorpb.FieldDescriptorProto_TYPE_BYTES,
+					descriptorpb.FieldDescriptorProto_TYPE_MESSAGE:
+					e.wtype = protowire.BytesType
+					e.bytes = []byte{}
+				case descriptorpb.FieldDescriptorProto_TYPE_FLOAT,
+					descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
+					descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+					e.wtype = protowire.Fixed32Type
+				case descriptorpb.FieldDescriptorProto_TYPE_DOUBLE,
+					descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
+					descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+					e.wtype = protowire.Fixed64Type
+				case descriptorpb.FieldDescriptorProto_TYPE_GROUP:
+					e.wtype = protowire.StartGroupType
+					e.group = []byte{}
+				default:
+					e.wtype = protowire.VarintType
+				}
+				knownEntries = append(knownEntries, e)
+			}
+		}
+	}
+
 	prefix := strings.Repeat("  ", indent)
 
 	// Print known fields first (sorted by field number, map entries sorted by key)
