@@ -9143,7 +9143,7 @@ func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorp
 			}
 		}
 
-		// Merge non-repeated message fields (concatenate bytes)
+		// Merge non-repeated message/group fields (concatenate bytes)
 		if len(lastIdx) > 0 {
 			mergedBytes := make(map[protowire.Number][]byte)
 			for i, e := range knownEntries {
@@ -9151,15 +9151,25 @@ func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorp
 					continue
 				}
 				if e.known != nil && (e.known.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE ||
-					e.known.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP) &&
-					e.wtype == protowire.BytesType {
-					if _, seen := mergedBytes[e.num]; seen {
-						mergedBytes[e.num] = append(mergedBytes[e.num], e.bytes...)
-						knownEntries[lastIdx[e.num]].bytes = mergedBytes[e.num]
-					} else {
-						b := make([]byte, len(e.bytes))
-						copy(b, e.bytes)
-						mergedBytes[e.num] = b
+					e.known.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP) {
+					if e.wtype == protowire.BytesType {
+						if _, seen := mergedBytes[e.num]; seen {
+							mergedBytes[e.num] = append(mergedBytes[e.num], e.bytes...)
+							knownEntries[lastIdx[e.num]].bytes = mergedBytes[e.num]
+						} else {
+							b := make([]byte, len(e.bytes))
+							copy(b, e.bytes)
+							mergedBytes[e.num] = b
+						}
+					} else if e.wtype == protowire.StartGroupType {
+						if _, seen := mergedBytes[e.num]; seen {
+							mergedBytes[e.num] = append(mergedBytes[e.num], e.group...)
+							knownEntries[lastIdx[e.num]].group = mergedBytes[e.num]
+						} else {
+							b := make([]byte, len(e.group))
+							copy(b, e.group)
+							mergedBytes[e.num] = b
+						}
 					}
 					_ = i
 				}
