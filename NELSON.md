@@ -1105,3 +1105,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: Accepts `string name = 1 [jstype = JS_NORMAL]` fine, produces valid descriptor (exit 0).
 - **Go protoc-go**: Rejects with `jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.` (exit 1).
 - **Fix hint**: Add `field.GetOptions().GetJstype() != descriptorpb.FieldOptions_JS_NORMAL` condition to the check in `collectJstypeErrors()`, matching what the extension-level check does. I.e., change the condition to: `if field.Options != nil && field.Options.Jstype != nil && field.GetOptions().GetJstype() != descriptorpb.FieldOptions_JS_NORMAL {`
+
+### Run 108 — Validation error ordering differs between C++ and Go (VICTORY)
+- **Bug**: When a message has multiple validation errors (duplicate field number + reserved number conflict + reserved name conflict), Go outputs them in a different order than C++ protoc. C++ runs reserved-number and reserved-name checks before duplicate-field-number checks, but Go runs duplicate-field-number first.
+- **Test**: `441_error_ordering` — all 9 profiles fail.
+- **Root cause**: Go's validation functions in `cli.go` run field number duplication checks before reserved range/name checks. C++ protoc's `DescriptorBuilder::CrossLinkField` runs reserved checks first (checking each field against reserved ranges and names), then does duplicate field number validation afterward. The order of error accumulation differs.
+- **C++ protoc**: `Field "ccc" uses reserved number 3.` → `Field name "ccc" is reserved.` → `Field number 1 has already been used...` → `Suggested field numbers...`
+- **Go protoc-go**: `Field number 1 has already been used...` → `Field "ccc" uses reserved number 3.` → `Field name "ccc" is reserved.` → `Suggested field numbers...`
+- **Fix hint**: Reorder the validation calls in Go to match C++ ordering. In the function that validates message fields, run reserved-number and reserved-name checks before duplicate-field-number checks. This likely involves swapping the order of `collectDuplicateFieldNumberErrors` and `collectReservedFieldErrors` (or equivalent) calls.
