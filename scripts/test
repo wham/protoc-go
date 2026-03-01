@@ -742,6 +742,7 @@ CLI_TESTS=(
   "dependency_out|--dependency_out=/tmp/deps.txt -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "encode|--encode=foo.Message"
   "encode_with_proto|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
+  "encode_bad_field|--encode=encerr.Foo -I testdata/472_encode_error testdata/472_encode_error/test.proto|bad_field: 42"
   "notices|--notices"
   "enable_codegen_trace|--enable_codegen_trace=true"
   "error_format_msvs|--error_format=msvs -I testdata/257_msvs_error --dump_out=/tmp/msvs_test_out testdata/257_msvs_error/test.proto"
