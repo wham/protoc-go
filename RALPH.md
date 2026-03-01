@@ -268,6 +268,10 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 120. [DONE] Fix `stdin@decode_raw_overflow_varint` — Go's `protowire.ConsumeVarint` rejects varints where the 10th byte is > 1 (overflow bits beyond 64), but C++ protoc truncates to 64 bits and accepts them. Added `consumeVarintTruncated` helper that reads up to 10 bytes and truncates high bits. Replaced `protowire.ConsumeVarint` with `consumeVarintTruncated` in `decodeRawProto`, `validateRawProto`, `validateRawField`, and `decodeRawField`. All 4088/4088 tests pass.
 
+121. [DONE] Fix `decode@enum_value` — `buildEnumValueMap` was a stub returning empty map, so `--decode` mode printed enum field values as numbers instead of names. Replaced with proper enum collection during `findMessageType` that gathers all enum definitions (top-level and message-nested) into `allEnums` map (FQN → number→name). Threaded `allEnums` through `printTextProto` and `printKnownField`. All 4098/4098 tests pass.
+
+122. [DONE] Fix `decode@float_value` — `formatTextFloat` was delegating to `formatTextDouble(float64(v))`, which formatted with 64-bit precision (e.g., `0.10000000149011612` instead of `0.1`). Replaced with C++ `SimpleFtoa`-compatible formatting: try 6 significant digits, check round-trip through float32, fallback to 9 digits. Also handles subnormals, inf, -inf, nan. All 4108/4108 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `validateEnumPrefixConflict` checks enum value names for conflicts after prefix stripping and PascalCasing, matching C++ `CheckEnumValueUniqueness`. `prefixRemoverMaybeRemove` strips the enum type name prefix (lowercased, underscores removed) from value names. `enumValueToPascalCase` converts UPPER_SNAKE_CASE to PascalCase. Skips conflicts where values have the same name (handled by duplicate name check) or same number (aliases). Proto2 enums with `deprecated_legacy_json_field_conflicts` option skip the check. Error location uses SCI path `[enumPath, 2, valueIdx, 1]` (enum value name field).

@@ -9139,5 +9139,32 @@ func formatTextDouble(v float64) string {
 }
 
 func formatTextFloat(v float32) string {
-	return formatTextDouble(float64(v))
+	v64 := float64(v)
+	if math.IsInf(v64, 1) {
+		return "inf"
+	}
+	if math.IsInf(v64, -1) {
+		return "-inf"
+	}
+	if math.IsNaN(v64) {
+		return "nan"
+	}
+	// Match C++ SimpleFtoa: try 6 digits, fallback to 9.
+	bits := math.Float32bits(v)
+	if bits&0x7F800000 == 0 && v != 0 {
+		// Subnormal: C strtof doesn't reliably round-trip 6 digits.
+		s := strconv.FormatFloat(v64, 'g', 9, 64)
+		if !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E") {
+			s += "."
+		}
+		return s
+	}
+	s := strconv.FormatFloat(v64, 'g', 6, 64)
+	if v2, err := strconv.ParseFloat(s, 32); err != nil || float32(v2) != v {
+		s = strconv.FormatFloat(v64, 'g', 9, 64)
+	}
+	if !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E") {
+		s += "."
+	}
+	return s
 }
