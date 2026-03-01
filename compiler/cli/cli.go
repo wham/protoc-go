@@ -9455,7 +9455,7 @@ func printKnownField(w *os.File, e struct {
 	case descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
 		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int32(e.fixed32))
 	case descriptorpb.FieldDescriptorProto_TYPE_SINT32:
-		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, protowire.DecodeZigZag(e.varint))
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int32(protowire.DecodeZigZag(uint64(uint32(e.varint)))))
 	case descriptorpb.FieldDescriptorProto_TYPE_SINT64:
 		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, protowire.DecodeZigZag(e.varint))
 	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
@@ -9587,7 +9587,7 @@ func compareMapEntryKeys(a, b []byte, mapEntry *descriptorpb.DescriptorProto) in
 		var av, bv int32
 		switch keyFd.GetType() {
 		case descriptorpb.FieldDescriptorProto_TYPE_SINT32:
-			av, bv = int32(protowire.DecodeZigZag(aKey.varint)), int32(protowire.DecodeZigZag(bKey.varint))
+			av, bv = int32(protowire.DecodeZigZag(uint64(uint32(aKey.varint)))), int32(protowire.DecodeZigZag(uint64(uint32(bKey.varint))))
 		case descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
 			av, bv = int32(aKey.fixed32), int32(bKey.fixed32)
 		default:
