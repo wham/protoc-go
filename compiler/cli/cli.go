@@ -606,6 +606,7 @@ func Run(args []string) error {
 	buildErrors = append(buildErrors, validateExtRangePositive(orderedFiles, parsed, fieldHints)...)
 	buildErrors = append(buildErrors, validatePositiveFieldNumbers(orderedFiles, parsed, fieldHints)...)
 	buildErrors = append(buildErrors, validateMaxFieldNumbers(orderedFiles, parsed, fieldHints)...)
+	buildErrors = append(buildErrors, validateExtRangeMax(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateReservedFieldNumbers(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateReservedNumberConflicts(orderedFiles, parsed, fieldHints)...)
 	buildErrors = append(buildErrors, validateDuplicateReservedNames(orderedFiles, parsed)...)
@@ -1671,6 +1672,35 @@ func collectMaxFieldNumberErrors(filename string, msg *descriptorpb.DescriptorPr
 		nestedFqn := fqn + "." + nested.GetName()
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectMaxFieldNumberErrors(filename, nested, nestedFqn, nestedPath, sci, errs, hints)
+	}
+}
+
+// validateExtRangeMax checks that extension range numbers don't exceed kMaxFieldNumber.
+func validateExtRangeMax(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, msg := range fd.GetMessageType() {
+			collectExtRangeMaxErrors(fd.GetName(), msg, &errs)
+		}
+	}
+	return errs
+}
+
+func collectExtRangeMaxErrors(filename string, msg *descriptorpb.DescriptorProto, errs *[]string) {
+	if !msg.GetOptions().GetMessageSetWireFormat() {
+		for _, er := range msg.GetExtensionRange() {
+			if er.GetEnd() > kMaxFieldNumber+1 {
+				*errs = append(*errs, fmt.Sprintf("%s: Extension numbers cannot be greater than %d.", filename, kMaxFieldNumber))
+				return
+			}
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		collectExtRangeMaxErrors(filename, nested, errs)
 	}
 }
 
