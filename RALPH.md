@@ -294,6 +294,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 133. [DONE] Fix `decode@oneof_dedup` — C++ protoc's `ParseFromString` deduplicates oneof fields (keeping only the last wire entry), but Go's `printTextProto` printed all entries. Added oneof dedup logic: builds `fieldToOneof` map from `msgDesc.GetField()`, scans `knownEntries` backwards to find last index per oneof, then filters out earlier entries for the same oneof. All 4218/4218 tests pass.
 
+134. [DONE] Fix `decode@dup_scalar` — C++ protoc's `ParseFromString` deduplicates non-repeated scalar fields (last value wins), but Go's `printTextProto` printed all wire entries. Added dedup logic: for non-repeated scalar fields, keep only the last entry per field number. For non-repeated message fields, merge all entries' bytes into one. Oneof dedup preserved as a separate pass after scalar dedup. Also marks repeated extension fields in the `repeatedFields` set. All 4228/4228 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
