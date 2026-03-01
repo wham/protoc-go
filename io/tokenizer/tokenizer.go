@@ -489,8 +489,12 @@ func (t *Tokenizer) readNumber() {
 			if t.pos < len(t.input) && (t.input[t.pos] == '+' || t.input[t.pos] == '-') {
 				t.advance()
 			}
+			expStart := t.pos
 			for t.pos < len(t.input) && t.input[t.pos] >= '0' && t.input[t.pos] <= '9' {
 				t.advance()
+			}
+			if t.pos == expStart {
+				t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: `"e" must be followed by exponent.`})
 			}
 		}
 	}
@@ -516,8 +520,12 @@ func (t *Tokenizer) readFloatStartingWithDot() {
 		if t.pos < len(t.input) && (t.input[t.pos] == '+' || t.input[t.pos] == '-') {
 			t.advance()
 		}
+		expStart := t.pos
 		for t.pos < len(t.input) && t.input[t.pos] >= '0' && t.input[t.pos] <= '9' {
 			t.advance()
+		}
+		if t.pos == expStart {
+			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: `"e" must be followed by exponent.`})
 		}
 	}
 	t.tokens = append(t.tokens, Token{Type: TokenFloat, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
