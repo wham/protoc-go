@@ -6188,7 +6188,13 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		} else {
 			// Unexpected token inside option brackets (e.g., ";" instead of "," or "]")
 			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected \"]\".", p.filename, next.Line+1, next.Column+1))
-			// Return early — leave the unexpected token for the caller's error recovery
+			// Skip to "]" to recover, matching C++ parser behavior
+			for p.tok.Peek().Type != tokenizer.TokenEOF && p.tok.Peek().Value != "]" && p.tok.Peek().Value != ";" && p.tok.Peek().Value != "}" {
+				p.tok.Next()
+			}
+			if p.tok.Peek().Value == "]" {
+				p.tok.Next() // consume "]"
+			}
 			return nil, nil
 		}
 	}

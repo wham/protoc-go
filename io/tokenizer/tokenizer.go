@@ -83,8 +83,14 @@ func (t *Tokenizer) tokenize() {
 			t.readString()
 		} else if ch >= '0' && ch <= '9' {
 			t.readNumber()
+			if t.pos < len(t.input) && isIdentStart(t.input[t.pos]) {
+				t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Need space between number and identifier."})
+			}
 		} else if ch == '.' && t.pos+1 < len(t.input) && t.input[t.pos+1] >= '0' && t.input[t.pos+1] <= '9' {
 			t.readFloatStartingWithDot()
+			if t.pos < len(t.input) && isIdentStart(t.input[t.pos]) {
+				t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Need space between number and identifier."})
+			}
 		} else if isIdentStart(ch) {
 			t.readIdent()
 		} else {
