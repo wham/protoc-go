@@ -252,6 +252,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 112. [DONE] Fix `440_jstype_normal_nonint64` — C++ protoc accepts `jstype = JS_NORMAL` on non-int64 fields because JS_NORMAL is the default value. Go rejected it for message fields and message-level extensions. Added `!= JS_NORMAL` check to `collectJstypeErrors` for both field and extension cases, matching the check already present for file-level extensions. All 4021/4021 tests pass.
 
+113. [DONE] Fix `441_error_ordering` — C++ protoc outputs reserved number/name conflict errors before duplicate field number errors, but Go had `validateDuplicateFieldNumbers` called before `validateReservedNumberConflicts` and `validateReservedNameConflicts`. Reordered validation calls so reserved checks come first: reserved number conflicts → duplicate reserved names → reserved name conflicts → duplicate field numbers. All 4030/4030 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `validateEnumPrefixConflict` checks enum value names for conflicts after prefix stripping and PascalCasing, matching C++ `CheckEnumValueUniqueness`. `prefixRemoverMaybeRemove` strips the enum type name prefix (lowercased, underscores removed) from value names. `enumValueToPascalCase` converts UPPER_SNAKE_CASE to PascalCase. Skips conflicts where values have the same name (handled by duplicate name check) or same number (aliases). Proto2 enums with `deprecated_legacy_json_field_conflicts` option skip the check. Error location uses SCI path `[enumPath, 2, valueIdx, 1]` (enum value name field).
