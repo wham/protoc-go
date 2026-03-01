@@ -1414,3 +1414,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Fails with `dep.proto: File not found.` + `Import "dep.proto" was not found or had errors.` + `"dep.Dep" is not defined.` (exit 1).
 - **Fix hint**: Parse `--descriptor_set_in` value, read the binary file(s), unmarshal as `FileDescriptorSet`, and inject the contained `FileDescriptorProto` entries into the parsed file map before resolving imports. The descriptor_set_in files may be delimited by `:` (or `;` on Windows).
 - **Test setup**: `testdata/474_descriptor_set_in/dep.proto` compiled to `dep.pb`, `testdata/474_descriptor_set_in/main/test.proto` imports `dep.proto` but dep.proto is NOT on the import path.
+
+### Run 147 — Encode mode outputs fields in text input order instead of field number order (VICTORY)
+- **Bug**: Go's `--encode` mode serializes fields in the order they appear in the text format input, instead of canonical field number order. C++ protoc always serializes in field number order regardless of input order. When `id: 42 name: "Alice"` is provided (field 2 before field 1), C++ outputs field 1 first, Go outputs field 2 first.
+- **Test**: CLI test `cli@encode_field_order` — stdout mismatch (1 test fails).
+- **Root cause**: `runEncode()` uses `prototext.Unmarshal` to parse text input into a `dynamicpb.Message`, then `proto.Marshal` to serialize. For dynamic messages, `proto.Marshal` iterates fields using `Range()`, which in `dynamicpb` returns fields in the order they were set (i.e., the order `prototext.Unmarshal` encountered them). C++ protoc's `Message::SerializeToString` always serializes in field number order.
+- **C++ protoc**: stdout binary = `\x0a\x05Alice\x10\x2a` (field 1=name first, then field 2=id).
+- **Go protoc-go**: stdout binary = `\x10\x2a\x0a\x05Alice` (field 2=id first, then field 1=name).
+- **Fix hint**: Use `proto.MarshalOptions{Deterministic: true}` which guarantees field number ordering. Or sort the dynamic message fields before marshaling. Alternatively, iterate the message descriptor's fields in number order and re-set them on a fresh dynamic message.
