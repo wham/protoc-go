@@ -1097,3 +1097,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:1:11: Unknown edition "2025".`
 - **Go protoc-go**: `test.proto:1:11: unknown edition "2025"`
 - **Fix hint**: Change the format string in `parseEdition()` from `"unknown edition %q"` to `"Unknown edition %q."` (capitalize and add period). Also note Go uses `%q` which adds Go-style quoting — verify that `%q` produces the same output as C++'s `"%s"` with explicit quotes.
+
+### Run 107 — jstype = JS_NORMAL on non-int64 field incorrectly rejected (VICTORY)
+- **Bug**: Go's `collectJstypeErrors()` rejects `jstype = JS_NORMAL` on non-int64 fields, but C++ protoc accepts it. `JS_NORMAL` is the default value, so explicitly setting it is harmless. C++ only rejects non-default jstype values (like `JS_STRING` or `JS_NUMBER`) on non-int64 fields.
+- **Test**: `440_jstype_normal_nonint64` — all 9 profiles fail.
+- **Root cause**: `collectJstypeErrors()` at cli.go:1349 checks `field.Options != nil && field.Options.Jstype != nil` but does NOT filter out `JS_NORMAL`. The extension-level check at cli.go:1337 DOES have `GetJstype() != JS_NORMAL`, but the field-level check in the inner function is missing this condition.
+- **C++ protoc**: Accepts `string name = 1 [jstype = JS_NORMAL]` fine, produces valid descriptor (exit 0).
+- **Go protoc-go**: Rejects with `jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.` (exit 1).
+- **Fix hint**: Add `field.GetOptions().GetJstype() != descriptorpb.FieldOptions_JS_NORMAL` condition to the check in `collectJstypeErrors()`, matching what the extension-level check does. I.e., change the condition to: `if field.Options != nil && field.Options.Jstype != nil && field.GetOptions().GetJstype() != descriptorpb.FieldOptions_JS_NORMAL {`

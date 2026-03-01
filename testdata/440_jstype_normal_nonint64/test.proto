@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package jstype_normal_nonint64;
+
+// C++ protoc accepts jstype = JS_NORMAL on non-int64 fields (it's the
+// default value, so setting it explicitly is harmless).  Go incorrectly
+// rejects it with "jstype is only allowed on int64, ... fields."
+message Msg {
+  string name = 1 [jstype = JS_NORMAL];
+  int32 count = 2 [jstype = JS_NORMAL];
+  int64 big = 3 [jstype = JS_NORMAL];
+}
