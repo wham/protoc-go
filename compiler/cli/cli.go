@@ -591,7 +591,11 @@ func Run(args []string) error {
 	buildErrors = append(buildErrors, validateExtensionRangeOverlaps(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateExtensionReservedOverlaps(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateExtensionRanges(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateDuplicateExtensionNumbers(orderedFiles, parsed)...)
+	dupExtErrors, dupExtWarnings := validateDuplicateExtensionNumbers(orderedFiles, parsed)
+	buildErrors = append(buildErrors, dupExtErrors...)
+	for _, w := range dupExtWarnings {
+		fmt.Fprintln(os.Stderr, w)
+	}
 	buildErrors = append(buildErrors, validateRequiredExtensions(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateExtensionJsonName(orderedFiles, parsed, explicitJsonNames)...)
 	buildErrors = append(buildErrors, validateMessageSetFields(orderedFiles, parsed)...)
@@ -3852,8 +3856,9 @@ type extInfo struct {
 }
 
 // validateDuplicateExtensionNumbers checks that no two extensions for the same
-// message use the same field number.
-func validateDuplicateExtensionNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+// message use the same field number. Same-file duplicates are errors; cross-file
+// duplicates are warnings (matching C++ protoc behavior).
+func validateDuplicateExtensionNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) (errors []string, warnings []string) {
 	// Collect all extensions keyed by extendee FQN (without leading dot).
 	extsByMsg := map[string][]extInfo{}
 	for _, name := range orderedFiles {
@@ -3884,20 +3889,30 @@ func validateDuplicateExtensionNumbers(orderedFiles []string, parsed map[string]
 			collectExtInfoInMsg(fd.GetName(), msg, msgFQN, []int32{4, int32(i)}, sci, extsByMsg)
 		}
 	}
-	var errs []string
 	for extendee, exts := range extsByMsg {
-		seen := map[int32]string{} // number -> first extension FQN
+		type seenExt struct {
+			fqn      string
+			filename string
+		}
+		seen := map[int32]seenExt{} // number -> first extension info
 		for _, ei := range exts {
 			if first, ok := seen[ei.number]; ok {
 				line, col := findLocationByPath(ei.sciPath, ei.sci)
-				errs = append(errs, fmt.Sprintf("%s:%d:%d: Extension number %d has already been used in \"%s\" by extension \"%s\".",
-					ei.filename, line, col, ei.number, extendee, first))
+				if ei.filename == first.filename {
+					// Same file: hard error (no "warning:" prefix, no "defined in")
+					errors = append(errors, fmt.Sprintf("%s:%d:%d: Extension number %d has already been used in \"%s\" by extension \"%s\".",
+						ei.filename, line, col, ei.number, extendee, first.fqn))
+				} else {
+					// Cross-file: warning
+					warnings = append(warnings, fmt.Sprintf("%s:%d:%d: warning: Extension number %d has already been used in \"%s\" by extension \"%s\" defined in %s.",
+						ei.filename, line, col, ei.number, extendee, first.fqn, first.filename))
+				}
 			} else {
-				seen[ei.number] = ei.fqn
+				seen[ei.number] = seenExt{fqn: ei.fqn, filename: ei.filename}
 			}
 		}
 	}
-	return errs
+	return errors, warnings
 }
 
 func collectExtInfoInMsg(filename string, msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, out map[string][]extInfo) {
