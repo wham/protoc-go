@@ -1,0 +1,9 @@
+syntax = "proto2";
+package extrangeretention;
+
+import "opts.proto";
+
+message Extendable {
+  optional int32 id = 1;
+  extensions 100 to 200 [(range_debug) = "trace_info"];
+}
