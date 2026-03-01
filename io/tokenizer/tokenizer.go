@@ -418,11 +418,27 @@ func (t *Tokenizer) readString() {
 					appendUTF8(&sb, cp)
 					continue
 				case 'U':
-					// Unicode escape: \UNNNNNNNN (exactly 8 hex digits)
+					// Unicode escape: \UNNNNNNNN (exactly 8 hex digits, up to 10ffff)
+					// C++ validates digit-by-digit: 00[01]XXXXX, error at first failing digit
 					t.advance()
+					hexStart := t.col
 					cp, cnt := t.readUnicodeHex(8)
 					if cnt < 8 {
 						t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Expected eight hex digits for \\U escape sequence."})
+						continue
+					}
+					if cp > 0x1FFFFF {
+						errCol := hexStart
+						d0 := (cp >> 28) & 0xF
+						d1 := (cp >> 24) & 0xF
+						if d0 != 0 {
+							errCol = hexStart
+						} else if d1 != 0 {
+							errCol = hexStart + 1
+						} else {
+							errCol = hexStart + 2
+						}
+						t.Errors = append(t.Errors, TokenError{Line: t.line, Column: errCol, Message: "Expected eight hex digits up to 10ffff for \\U escape sequence"})
 						continue
 					}
 					appendUTF8(&sb, cp)
