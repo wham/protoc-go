@@ -1017,6 +1017,7 @@ DECODE_TESTS=(
   "map_sort|testdata/456_decode_map_sort|decodemapsort.Config|0a0b0a0774696d656f7574101e0a0b0a07726574726965731003120474657374"
   "proto2_unknown_enum|testdata/457_decode_proto2_unknown_enum|decode_p2_enum.Record|086312026f6b"
   "edition_open_enum|testdata/458_decode_edition_open_enum|decodeeditionenum.Record|086312026f6b"
+  "double_precision|testdata/459_decode_double_precision|decodedoubleprec.Sample|09020000000000004012026f6b"
 )
 
 for decode_spec in "${DECODE_TESTS[@]}"; do

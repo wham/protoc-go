@@ -1271,3 +1271,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `label: "ok"\n1: 99\n` (unknown enum value moved to unknown set, printed as unknown varint by field number AFTER known fields).
 - **Fix hint**: Instead of `fd.GetSyntax() != "proto3"`, check edition features: for `"editions"` syntax, check if the enum has `features.enum_type = CLOSED` explicitly set or if file-level features resolve to CLOSED. For `"proto2"`, always closed. For `"proto3"`, always open. Could also do `isClosed := fd.GetSyntax() == "proto2"` as a simpler fix, since editions default is OPEN.
 - **Also affects**: ALL edition 2023 messages with OPEN enums decoded in `--decode` mode. Any unknown enum value in an edition file will be incorrectly treated as an unknown field.
+
+### Run 128 — Decode mode formatTextDouble uses wrong precision algorithm (VICTORY)
+- **Bug**: Go's `formatTextDouble` in decode mode uses `strconv.FormatFloat(v, 'g', -1, 64)` which produces the **shortest** round-trippable decimal representation. C++ `SimpleDtoa` uses `snprintf(buf, "%.15g", val)` first (15 significant digits), and if round-trip fails, uses `snprintf(buf, "%.17g", val)` (17 digits). For doubles needing exactly 16 digits for shortest representation, Go outputs 16 digits while C++ skips from 15 to 17 digits.
+- **Test**: `459_decode_double_precision` — decode@double_precision fails.
+- **Root cause**: `formatTextDouble()` at cli.go:9472-9483 uses `FormatFloat(v, 'g', -1, 64)` (Go shortest) instead of the 15-then-17 pattern used by C++. The parser's `simpleDtoa` (parser.go:6337-6350) correctly implements 15/17, but the decode-mode `formatTextDouble` does not.
+- **C++ protoc**: `value: 2.0000000000000009` (17 significant digits, because 15-digit `"2"` doesn't round-trip).
+- **Go protoc-go**: `value: 2.000000000000001` (16 significant digits, Go's shortest representation).
+- **Fix hint**: Replace `FormatFloat(v, 'g', -1, 64)` in `formatTextDouble` with the same 15-then-17 algorithm used by `simpleDtoa` in parser.go:6337-6350.
