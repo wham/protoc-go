@@ -373,17 +373,20 @@ type pluginSpec struct {
 }
 
 type config struct {
-	protoPaths            []string
-	plugins               map[string]*pluginSpec
-	descriptorSetOut      string
-	includeImports        bool
-	includeSourceInfo     bool
-	printFreeFieldNumbers bool
-	decodeRaw             bool
-	decodeType            string
-	notices               bool
-	errorFormat           string // "gcc" (default) or "msvs"
-	protoFiles            []string
+	protoPaths                      []string
+	plugins                         map[string]*pluginSpec
+	descriptorSetOut                string
+	includeImports                  bool
+	includeSourceInfo               bool
+	printFreeFieldNumbers           bool
+	decodeRaw                       bool
+	decodeType                      string
+	notices                         bool
+	errorFormat                     string // "gcc" (default) or "msvs"
+	protoFiles                      []string
+	directDependencies              map[string]bool
+	directDependenciesSet           bool
+	directDependenciesViolationMsg  string
 }
 
 // Run executes the protocol buffer compiler with the given command-line arguments.
@@ -476,6 +479,30 @@ func Run(args []string) error {
 			collectErrors = formatErrorsMSVS(collectErrors, srcTree)
 		}
 		return fmt.Errorf("%s", strings.Join(collectErrors, "\n"))
+	}
+
+	// Enforce --direct_dependencies
+	if cfg.directDependenciesSet {
+		violationMsg := cfg.directDependenciesViolationMsg
+		if violationMsg == "" {
+			violationMsg = "File is imported but not declared in --direct_dependencies: %s"
+		}
+		var depErrors []string
+		for _, f := range relFiles {
+			fd := parsed[f]
+			if fd == nil {
+				continue
+			}
+			for _, dep := range fd.GetDependency() {
+				if !cfg.directDependencies[dep] {
+					msg := strings.ReplaceAll(violationMsg, "%s", dep)
+					depErrors = append(depErrors, fmt.Sprintf("%s: %s", f, msg))
+				}
+			}
+		}
+		if len(depErrors) > 0 {
+			return fmt.Errorf("%s", strings.Join(depErrors, "\n"))
+		}
 	}
 
 	// Resolve type references across all files (must happen after all files parsed)
@@ -1063,6 +1090,21 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--direct_dependencies=") {
+			cfg.directDependenciesSet = true
+			val := arg[len("--direct_dependencies="):]
+			cfg.directDependencies = make(map[string]bool)
+			if val != "" {
+				for _, dep := range strings.Split(val, ":") {
+					if dep != "" {
+						cfg.directDependencies[dep] = true
+					}
+				}
+			}
+			continue
+		}
+
+		if strings.HasPrefix(arg, "--direct_dependencies_violation_msg=") {
+			cfg.directDependenciesViolationMsg = arg[len("--direct_dependencies_violation_msg="):]
 			continue
 		}
 
