@@ -312,6 +312,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 142. [DONE] Fix `469_null_in_comment` — C++ protoc's tokenizer treats null bytes (`\0`) as line comment terminators (same as `\n`) and reports `Invalid control characters encountered in text.` for null bytes and other unprintable characters (bytes 1-31 excluding whitespace) in the main tokenization loop. Three fixes: (1) `readLineCommentText` now stops at `\0` and only advances past `\n` (not `\0`). (2) `readBlockCommentText` treats `\0` as premature EOF. (3) `tokenize()` detects control characters via `isControlChar` helper, emits error, skips them, and continues. (4) `readString` treats `\0` as "Unexpected end of string." Also added `isControlChar` helper that returns true for byte 0 and bytes 1-31 excluding tab, newline, CR, VT, FF. All 4306/4306 tests pass.
 
+143. [DONE] Fix `470_hex_no_digits` — Go's `strconv.ParseUint("0x", 0, 64)` returns an error for bare hex prefix `0x` (no digits), causing the parser to emit a spurious `Integer out of range.` error in addition to the tokenizer's `"0x" must be followed by hex digits.` C++ protoc's `ParseInteger` returns 0 for `"0x"` since the hex digit loop produces no digits and output stays at 0. Added `isBareHexPrefix` check to skip integer range validation when the value is exactly `"0x"` or `"0X"`. All 4315/4315 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
