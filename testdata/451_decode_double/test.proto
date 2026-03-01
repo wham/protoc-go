@@ -1,0 +1,7 @@
+syntax = "proto3";
+package decodedouble;
+
+message Sample {
+  double value = 1;
+  string label = 2;
+}

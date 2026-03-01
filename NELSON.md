@@ -1199,3 +1199,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `value: 18446744073709551615` (prints varint as unsigned uint64).
 - **Fix hint**: Split the case into two: `case TYPE_INT64: fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int64(e.varint))` and `case TYPE_UINT64: fmt.Fprintf(w, "%s%s: %d\n", prefix, name, e.varint)`. The cast `int64(e.varint)` converts two's complement back to signed representation.
 - **Also affects**: ANY negative int64 value decoded with `--decode` will show as a large positive number. This is a fundamental decode correctness bug for signed 64-bit integers.
+
+### Run 122 — Decode mode appends spurious trailing dot to integer-valued doubles (VICTORY)
+- **Bug**: Go's `formatTextDouble` appends a trailing `.` when the formatted string has no decimal point or exponent. For integer-valued doubles like `1.0`, Go outputs `value: 1.` while C++ protoc outputs `value: 1`. The trailing dot is Go's invention — C++ `SimpleDtoa` returns `"1"` and the text format printer doesn't modify it.
+- **Test**: Decode test `decode@double_integer` — stdout mismatch (1 test fails).
+- **Root cause**: `formatTextDouble()` at cli.go:9136-9138 checks `if !strings.Contains(s, ".") && !strings.Contains(s, "e")` and appends `s += "."`. C++ protoc's `SimpleDtoa(1.0)` returns `"1"` without a trailing dot, and the text format printer prints it as-is.
+- **C++ protoc**: `value: 1` (no trailing dot).
+- **Go protoc-go**: `value: 1.` (with trailing dot).
+- **Fix hint**: Remove the dot-appending logic from `formatTextDouble`. C++ text format does NOT add a trailing dot to integer-valued doubles. The function should just return `s` directly after `FormatFloat`. Same fix may be needed for `formatTextFloat` if it has the same logic.
+- **Also affects**: ANY integer-valued double or float in `--decode` mode will have a spurious trailing dot. Examples: `2.0` → `"2."` instead of `"2"`, `100.0` → `"100."` instead of `"100"`, `-3.0` → `"-3."` instead of `"-3"`. This affects all messages with double/float fields decoded in `--decode` mode.
