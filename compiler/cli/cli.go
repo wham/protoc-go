@@ -381,6 +381,7 @@ type config struct {
 	protoPaths                      []string
 	plugins                         map[string]*pluginSpec
 	descriptorSetOut                string
+	descriptorSetIn                 string
 	includeImports                  bool
 	includeSourceInfo               bool
 	printFreeFieldNumbers           bool
@@ -475,6 +476,22 @@ func Run(args []string) error {
 	parseResults := make(map[string]*parser.ParseResult)
 	var orderedFiles []string
 	var collectErrors []string
+
+	// Load --descriptor_set_in descriptors
+	if cfg.descriptorSetIn != "" {
+		data, err := os.ReadFile(cfg.descriptorSetIn)
+		if err != nil {
+			return fmt.Errorf("%s: %s", cfg.descriptorSetIn, err.Error())
+		}
+		var fds descriptorpb.FileDescriptorSet
+		if err := proto.Unmarshal(data, &fds); err != nil {
+			return fmt.Errorf("%s: Unable to parse.", cfg.descriptorSetIn)
+		}
+		for _, fd := range fds.GetFile() {
+			parsed[fd.GetName()] = fd
+			orderedFiles = append(orderedFiles, fd.GetName())
+		}
+	}
 
 	for _, f := range relFiles {
 		ok, err := parseRecursive(f, srcTree, parsed, explicitJsonNames, parseResults, &orderedFiles, nil, &collectErrors)
@@ -1090,6 +1107,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--descriptor_set_in=") {
+			cfg.descriptorSetIn = arg[len("--descriptor_set_in="):]
 			continue
 		}
 
