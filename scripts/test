@@ -1021,6 +1021,7 @@ DECODE_TESTS=(
   "oneof_dedup|testdata/460_decode_oneof_dedup|oneofdedup.Msg|0a0568656c6c6f102a1a026f6b"
   "dup_scalar|testdata/461_decode_dup_scalar|decodedup.Record|0801080212026f6b"
   "group_merge|testdata/462_decode_group_merge|decodegroupmerge.Record|0b0a0568656c6c6f0c0b102a0c12026f6b"
+  "utf8_invalid|testdata/463_decode_utf8_invalid|decodeutf8.test.Record|082a12028081"
 )
 
 for decode_spec in "${DECODE_TESTS[@]}"; do
