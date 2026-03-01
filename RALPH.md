@@ -276,6 +276,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 124. [DONE] Fix `decode@double_integer` — `formatTextDouble` added a trailing `.` to integer-like doubles (e.g., `1.0` → `"1."`), but C++ protoc's `SimpleDtoa` outputs `"1"` without trailing dot. Removed the trailing dot addition. All 4128/4128 tests pass.
 
+125. [DONE] Fix `decode@float_integer` — `formatTextFloat` added a trailing `.` to integer-like floats (e.g., `2` → `"2."`), but C++ protoc's `SimpleFtoa` outputs `"2"` without trailing dot. Removed the trailing dot addition from both the normal and subnormal branches. All 4138/4138 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.

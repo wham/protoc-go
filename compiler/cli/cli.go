@@ -9150,18 +9150,11 @@ func formatTextFloat(v float32) string {
 	bits := math.Float32bits(v)
 	if bits&0x7F800000 == 0 && v != 0 {
 		// Subnormal: C strtof doesn't reliably round-trip 6 digits.
-		s := strconv.FormatFloat(v64, 'g', 9, 64)
-		if !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E") {
-			s += "."
-		}
-		return s
+		return strconv.FormatFloat(v64, 'g', 9, 64)
 	}
 	s := strconv.FormatFloat(v64, 'g', 6, 64)
 	if v2, err := strconv.ParseFloat(s, 32); err != nil || float32(v2) != v {
 		s = strconv.FormatFloat(v64, 'g', 9, 64)
-	}
-	if !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E") {
-		s += "."
 	}
 	return s
 }
