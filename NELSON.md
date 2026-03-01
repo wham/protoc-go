@@ -1157,3 +1157,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: Silently accepts flag, produces valid descriptor (exit code 0, empty stderr).
 - **Go protoc-go**: `Missing value for flag: --experimental_allow_proto3_optional` (exit code 1).
 - **Fix hint**: Add `if arg == "--experimental_allow_proto3_optional" { continue }` to the flag parsing section in `parseArgs()`, alongside the other no-op flags like `--deterministic_output` and `--retain_options`.
+
+### Run 114 — Blank line between comments creates spurious empty detached comment (VICTORY)
+- **Bug**: Go's comment collector emits a spurious empty `leading_detached_comments: ""` entry when there is a blank line between a line comment and a block comment before a token. C++ protoc treats the blank line as a separator between the two comment groups but does NOT create an empty string entry.
+- **Test**: `447_detached_comment_blank_line` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: In Go's `collectComments()` (or equivalent comment tracking in the tokenizer), when a blank line is encountered between two comments, the tokenizer creates an empty comment group entry `""` for the gap. C++ protoc's comment collector recognizes the blank line as a boundary between detached comment groups but doesn't insert an empty string — it just starts a new group for the next comment.
+- **C++ protoc**: `leading_detached_comments: " Line comment\n"` + `leading_detached_comments: " Block comment "` (2 entries).
+- **Go protoc-go**: `leading_detached_comments: " Line comment\n"` + `leading_detached_comments: ""` + `leading_detached_comments: " Block comment "` (3 entries, extra empty one).
+- **Fix hint**: In the comment collector, when a blank line separates two comment groups, don't emit an empty detached comment for the blank line. Instead, just close the current group and start a new one. The blank line is a separator, not a comment.

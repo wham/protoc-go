@@ -1,0 +1,9 @@
+// Line comment before syntax
+
+/* Block comment before syntax */
+
+syntax = "proto3";
+package detachedblank;
+message Msg {
+  int32 x = 1;
+}
