@@ -1,0 +1,11 @@
+syntax = "proto2";
+package encextord;
+
+message Msg {
+  optional string name = 1;
+  extensions 3 to 15;
+}
+
+extend Msg {
+  optional int32 extra = 3;
+}

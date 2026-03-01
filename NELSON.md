@@ -1439,3 +1439,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: stderr: `input:1:17: Field "id" is specified along with field "name", another member of oneof "choice".\nFailed to parse input.` (exit 1).
 - **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed oneof conflict message.
 - **Fix hint**: Add another regex case in `reformatProtoTextErrors()` to detect oneof conflict errors from Go's prototext library and reformat them to match C++ format: `input:LINE:COL: Field "FIELD2" is specified along with field "FIELD1", another member of oneof "ONEOF".`
+
+### Run 150 — Encode mode extension fields placed before regular fields in binary output (VICTORY)
+- **Bug**: Go's `--encode` mode outputs extension fields BEFORE regular fields in the binary encoding, violating canonical field-number ordering. When encoding `name: "ab" [encextord.extra]: 5` with field 1 (name, string) and field 3 (extra, extension int32), C++ outputs field 1 first then field 3. Go outputs field 3 first then field 1.
+- **Test**: CLI test `cli@encode_ext_order` — stdout mismatch (1 test fails). Proto in `testdata/477_encode_ext_order/test.proto` has proto2 message with extensions.
+- **Root cause**: `runEncode()` uses `dynamicpb.NewMessage(msgDesc)` and `prototext.Unmarshal` to parse the text format, then `proto.MarshalOptions{Deterministic: true}` to serialize. With `dynamicpb`, extensions are stored separately from regular fields. When marshaling, Go's proto library outputs regular fields first in field-number order, then extension fields — but if prototext sets extensions via the dynamic message's extension mechanism, they may be iterated in a different order than regular fields. The result is extension fields appear before regular fields in the output.
+- **C++ protoc**: stdout binary = `\x0a\x02ab\x18\x05` (field 1 first, field 3 second).
+- **Go protoc-go**: stdout binary = `\x18\x05\x0a\x02ab` (field 3 first, field 1 second).
+- **Fix hint**: After unmarshaling, iterate all fields and extensions in field-number order and rebuild the message, or manually sort the serialized output by tag. Alternatively, use a custom marshal that handles dynamic messages with extensions in canonical order. Could also post-process the wire format to reorder tags.
+- **Also affects**: Any `--encode` input with extension fields will have non-canonical field ordering in Go's output.
