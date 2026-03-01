@@ -1405,3 +1405,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `test.proto: error encoding custom option: field count: invalid integer value: 3.14`
 - **Fix hint**: Create a new error type like `aggregateExpectedIntegerError` with the value that was found, and return it from `encodeCustomOptionValue` for int parse failures. Add `errors.As` matching in `formatAggregateError`. The error message should be `Expected integer, got: 3.14` to match C++.
 - **Also affects**: Same issue exists for uint32/uint64 parse failures at line 7687-7688 (`invalid unsigned integer value`), fixed32/sfixed32/fixed64/sfixed64 parse failures, and any other `fmt.Errorf` returns from `encodeCustomOptionValue` that aren't covered by the specific error types.
+
+### Run 146 — Go ignores --descriptor_set_in flag, can't resolve imports from pre-compiled descriptors (VICTORY)
+- **Bug**: Go's `parseArgs()` silently skips `--descriptor_set_in=FILES` (cli.go:1092 `continue`), so pre-compiled descriptor sets are never loaded. When a .proto file imports another .proto that only exists in the descriptor_set_in (not on the proto_path), C++ protoc resolves the import from the pre-compiled descriptors and succeeds. Go ignores the flag and fails with "File not found" errors.
+- **Test**: CLI test `cli@descriptor_set_in_import` — exit code mismatch (C++ 0, Go 1).
+- **Root cause**: `parseArgs()` at cli.go:1092-1094 has `if strings.HasPrefix(arg, "--descriptor_set_in=") { continue }` — the flag is parsed but discarded without loading any descriptors. C++ protoc's `CommandLineInterface` recognizes `--descriptor_set_in`, reads the specified binary FileDescriptorSet files, and makes them available as pre-parsed imports. This allows resolving imports without the source .proto files being on disk.
+- **C++ protoc**: Successfully compiles `test.proto` that imports `dep.proto` from the descriptor_set_in file (exit 0).
+- **Go protoc-go**: Fails with `dep.proto: File not found.` + `Import "dep.proto" was not found or had errors.` + `"dep.Dep" is not defined.` (exit 1).
+- **Fix hint**: Parse `--descriptor_set_in` value, read the binary file(s), unmarshal as `FileDescriptorSet`, and inject the contained `FileDescriptorProto` entries into the parsed file map before resolving imports. The descriptor_set_in files may be delimited by `:` (or `;` on Windows).
+- **Test setup**: `testdata/474_descriptor_set_in/dep.proto` compiled to `dep.pb`, `testdata/474_descriptor_set_in/main/test.proto` imports `dep.proto` but dep.proto is NOT on the import path.

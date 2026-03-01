@@ -1,0 +1,4 @@
+syntax = "proto3";
+package mainpkg;
+import "dep.proto";
+message Main { dep.Dep my_dep = 1; }
