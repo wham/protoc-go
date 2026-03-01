@@ -1339,3 +1339,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: stderr: `Failed to parse input.` (exit 1).
 - **Go protoc-go**: stderr: `invalid bytes\nFailed to parse input.` (exit 1). Extra line in stderr.
 - **Fix hint**: In the decode error path, suppress the "invalid bytes" diagnostic or only print the top-level "Failed to parse input." message, matching C++ protoc's behavior.
+
+### Run 136 — Decode mode sint32 zigzag with oversized varint (VICTORY)
+- **Bug**: Go's `--decode` mode uses the full 64-bit varint value for `sint32` zigzag decoding, while C++ protoc truncates to uint32 first. When a sint32 field has a varint that exceeds 32 bits (e.g., 0x100000001), C++ reads it as uint32(0x01) then zigzag-decodes to -1. Go zigzag-decodes the full uint64 value 0x100000001 to -2147483649.
+- **Test**: Decode test `decode@sint32_truncate` — stdout mismatch (1 test fails).
+- **Root cause**: Go's `printKnownField()` calls `protowire.DecodeZigZag(e.varint)` on the raw uint64 varint value without truncating to uint32 first. C++ protoc's `WireFormatLite::ReadSInt32` internally calls `ReadVarint32` which truncates the varint to 32 bits, then calls `ZigZagDecode32`. The different truncation order produces different values: Go gets DecodeZigZag(0x100000001) = -2147483649, C++ gets ZigZagDecode32(uint32(0x100000001)) = ZigZagDecode32(1) = -1.
+- **C++ protoc**: `value: -1` (truncate to uint32, then zigzag decode).
+- **Go protoc-go**: `value: -2147483649` (zigzag decode full uint64).
+- **Fix hint**: In `printKnownField()` for `TYPE_SINT32`, truncate to uint32 before zigzag: `protowire.DecodeZigZag(uint64(uint32(e.varint)))` instead of `protowire.DecodeZigZag(e.varint)`. Same may apply to `TYPE_INT32` and `TYPE_UINT32` — they should also truncate to 32 bits.
