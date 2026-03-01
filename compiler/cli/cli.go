@@ -8047,6 +8047,12 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 	return b, nil
 }
 
+type utf8ValidationError struct {
+	msg string
+}
+
+func (e *utf8ValidationError) Error() string { return e.msg }
+
 type aggregateDupFieldError struct {
 	fieldName string
 }
@@ -8738,7 +8744,10 @@ func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 
 	// Try to parse the data to validate it
 	if err := validateProtoWithSchema(data, msgTypeName, msgDesc, allMsgs, utf8Msgs); err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
+		var u8err *utf8ValidationError
+		if errors.As(err, &u8err) {
+			fmt.Fprintln(os.Stderr, u8err.Error())
+		}
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
 		os.Exit(1)
 	}
@@ -8907,7 +8916,7 @@ func validateProtoWithSchema(data []byte, msgFQN string, msgDesc *descriptorpb.D
 					}
 				} else if isUtf8 && fd.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING {
 					if !utf8.Valid(v) {
-						return fmt.Errorf("String field '%s.%s' contains invalid UTF-8 data when parsing a protocol buffer. Use the 'bytes' type if you intend to send raw bytes. ", msgFQN, fd.GetName())
+						return &utf8ValidationError{msg: fmt.Sprintf("String field '%s.%s' contains invalid UTF-8 data when parsing a protocol buffer. Use the 'bytes' type if you intend to send raw bytes. ", msgFQN, fd.GetName())}
 					}
 				}
 			}
