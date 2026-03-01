@@ -1081,3 +1081,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:7:35: Expected integer for field default value.` (single error, clean).
 - **Go protoc-go**: `test.proto:7:35: Integer out of range.` + `test.proto:7:36: Expected ";".` + `test.proto:7:36: Expected "]".` (three errors, misleading).
 - **Fix hint**: After checking for `-`, also check for `+` sign: `if optName == "default" && p.tok.Peek().Value == "+" { p.tok.Next() }` — just skip it since positive sign is a no-op for numeric values. Or, match C++ behavior: if `+` is seen, emit "Expected integer for field default value." error.
+
+### Run 105 — Missing "Need space between number and identifier" tokenizer warning (VICTORY)
+- **Bug**: Go's tokenizer does NOT emit the "Need space between number and identifier." warning when a number token is immediately followed by an alphabetic character without whitespace. When a proto has `[default = 0b1010]` (binary literal syntax, not valid in proto), C++ tokenizer reads `0` as a number, sees `b` immediately after, and emits the specific warning before the parse error. Go's tokenizer reads `0` as a number and `b1010` as a separate identifier, producing only a generic "Expected ";"." error.
+- **Test**: `438_number_ident_space` — all 9 profiles fail.
+- **Root cause**: Go's `readNumber()` in `io/tokenizer/tokenizer.go:455` does not check if the character immediately following a number token is an alphabetic character. C++ tokenizer's `ConsumeNumber` checks this and calls `AddError("Need space between number and identifier.")` when it detects a number-to-identifier transition without whitespace.
+- **C++ protoc**: `test.proto:4:38: Need space between number and identifier.` + `test.proto:4:38: Expected "]".`
+- **Go protoc-go**: `test.proto:4:38: Expected ";".` + `test.proto:4:38: Expected "]".`
+- **Fix hint**: After `readNumber()` finishes building the number token, check if `t.pos < len(t.input)` and the next character is alphabetic (`isIdentStart(t.input[t.pos])`). If so, emit `TokenError{..., Message: "Need space between number and identifier."}`. This matches C++ behavior in `io/tokenizer.cc`'s `Tokenizer::Next()` where it checks `current_char_ == '_' || ascii_isalpha(current_char_)` after consuming a number.

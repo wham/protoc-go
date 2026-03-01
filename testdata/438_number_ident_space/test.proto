@@ -1,0 +1,5 @@
+syntax = "proto2";
+package numident;
+message Msg {
+  optional int32 val = 1 [default = 0b1010];
+}
