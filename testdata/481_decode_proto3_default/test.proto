@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package decodep3def;
+
+message Record {
+  int32 id = 1;
+  string name = 2;
+  bytes data = 3;
+  bool flag = 4;
+  string label = 5;
+}
