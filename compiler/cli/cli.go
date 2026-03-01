@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -8785,6 +8786,7 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		Resolver:     dynamicpb.NewTypes(files),
 	}
 	if err := unmarshalOpts.Unmarshal(data, msg); err != nil {
+		reformatProtoTextErrors(err, msgTypeName)
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
 		os.Exit(1)
 	}
@@ -8807,6 +8809,21 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 
 	os.Stdout.Write(out)
 	return nil
+}
+
+// reformatProtoTextErrors reformats Go prototext errors to match C++ protoc format.
+func reformatProtoTextErrors(err error, msgTypeName string) {
+	errStr := err.Error()
+	// Go prototext errors: "proto:\u00a0(line L:C): unknown field: NAME"
+	// C++ format: "input:L:COL: Message type "TYPE" has no field named "NAME"."
+	re := regexp.MustCompile(`\(line (\d+):(\d+)\): unknown field: (\w+)`)
+	if m := re.FindStringSubmatch(errStr); m != nil {
+		line := m[1]
+		col, _ := strconv.Atoi(m[2])
+		fieldName := m[3]
+		cppCol := col + len(fieldName)
+		fmt.Fprintf(os.Stderr, "input:%s:%d: Message type \"%s\" has no field named \"%s\".\n", line, cppCol, msgTypeName, fieldName)
+	}
 }
 
 // findMissingRequiredReflect finds missing required fields using protoreflect.
