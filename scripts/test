@@ -1018,6 +1018,7 @@ DECODE_TESTS=(
   "proto2_unknown_enum|testdata/457_decode_proto2_unknown_enum|decode_p2_enum.Record|086312026f6b"
   "edition_open_enum|testdata/458_decode_edition_open_enum|decodeeditionenum.Record|086312026f6b"
   "double_precision|testdata/459_decode_double_precision|decodedoubleprec.Sample|09020000000000004012026f6b"
+  "oneof_dedup|testdata/460_decode_oneof_dedup|oneofdedup.Msg|0a0568656c6c6f102a1a026f6b"
 )
 
 for decode_spec in "${DECODE_TESTS[@]}"; do

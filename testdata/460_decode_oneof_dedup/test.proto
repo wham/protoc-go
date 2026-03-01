@@ -1,0 +1,10 @@
+syntax = "proto3";
+package oneofdedup;
+
+message Msg {
+  oneof choice {
+    string name = 1;
+    int32 id = 2;
+  }
+  string label = 3;
+}
