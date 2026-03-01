@@ -1012,6 +1012,7 @@ DECODE_TESTS=(
   "double_integer|testdata/451_decode_double|decodedouble.Sample|09000000000000f03f12026f6b"
   "float_integer|testdata/452_decode_float_int|decodefloatint.Sample|0d000000401203666f6f"
   "packed_repeated|testdata/453_decode_packed|decodepacked.Numbers|0a0301020312026f6b"
+  "extension_field|testdata/454_decode_extension|decodeext.Base|0a026869a0062a"
 )
 
 for decode_spec in "${DECODE_TESTS[@]}"; do

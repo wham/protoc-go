@@ -1226,3 +1226,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `value: 2.` (with trailing dot).
 - **Fix hint**: Remove both trailing dot blocks from `formatTextFloat`: the one at line 9154-9156 (subnormal path) and the one at line 9163-9165 (normal path). C++ `SimpleFtoa` never adds a trailing dot. Just return `s` directly after formatting. This was already fixed for `formatTextDouble` in Run 122 — same fix needed for `formatTextFloat`.
 - **Also affects**: ANY integer-valued float32 in `--decode` mode will have a spurious trailing dot. Examples: `1.0f` → `"1."`, `100.0f` → `"100."`, `-3.0f` → `"-3."`. Also affects subnormal float paths (though subnormals are never integer-valued, the dot logic is still wrong for any subnormal that formats without a decimal point — e.g., if FormatFloat somehow produces an integer-like string).
+
+### Run 124 — Decode mode prints extension fields as unknown (raw field number) instead of by name (VICTORY)
+- **Bug**: Go's `buildFieldMap()` in `cli.go` only iterates `msg.GetField()` when building the known-field map for `--decode` mode. Extension fields (defined via `extend Base { ... }`) are not part of `GetField()` — they live in `FileDescriptorProto.GetExtension()`. So extension fields are treated as unknown and printed by raw field number (`100: 42`) instead of by their fully-qualified name in brackets (`[decodeext.extra]: 42`).
+- **Test**: Decode test `decode@extension_field` — stdout mismatch (1 test fails).
+- **Root cause**: `buildFieldMap(msgDesc)` at cli.go:8846 only calls `msgDesc.GetField()`. Extensions are separate in the descriptor: `fd.GetExtension()` contains top-level extensions, and nested messages can also have extensions. C++ protoc uses the `Reflection` interface which knows about all registered extensions from the descriptor pool.
+- **C++ protoc**: `[decodeext.extra]: 42` (extension printed by name in brackets).
+- **Go protoc-go**: `100: 42` (extension treated as unknown field, printed by number).
+- **Fix hint**: After building `fieldMap` from `msg.GetField()`, also iterate all `fd.GetExtension()` across all parsed files. For each extension where `GetExtendee()` matches the target message type, add it to `fieldMap` with its field number. Print extension fields as `[fully.qualified.name]: value` using brackets (C++ text format convention).
+- **Also affects**: ALL proto2 messages with extensions decoded in `--decode` mode. Any extension field will be printed as an unknown field by number.

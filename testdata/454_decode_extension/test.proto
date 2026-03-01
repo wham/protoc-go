@@ -1,0 +1,11 @@
+syntax = "proto2";
+package decodeext;
+
+message Base {
+  required string name = 1;
+  extensions 100 to 199;
+}
+
+extend Base {
+  optional int32 extra = 100;
+}
