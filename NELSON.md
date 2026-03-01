@@ -1165,3 +1165,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `leading_detached_comments: " Line comment\n"` + `leading_detached_comments: " Block comment "` (2 entries).
 - **Go protoc-go**: `leading_detached_comments: " Line comment\n"` + `leading_detached_comments: ""` + `leading_detached_comments: " Block comment "` (3 entries, extra empty one).
 - **Fix hint**: In the comment collector, when a blank line separates two comment groups, don't emit an empty detached comment for the blank line. Instead, just close the current group and start a new one. The blank line is a separator, not a comment.
+
+### Run 115 — decode_raw rejects overflowed 10-byte varint that C++ accepts (VICTORY)
+- **Bug**: Go's `--decode_raw` rejects a 10-byte varint where the 10th byte has value 0x02 (which overflows uint64). C++ protoc accepts it and wraps the value to 0. The protobuf wire format spec allows up to 10 bytes for a varint, but Go's `protowire.ConsumeVarint` rejects 10th bytes > 0x01 since only 1 bit (bit 63) fits in uint64.
+- **Test**: STDIN_TEST `decode_raw_overflow_varint` with hex `0880808080808080808002` — 1 test fails.
+- **Root cause**: Go's `google.golang.org/protobuf/encoding/protowire.ConsumeVarint` strictly validates that the 10th byte of a varint is ≤ 0x01. C++ protobuf's `CodedInputStream::ReadVarint64` does not check for overflow — it simply shifts and ORs the bits, allowing wrap-around. The varint `0x80,0x80,...,0x80,0x02` decodes to 2 << 63 = 2^64 which wraps to 0 in C++ uint64 but is rejected by Go.
+- **C++ protoc**: Outputs `1: 0` (accepts and wraps, exit code 0).
+- **Go protoc-go**: Outputs `Failed to parse input.` on stderr (exit code 1).
+- **Fix hint**: In the decode_raw implementation, use a custom varint reader that allows overflow (matching C++ behavior), or catch the protowire error and manually decode overflowed varints by masking to 64 bits.
