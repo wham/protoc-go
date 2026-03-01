@@ -300,6 +300,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 136. [DONE] Fix `decode@utf8_invalid` — C++ protoc validates UTF-8 on proto3 string fields during `--decode` and rejects invalid data with `String field '<fqn>' contains invalid UTF-8 data...` + `Failed to parse input.` (exit 1). Added `utf8Msgs` set tracking proto3 message FQNs in `findMessageType`. Extended `validateProtoWithSchema` to accept `msgFQN` and `utf8Msgs`, checking `utf8.Valid(v)` on TYPE_STRING fields. Also added GLOG prefix stripping (`sed 's/^[EIWF]...'`) to decode test stderr comparison since C++ protoc's LOG(ERROR) lines contain variable timestamps. All 4248/4248 tests pass.
 
+137. [DONE] Fix `464_ext_range_past_max` — C++ protoc rejects extension ranges with numbers > 536870911 with `Extension numbers cannot be greater than 536870911.` (no line/column) but Go silently accepted them. Added `validateExtRangeMax` that checks `ExtensionRange.End > kMaxFieldNumber + 1` (end is exclusive). Skips `message_set_wire_format` messages which allow extension numbers up to INT32_MAX. All 4257/4257 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
