@@ -244,6 +244,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 108. [DONE] Fix `436_deep_subfield_merge` — `mergeUnknownExtensions` concatenated payloads at the top level (extension field number) but didn't recursively merge nested message sub-fields. When `(cfg).inner.value = "hello"` and `(cfg).inner.num = 42` were set, the merged entry for field 50001 contained two separate `inner` (field 1) entries instead of one merged entry. Added `mergeNestedBytes` recursive function that merges duplicate bytes-type fields within raw protobuf payloads at all nesting levels. Called from `mergeUnknownExtensions` on each merged payload. All 3984/3984 tests pass.
 
+109. [DONE] Fix `cli@error_format_msvs_parse` — Parse errors from `parser.ParseFile` were returned directly as errors (both `MultiError` and single errors), bypassing the `collectErrors` path that handles MSVS formatting. Modified `parseRecursive` to collect parse errors into `collectErrors` when the collector is available, allowing `formatErrorsMSVS` to reformat them. All 3994/3994 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `validateEnumPrefixConflict` checks enum value names for conflicts after prefix stripping and PascalCasing, matching C++ `CheckEnumValueUniqueness`. `prefixRemoverMaybeRemove` strips the enum type name prefix (lowercased, underscores removed) from value names. `enumValueToPascalCase` converts UPPER_SNAKE_CASE to PascalCase. Skips conflicts where values have the same name (handled by duplicate name check) or same number (aliases). Proto2 enums with `deprecated_legacy_json_field_conflicts` option skip the check. Error location uses SCI path `[enumPath, 2, valueIdx, 1]` (enum value name field).
