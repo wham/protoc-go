@@ -616,6 +616,7 @@ func Run(args []string) error {
 	valErrors = append(valErrors, validateEnumDefaultValues(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateProto3(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateEditionGroups(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateEditionOpenEnumZero(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateFileLevelLegacyRequired(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateRepeatedFieldEncoding(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateFieldPresenceRepeated(orderedFiles, parsed)...)
@@ -2444,6 +2445,52 @@ func collectEditionGroupErrors(filename string, msg *descriptorpb.DescriptorProt
 			continue
 		}
 		collectEditionGroupErrors(filename, nested, append(append([]int32{}, msgPath...), 3, int32(i)), sci, errs)
+	}
+}
+
+func isEnumOpen(e *descriptorpb.EnumDescriptorProto, fd *descriptorpb.FileDescriptorProto) bool {
+	// Check enum-level feature first
+	if e.GetOptions() != nil && e.GetOptions().GetFeatures() != nil && e.GetOptions().GetFeatures().EnumType != nil {
+		return e.GetOptions().GetFeatures().GetEnumType() == descriptorpb.FeatureSet_OPEN
+	}
+	// Check file-level feature
+	if fd.GetOptions() != nil && fd.GetOptions().GetFeatures() != nil && fd.GetOptions().GetFeatures().EnumType != nil {
+		return fd.GetOptions().GetFeatures().GetEnumType() == descriptorpb.FeatureSet_OPEN
+	}
+	// Default for edition 2023 is OPEN
+	return true
+}
+
+func validateEditionOpenEnumZero(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		for i, e := range fd.GetEnumType() {
+			if isEnumOpen(e, fd) {
+				collectProto3EnumZeroErrors(fd.GetName(), e, []int32{5, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+			}
+		}
+		for i, msg := range fd.GetMessageType() {
+			collectEditionOpenEnumZeroInMsg(fd.GetName(), fd, msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+	}
+	return errs
+}
+
+func collectEditionOpenEnumZeroInMsg(filename string, fd *descriptorpb.FileDescriptorProto, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, e := range msg.GetEnumType() {
+		if isEnumOpen(e, fd) {
+			collectProto3EnumZeroErrors(filename, e, append(append([]int32{}, msgPath...), 4, int32(i)), sci, errs)
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		collectEditionOpenEnumZeroInMsg(filename, fd, nested, append(append([]int32{}, msgPath...), 3, int32(i)), sci, errs)
 	}
 }
 
