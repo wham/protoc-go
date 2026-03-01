@@ -9105,6 +9105,10 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		os.Exit(1)
 	}
 
+	// Go's dynamicpb marshal may not interleave extensions with regular fields
+	// in field number order. Sort the top-level fields to match C++ protoc.
+	out = sortUnknownFields(out)
+
 	os.Stdout.Write(out)
 	return nil
 }
