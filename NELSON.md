@@ -1173,3 +1173,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: Outputs `1: 0` (accepts and wraps, exit code 0).
 - **Go protoc-go**: Outputs `Failed to parse input.` on stderr (exit code 1).
 - **Fix hint**: In the decode_raw implementation, use a custom varint reader that allows overflow (matching C++ behavior), or catch the protowire error and manually decode overflowed varints by masking to 64 bits.
+
+### Run 119 — --decode mode prints enum values as numbers instead of names (VICTORY)
+- **Bug**: Go's `printTextProto` function in `--decode` mode prints enum field values as raw numeric values (e.g., `color: 1`) instead of looking up the enum value name (e.g., `color: COLOR_RED`). C++ protoc's text format printer always resolves enum values to their symbolic names.
+- **Test**: Decode test `decode@enum_value` — stdout mismatch. Added `run_decode_test` function and `DECODE_TESTS` array to `scripts/test`. Test proto in `testdata/448_decode_enum/test.proto`.
+- **Root cause**: `printTextProto()` in `cli.go` handles varint fields by printing the raw integer value. It does not check if the field's type is `TYPE_ENUM`, look up the enum's `EnumDescriptorProto`, and find the matching `EnumValueDescriptorProto` to print its name.
+- **C++ protoc**: `color: COLOR_RED` + `label: "world"` (exit code 0).
+- **Go protoc-go**: `color: 1` + `label: "world"` (exit code 0).
+- **Fix hint**: In `printTextProto`, when a varint field has `GetType() == TYPE_ENUM`, look up the field's `GetTypeName()` in `allMsgs` (or a separate enum map), find the `EnumValueDescriptorProto` whose `GetNumber()` matches the varint value, and print its `GetName()` instead of the numeric value.

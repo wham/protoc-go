@@ -932,6 +932,90 @@ for stdin_spec in "${STDIN_TESTS[@]}"; do
   TEST_NAMES+=("stdin@${stdin_name}")
 done
 
+# -- decode tests ----------------------------------------------------------
+# Compare --decode=TYPE output between C++ protoc and Go protoc-go.
+
+run_decode_test() {
+  local test_name="$1"
+  local proto_dir="$2"
+  local msg_type="$3"
+  local binary_hex="$4"
+  local full_name="decode@${test_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$result_dir"
+
+  local binary_file="$result_dir/input.bin"
+  echo "$binary_hex" | xxd -r -p > "$binary_file"
+
+  local proto_files
+  proto_files=$(find "$proto_dir" -maxdepth 1 -name "*.proto" -exec basename {} \; | sort)
+
+  local cpp_exit=0
+  (cd "$proto_dir" && "$PROTOC" -I. --decode="$msg_type" $proto_files < "$binary_file") \
+    >"$result_dir/cpp_stdout.txt" 2>"$result_dir/cpp_stderr.txt" || cpp_exit=$?
+
+  local go_exit=0
+  (cd "$proto_dir" && "$PROTOC_GO" -I. --decode="$msg_type" $proto_files < "$binary_file") \
+    >"$result_dir/go_stdout.txt" 2>"$result_dir/go_stderr.txt" || go_exit=$?
+
+  if [ "$cpp_exit" != "$go_exit" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "exit code mismatch: C++ protoc=$cpp_exit, Go protoc-go=$go_exit"
+      echo "--- C++ stderr ---"
+      cat "$result_dir/cpp_stderr.txt"
+      echo "+++ Go stderr +++"
+      cat "$result_dir/go_stderr.txt"
+    } > "$failure_file"
+    return
+  fi
+
+  local cpp_stdout go_stdout
+  cpp_stdout=$(cat "$result_dir/cpp_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  go_stdout=$(cat "$result_dir/go_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+
+  if [ "$cpp_stdout" != "$go_stdout" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "stdout mismatch"
+      diff -u "$result_dir/cpp_stdout.txt" "$result_dir/go_stdout.txt" 2>&1 || true
+    } > "$failure_file"
+    return
+  fi
+
+  local cpp_stderr go_stderr
+  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  go_stderr=$(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+
+  if [ "$cpp_stderr" != "$go_stderr" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "stderr mismatch"
+      diff -u "$result_dir/cpp_stderr.txt" "$result_dir/go_stderr.txt" 2>&1 || true
+    } > "$failure_file"
+    return
+  fi
+
+  echo "PASS 0 0" > "$result_file"
+}
+
+# Decode tests: name|proto_dir|message_type|hex_data
+# 0801 = field 1 (varint) value 1 (COLOR_RED)
+# 120568656c6c6f = field 2 (string) "hello"
+DECODE_TESTS=(
+  "enum_value|testdata/448_decode_enum|decodeenumtest.Painted|08011205776f726c64"
+)
+
+for decode_spec in "${DECODE_TESTS[@]}"; do
+  IFS='|' read -r decode_name decode_dir decode_type decode_hex <<< "$decode_spec"
+  run_decode_test "$decode_name" "$decode_dir" "$decode_type" "$decode_hex" &
+  PIDS+=($!)
+  TEST_NAMES+=("decode@${decode_name}")
+done
+
 # -- determinism tests -----------------------------------------------------
 # Run protoc-go multiple times on select cases and verify byte-identical output.
 
