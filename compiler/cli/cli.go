@@ -9013,8 +9013,9 @@ func printKnownField(w *os.File, e struct {
 			v := math.Float32frombits(e.fixed32)
 			fmt.Fprintf(w, "%s%s: %s\n", prefix, name, formatTextFloat(v))
 		}
-	case descriptorpb.FieldDescriptorProto_TYPE_INT64,
-		descriptorpb.FieldDescriptorProto_TYPE_UINT64:
+	case descriptorpb.FieldDescriptorProto_TYPE_INT64:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int64(e.varint))
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT64:
 		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, e.varint)
 	case descriptorpb.FieldDescriptorProto_TYPE_INT32:
 		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int32(e.varint))
