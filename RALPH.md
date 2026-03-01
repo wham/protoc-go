@@ -288,6 +288,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 130. [DONE] Fix `decode@proto2_unknown_enum` — In proto2 (closed enums), enum field values not in the defined set should be treated as unknown fields (printed by number after known fields), matching C++ protoc's behavior. Added `closedEnums map[string]bool` tracking based on file syntax (proto2 = closed, proto3 = open). During field classification in `printTextProto`, TYPE_ENUM fields with unknown values in closed enums are now classified as unknown entries. All 4188/4188 tests pass.
 
+131. [DONE] Fix `decode@edition_open_enum` — Edition 2023 enums default to OPEN, but `findMessageType` treated all non-proto3 enums as closed (`isClosed := fd.GetSyntax() != "proto3"`). Added `isEditions` check: for editions files, per-enum openness is determined by `isEnumOpen(ed, fd)` (checking enum-level then file-level `features.enum_type`, defaulting to OPEN). Passed `isEditions` and `fd` to `collectMsgsForDecode` for nested enums. All 4198/4198 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
