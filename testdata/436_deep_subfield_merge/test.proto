@@ -1,0 +1,12 @@
+syntax = "proto2";
+package deepmerge;
+
+import "opts.proto";
+
+option (cfg).inner.value = "hello";
+option (cfg).inner.num = 42;
+option (cfg).name = "top";
+
+message Msg {
+  optional int32 x = 1;
+}
