@@ -1140,3 +1140,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silently accepts, stores literal `\U00200000` text as `default_value` in descriptor (exit code 0).
 - **Fix hint**: In `appendUTF8()`, instead of writing the literal escape text for `cp > 0x10FFFF`, the tokenizer should emit an error: `TokenError{..., Message: "Expected eight hex digits up to 10ffff for \\U escape sequence."}`. Or add a check in the `\U` escape handler in `readString()` before calling `appendUTF8()`.
 - **Also affects**: Any string literal with `\U` code points from `0x110000` to `0xFFFFFFFF`. Same issue exists for `\u` escapes combined into surrogates that produce values > `0x10FFFF` (though that's unlikely since surrogates map to supplementary plane values ≤ `0x10FFFF`).
+
+### Run 112 — --fatal_warnings flag silently ignored by Go (VICTORY)
+- **Bug**: Go's CLI recognizes the `--fatal_warnings` flag but silently ignores it (`continue` at cli.go:1049). C++ protoc uses this flag to turn warnings into fatal errors (exit code 1). When both compilers emit an identical warning (e.g., cross-file duplicate extension number), C++ exits 1 with `--fatal_warnings` while Go exits 0.
+- **Test**: CLI test `cli@fatal_warnings_ext` — exit code mismatch (C++ exits 1, Go exits 0).
+- **Root cause**: `cli.go:1049` has `if arg == "--fatal_warnings" { continue }` — the flag is parsed but completely discarded. No `fatalWarnings` boolean is stored, and warnings are never checked for fatal promotion before exit.
+- **C++ protoc**: `test.proto:7:27: warning: Extension number 100 has already been used...` (exit code 1 with --fatal_warnings).
+- **Go protoc-go**: Same warning message (exit code 0, --fatal_warnings ignored).
+- **Fix hint**: (1) Parse `--fatal_warnings` into a boolean config field. (2) After compilation, if `fatalWarnings` is true and any warnings were emitted, set exit code to 1. Or, before printing warnings, promote them to errors (remove "warning:" prefix) and add to the error list.
+- **Also affects**: Any other scenario that produces warnings (e.g., unused imports, JSON name conflicts in proto2) would also be affected if Go ever implements those warnings.
