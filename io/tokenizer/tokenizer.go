@@ -213,6 +213,7 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 			if hasComment {
 				t.flushComment(&result, &commentBuf, canAttachToPrev)
 				canAttachToPrev = false
+				hasComment = false
 			}
 			canAttachToPrev = false
 			t.advance()
