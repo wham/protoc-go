@@ -8965,7 +8965,51 @@ func printTextProto(w *os.File, data []byte, msgDesc *descriptorpb.DescriptorPro
 			continue
 		}
 
-		if fd != nil {
+		// Unpack packed repeated fields: when a repeated packable field
+		// arrives with BytesType wire type, decode the bytes into individual entries.
+		if fd != nil && wtype == protowire.BytesType &&
+			fd.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED &&
+			isPackableType(fd.GetType()) {
+			packed := entry.bytes
+			ppos := 0
+			for ppos < len(packed) {
+				pe := fieldEntry{num: num, known: fd}
+				switch fd.GetType() {
+				case descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
+					descriptorpb.FieldDescriptorProto_TYPE_SFIXED64,
+					descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+					pe.wtype = protowire.Fixed64Type
+					v, vn := protowire.ConsumeFixed64(packed[ppos:])
+					if vn < 0 {
+						ppos = len(packed)
+						continue
+					}
+					ppos += vn
+					pe.fixed64 = v
+				case descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
+					descriptorpb.FieldDescriptorProto_TYPE_SFIXED32,
+					descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
+					pe.wtype = protowire.Fixed32Type
+					v, vn := protowire.ConsumeFixed32(packed[ppos:])
+					if vn < 0 {
+						ppos = len(packed)
+						continue
+					}
+					ppos += vn
+					pe.fixed32 = v
+				default:
+					pe.wtype = protowire.VarintType
+					v, vn := protowire.ConsumeVarint(packed[ppos:])
+					if vn < 0 {
+						ppos = len(packed)
+						continue
+					}
+					ppos += vn
+					pe.varint = v
+				}
+				knownEntries = append(knownEntries, pe)
+			}
+		} else if fd != nil {
 			knownEntries = append(knownEntries, entry)
 		} else {
 			unknownEntries = append(unknownEntries, entry)
