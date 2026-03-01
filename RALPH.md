@@ -274,6 +274,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 123. [DONE] Fix `decode@neg_int64` — `printKnownField` handled TYPE_INT64 and TYPE_UINT64 together, printing `e.varint` (uint64) with `%d`. For TYPE_INT64, the varint `0xFFFFFFFFFFFFFFFF` should print as `-1`, not `18446744073709551615`. Split the cases: TYPE_INT64 casts to `int64`, TYPE_UINT64 stays `uint64`. All 4118/4118 tests pass.
 
+124. [DONE] Fix `decode@double_integer` — `formatTextDouble` added a trailing `.` to integer-like doubles (e.g., `1.0` → `"1."`), but C++ protoc's `SimpleDtoa` outputs `"1"` without trailing dot. Removed the trailing dot addition. All 4128/4128 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.

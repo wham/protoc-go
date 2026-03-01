@@ -9132,11 +9132,7 @@ func formatTextDouble(v float64) string {
 	if math.IsNaN(v) {
 		return "nan"
 	}
-	s := strconv.FormatFloat(v, 'g', -1, 64)
-	if !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E") {
-		s += "."
-	}
-	return s
+	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
 func formatTextFloat(v float32) string {
