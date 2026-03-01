@@ -278,6 +278,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 125. [DONE] Fix `decode@float_integer` — `formatTextFloat` added a trailing `.` to integer-like floats (e.g., `2` → `"2."`), but C++ protoc's `SimpleFtoa` outputs `"2"` without trailing dot. Removed the trailing dot addition from both the normal and subnormal branches. All 4138/4138 tests pass.
 
+126. [DONE] Fix `decode@packed_repeated` — `printTextProto` didn't handle packed repeated fields. When a repeated packable field (int32, float, etc.) arrives with BytesType wire type, the bytes contain a sequence of packed values. Added unpacking logic in the entry-building section that detects packed encoding (known + BytesType + repeated + packable type) and decodes the bytes into individual entries with correct wire types. All 4148/4148 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
