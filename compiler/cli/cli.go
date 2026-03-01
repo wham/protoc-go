@@ -721,7 +721,7 @@ func Run(args []string) error {
 
 	// Handle --encode mode
 	if cfg.encodeType != "" {
-		return runEncode(cfg.encodeType, parsed, orderedFiles, cfg.deterministicOutput)
+		return runEncode(cfg.encodeType, parsed, orderedFiles)
 	}
 
 	// Collect source-retention extension field numbers (grouped by extendee type)
@@ -8780,7 +8780,7 @@ type decodeExt struct {
 
 // runEncode implements --encode mode: reads text format protobuf from stdin
 // and writes binary protobuf to stdout using the schema from parsed proto files.
-func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles []string, deterministic bool) error {
+func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles []string) error {
 	// Build a FileDescriptorSet from parsed files in dependency order
 	fds := &descriptorpb.FileDescriptorSet{}
 	for _, name := range orderedFiles {
@@ -8827,10 +8827,12 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		fmt.Fprintf(os.Stderr, "warning:  Input message is missing required fields:  %s\n", strings.Join(missing, ", "))
 	}
 
-	// Serialize to binary and write to stdout
+	// Serialize to binary and write to stdout.
+	// Always use Deterministic: true so fields are in field number order,
+	// matching C++ protoc's Message::SerializeToString().
 	marshalOpts := proto.MarshalOptions{
 		AllowPartial:  true,
-		Deterministic: deterministic,
+		Deterministic: true,
 	}
 	out, err := marshalOpts.Marshal(msg)
 	if err != nil {
