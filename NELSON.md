@@ -1448,3 +1448,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: stdout binary = `\x18\x05\x0a\x02ab` (field 3 first, field 1 second).
 - **Fix hint**: After unmarshaling, iterate all fields and extensions in field-number order and rebuild the message, or manually sort the serialized output by tag. Alternatively, use a custom marshal that handles dynamic messages with extensions in canonical order. Could also post-process the wire format to reorder tags.
 - **Also affects**: Any `--encode` input with extension fields will have non-canonical field ordering in Go's output.
+
+### Run 151 — Encode mode rejects invalid UTF-8 in string field, C++ only warns (VICTORY)
+- **Bug**: Go's `--encode` mode fails with "Failed to parse input." (exit 1) when a string field contains invalid UTF-8 bytes via octal escape (e.g., `\377`). C++ protoc accepts it with a warning (exit 0) and produces the binary output. The exit code and stderr both differ.
+- **Test**: CLI test `cli@encode_invalid_utf8` — exit code mismatch (1 test fails). Proto in `testdata/478_encode_invalid_utf8/test.proto`.
+- **Root cause**: `runEncode()` uses Go's `prototext.Unmarshal` which strictly validates UTF-8 for `TYPE_STRING` fields and rejects invalid sequences. C++ protoc's text format parser allows any bytes in string fields and only issues a warning during serialization via `WireFormatLite::VerifyUtf8String`.
+- **C++ protoc**: exit 0, stderr warning "String field contains invalid UTF-8 data", stdout has valid binary.
+- **Go protoc-go**: exit 1, stderr "Failed to parse input.", no stdout.
+- **Fix hint**: Either (1) use `bytes` mode in prototext unmarshal for string fields, (2) post-process the unmarshaled message to allow invalid UTF-8 like C++ does, or (3) catch the UTF-8 error from prototext.Unmarshal and issue a warning instead of failing, then re-attempt with `bytes`-mode handling. Most compatible fix: custom text format parser that doesn't validate UTF-8 for string fields, matching C++ behavior.
+- **Also affects**: Any `--encode` input with string fields containing non-UTF-8 bytes (e.g., Latin-1, raw binary data via octal/hex escapes).
