@@ -8688,7 +8688,7 @@ func sortProtoUnknown(m proto.Message) {
 // prints text format using the schema from parsed proto files.
 func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles []string) error {
 	// Find the message descriptor
-	msgDesc, allMsgs := findMessageType(msgTypeName, parsed)
+	msgDesc, allMsgs, allEnums := findMessageType(msgTypeName, parsed)
 	if msgDesc == nil {
 		return fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)
 	}
@@ -8706,25 +8706,35 @@ func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 	}
 
 	// Print in text format
-	printTextProto(os.Stdout, data, msgDesc, allMsgs, 0)
+	printTextProto(os.Stdout, data, msgDesc, allMsgs, allEnums, 0)
 	return nil
 }
 
 // findMessageType searches all parsed FileDescriptorProtos for a message
 // with the given fully-qualified name. Returns the descriptor and a map of
 // all message FQNs to their descriptors.
-func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescriptorProto) (*descriptorpb.DescriptorProto, map[string]*descriptorpb.DescriptorProto) {
+func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescriptorProto) (*descriptorpb.DescriptorProto, map[string]*descriptorpb.DescriptorProto, map[string]map[int32]string) {
 	allMsgs := make(map[string]*descriptorpb.DescriptorProto)
+	allEnums := make(map[string]map[int32]string)
 	for _, fd := range parsed {
 		pkg := fd.GetPackage()
 		for _, msg := range fd.GetMessageType() {
-			collectMsgsForDecode(pkg, "", msg, allMsgs)
+			collectMsgsForDecode(pkg, "", msg, allMsgs, allEnums)
+		}
+		for _, ed := range fd.GetEnumType() {
+			var fqn string
+			if pkg != "" {
+				fqn = pkg + "." + ed.GetName()
+			} else {
+				fqn = ed.GetName()
+			}
+			allEnums[fqn] = buildEnumValMap(ed)
 		}
 	}
-	return allMsgs[fullName], allMsgs
+	return allMsgs[fullName], allMsgs, allEnums
 }
 
-func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto, out map[string]*descriptorpb.DescriptorProto) {
+func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto, out map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string) {
 	var fqn string
 	if pkg != "" {
 		fqn = pkg + "." + prefix + msg.GetName()
@@ -8732,9 +8742,22 @@ func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto,
 		fqn = prefix + msg.GetName()
 	}
 	out[fqn] = msg
-	for _, nested := range msg.GetNestedType() {
-		collectMsgsForDecode(pkg, prefix+msg.GetName()+".", nested, out)
+	for _, ed := range msg.GetEnumType() {
+		allEnums[fqn+"."+ed.GetName()] = buildEnumValMap(ed)
 	}
+	for _, nested := range msg.GetNestedType() {
+		collectMsgsForDecode(pkg, prefix+msg.GetName()+".", nested, out, allEnums)
+	}
+}
+
+func buildEnumValMap(ed *descriptorpb.EnumDescriptorProto) map[int32]string {
+	m := make(map[int32]string)
+	for _, v := range ed.GetValue() {
+		if _, exists := m[v.GetNumber()]; !exists {
+			m[v.GetNumber()] = v.GetName()
+		}
+	}
+	return m
 }
 
 // validateProtoWithSchema validates that binary data can be parsed as the
@@ -8844,11 +8867,8 @@ func resolveFieldMsgType(fd *descriptorpb.FieldDescriptorProto, allMsgs map[stri
 // printTextProto prints binary protobuf data in text format using the message
 // schema. Known fields are printed by name, unknown fields by number.
 // This matches C++ protoc's TextFormat::Print behavior for --decode.
-func printTextProto(w *os.File, data []byte, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, indent int) {
+func printTextProto(w *os.File, data []byte, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, indent int) {
 	fieldMap := buildFieldMap(msgDesc)
-
-	// Build enum value maps for known enum fields
-	enumsByTypeName := make(map[string]map[int32]string)
 
 	// Collect all known and unknown field entries in wire order
 	type fieldEntry struct {
@@ -8959,7 +8979,7 @@ func printTextProto(w *os.File, data []byte, msgDesc *descriptorpb.DescriptorPro
 		return knownEntries[i].num < knownEntries[j].num
 	})
 	for _, e := range knownEntries {
-		printKnownField(w, e, prefix, allMsgs, enumsByTypeName, indent)
+		printKnownField(w, e, prefix, allMsgs, allEnums, indent)
 	}
 
 	// Print unknown fields (in wire order)
@@ -8977,7 +8997,7 @@ func printKnownField(w *os.File, e struct {
 	fixed64 uint64
 	bytes   []byte
 	group   []byte
-}, prefix string, allMsgs map[string]*descriptorpb.DescriptorProto, enumsByTypeName map[string]map[int32]string, indent int) {
+}, prefix string, allMsgs map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, indent int) {
 	fd := e.known
 	name := fd.GetName()
 	t := fd.GetType()
@@ -9027,11 +9047,7 @@ func printKnownField(w *os.File, e struct {
 		if strings.HasPrefix(tn, ".") {
 			tn = tn[1:]
 		}
-		valMap, ok := enumsByTypeName[tn]
-		if !ok {
-			valMap = buildEnumValueMap(tn, allMsgs)
-			enumsByTypeName[tn] = valMap
-		}
+		valMap := allEnums[tn]
 		if valName, ok := valMap[int32(e.varint)]; ok {
 			fmt.Fprintf(w, "%s%s: %s\n", prefix, name, valName)
 		} else {
@@ -9041,7 +9057,7 @@ func printKnownField(w *os.File, e struct {
 		subMsg := resolveFieldMsgType(fd, allMsgs)
 		if subMsg != nil {
 			fmt.Fprintf(w, "%s%s {\n", prefix, name)
-			printTextProto(w, e.bytes, subMsg, allMsgs, indent+1)
+			printTextProto(w, e.bytes, subMsg, allMsgs, allEnums, indent+1)
 			fmt.Fprintf(w, "%s}\n", prefix)
 		} else {
 			fmt.Fprintf(w, "%s%s {\n", prefix, name)
@@ -9059,7 +9075,7 @@ func printKnownField(w *os.File, e struct {
 		}
 		if subMsg != nil {
 			fmt.Fprintf(w, "%s%s {\n", prefix, groupName)
-			printTextProto(w, e.group, subMsg, allMsgs, indent+1)
+			printTextProto(w, e.group, subMsg, allMsgs, allEnums, indent+1)
 			fmt.Fprintf(w, "%s}\n", prefix)
 		} else {
 			fmt.Fprintf(w, "%s%s {\n", prefix, groupName)
@@ -9103,11 +9119,6 @@ func printUnknownField(w *os.File, e struct {
 		decodeRawProto(w, e.group, indent+1)
 		fmt.Fprintf(w, "%s}\n", prefix)
 	}
-}
-
-func buildEnumValueMap(enumFQN string, allMsgs map[string]*descriptorpb.DescriptorProto) map[int32]string {
-	// Return empty map - enum lookup not needed for unknown fields
-	return make(map[int32]string)
 }
 
 func formatTextDouble(v float64) string {
