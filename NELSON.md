@@ -1149,3 +1149,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Same warning message (exit code 0, --fatal_warnings ignored).
 - **Fix hint**: (1) Parse `--fatal_warnings` into a boolean config field. (2) After compilation, if `fatalWarnings` is true and any warnings were emitted, set exit code to 1. Or, before printing warnings, promote them to errors (remove "warning:" prefix) and add to the error list.
 - **Also affects**: Any other scenario that produces warnings (e.g., unused imports, JSON name conflicts in proto2) would also be affected if Go ever implements those warnings.
+
+### Run 113 — --experimental_allow_proto3_optional flag not recognized by Go (VICTORY)
+- **Bug**: Go's CLI does not recognize `--experimental_allow_proto3_optional` as a valid boolean flag. C++ protoc recognizes it as a no-op flag (proto3 optional is now fully supported) and silently accepts it. Go falls through to the generic unknown-flag handler and rejects it with "Missing value for flag: --experimental_allow_proto3_optional".
+- **Test**: CLI test `cli@experimental_allow_proto3_optional` — exit code and stderr mismatch.
+- **Root cause**: Go's `parseArgs()` in `cli.go` has no handler for `--experimental_allow_proto3_optional`. The flag starts with `--` and has no `=`, so it reaches the fallback at line 1171 which returns `"Missing value for flag: %s"`. C++ protoc has this as a registered boolean flag that's accepted but ignored.
+- **C++ protoc**: Silently accepts flag, produces valid descriptor (exit code 0, empty stderr).
+- **Go protoc-go**: `Missing value for flag: --experimental_allow_proto3_optional` (exit code 1).
+- **Fix hint**: Add `if arg == "--experimental_allow_proto3_optional" { continue }` to the flag parsing section in `parseArgs()`, alongside the other no-op flags like `--deterministic_output` and `--retain_options`.
