@@ -15,10 +15,13 @@ import (
 	"github.com/wham/protoc-go/compiler/parser"
 	"github.com/wham/protoc-go/compiler/plugin"
 	"github.com/wham/protoc-go/io/tokenizer"
+	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
 )
 
 const usageText = `Usage: protoc [OPTION] PROTO_FILES
@@ -382,6 +385,8 @@ type config struct {
 	printFreeFieldNumbers           bool
 	decodeRaw                       bool
 	decodeType                      string
+	encodeType                      string
+	deterministicOutput             bool
 	notices                         bool
 	errorFormat                     string // "gcc" (default) or "msvs"
 	protoFiles                      []string
@@ -433,7 +438,7 @@ func Run(args []string) error {
 	}
 
 	// Validate we have output directives
-	if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers && cfg.decodeType == "" {
+	if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers && cfg.decodeType == "" && cfg.encodeType == "" {
 		return fmt.Errorf("Missing output directives.")
 	}
 
@@ -694,6 +699,11 @@ func Run(args []string) error {
 	// Handle --decode mode
 	if cfg.decodeType != "" {
 		return runDecode(cfg.decodeType, parsed, orderedFiles)
+	}
+
+	// Handle --encode mode
+	if cfg.encodeType != "" {
+		return runEncode(cfg.encodeType, parsed, orderedFiles, cfg.deterministicOutput)
 	}
 
 	// Collect source-retention extension field numbers (grouped by extendee type)
@@ -1062,6 +1072,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--deterministic_output" {
+			cfg.deterministicOutput = true
 			continue
 		}
 
@@ -1082,6 +1093,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--encode=") {
+			cfg.encodeType = arg[len("--encode="):]
 			continue
 		}
 
@@ -8725,6 +8737,92 @@ func sortProtoUnknown(m proto.Message) {
 type decodeExt struct {
 	fqn string
 	fd  *descriptorpb.FieldDescriptorProto
+}
+
+// runEncode implements --encode mode: reads text format protobuf from stdin
+// and writes binary protobuf to stdout using the schema from parsed proto files.
+func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles []string, deterministic bool) error {
+	// Build a FileDescriptorSet from parsed files in dependency order
+	fds := &descriptorpb.FileDescriptorSet{}
+	for _, name := range orderedFiles {
+		fds.File = append(fds.File, parsed[name])
+	}
+
+	// Create protoreflect file descriptors
+	files, err := protodesc.NewFiles(fds)
+	if err != nil {
+		return fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)
+	}
+
+	// Find the message descriptor
+	fullName := protoreflect.FullName(msgTypeName)
+	md, findErr := files.FindDescriptorByName(fullName)
+	if findErr != nil {
+		return fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)
+	}
+	msgDesc, ok := md.(protoreflect.MessageDescriptor)
+	if !ok {
+		return fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)
+	}
+
+	// Read text format from stdin
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("Failed to read input.")
+	}
+
+	// Create a dynamic message and parse text format into it
+	msg := dynamicpb.NewMessage(msgDesc)
+	unmarshalOpts := prototext.UnmarshalOptions{
+		AllowPartial: true,
+		Resolver:     dynamicpb.NewTypes(files),
+	}
+	if err := unmarshalOpts.Unmarshal(data, msg); err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to parse input.")
+		os.Exit(1)
+	}
+
+	// Check for missing required fields (warning)
+	if missing := findMissingRequiredReflect(msg); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "warning:  Input message is missing required fields:  %s\n", strings.Join(missing, ", "))
+	}
+
+	// Serialize to binary and write to stdout
+	marshalOpts := proto.MarshalOptions{
+		AllowPartial:  true,
+		Deterministic: deterministic,
+	}
+	out, err := marshalOpts.Marshal(msg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "output: I/O error.")
+		os.Exit(1)
+	}
+
+	os.Stdout.Write(out)
+	return nil
+}
+
+// findMissingRequiredReflect finds missing required fields using protoreflect.
+func findMissingRequiredReflect(msg *dynamicpb.Message) []string {
+	var missing []string
+	collectMissingRequired(msg.ProtoReflect(), "", &missing)
+	return missing
+}
+
+func collectMissingRequired(m protoreflect.Message, prefix string, missing *[]string) {
+	md := m.Descriptor()
+	fields := md.Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		fieldName := prefix + string(fd.Name())
+		if fd.Cardinality() == protoreflect.Required && !m.Has(fd) {
+			*missing = append(*missing, fieldName)
+		}
+		if fd.Kind() == protoreflect.MessageKind && !fd.IsList() && !fd.IsMap() && m.Has(fd) {
+			sub := m.Get(fd).Message()
+			collectMissingRequired(sub, fieldName+".", missing)
+		}
+	}
 }
 
 // runDecode implements --decode mode: reads binary protobuf from stdin and
