@@ -9068,6 +9068,13 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		return fmt.Errorf("Failed to read input.")
 	}
 
+	// Check for oneof conflicts before unmarshalling (prototext silently accepts them)
+	if conflictErr := checkOneofConflicts(data, msgDesc); conflictErr != "" {
+		fmt.Fprintln(os.Stderr, conflictErr)
+		fmt.Fprintln(os.Stderr, "Failed to parse input.")
+		os.Exit(1)
+	}
+
 	// Create a dynamic message and parse text format into it
 	msg := dynamicpb.NewMessage(msgDesc)
 	unmarshalOpts := prototext.UnmarshalOptions{
@@ -9115,6 +9122,195 @@ func reformatProtoTextErrors(err error, msgTypeName string) {
 		cppCol := col + len(fieldName)
 		fmt.Fprintf(os.Stderr, "input:%s:%d: Message type \"%s\" has no field named \"%s\".\n", line, cppCol, msgTypeName, fieldName)
 	}
+}
+
+// checkOneofConflicts scans text format input for oneof field conflicts.
+// Returns error string if a conflict is found, empty string otherwise.
+// C++ protoc's TextFormat::Parser detects when two fields from the same oneof
+// are specified and reports: Field "X" is specified along with field "Y",
+// another member of oneof "Z".
+func checkOneofConflicts(data []byte, msgDesc protoreflect.MessageDescriptor) string {
+	// Build field name → oneof index and oneof index → name maps
+	type fieldOneofInfo struct {
+		oneofIdx  int
+		oneofName string
+	}
+	fieldToOneof := map[string]fieldOneofInfo{}
+	fields := msgDesc.Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		od := fd.ContainingOneof()
+		if od != nil && !od.IsSynthetic() {
+			fieldToOneof[string(fd.Name())] = fieldOneofInfo{
+				oneofIdx:  od.Index(),
+				oneofName: string(od.Name()),
+			}
+		}
+	}
+	if len(fieldToOneof) == 0 {
+		return ""
+	}
+
+	// Scan the text format for field names at the top level
+	// Track which oneof has been set and by which field
+	type oneofState struct {
+		fieldName string
+	}
+	oneofSet := map[int]oneofState{}
+
+	line := 1
+	col := 1
+	i := 0
+	for i < len(data) {
+		// Skip whitespace
+		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
+			col++
+			i++
+			continue
+		}
+		if data[i] == '\n' {
+			line++
+			col = 1
+			i++
+			continue
+		}
+
+		// Try to read an identifier (field name)
+		if isLetter(data[i]) || data[i] == '_' {
+			start := i
+			startCol := col
+			for i < len(data) && (isAlphanumeric(data[i]) || data[i] == '_') {
+				i++
+				col++
+			}
+			fieldName := string(data[start:i])
+
+			// Skip whitespace to find ':'
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				i++
+				col++
+			}
+
+			colonCol := col
+			if i < len(data) && data[i] == ':' {
+				// This is a field: value pair
+				if info, ok := fieldToOneof[fieldName]; ok {
+					if prev, exists := oneofSet[info.oneofIdx]; exists {
+						return fmt.Sprintf("input:%d:%d: Field \"%s\" is specified along with field \"%s\", another member of oneof \"%s\".",
+							line, colonCol, fieldName, prev.fieldName, info.oneofName)
+					}
+					oneofSet[info.oneofIdx] = oneofState{fieldName: fieldName}
+				}
+				i++
+				col++
+				// Skip the value (we need to handle strings, numbers, etc.)
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			} else {
+				// Could be a message field without colon (submessage)
+				_ = startCol
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
+		}
+
+		// Skip any other character
+		i++
+		col++
+	}
+
+	return ""
+}
+
+func isLetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+func isAlphanumeric(b byte) bool {
+	return isLetter(b) || (b >= '0' && b <= '9')
+}
+
+// skipTextFormatValue skips over a text format value (string, number, identifier, submessage).
+func skipTextFormatValue(data []byte, i, line, col int) (int, int, int) {
+	// Skip whitespace
+	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
+		col++
+		i++
+	}
+	if i >= len(data) {
+		return i, line, col
+	}
+
+	if data[i] == '"' || data[i] == '\'' {
+		// String value - skip to matching quote
+		quote := data[i]
+		i++
+		col++
+		for i < len(data) && data[i] != quote {
+			if data[i] == '\\' && i+1 < len(data) {
+				i++
+				col++
+			}
+			if data[i] == '\n' {
+				line++
+				col = 1
+			} else {
+				col++
+			}
+			i++
+		}
+		if i < len(data) {
+			i++
+			col++
+		}
+	} else if data[i] == '{' || data[i] == '<' {
+		// Submessage - skip to matching close
+		close := byte('}')
+		if data[i] == '<' {
+			close = '>'
+		}
+		depth := 1
+		i++
+		col++
+		for i < len(data) && depth > 0 {
+			if data[i] == '{' || data[i] == '<' {
+				depth++
+			} else if data[i] == close || (data[i] == '}' && close == '}') || (data[i] == '>' && close == '>') {
+				depth--
+			} else if data[i] == '"' || data[i] == '\'' {
+				quote := data[i]
+				i++
+				col++
+				for i < len(data) && data[i] != quote {
+					if data[i] == '\\' && i+1 < len(data) {
+						i++
+						col++
+					}
+					if data[i] == '\n' {
+						line++
+						col = 1
+					} else {
+						col++
+					}
+					i++
+				}
+			}
+			if data[i] == '\n' {
+				line++
+				col = 1
+			} else {
+				col++
+			}
+			i++
+		}
+	} else {
+		// Number, identifier, or other token - skip to whitespace/newline
+		for i < len(data) && data[i] != ' ' && data[i] != '\t' && data[i] != '\r' && data[i] != '\n' {
+			col++
+			i++
+		}
+	}
+
+	return i, line, col
 }
 
 // findMissingRequiredReflect finds missing required fields using protoreflect.
