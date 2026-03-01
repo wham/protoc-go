@@ -9083,9 +9083,21 @@ func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorp
 
 	prefix := strings.Repeat("  ", indent)
 
-	// Print known fields first (sorted by field number)
-	sort.Slice(knownEntries, func(i, j int) bool {
-		return knownEntries[i].num < knownEntries[j].num
+	// Print known fields first (sorted by field number, map entries sorted by key)
+	sort.SliceStable(knownEntries, func(i, j int) bool {
+		if knownEntries[i].num != knownEntries[j].num {
+			return knownEntries[i].num < knownEntries[j].num
+		}
+		// Same field number: sort map entries by key
+		ei, ej := knownEntries[i], knownEntries[j]
+		if ei.known != nil && ei.known.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE &&
+			ei.known.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
+			subMsg := resolveFieldMsgType(ei.known, allMsgs)
+			if subMsg != nil && subMsg.GetOptions().GetMapEntry() {
+				return compareMapEntryKeys(ei.bytes, ej.bytes, subMsg) < 0
+			}
+		}
+		return false
 	})
 	for _, e := range knownEntries {
 		printKnownField(w, e, prefix, allMsgs, allEnums, allExts, indent)
@@ -9239,6 +9251,193 @@ func printUnknownField(w *os.File, e struct {
 		decodeRawProto(w, e.group, indent+1)
 		fmt.Fprintf(w, "%s}\n", prefix)
 	}
+}
+
+// compareMapEntryKeys compares two map entry byte payloads by their key field (field 1).
+// Returns <0, 0, >0 for less, equal, greater. Key type is determined from the map entry descriptor.
+func compareMapEntryKeys(a, b []byte, mapEntry *descriptorpb.DescriptorProto) int {
+	var keyFd *descriptorpb.FieldDescriptorProto
+	for _, f := range mapEntry.GetField() {
+		if f.GetNumber() == 1 {
+			keyFd = f
+			break
+		}
+	}
+	if keyFd == nil {
+		return 0
+	}
+	aKey := extractMapKey(a, keyFd)
+	bKey := extractMapKey(b, keyFd)
+	switch keyFd.GetType() {
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING:
+		as, bs := string(aKey.bytes), string(bKey.bytes)
+		if as < bs {
+			return -1
+		}
+		if as > bs {
+			return 1
+		}
+		return 0
+	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
+		// false < true
+		ai, bi := int(aKey.varint), int(bKey.varint)
+		return ai - bi
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32, descriptorpb.FieldDescriptorProto_TYPE_SINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+		var av, bv int32
+		switch keyFd.GetType() {
+		case descriptorpb.FieldDescriptorProto_TYPE_SINT32:
+			av, bv = int32(protowire.DecodeZigZag(aKey.varint)), int32(protowire.DecodeZigZag(bKey.varint))
+		case descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+			av, bv = int32(aKey.fixed32), int32(bKey.fixed32)
+		default:
+			av, bv = int32(aKey.varint), int32(bKey.varint)
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+		return 0
+	case descriptorpb.FieldDescriptorProto_TYPE_INT64, descriptorpb.FieldDescriptorProto_TYPE_SINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+		var av, bv int64
+		switch keyFd.GetType() {
+		case descriptorpb.FieldDescriptorProto_TYPE_SINT64:
+			av, bv = int64(protowire.DecodeZigZag(aKey.varint)), int64(protowire.DecodeZigZag(bKey.varint))
+		case descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+			av, bv = int64(aKey.fixed64), int64(bKey.fixed64)
+		default:
+			av, bv = int64(aKey.varint), int64(bKey.varint)
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+		return 0
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32, descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
+		var av, bv uint32
+		if keyFd.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FIXED32 {
+			av, bv = aKey.fixed32, bKey.fixed32
+		} else {
+			av, bv = uint32(aKey.varint), uint32(bKey.varint)
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+		return 0
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT64, descriptorpb.FieldDescriptorProto_TYPE_FIXED64:
+		var av, bv uint64
+		if keyFd.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FIXED64 {
+			av, bv = aKey.fixed64, bKey.fixed64
+		} else {
+			av, bv = aKey.varint, bKey.varint
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+		return 0
+	}
+	return 0
+}
+
+type mapKeyValue struct {
+	varint  uint64
+	fixed32 uint32
+	fixed64 uint64
+	bytes   []byte
+}
+
+func extractMapKey(data []byte, keyFd *descriptorpb.FieldDescriptorProto) mapKeyValue {
+	pos := 0
+	for pos < len(data) {
+		num, wtype, n := protowire.ConsumeTag(data[pos:])
+		if n < 0 {
+			break
+		}
+		pos += n
+		switch wtype {
+		case protowire.VarintType:
+			v, vn := protowire.ConsumeVarint(data[pos:])
+			if vn < 0 {
+				return mapKeyValue{}
+			}
+			pos += vn
+			if num == 1 {
+				return mapKeyValue{varint: v}
+			}
+		case protowire.Fixed64Type:
+			v, vn := protowire.ConsumeFixed64(data[pos:])
+			if vn < 0 {
+				return mapKeyValue{}
+			}
+			pos += vn
+			if num == 1 {
+				return mapKeyValue{fixed64: v}
+			}
+		case protowire.Fixed32Type:
+			v, vn := protowire.ConsumeFixed32(data[pos:])
+			if vn < 0 {
+				return mapKeyValue{}
+			}
+			pos += vn
+			if num == 1 {
+				return mapKeyValue{fixed32: v}
+			}
+		case protowire.BytesType:
+			v, vn := protowire.ConsumeBytes(data[pos:])
+			if vn < 0 {
+				return mapKeyValue{}
+			}
+			pos += vn
+			if num == 1 {
+				return mapKeyValue{bytes: v}
+			}
+		case protowire.StartGroupType:
+			depth := 1
+			for pos < len(data) && depth > 0 {
+				_, gType, gn := protowire.ConsumeTag(data[pos:])
+				if gn < 0 {
+					return mapKeyValue{}
+				}
+				pos += gn
+				switch gType {
+				case protowire.VarintType:
+					_, vn := protowire.ConsumeVarint(data[pos:])
+					if vn < 0 {
+						return mapKeyValue{}
+					}
+					pos += vn
+				case protowire.Fixed64Type:
+					pos += 8
+				case protowire.Fixed32Type:
+					pos += 4
+				case protowire.BytesType:
+					_, vn := protowire.ConsumeBytes(data[pos:])
+					if vn < 0 {
+						return mapKeyValue{}
+					}
+					pos += vn
+				case protowire.StartGroupType:
+					depth++
+				case protowire.EndGroupType:
+					depth--
+				}
+			}
+		default:
+			return mapKeyValue{}
+		}
+	}
+	return mapKeyValue{}
 }
 
 func formatTextDouble(v float64) string {
