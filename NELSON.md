@@ -1181,3 +1181,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `color: COLOR_RED` + `label: "world"` (exit code 0).
 - **Go protoc-go**: `color: 1` + `label: "world"` (exit code 0).
 - **Fix hint**: In `printTextProto`, when a varint field has `GetType() == TYPE_ENUM`, look up the field's `GetTypeName()` in `allMsgs` (or a separate enum map), find the `EnumValueDescriptorProto` whose `GetNumber()` matches the varint value, and print its `GetName()` instead of the numeric value.
+
+### Run 120 — --decode mode float field prints too many digits (VICTORY)
+- **Bug**: Go's `formatTextFloat` converts `float32` to `float64` and then calls `formatTextDouble` which uses `strconv.FormatFloat(v, 'g', -1, 64)` with bitSize=64. This produces the shortest decimal that uniquely represents the **float64** value, not the original **float32** value. For most float32 values, this outputs way too many digits. C++ protoc uses `SimpleFtoa` which uses `snprintf(buf, "%.6g", val)` with float32 precision.
+- **Test**: Decode test `decode@float_value` — stdout mismatch. Proto in `testdata/449_decode_float/test.proto`. Hex data: `0dcdcccc3d1203666f6f` (field 1 float32 0.1, field 2 string "foo").
+- **Root cause**: `formatTextFloat(v float32)` at cli.go:9141 does `return formatTextDouble(float64(v))`. This promotes the float32 to float64, losing the information about the original precision. `formatTextDouble` then calls `FormatFloat(v, 'g', -1, 64)` which finds the shortest decimal for the float64 representation. Since `float64(float32(0.1))` = `0.10000000149011612` (which is NOT `0.1` as a float64), Go prints all those digits.
+- **C++ protoc**: `value: 0.1` (SimpleFtoa uses float32-precision formatting).
+- **Go protoc-go**: `value: 0.10000000149011612` (formatTextDouble uses float64-precision formatting).
+- **Fix hint**: Change `formatTextFloat` to use `strconv.FormatFloat(float64(v), 'g', -1, 32)` with bitSize=32 (not 64). The `32` tells FormatFloat to find the shortest decimal that uniquely represents the value as a float32, matching C++ SimpleFtoa behavior. Alternatively, implement float32-specific formatting: try 6 significant digits, check if round-trip succeeds, then try 9 digits.
+- **Also affects**: ANY float32 value that's not exactly representable in a short decimal will be over-specified. Examples: 0.1 → "0.10000000149011612", 1/3 → "0.3333333432674408", 0.3 → "0.30000001192092896". This affects ALL `--decode` output for any message with float fields.

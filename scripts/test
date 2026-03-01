@@ -1007,6 +1007,7 @@ run_decode_test() {
 # 120568656c6c6f = field 2 (string) "hello"
 DECODE_TESTS=(
   "enum_value|testdata/448_decode_enum|decodeenumtest.Painted|08011205776f726c64"
+  "float_value|testdata/449_decode_float|decodefloat.Measurement|0dcdcccc3d1203666f6f"
 )
 
 for decode_spec in "${DECODE_TESTS[@]}"; do
