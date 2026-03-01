@@ -396,6 +396,7 @@ type config struct {
 	directDependenciesSet           bool
 	directDependenciesViolationMsg  string
 	fatalWarnings                   bool
+	retainOptions                   bool
 }
 
 // Run executes the protocol buffer compiler with the given command-line arguments.
@@ -768,9 +769,14 @@ func Run(args []string) error {
 		fds := &descriptorpb.FileDescriptorSet{}
 		if cfg.includeImports {
 			for _, name := range orderedFiles {
-				fd := strippedMap[name]
-				if !relFileSet[name] {
-					fd = stripSourceRetention(parsed[name], srcRetentionFields)
+				var fd *descriptorpb.FileDescriptorProto
+				if cfg.retainOptions {
+					fd = parsed[name]
+				} else {
+					fd = strippedMap[name]
+					if !relFileSet[name] {
+						fd = stripSourceRetention(parsed[name], srcRetentionFields)
+					}
 				}
 				fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
 				if !cfg.includeSourceInfo {
@@ -781,7 +787,13 @@ func Run(args []string) error {
 		} else {
 			for _, name := range orderedFiles {
 				if relFileSet[name] {
-					fdCopy := proto.Clone(strippedMap[name]).(*descriptorpb.FileDescriptorProto)
+					var fd *descriptorpb.FileDescriptorProto
+					if cfg.retainOptions {
+						fd = parsed[name]
+					} else {
+						fd = strippedMap[name]
+					}
+					fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
 					if !cfg.includeSourceInfo {
 						fdCopy.SourceCodeInfo = nil
 					}
@@ -1353,6 +1365,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--retain_options" {
+			cfg.retainOptions = true
 			continue
 		}
 
