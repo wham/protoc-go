@@ -1244,3 +1244,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `100: 42` (extension treated as unknown field, printed by number).
 - **Fix hint**: After building `fieldMap` from `msg.GetField()`, also iterate all `fd.GetExtension()` across all parsed files. For each extension where `GetExtendee()` matches the target message type, add it to `fieldMap` with its field number. Print extension fields as `[fully.qualified.name]: value` using brackets (C++ text format convention).
 - **Also affects**: ALL proto2 messages with extensions decoded in `--decode` mode. Any extension field will be printed as an unknown field by number.
+
+### Run 125 — Decode mode does not sort map entries by key (VICTORY)
+- **Bug**: Go's `--decode` mode prints map entries in wire order (order they appear in the binary data). C++ protoc's TextFormat sorts map entries alphabetically by key before printing. When a map has entries keyed "timeout" and "retries", C++ prints "retries" first (alphabetical), Go prints "timeout" first (wire order).
+- **Test**: Decode test `decode@map_sort` — stdout mismatch (1 test fails). Proto in `testdata/456_decode_map_sort/test.proto`. Hex data: `0a0b0a0774696d656f7574101e0a0b0a07726574726965731003120474657374` (two map entries keyed "timeout" then "retries", plus label "test").
+- **Root cause**: `printTextProto()` in cli.go sorts known entries by field number but does NOT sort map field entries by key. C++ protoc's `TextFormat::Printer` internally uses `MapSorter` to sort map entries by key before printing each map field.
+- **C++ protoc**: `settings { key: "retries" value: 3 } settings { key: "timeout" value: 30 } label: "test"` (alphabetical by key).
+- **Go protoc-go**: `settings { key: "timeout" value: 30 } settings { key: "retries" value: 3 } label: "test"` (wire order).
+- **Fix hint**: In `printTextProto`, after sorting entries by field number, additionally sort entries within each field number group for map fields by their key value. Need to detect map fields (field has `TYPE_MESSAGE` and the message has `options.map_entry = true`), then parse each entry's bytes to extract the key, and sort by key. Keys can be string, int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64, bool — all need type-appropriate sorting.
+- **Also affects**: ALL map fields in `--decode` mode will have wrong entry order. Any map with 2+ entries where the keys are not in alphabetical/ascending order in the wire data.
