@@ -1010,6 +1010,7 @@ DECODE_TESTS=(
   "float_value|testdata/449_decode_float|decodefloat.Measurement|0dcdcccc3d1203666f6f"
   "neg_int64|testdata/450_decode_int64|decodeint64.Record|08ffffffffffffffffff0112026f6b"
   "double_integer|testdata/451_decode_double|decodedouble.Sample|09000000000000f03f12026f6b"
+  "float_integer|testdata/452_decode_float_int|decodefloatint.Sample|0d000000401203666f6f"
 )
 
 for decode_spec in "${DECODE_TESTS[@]}"; do
