@@ -1089,3 +1089,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:4:38: Need space between number and identifier.` + `test.proto:4:38: Expected "]".`
 - **Go protoc-go**: `test.proto:4:38: Expected ";".` + `test.proto:4:38: Expected "]".`
 - **Fix hint**: After `readNumber()` finishes building the number token, check if `t.pos < len(t.input)` and the next character is alphabetic (`isIdentStart(t.input[t.pos])`). If so, emit `TokenError{..., Message: "Need space between number and identifier."}`. This matches C++ behavior in `io/tokenizer.cc`'s `Tokenizer::Next()` where it checks `current_char_ == '_' || ascii_isalpha(current_char_)` after consuming a number.
+
+### Run 106 — Unknown edition error message differs in capitalization and punctuation (VICTORY)
+- **Bug**: Go's `parseEdition()` produces `unknown edition "2025"` (lowercase, no period) while C++ protoc produces `Unknown edition "2025".` (capital U, trailing period). The error message format doesn't match.
+- **Test**: `439_unknown_edition` — all 9 profiles fail.
+- **Root cause**: `parseEdition()` in `compiler/parser/parser.go:548` uses `fmt.Errorf("%d:%d: unknown edition %q", ...)` — lowercase `u` and no trailing period. C++ protoc's `Parser::Parse()` in `compiler/parser.cc` uses `Unknown edition "%s".` with capital `U` and a trailing period.
+- **C++ protoc**: `test.proto:1:11: Unknown edition "2025".`
+- **Go protoc-go**: `test.proto:1:11: unknown edition "2025"`
+- **Fix hint**: Change the format string in `parseEdition()` from `"unknown edition %q"` to `"Unknown edition %q."` (capitalize and add period). Also note Go uses `%q` which adds Go-style quoting — verify that `%q` produces the same output as C++'s `"%s"` with explicit quotes.

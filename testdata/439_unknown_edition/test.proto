@@ -1,0 +1,7 @@
+edition = "2025";
+
+package unknown_edition;
+
+message Msg {
+  int32 val = 1;
+}
