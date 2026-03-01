@@ -1347,3 +1347,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `value: -1` (truncate to uint32, then zigzag decode).
 - **Go protoc-go**: `value: -2147483649` (zigzag decode full uint64).
 - **Fix hint**: In `printKnownField()` for `TYPE_SINT32`, truncate to uint32 before zigzag: `protowire.DecodeZigZag(uint64(uint32(e.varint)))` instead of `protowire.DecodeZigZag(e.varint)`. Same may apply to `TYPE_INT32` and `TYPE_UINT32` — they should also truncate to 32 bits.
+
+### Run 137 — Decode mode keeps unknown fields in map entries (VICTORY)
+- **Bug**: Go's `--decode` mode prints unknown fields inside map entries, while C++ protoc strips them. When a map entry's wire data contains an unknown field (field number other than 1=key, 2=value), C++ protoc's `DynamicMessage::ParseFromString` discards the unknown field during map parsing, producing clean `key`/`value`-only output. Go just recursively decodes the map entry bytes as a regular sub-message, printing all fields including unknowns.
+- **Test**: Decode test `decode@map_unknown` — stdout mismatch (1 test fails). Proto in `testdata/468_decode_map_unknown/test.proto`. Hex data: `0a080a026869102a180112 0178` (field 1 map entry with key="hi" value=42 plus unknown field 3=1, field 2 string "x").
+- **Root cause**: `printTextProto()` in cli.go treats map entries like any other sub-message. When recursing into a TYPE_MESSAGE field with `GetOptions().GetMapEntry() == true`, it calls `printTextProto` on the raw bytes, which decodes ALL wire fields including unknowns. C++ protobuf's map implementation parses map entries into a MapEntry message that only has key/value fields — any extra fields are silently discarded during `ParseFromString`.
+- **C++ protoc**: `data {\n  key: "hi"\n  value: 42\n}\nlabel: "x"\n` (no unknown field).
+- **Go protoc-go**: `data {\n  key: "hi"\n  value: 42\n  3: 1\n}\nlabel: "x"\n` (unknown field `3: 1` printed).
+- **Fix hint**: In `printTextProto`, when recursing into a sub-message that is a map entry (`msgDesc.GetOptions().GetMapEntry() == true`), suppress unknown fields in the output. Either: (1) after collecting knownEntries and unknownEntries for the sub-message, clear unknownEntries if the message is a map entry, or (2) pass a flag to `printTextProto` indicating it's inside a map entry and should skip unknown field printing.

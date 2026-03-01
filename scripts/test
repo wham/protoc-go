@@ -1025,6 +1025,7 @@ DECODE_TESTS=(
   "missing_required|testdata/465_decode_missing_required|decodemissing.Record|1807"
   "truncated|testdata/466_decode_truncated|decodetrunc.Record|0a0568"
   "sint32_truncate|testdata/467_decode_sint32_truncate|decodesint.Record|08818080801012026f6b"
+  "map_unknown|testdata/468_decode_map_unknown|decodemapunk.Record|0a080a026869102a18011201 78"
 )
 
 for decode_spec in "${DECODE_TESTS[@]}"; do
