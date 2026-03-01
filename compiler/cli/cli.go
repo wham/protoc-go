@@ -387,6 +387,7 @@ type config struct {
 	directDependencies              map[string]bool
 	directDependenciesSet           bool
 	directDependenciesViolationMsg  string
+	fatalWarnings                   bool
 }
 
 // Run executes the protocol buffer compiler with the given command-line arguments.
@@ -444,9 +445,11 @@ func Run(args []string) error {
 	srcTree := &importer.SourceTree{Roots: cfg.protoPaths}
 
 	// Validate proto paths
+	hadWarnings := false
 	warnings := srcTree.ValidateRoots()
 	for _, w := range warnings {
 		fmt.Fprintln(os.Stderr, w)
+		hadWarnings = true
 	}
 
 	// Make proto files relative to source tree
@@ -621,7 +624,8 @@ func Run(args []string) error {
 	dupExtErrors, dupExtWarnings := validateDuplicateExtensionNumbers(orderedFiles, parsed)
 	buildErrors = append(buildErrors, dupExtErrors...)
 	for _, w := range dupExtWarnings {
-		fmt.Fprintln(os.Stderr, w)
+		fmt.Fprintln(os.Stderr, mapErrorFilename(w, srcTree))
+		hadWarnings = true
 	}
 	buildErrors = append(buildErrors, validateRequiredExtensions(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateExtensionJsonName(orderedFiles, parsed, explicitJsonNames)...)
@@ -790,6 +794,10 @@ func Run(args []string) error {
 		if err := plugin.WritePluginOutput(resp, plug.outputDir); err != nil {
 			return err
 		}
+	}
+
+	if cfg.fatalWarnings && hadWarnings {
+		return fmt.Errorf("")
 	}
 
 	return nil
@@ -1047,6 +1055,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--fatal_warnings" {
+			cfg.fatalWarnings = true
 			continue
 		}
 
@@ -5100,6 +5109,20 @@ func printFreeFieldNumbers(fullName string, msg *descriptorpb.DescriptorProto) {
 		output += fmt.Sprintf(" %d-INF", nextFree)
 	}
 	fmt.Println(output)
+}
+
+// mapErrorFilename replaces the virtual filename at the start of an error/warning
+// line with the disk path, matching C++ protoc's ErrorPrinter behavior.
+func mapErrorFilename(line string, srcTree *importer.SourceTree) string {
+	colon := strings.Index(line, ":")
+	if colon < 0 || srcTree == nil {
+		return line
+	}
+	filename := line[:colon]
+	if diskPath, ok := srcTree.VirtualFileToDiskFile(filename); ok {
+		return diskPath + line[colon:]
+	}
+	return line
 }
 
 // formatErrorsMSVS transforms error lines from GCC format to MSVS format.
