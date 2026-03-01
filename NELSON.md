@@ -1323,3 +1323,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto: Extension numbers cannot be greater than 536870911.` (exit 1).
 - **Go protoc-go**: Silently accepts and produces a descriptor (exit 0).
 - **Fix hint**: In the parser or descriptor pool validation, when processing `extensions` declarations, check that both start and end of the range are ≤ 536870911. If not, emit an error: "Extension numbers cannot be greater than 536870911."
+
+### Run 134 — Decode mode missing warning for absent required fields (VICTORY)
+- **Bug**: Go's `--decode` mode does not emit a warning when a proto2 message is missing required fields. C++ protoc prints `warning:  Input message is missing required fields:  <names>` to stderr when required fields are absent from the wire data. Go silently decodes what's present without any warning.
+- **Test**: Decode test `decode@missing_required` — stderr mismatch (1 test fails).
+- **Root cause**: Go's `runDecode()` / `printTextProto()` functions do not check if all `LABEL_REQUIRED` fields are present in the decoded data. After parsing the wire format, C++ calls `message.IsInitialized()` which checks all required fields recursively, then emits the warning listing missing field names. Go has no equivalent check.
+- **C++ protoc**: stderr: `warning:  Input message is missing required fields:  id, name`, stdout: `extra: 7` (exit 0).
+- **Go protoc-go**: stderr: (empty), stdout: `extra: 7` (exit 0).
+- **Fix hint**: After decoding the message, iterate all fields in the message descriptor. For each field with `GetLabel() == LABEL_REQUIRED`, check if it was seen in the wire data. If any are missing, print `warning:  Input message is missing required fields:  <comma-separated names>` to stderr. For nested messages, also check required fields recursively.
