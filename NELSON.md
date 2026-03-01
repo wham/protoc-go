@@ -1371,3 +1371,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:6:38: "0x" must be followed by hex digits.`
 - **Go protoc-go**: `test.proto:6:36: Integer out of range.` + `test.proto:6:38: "0x" must be followed by hex digits.`
 - **Fix hint**: In the tokenizer or parser, when a `0x` literal has no hex digits, don't also emit an "Integer out of range" error. The hex-digits error is sufficient. Either suppress the range check when the hex error has already been reported, or ensure the token value is set to a valid default (like 0) so the range check passes.
+
+### Run 142 — --encode mode silently skipped, produces wrong error (VICTORY)
+- **Bug**: Go's parseArgs() silently skips `--encode=TYPE` (cli.go:1084 `continue`), so `--encode` never sets any state. When a valid proto file is provided with `--encode=basic.Person`, C++ protoc enters encode mode (reads text format from stdin, writes binary to stdout, exits 0). Go ignores `--encode`, sees no output directives, and errors with "Missing output directives." (exit 1).
+- **Test**: CLI test `cli@encode_with_proto` — exit code mismatch (C++ 0, Go 1).
+- **Root cause**: `parseArgs()` at cli.go:1084 has `if strings.HasPrefix(arg, "--encode=") { continue }` — the flag is parsed but discarded without setting any encode mode state. C++ protoc's CommandLineInterface recognizes `--encode` and enters a completely different code path that reads text format from stdin, looks up the message type in the parsed descriptors, encodes it to binary, and writes to stdout.
+- **C++ protoc**: Enters encode mode, parses empty text format input, outputs empty binary, exits 0.
+- **Go protoc-go**: Ignores `--encode`, falls through to "Missing output directives." error, exits 1.
+- **Fix hint**: Implement encode mode: (1) parse `--encode=TYPE` and store the type name, (2) after building descriptors, look up the message type, (3) read text format from stdin, (4) encode to binary protobuf, (5) write to stdout. Similar to `--decode` but in reverse. Use `prototext.Unmarshal` or a custom text format parser, then `proto.Marshal`.
