@@ -8891,6 +8891,35 @@ func resolveFieldMsgType(fd *descriptorpb.FieldDescriptorProto, allMsgs map[stri
 	return allMsgs[tn]
 }
 
+func wireTypeMatchesProtoType(wt protowire.Type, pt descriptorpb.FieldDescriptorProto_Type) bool {
+	switch pt {
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32,
+		descriptorpb.FieldDescriptorProto_TYPE_INT64,
+		descriptorpb.FieldDescriptorProto_TYPE_UINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_UINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_BOOL,
+		descriptorpb.FieldDescriptorProto_TYPE_ENUM:
+		return wt == protowire.VarintType
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		return wt == protowire.Fixed64Type
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
+		return wt == protowire.Fixed32Type
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING,
+		descriptorpb.FieldDescriptorProto_TYPE_BYTES,
+		descriptorpb.FieldDescriptorProto_TYPE_MESSAGE:
+		return wt == protowire.BytesType
+	case descriptorpb.FieldDescriptorProto_TYPE_GROUP:
+		return wt == protowire.StartGroupType
+	}
+	return false
+}
+
 // printTextProto prints binary protobuf data in text format using the message
 // schema. Known fields are printed by name, unknown fields by number.
 // This matches C++ protoc's TextFormat::Print behavior for --decode.
@@ -9045,7 +9074,7 @@ func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorp
 				}
 				knownEntries = append(knownEntries, pe)
 			}
-		} else if fd != nil {
+		} else if fd != nil && wireTypeMatchesProtoType(wtype, fd.GetType()) {
 			knownEntries = append(knownEntries, entry)
 		} else {
 			unknownEntries = append(unknownEntries, entry)
