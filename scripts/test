@@ -45,6 +45,7 @@ PROFILES=(
   "descriptor_set|descriptor|"
   "descriptor_set_src|descriptor|--include_source_info"
   "descriptor_set_full|descriptor|--include_imports --include_source_info"
+  "descriptor_set_retain|descriptor|--retain_options"
   "multi_plugin|multi_plugin|"
   "multi_opt|multi_opt|"
   "plugin_descriptor|plugin_descriptor|"

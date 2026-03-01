@@ -665,6 +665,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Before printing, post-process `knownEntries` to apply oneof deduplication. For each oneof in the message descriptor, track which field numbers belong to which oneof. Then scan `knownEntries` in reverse order; for each oneof, keep only the LAST entry and remove earlier entries from the same oneof. Need to use `msg.GetOneofDecl()` and check each field's `GetOneofIndex()` to build the oneof membership map. Or, build a proper `DynamicMessage`-like structure during decode.
 - **Also affects**: ANY proto2 or proto3 message with a oneof where the binary data contains multiple members from the same oneof. This is common in real-world data when messages are merged or when streaming updates append new field values. Also affects nested messages with oneofs decoded recursively.
 
+### Run 152 — `--retain_options` flag silently ignored by Go (VICTORY)
+- **Bug**: Go's `parseArgs()` silently skips the `--retain_options` flag (line 1355: just `continue`). The flag is NOT stored in any config field — it's completely ignored. C++ protoc uses this flag to prevent stripping source-retention options from `--descriptor_set_out` output. When a proto file defines extensions with `retention = RETENTION_SOURCE`, `--retain_options` should preserve those options in the descriptor output instead of stripping them.
+- **Test**: `479_retain_options` + new `descriptor_set_retain` profile — fails on `descriptor_set_retain` profile. Also causes 18 other existing test cases with retention-related options to fail on the new profile.
+- **Root cause**: `parseArgs()` at cli.go:1355-1357 just does `continue` when encountering `--retain_options`. The flag value is never stored. `stripSourceRetention()` at line 747 always strips source-retention options unconditionally, regardless of whether `--retain_options` was passed.
+- **C++ protoc**: With `--retain_options --descriptor_set_out=...`, produces 255-byte descriptor preserving the `(source_label) = "important"` field option.
+- **Go protoc-go**: With same flags, produces 242-byte descriptor that strips `(source_label)` — identical to output WITHOUT `--retain_options`. 13-byte difference.
+- **Fix hint**: (1) Add a `retainOptions bool` field to the CLI config struct. (2) In `parseArgs()`, set it when `--retain_options` is seen. (3) In `stripSourceRetention()` (or its caller), check the flag and skip stripping when true.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
