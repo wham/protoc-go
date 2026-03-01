@@ -9110,25 +9110,80 @@ func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorp
 		}
 	}
 
-	// Deduplicate oneof fields: for each oneof, keep only the last entry.
-	// This matches C++ protoc's MergeFromString semantics where setting a
-	// oneof field clears the previous member.
+	// Deduplicate non-repeated fields to match C++ protoc's ParseFromString.
+	// For singular scalars: keep last entry only.
+	// For singular messages: merge all entries' bytes into one.
+	// For oneof fields: keep only the last member.
 	if msgDesc != nil {
+		repeatedFields := make(map[int32]bool)
 		fieldToOneof := make(map[int32]int32)
 		for _, f := range msgDesc.GetField() {
+			if f.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
+				repeatedFields[f.GetNumber()] = true
+			}
 			if f.OneofIndex != nil {
 				fieldToOneof[f.GetNumber()] = f.GetOneofIndex()
 			}
 		}
+		// Also mark extension fields that are repeated
+		if extMap != nil {
+			for num, ext := range extMap {
+				if ext.fd.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
+					repeatedFields[num] = true
+				}
+			}
+		}
+
+		// For non-repeated, non-oneof fields: keep last entry per field number
+		// For non-repeated message/group fields: merge bytes of all entries
+		lastIdx := make(map[protowire.Number]int) // field number → last index
+		for i, e := range knownEntries {
+			if !repeatedFields[int32(e.num)] {
+				lastIdx[e.num] = i
+			}
+		}
+
+		// Merge non-repeated message fields (concatenate bytes)
+		if len(lastIdx) > 0 {
+			mergedBytes := make(map[protowire.Number][]byte)
+			for i, e := range knownEntries {
+				if repeatedFields[int32(e.num)] {
+					continue
+				}
+				if e.known != nil && (e.known.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE ||
+					e.known.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP) &&
+					e.wtype == protowire.BytesType {
+					if _, seen := mergedBytes[e.num]; seen {
+						mergedBytes[e.num] = append(mergedBytes[e.num], e.bytes...)
+						knownEntries[lastIdx[e.num]].bytes = mergedBytes[e.num]
+					} else {
+						b := make([]byte, len(e.bytes))
+						copy(b, e.bytes)
+						mergedBytes[e.num] = b
+					}
+					_ = i
+				}
+			}
+
+			filtered := make([]fieldEntry, 0, len(knownEntries))
+			for i, e := range knownEntries {
+				if repeatedFields[int32(e.num)] {
+					filtered = append(filtered, e)
+				} else if lastIdx[e.num] == i {
+					filtered = append(filtered, e)
+				}
+			}
+			knownEntries = filtered
+		}
+
+		// Deduplicate oneof fields: keep only the last entry per oneof
 		if len(fieldToOneof) > 0 {
-			// Scan backwards to find the last entry for each oneof
-			lastOneofIdx := make(map[int32]int) // oneof index → last knownEntries index
+			lastOneofIdx := make(map[int32]int)
 			for i, e := range knownEntries {
 				if oi, ok := fieldToOneof[int32(e.num)]; ok {
 					lastOneofIdx[oi] = i
 				}
 			}
-			// Filter: keep entries that are not oneof, or are the last for their oneof
 			filtered := knownEntries[:0]
 			for i, e := range knownEntries {
 				oi, isOneof := fieldToOneof[int32(e.num)]
