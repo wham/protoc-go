@@ -316,6 +316,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 144. [DONE] Fix `cli@encode_with_proto` — Implemented `--encode=MESSAGE_TYPE` mode. Reads text-format protobuf from stdin and writes binary protobuf to stdout. Uses `protodesc.NewFiles` to build `protoreflect.FileDescriptor` from parsed `FileDescriptorProto` objects, `dynamicpb.NewMessage` for dynamic message creation, and `prototext.Unmarshal` for text format parsing. Also parses `--deterministic_output` flag for deterministic serialization. Includes missing required field warnings. All 4316/4316 tests pass.
 
+145. [DONE] Fix `471_ext_range_retention` — `stripMsgSourceRetention` was missing ExtensionRangeOptions handling. Extensions with `retention = RETENTION_SOURCE` on extension ranges were not stripped from `proto_file`. Added loop over `msg.GetExtensionRange()` to strip `.google.protobuf.ExtensionRangeOptions` unknown fields (path `[..., 5, i, 3]`). All 4325/4325 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
