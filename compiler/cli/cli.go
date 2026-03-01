@@ -8188,6 +8188,24 @@ func formatAggregateError(err error, filename string, braceTok tokenizer.Token, 
 	return fmt.Sprintf("%s: error encoding custom option: %v", filename, err)
 }
 
+// consumeVarintTruncated reads a varint (up to 10 bytes), truncating to 64 bits.
+// C++ protoc accepts overflow varints; Go's protowire.ConsumeVarint rejects them.
+func consumeVarintTruncated(data []byte) (uint64, int) {
+	var val uint64
+	for i := 0; i < len(data) && i < 10; i++ {
+		b := data[i]
+		if i < 9 {
+			val |= uint64(b&0x7f) << (7 * uint(i))
+		} else {
+			val |= uint64(b&0x7f) << 63
+		}
+		if b&0x80 == 0 {
+			return val, i + 1
+		}
+	}
+	return 0, -1
+}
+
 func decodeRawProto(w *os.File, data []byte, indent int) error {
 	for len(data) > 0 {
 		num, wtype, n := protowire.ConsumeTag(data)
@@ -8198,7 +8216,7 @@ func decodeRawProto(w *os.File, data []byte, indent int) error {
 		prefix := strings.Repeat("  ", indent)
 		switch wtype {
 		case protowire.VarintType:
-			v, vn := protowire.ConsumeVarint(data)
+			v, vn := consumeVarintTruncated(data)
 			if vn < 0 {
 				return fmt.Errorf("invalid varint")
 			}
@@ -8266,7 +8284,7 @@ func validateRawProto(data []byte) error {
 		data = data[n:]
 		switch wtype {
 		case protowire.VarintType:
-			_, vn := protowire.ConsumeVarint(data)
+			_, vn := consumeVarintTruncated(data)
 			if vn < 0 {
 				return fmt.Errorf("invalid")
 			}
@@ -8328,7 +8346,7 @@ func validateRawField(data []byte) int {
 	rest := data[n:]
 	switch wtype {
 	case protowire.VarintType:
-		_, vn := protowire.ConsumeVarint(rest)
+		_, vn := consumeVarintTruncated(rest)
 		if vn < 0 {
 			return -1
 		}
@@ -8385,7 +8403,7 @@ func decodeRawField(w *os.File, data []byte, indent int) (int, error) {
 	prefix := strings.Repeat("  ", indent)
 	switch wtype {
 	case protowire.VarintType:
-		v, vn := protowire.ConsumeVarint(rest)
+		v, vn := consumeVarintTruncated(rest)
 		if vn < 0 {
 			return 0, fmt.Errorf("invalid varint")
 		}
