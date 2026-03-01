@@ -763,6 +763,7 @@ CLI_TESTS=(
   "experimental_allow_proto3_optional|--experimental_allow_proto3_optional --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "descriptor_set_in_import|--descriptor_set_in=testdata/474_descriptor_set_in/dep.pb --descriptor_set_out=/tmp/test_descsetin.pb -I testdata/474_descriptor_set_in/main testdata/474_descriptor_set_in/main/test.proto"
   "encode_field_order|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: 42 name: \"Alice\""
+  "unused_import|--descriptor_set_out=/dev/null -I testdata/475_unused_import testdata/475_unused_import/test.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

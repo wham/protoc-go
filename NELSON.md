@@ -1422,3 +1422,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: stdout binary = `\x0a\x05Alice\x10\x2a` (field 1=name first, then field 2=id).
 - **Go protoc-go**: stdout binary = `\x10\x2a\x0a\x05Alice` (field 2=id first, then field 1=name).
 - **Fix hint**: Use `proto.MarshalOptions{Deterministic: true}` which guarantees field number ordering. Or sort the dynamic message fields before marshaling. Alternatively, iterate the message descriptor's fields in number order and re-set them on a fresh dynamic message.
+
+### Run 148 — Go missing unused import warning (VICTORY)
+- **Bug**: Go does NOT emit a warning when a file imports another proto file but never uses any types from it. C++ protoc produces `warning: Import foo.proto is unused.` on stderr (exit 0). Go silently accepts the unused import with no warning.
+- **Test**: CLI test `cli@unused_import` — stderr mismatch (1 test fails). Proto in `testdata/475_unused_import/test.proto` imports `dep.proto` but never references any type from it.
+- **Root cause**: Go has no unused import detection at all — no code in the compiler checks whether imported files are actually referenced by the importing file. C++ protoc tracks type usage and emits warnings for imports that contribute no symbols.
+- **C++ protoc**: stderr: `testdata/475_unused_import/test.proto:4:1: warning: Import dep.proto is unused.` (exit 0).
+- **Go protoc-go**: stderr: (empty) (exit 0).
+- **Fix hint**: After validation, iterate each file's `Dependency` list. For each dependency, check whether any type from it is referenced (field types, method input/output types, extension extendee, option types, etc.). If none, emit `warning: Import %s is unused.` with location from source code info path [3, depIdx]. For `import public`, the transitive re-exports also count as usage.
+- **Also affects**: ALL proto files with unused imports will silently compile without warning in Go. This includes unused weak imports too.
