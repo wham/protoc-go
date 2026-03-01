@@ -254,6 +254,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 113. [DONE] Fix `441_error_ordering` — C++ protoc outputs reserved number/name conflict errors before duplicate field number errors, but Go had `validateDuplicateFieldNumbers` called before `validateReservedNumberConflicts` and `validateReservedNameConflicts`. Reordered validation calls so reserved checks come first: reserved number conflicts → duplicate reserved names → reserved name conflicts → duplicate field numbers. All 4030/4030 tests pass.
 
+114. [DONE] Fix `442_enum_reserved_int32_min` — `parseEnumReserved` checked `startNum > math.MaxInt32` before applying negation, so `-2147483648` (INT32_MIN) was rejected because `2147483648 > MaxInt32`. Fixed by computing `upperBound` based on whether the value is negative: `MaxInt32+1` when negative (allowing INT32_MIN), `MaxInt32` otherwise. Applied same fix to end number in range. All 4039/4039 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `validateEnumPrefixConflict` checks enum value names for conflicts after prefix stripping and PascalCasing, matching C++ `CheckEnumValueUniqueness`. `prefixRemoverMaybeRemove` strips the enum type name prefix (lowercased, underscores removed) from value names. `enumValueToPascalCase` converts UPPER_SNAKE_CASE to PascalCase. Skips conflicts where values have the same name (handled by duplicate name check) or same number (aliases). Proto2 enums with `deprecated_legacy_json_field_conflicts` option skip the check. Error location uses SCI path `[enumPath, 2, valueIdx, 1]` (enum value name field).

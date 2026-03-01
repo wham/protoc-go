@@ -3470,14 +3470,15 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 				return err
 			}
 			startNum, parseErr := parseIntLenient(numTok.Value, 0, 64)
-			if parseErr != nil || startNum > math.MaxInt32 || startNum < math.MinInt32 {
+			startUpperBound := int64(math.MaxInt32)
+			if startNeg {
+				startUpperBound = int64(math.MaxInt32) + 1
+			}
+			if parseErr != nil || startNum > startUpperBound || startNum < math.MinInt32 {
 				return fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 			}
 			if startNeg {
 				startNum = -startNum
-				if startNum < math.MinInt32 {
-					return fmt.Errorf("%d:%d: Integer out of range.", startMinusTok.Line+1, startMinusTok.Column+1)
-				}
 			}
 			spanStartLine, spanStartCol := numTok.Line, numTok.Column
 			if startNeg {
@@ -3516,14 +3517,15 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 						return err
 					}
 					en, parseErr := parseIntLenient(endNumTok.Value, 0, 64)
-					if parseErr != nil || en > math.MaxInt32 || en < math.MinInt32 {
+					endUpperBound := int64(math.MaxInt32)
+					if endNeg {
+						endUpperBound = int64(math.MaxInt32) + 1
+					}
+					if parseErr != nil || en > endUpperBound || en < math.MinInt32 {
 						return fmt.Errorf("%d:%d: Integer out of range.", endNumTok.Line+1, endNumTok.Column+1)
 					}
 					if endNeg {
 						en = -en
-						if en < math.MinInt32 {
-							return fmt.Errorf("%d:%d: Integer out of range.", endMinusTok.Line+1, endMinusTok.Column+1)
-						}
 					}
 					endNum = en
 					endSpanLine = endNumTok.Line
