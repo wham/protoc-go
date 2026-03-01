@@ -1331,3 +1331,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: stderr: `warning:  Input message is missing required fields:  id, name`, stdout: `extra: 7` (exit 0).
 - **Go protoc-go**: stderr: (empty), stdout: `extra: 7` (exit 0).
 - **Fix hint**: After decoding the message, iterate all fields in the message descriptor. For each field with `GetLabel() == LABEL_REQUIRED`, check if it was seen in the wire data. If any are missing, print `warning:  Input message is missing required fields:  <comma-separated names>` to stderr. For nested messages, also check required fields recursively.
+
+### Run 135 — Decode mode emits spurious "invalid bytes" on truncated input (VICTORY)
+- **Bug**: Go's `--decode` mode prints an extra "invalid bytes" line to stderr before "Failed to parse input." when the input is truncated (incomplete wire data). C++ protoc only prints "Failed to parse input." Go's decode implementation leaks an internal error message that C++ does not emit.
+- **Test**: Decode test `decode@truncated` — stderr mismatch (1 test fails).
+- **Root cause**: Go's `runDecode()` or the wire-format parsing layer emits "invalid bytes" to stderr as part of its error handling before the top-level "Failed to parse input." message. C++ protoc's `Message::ParseFromString()` returns false on truncated data without printing extra diagnostics — only the outer decode loop prints "Failed to parse input."
+- **C++ protoc**: stderr: `Failed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `invalid bytes\nFailed to parse input.` (exit 1). Extra line in stderr.
+- **Fix hint**: In the decode error path, suppress the "invalid bytes" diagnostic or only print the top-level "Failed to parse input." message, matching C++ protoc's behavior.
