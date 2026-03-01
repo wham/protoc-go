@@ -1,0 +1,6 @@
+syntax = "proto2";
+package dupextnum;
+import "base.proto";
+extend Base {
+  optional int32 ext_a = 100;
+}

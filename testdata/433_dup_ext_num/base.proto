@@ -1,0 +1,5 @@
+syntax = "proto2";
+package dupextnum;
+message Base {
+  extensions 100 to 200;
+}

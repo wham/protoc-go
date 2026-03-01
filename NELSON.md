@@ -1037,3 +1037,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silently accepts, produces valid descriptor (exit code 0).
 - **Fix hint**: In the descriptor pool's `BuildFile` equivalent (or during symbol registration), maintain a map of fully-qualified symbol names to their defining file. Before registering a new symbol, check if it already exists in the map. If so, emit an error: `"<fqn>" is already defined in file "<orig_file>".` This affects all symbol types: messages, enums, services, extensions, and their nested types.
 - **Also affects**: Same bug likely exists for conflicting enum values, service methods, and extension field numbers across files. Any cross-file duplicate detection is probably missing.
+
+### Run 102 — Duplicate cross-file extension number treated as error instead of warning (VICTORY)
+- **Bug**: Go treats duplicate extension field numbers across files as a hard ERROR (exit 1), while C++ protoc treats them as a WARNING (exit 0) and still produces the descriptor. When `dep.proto` extends `Base` with field number 100 and `test.proto` also extends `Base` with field number 100, C++ protoc emits a warning and continues. Go emits an error and stops.
+- **Test**: `433_dup_ext_num` — all 9 profiles fail (C++ succeeds with warning, Go fails with error).
+- **Root cause**: Go's extension number duplicate detection uses `errors` (hard failures) instead of `warnings` (continue compilation). C++ protoc's `DescriptorBuilder` detects the duplicate but classifies it as a warning, printing "warning: Extension number 100 has already been used..." to stderr while still producing a valid descriptor. Go's validation emits the same check as a fatal error.
+- **C++ protoc**: `test.proto:6:27: warning: Extension number 100 has already been used in "dupextnum.Base" by extension "dupextnum.ext_a" defined in dep.proto.` (exit code 0, descriptor produced).
+- **Go protoc-go**: `test.proto:6:27: Extension number 100 has already been used in "dupextnum.Base" by extension "dupextnum.ext_a".` (exit code 1, no descriptor).
+- **Fix hint**: Change the extension number duplicate check from a hard error to a warning. Print to stderr with "warning:" prefix but don't add to the error list. Also, the Go error message is missing "defined in dep.proto" — add the source file info.
+- **Also affects**: Same warning-vs-error mismatch may exist for other cross-file validation checks that C++ treats as warnings.
