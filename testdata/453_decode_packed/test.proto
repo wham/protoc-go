@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package decodepacked;
+
+message Numbers {
+  repeated int32 values = 1;
+  string label = 2;
+}
