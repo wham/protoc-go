@@ -9479,7 +9479,12 @@ func formatTextDouble(v float64) string {
 	if math.IsNaN(v) {
 		return "nan"
 	}
-	return strconv.FormatFloat(v, 'g', -1, 64)
+	// Match C++ SimpleDtoa: try 15 significant digits, fallback to 17.
+	s := strconv.FormatFloat(v, 'g', 15, 64)
+	if v2, err := strconv.ParseFloat(s, 64); err != nil || v2 != v {
+		s = strconv.FormatFloat(v, 'g', 17, 64)
+	}
+	return s
 }
 
 func formatTextFloat(v float32) string {

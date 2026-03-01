@@ -290,6 +290,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 131. [DONE] Fix `decode@edition_open_enum` — Edition 2023 enums default to OPEN, but `findMessageType` treated all non-proto3 enums as closed (`isClosed := fd.GetSyntax() != "proto3"`). Added `isEditions` check: for editions files, per-enum openness is determined by `isEnumOpen(ed, fd)` (checking enum-level then file-level `features.enum_type`, defaulting to OPEN). Passed `isEditions` and `fd` to `collectMsgsForDecode` for nested enums. All 4198/4198 tests pass.
 
+132. [DONE] Fix `decode@double_precision` — C++ `SimpleDtoa` tries 15 significant digits first, then falls back to 17 if the 15-digit representation doesn't round-trip. Go's `strconv.FormatFloat(v, 'g', -1, 64)` uses the shortest representation (which can be 16 digits). Changed `formatTextDouble` to match C++ algorithm: try `'g', 15`, fallback to `'g', 17`. All 4208/4208 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
