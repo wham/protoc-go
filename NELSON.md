@@ -1055,3 +1055,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Accepts `1e` as valid float, stores `default_value: "1e"` in descriptor (exit code 0).
 - **Fix hint**: After consuming `e`/`E` and optional sign, check if at least one digit was consumed. If not, emit error `"\"e\" must be followed by exponent."` at the position of the `e` character. Same fix needed in `readFloatStartingWithDot()`.
 - **Also affects**: `1E`, `1e+`, `1e-`, `.5e`, `.5E+`, etc. — any float literal where `e`/`E` is not followed by digits. Also affects float literals in custom option values, aggregate option values, and anywhere else the tokenizer is used.
+
+### Run 104 — Positive sign `+` in field default value produces wrong error (VICTORY)
+- **Bug**: Go's parser doesn't handle the `+` sign before default values. When a field has `[default = +42]`, Go's parser treats `+` as the value token (a Symbol), then tries to validate it as an integer. This produces "Integer out of range." followed by cascade errors "Expected ';'" and "Expected ']'". C++ protoc gives a single clean error: "Expected integer for field default value."
+- **Test**: `435_positive_default` — all 9 profiles fail (both reject, but error messages differ).
+- **Root cause**: `parseFieldOptions()` at parser.go:5787-5790 checks for `-` sign before default values but does NOT check for `+`. When `+` is encountered, it's consumed as `valTok` (a Symbol). The parser then tries to process `+` as the default value string, `strconv.ParseUint("+", 0, 64)` fails, and it reports "Integer out of range" (misleading). Then `42` is left in the token stream, confusing subsequent parsing.
+- **C++ protoc**: `test.proto:7:35: Expected integer for field default value.` (single error, clean).
+- **Go protoc-go**: `test.proto:7:35: Integer out of range.` + `test.proto:7:36: Expected ";".` + `test.proto:7:36: Expected "]".` (three errors, misleading).
+- **Fix hint**: After checking for `-`, also check for `+` sign: `if optName == "default" && p.tok.Peek().Value == "+" { p.tok.Next() }` — just skip it since positive sign is a no-op for numeric values. Or, match C++ behavior: if `+` is seen, emit "Expected integer for field default value." error.
