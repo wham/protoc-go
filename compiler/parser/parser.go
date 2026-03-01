@@ -48,10 +48,14 @@ func invalidOctalError(filename string, tok tokenizer.Token) string {
 // parseIntLenient wraps strconv.ParseInt but treats bare "0x"/"0X" as 0,
 // matching C++ protoc's ParseInteger which returns 0 for hex prefix with no digits.
 func parseIntLenient(s string, base int, bitSize int) (int64, error) {
-	if s == "0x" || s == "0X" {
+	if isBareHexPrefix(s) {
 		return 0, nil
 	}
 	return strconv.ParseInt(s, base, bitSize)
+}
+
+func isBareHexPrefix(s string) bool {
+	return s == "0x" || s == "0X"
 }
 
 type parser struct {
@@ -5868,6 +5872,11 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if isIntegerType(field.GetType()) {
 				maxVal := intDefaultMaxValue(field.GetType(), negative)
 				n, err := strconv.ParseUint(valTok.Value, 0, 64)
+				// "0x"/"0X" with no hex digits: tokenizer already emitted error;
+				// C++ ParseInteger returns 0 for this case, so skip range check.
+				if isBareHexPrefix(valTok.Value) {
+					n, err = 0, nil
+				}
 				if err != nil || n > maxVal {
 					if octalErr := invalidOctalError(p.filename, valTok); octalErr != "" {
 						p.errors = append(p.errors, octalErr)
