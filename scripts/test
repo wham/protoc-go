@@ -987,7 +987,7 @@ run_decode_test() {
   fi
 
   local cpp_stderr go_stderr
-  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/^[EIWF][0-9][0-9][0-9][0-9] [0-9:.]* [0-9]* [^ ]*] //' | sed 's/[[:space:]]*$//' | sed '/^$/d')
   go_stderr=$(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
 
   if [ "$cpp_stderr" != "$go_stderr" ]; then

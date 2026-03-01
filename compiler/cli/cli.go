@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/wham/protoc-go/compiler/importer"
 	"github.com/wham/protoc-go/compiler/parser"
@@ -8694,7 +8695,7 @@ type decodeExt struct {
 // prints text format using the schema from parsed proto files.
 func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles []string) error {
 	// Find the message descriptor
-	msgDesc, allMsgs, allEnums, allExts, closedEnums := findMessageType(msgTypeName, parsed)
+	msgDesc, allMsgs, allEnums, allExts, closedEnums, utf8Msgs := findMessageType(msgTypeName, parsed)
 	if msgDesc == nil {
 		return fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)
 	}
@@ -8706,7 +8707,8 @@ func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 	}
 
 	// Try to parse the data to validate it
-	if err := validateProtoWithSchema(data, msgDesc, allMsgs); err != nil {
+	if err := validateProtoWithSchema(data, msgTypeName, msgDesc, allMsgs, utf8Msgs); err != nil {
+		fmt.Fprintln(os.Stderr, err.Error())
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
 		os.Exit(1)
 	}
@@ -8719,17 +8721,22 @@ func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 // findMessageType searches all parsed FileDescriptorProtos for a message
 // with the given fully-qualified name. Returns the descriptor, maps of all
 // messages, enums, and extensions.
-func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescriptorProto) (*descriptorpb.DescriptorProto, map[string]*descriptorpb.DescriptorProto, map[string]map[int32]string, map[string]map[int32]*decodeExt, map[string]bool) {
+func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescriptorProto) (*descriptorpb.DescriptorProto, map[string]*descriptorpb.DescriptorProto, map[string]map[int32]string, map[string]map[int32]*decodeExt, map[string]bool, map[string]bool) {
 	allMsgs := make(map[string]*descriptorpb.DescriptorProto)
 	allEnums := make(map[string]map[int32]string)
 	allExts := make(map[string]map[int32]*decodeExt)
 	closedEnums := make(map[string]bool)
+	utf8Msgs := make(map[string]bool)
 	for _, fd := range parsed {
 		pkg := fd.GetPackage()
 		isEditions := fd.GetSyntax() == "editions"
 		isClosed := fd.GetSyntax() != "proto3" && !isEditions
+		isProto3 := fd.GetSyntax() == "proto3"
 		for _, msg := range fd.GetMessageType() {
 			collectMsgsForDecode(pkg, "", msg, allMsgs, allEnums, allExts, closedEnums, isClosed, isEditions, fd)
+			if isProto3 {
+				collectUtf8Msgs(pkg, "", msg, utf8Msgs)
+			}
 		}
 		for _, ed := range fd.GetEnumType() {
 			var fqn string
@@ -8751,7 +8758,7 @@ func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescri
 			addDecodeExt(allExts, pkg, "", ext)
 		}
 	}
-	return allMsgs[fullName], allMsgs, allEnums, allExts, closedEnums
+	return allMsgs[fullName], allMsgs, allEnums, allExts, closedEnums, utf8Msgs
 }
 
 func addDecodeExt(allExts map[string]map[int32]*decodeExt, pkg, prefix string, ext *descriptorpb.FieldDescriptorProto) {
@@ -8795,6 +8802,19 @@ func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto,
 	}
 }
 
+func collectUtf8Msgs(pkg, prefix string, msg *descriptorpb.DescriptorProto, utf8Msgs map[string]bool) {
+	var fqn string
+	if pkg != "" {
+		fqn = pkg + "." + prefix + msg.GetName()
+	} else {
+		fqn = prefix + msg.GetName()
+	}
+	utf8Msgs[fqn] = true
+	for _, nested := range msg.GetNestedType() {
+		collectUtf8Msgs(pkg, prefix+msg.GetName()+".", nested, utf8Msgs)
+	}
+}
+
 func buildEnumValMap(ed *descriptorpb.EnumDescriptorProto) map[int32]string {
 	m := make(map[int32]string)
 	for _, v := range ed.GetValue() {
@@ -8807,8 +8827,9 @@ func buildEnumValMap(ed *descriptorpb.EnumDescriptorProto) map[int32]string {
 
 // validateProtoWithSchema validates that binary data can be parsed as the
 // given message type. Returns nil on success.
-func validateProtoWithSchema(data []byte, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto) error {
+func validateProtoWithSchema(data []byte, msgFQN string, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, utf8Msgs map[string]bool) error {
 	fieldMap := buildFieldMap(msgDesc)
+	isUtf8 := utf8Msgs[msgFQN]
 	pos := 0
 	for pos < len(data) {
 		num, wtype, n := protowire.ConsumeTag(data[pos:])
@@ -8840,11 +8861,18 @@ func validateProtoWithSchema(data []byte, msgDesc *descriptorpb.DescriptorProto,
 			}
 			pos += vn
 			fd := fieldMap[int32(num)]
-			if fd != nil && isMessageField(fd) {
-				subMsg := resolveFieldMsgType(fd, allMsgs)
-				if subMsg != nil {
-					if err := validateProtoWithSchema(v, subMsg, allMsgs); err != nil {
-						return err
+			if fd != nil {
+				if isMessageField(fd) {
+					subMsg := resolveFieldMsgType(fd, allMsgs)
+					if subMsg != nil {
+						subFQN := strings.TrimPrefix(fd.GetTypeName(), ".")
+						if err := validateProtoWithSchema(v, subFQN, subMsg, allMsgs, utf8Msgs); err != nil {
+							return err
+						}
+					}
+				} else if isUtf8 && fd.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING {
+					if !utf8.Valid(v) {
+						return fmt.Errorf("String field '%s.%s' contains invalid UTF-8 data when parsing a protocol buffer. Use the 'bytes' type if you intend to send raw bytes. ", msgFQN, fd.GetName())
 					}
 				}
 			}
