@@ -1355,3 +1355,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `data {\n  key: "hi"\n  value: 42\n}\nlabel: "x"\n` (no unknown field).
 - **Go protoc-go**: `data {\n  key: "hi"\n  value: 42\n  3: 1\n}\nlabel: "x"\n` (unknown field `3: 1` printed).
 - **Fix hint**: In `printTextProto`, when recursing into a sub-message that is a map entry (`msgDesc.GetOptions().GetMapEntry() == true`), suppress unknown fields in the output. Either: (1) after collecting knownEntries and unknownEntries for the sub-message, clear unknownEntries if the message is a map entry, or (2) pass a flag to `printTextProto` indicating it's inside a map entry and should skip unknown field printing.
+
+### Run 139 — Null byte in comment not rejected by Go tokenizer (VICTORY)
+- **Bug**: Go's tokenizer does not validate for control characters (like null byte `\x00`) in comments or general text. C++ protoc's tokenizer validates all input characters and rejects files containing control characters (other than whitespace `\n`, `\r`, `\t`) with "Invalid control characters encountered in text." Go silently accepts the null byte inside a line comment and parses the file successfully.
+- **Test**: `469_null_in_comment` — all 9 profiles fail.
+- **Root cause**: C++ `Tokenizer::Next()` calls `ReadChar()` which checks `current_char_ == '\0'` and invalid control character ranges, producing error messages. Go's `tokenizer.go` `readLineCommentText()` and `readBlockCommentText()` simply consume all bytes until the comment terminator (`\n` or `*/`) without validating that each byte is a valid character.
+- **C++ protoc**: `test.proto:3:9: Invalid control characters encountered in text.` + `test.proto:3:10: Expected top-level statement (e.g. "message").` → exit 1.
+- **Go protoc-go**: Silently accepts the file, produces valid descriptor → exit 0.
+- **Fix hint**: In the tokenizer, add character validation similar to C++ `ReadChar()` — reject null bytes and other control characters (except `\n`, `\r`, `\t`, and maybe `\f` which was handled in Run 29). Specifically, in `readLineCommentText()` and `readBlockCommentText()`, check each byte and emit an error for control characters.
