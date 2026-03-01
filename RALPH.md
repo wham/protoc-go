@@ -330,6 +330,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 151. [DONE] Fix `cli@encode_oneof_conflict` — C++ protoc's TextFormat::Parser detects when two fields from the same oneof are specified and reports `Field "X" is specified along with field "Y", another member of oneof "Z".` with line/column info. Go's `prototext.Unmarshal` silently accepts oneof conflicts (last value wins). Added `checkOneofConflicts` that scans text format input for top-level field names, maps them to oneof indices via the message descriptor, and reports the conflict with C++-compatible position (column points at `:`). All 4375/4375 tests pass.
 
+152. [DONE] Fix `cli@encode_ext_order` — Go's `dynamicpb` deterministic marshaling doesn't interleave extension fields with regular fields in field number order. Added `sortUnknownFields` post-processing on the marshaled bytes in `runEncode` to sort top-level wire fields by field number, matching C++ protoc's `Message::SerializeToString()` which always outputs fields in number order. All 4385/4385 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
