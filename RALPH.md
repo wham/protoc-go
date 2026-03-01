@@ -322,6 +322,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 147. [DONE] Fix `473_agg_float_for_int` — `encodeCustomOptionValue` returned generic `fmt.Errorf("invalid integer value: %s")` for int32/int64/sint32/sint64 and `fmt.Errorf("invalid unsigned integer value: %s")` for uint32/uint64 when parsing failed. These fell through to the generic fallback in `formatAggregateError` without line/column info. Added `aggregateIntExpectedError` type with `Expected integer, got: <value>` message and handling in `formatAggregateError`. All 4344/4344 tests pass.
 
+148. [DONE] Fix `cli@descriptor_set_in_import` — `--descriptor_set_in` flag was parsed but ignored. Implemented loading: reads the FileDescriptorSet from the specified file, unmarshals it, and pre-populates the `parsed` map and `orderedFiles` with its FileDescriptorProto entries before `parseRecursive` runs. This allows imports to resolve against pre-compiled descriptors without needing the .proto source files. All 4354/4354 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
