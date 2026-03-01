@@ -616,6 +616,7 @@ func Run(args []string) error {
 	valErrors = append(valErrors, validateEnumDefaultValues(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateProto3(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateEditionGroups(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateEnumPrefixConflict(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateEditionOpenEnumZero(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateFileLevelLegacyRequired(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateRepeatedFieldEncoding(orderedFiles, parsed)...)
@@ -1980,6 +1981,177 @@ func nextAvailableEnumValue(e *descriptorpb.EnumDescriptorProto) int32 {
 			return i
 		}
 	}
+}
+
+// enumValueToPascalCase converts an UPPER_SNAKE_CASE enum value name to PascalCase.
+// e.g., "FOO_BAR_BAZ" → "FooBarBaz", "UNKNOWN" → "Unknown"
+func enumValueToPascalCase(input string) string {
+	var result []byte
+	nextUpper := true
+	for i := 0; i < len(input); i++ {
+		c := input[i]
+		if c == '_' {
+			nextUpper = true
+		} else {
+			if nextUpper {
+				result = append(result, upper(c))
+			} else {
+				result = append(result, lower(c))
+			}
+			nextUpper = false
+		}
+	}
+	return string(result)
+}
+
+func upper(c byte) byte {
+	if c >= 'a' && c <= 'z' {
+		return c - 'a' + 'A'
+	}
+	return c
+}
+
+func lower(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c - 'A' + 'a'
+	}
+	return c
+}
+
+// prefixRemoverMaybeRemove tries to strip the enum type name prefix from an enum value name.
+// The prefix is the enum type name with underscores removed and lowercased.
+// Returns the stripped value name, or the original if the prefix doesn't match.
+func prefixRemoverMaybeRemove(enumName, valueName string) string {
+	// Build prefix: strip underscores and lowercase
+	var prefix []byte
+	for i := 0; i < len(enumName); i++ {
+		c := enumName[i]
+		if c != '_' {
+			prefix = append(prefix, lower(c))
+		}
+	}
+
+	// Try to match prefix in valueName, skipping underscores in valueName
+	i, j := 0, 0
+	for i < len(valueName) && j < len(prefix) {
+		if valueName[i] == '_' {
+			i++
+			continue
+		}
+		if lower(valueName[i]) != prefix[j] {
+			return valueName
+		}
+		i++
+		j++
+	}
+
+	// Didn't fully match prefix
+	if j < len(prefix) {
+		return valueName
+	}
+
+	// Skip underscores between prefix and remaining characters
+	for i < len(valueName) && valueName[i] == '_' {
+		i++
+	}
+
+	// Can't strip to empty
+	if i >= len(valueName) {
+		return valueName
+	}
+
+	return valueName[i:]
+}
+
+// validateEnumPrefixConflict checks that enum value names don't conflict after
+// stripping the enum name prefix and PascalCasing. C++ protoc's CheckEnumValueUniqueness.
+func validateEnumPrefixConflict(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		isProto2 := fd.GetSyntax() == "proto2" || (fd.GetSyntax() == "" && fd.GetEdition() == 0)
+		for i, e := range fd.GetEnumType() {
+			if isProto2 && e.GetOptions().GetDeprecatedLegacyJsonFieldConflicts() {
+				continue
+			}
+			collectEnumPrefixConflictErrors(fd.GetName(), e, []int32{5, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+		for i, msg := range fd.GetMessageType() {
+			msgPath := []int32{4, int32(i)}
+			collectEnumPrefixConflictInMsg(fd.GetName(), msg, isProto2, msgPath, fd.GetSourceCodeInfo(), &errs)
+		}
+	}
+	return errs
+}
+
+func collectEnumPrefixConflictInMsg(filename string, msg *descriptorpb.DescriptorProto, isProto2 bool, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, e := range msg.GetEnumType() {
+		if isProto2 && e.GetOptions().GetDeprecatedLegacyJsonFieldConflicts() {
+			continue
+		}
+		enumPath := append(append([]int32{}, msgPath...), 4, int32(i))
+		collectEnumPrefixConflictErrors(filename, e, enumPath, sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectEnumPrefixConflictInMsg(filename, nested, isProto2, nestedPath, sci, errs)
+	}
+}
+
+func collectEnumPrefixConflictErrors(filename string, e *descriptorpb.EnumDescriptorProto, enumPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	enumName := e.GetName()
+	// Map: stripped+PascalCased name → (first value name, first value index)
+	type firstEntry struct {
+		name string
+		idx  int
+	}
+	seen := make(map[string]firstEntry)
+	for i, val := range e.GetValue() {
+		stripped := prefixRemoverMaybeRemove(enumName, val.GetName())
+		pascal := enumValueToPascalCase(stripped)
+		if first, ok := seen[pascal]; ok {
+			// Skip if same name (duplicate name check handles it) or same number (alias)
+			if first.name == val.GetName() || e.GetValue()[first.idx].GetNumber() == val.GetNumber() {
+				continue
+			}
+			line, col := findEnumValueNameLocation(enumPath, i, sci)
+			*errs = append(*errs, fmt.Sprintf(
+				"%s:%d:%d: Enum name %s has the same name as %s if you ignore case and strip out the enum name prefix (if any). (If you are using allow_alias, please assign the same number to each enum value name.)",
+				filename, line, col, val.GetName(), first.name))
+		} else {
+			seen[pascal] = firstEntry{name: val.GetName(), idx: i}
+		}
+	}
+}
+
+func findEnumValueNameLocation(enumPath []int32, valueIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if sci == nil {
+		return 0, 0
+	}
+	// Path: enumPath + [2, valueIdx, 1] where 2=value field, 1=name field
+	target := append(append([]int32{}, enumPath...), 2, int32(valueIdx), 1)
+	for _, loc := range sci.GetLocation() {
+		path := loc.GetPath()
+		if len(path) == len(target) {
+			match := true
+			for i := range path {
+				if path[i] != target[i] {
+					match = false
+					break
+				}
+			}
+			if match {
+				span := loc.GetSpan()
+				if len(span) >= 2 {
+					return int(span[0]) + 1, int(span[1]) + 1
+				}
+			}
+		}
+	}
+	return 0, 0
 }
 
 // validateJsonNameConflicts checks that no two fields in a message have conflicting JSON names.
