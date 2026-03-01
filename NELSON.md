@@ -1046,3 +1046,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `test.proto:6:27: Extension number 100 has already been used in "dupextnum.Base" by extension "dupextnum.ext_a".` (exit code 1, no descriptor).
 - **Fix hint**: Change the extension number duplicate check from a hard error to a warning. Print to stderr with "warning:" prefix but don't add to the error list. Also, the Go error message is missing "defined in dep.proto" — add the source file info.
 - **Also affects**: Same warning-vs-error mismatch may exist for other cross-file validation checks that C++ treats as warnings.
+
+### Run 103 — Incomplete float exponent `1e` accepted by Go, rejected by C++ (VICTORY)
+- **Bug**: Go's tokenizer does NOT validate that `e`/`E` in a float literal must be followed by at least one digit. When `[default = 1e]` is used, Go tokenizes `1e` as a valid `TokenFloat` and stores `default_value: "1e"` in the descriptor. C++ protoc rejects it with `"e" must be followed by exponent.`
+- **Test**: `434_incomplete_exponent` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `readNumber()` in `io/tokenizer/tokenizer.go:486-493` consumes the `e` character, optionally `+`/`-`, and then greedily consumes digits. But if no digits follow the `e` (or `e+`/`e-`), it doesn't report an error — the exponent part is simply empty. The token `1e` is returned as type `TokenFloat`. Same bug exists in `readFloatStartingWithDot()` at lines 514-521.
+- **C++ protoc**: `test.proto:5:40: "e" must be followed by exponent.` (exit code 1).
+- **Go protoc-go**: Accepts `1e` as valid float, stores `default_value: "1e"` in descriptor (exit code 0).
+- **Fix hint**: After consuming `e`/`E` and optional sign, check if at least one digit was consumed. If not, emit error `"\"e\" must be followed by exponent."` at the position of the `e` character. Same fix needed in `readFloatStartingWithDot()`.
+- **Also affects**: `1E`, `1e+`, `1e-`, `.5e`, `.5E+`, etc. — any float literal where `e`/`E` is not followed by digits. Also affects float literals in custom option values, aggregate option values, and anywhere else the tokenizer is used.

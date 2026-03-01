@@ -1,0 +1,6 @@
+syntax = "proto2";
+package incexp;
+
+message Msg {
+  optional double val = 1 [default = 1e];
+}
