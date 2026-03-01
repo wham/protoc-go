@@ -3158,18 +3158,26 @@ func findDefaultValueLocation(field *descriptorpb.FieldDescriptorProto, msg *des
 // validateDuplicateNames checks that no two symbols share the same fully-qualified name.
 func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
+	seen := make(map[string]string)            // FQN -> filename where first defined
+	enumValParent := make(map[string]string)    // fqn -> enum short name
 	for _, name := range orderedFiles {
 		fd := parsed[name]
 		pkg := fd.GetPackage()
 		sci := fd.GetSourceCodeInfo()
 
-		seen := make(map[string]bool)
-		// Track which FQNs are enum values and their parent enum name
-		enumValParent := make(map[string]string) // fqn -> enum short name
 		check := func(fqn, shortName, scope string, line, col int, enumName string) {
-			if seen[fqn] {
+			if firstFile, exists := seen[fqn]; exists {
 				var errMsg string
-				if scope == "" {
+				if firstFile != fd.GetName() {
+					// Cross-file duplicate: use FQN and "in file" format
+					if line > 0 && col > 0 {
+						errMsg = fmt.Sprintf("%s:%d:%d: \"%s\" is already defined in file \"%s\".",
+							fd.GetName(), line, col, fqn, firstFile)
+					} else {
+						errMsg = fmt.Sprintf("%s: \"%s\" is already defined in file \"%s\".",
+							fd.GetName(), fqn, firstFile)
+					}
+				} else if scope == "" {
 					// No package — C++ protoc omits " in ..." suffix
 					if line > 0 && col > 0 {
 						errMsg = fmt.Sprintf("%s:%d:%d: \"%s\" is already defined.",
@@ -3193,7 +3201,7 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 						fd.GetName(), line, col, shortName, scope, enumName))
 				}
 			} else {
-				seen[fqn] = true
+				seen[fqn] = fd.GetName()
 				if enumName != "" {
 					enumValParent[fqn] = enumName
 				}
