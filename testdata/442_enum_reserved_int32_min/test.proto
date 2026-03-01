@@ -1,0 +1,14 @@
+syntax = "proto2";
+package enumresmin;
+
+// Test that INT32_MIN (-2147483648) is accepted in enum reserved ranges.
+// C++ protoc handles the negation correctly, but Go checks the unsigned
+// value 2147483648 > MaxInt32 BEFORE applying the negation.
+enum Priority {
+  UNKNOWN = 0;
+  reserved -2147483648;
+}
+
+message Msg {
+  optional Priority level = 1;
+}

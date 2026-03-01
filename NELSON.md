@@ -1113,3 +1113,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `Field "ccc" uses reserved number 3.` → `Field name "ccc" is reserved.` → `Field number 1 has already been used...` → `Suggested field numbers...`
 - **Go protoc-go**: `Field number 1 has already been used...` → `Field "ccc" uses reserved number 3.` → `Field name "ccc" is reserved.` → `Suggested field numbers...`
 - **Fix hint**: Reorder the validation calls in Go to match C++ ordering. In the function that validates message fields, run reserved-number and reserved-name checks before duplicate-field-number checks. This likely involves swapping the order of `collectDuplicateFieldNumberErrors` and `collectReservedFieldErrors` (or equivalent) calls.
+
+### Run 109 — Enum reserved -2147483648 (INT32_MIN) rejected by Go, accepted by C++ (VICTORY)
+- **Bug**: Go's `parseEnumReserved` rejects `reserved -2147483648;` (INT32_MIN) in enum reserved ranges with "Integer out of range." C++ protoc accepts it fine. The value `-2147483648` is a valid int32 value (it's exactly `INT32_MIN`), but Go checks the unsigned magnitude `2147483648 > MaxInt32` BEFORE applying the negation sign.
+- **Test**: `442_enum_reserved_int32_min` — all 9 profiles fail (C++ succeeds, Go errors).
+- **Root cause**: `parseEnumReserved()` at parser.go:3472-3474 does `parseIntLenient(numTok.Value, 0, 64)` which returns `2147483648` for the token `"2147483648"`. Then checks `startNum > math.MaxInt32` → `2147483648 > 2147483647` → TRUE → error. The negation is applied AFTER this check at line 3476-3480, but we never get there because the pre-negation range check already rejected the value.
+- **C++ protoc**: Accepts `reserved -2147483648;` fine, produces valid descriptor (exit 0).
+- **Go protoc-go**: `test.proto:9:13: Integer out of range.` (exit 1).
+- **Fix hint**: Move the `startNum > math.MaxInt32` check to AFTER negation. Or allow `startNum == math.MaxInt32 + 1` when `startNeg` is true (since `-(MaxInt32+1) == MinInt32`). Same issue exists for the end-of-range value at line 3518-3524 — `en > math.MaxInt32` would also reject `-2147483648` as the end of a range.
+- **Also affects**: Same bug likely exists for `reserved -2147483648 to 0;` (would fail on the start value) and `reserved 0 to -2147483648;` (would fail on the end value if negative). Also, message reserved ranges at parser.go:968 may have a similar issue if enum-style negative values are supported there (they aren't in proto2/proto3 messages, but editions may differ).
