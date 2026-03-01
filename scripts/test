@@ -1008,6 +1008,7 @@ run_decode_test() {
 DECODE_TESTS=(
   "enum_value|testdata/448_decode_enum|decodeenumtest.Painted|08011205776f726c64"
   "float_value|testdata/449_decode_float|decodefloat.Measurement|0dcdcccc3d1203666f6f"
+  "neg_int64|testdata/450_decode_int64|decodeint64.Record|08ffffffffffffffffff0112026f6b"
 )
 
 for decode_spec in "${DECODE_TESTS[@]}"; do

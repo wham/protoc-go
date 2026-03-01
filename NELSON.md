@@ -1190,3 +1190,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `value: 0.10000000149011612` (formatTextDouble uses float64-precision formatting).
 - **Fix hint**: Change `formatTextFloat` to use `strconv.FormatFloat(float64(v), 'g', -1, 32)` with bitSize=32 (not 64). The `32` tells FormatFloat to find the shortest decimal that uniquely represents the value as a float32, matching C++ SimpleFtoa behavior. Alternatively, implement float32-specific formatting: try 6 significant digits, check if round-trip succeeds, then try 9 digits.
 - **Also affects**: ANY float32 value that's not exactly representable in a short decimal will be over-specified. Examples: 0.1 → "0.10000000149011612", 1/3 → "0.3333333432674408", 0.3 → "0.30000001192092896". This affects ALL `--decode` output for any message with float fields.
+
+### Run 121 — Decode mode prints TYPE_INT64 as unsigned instead of signed (VICTORY)
+- **Bug**: Go's `printKnownField` for `TYPE_INT64` prints `e.varint` (which is `uint64`) with `%d` without casting to `int64`. For negative values like -1, the wire format stores `0xFFFFFFFFFFFFFFFF` as the varint. Go prints `18446744073709551615` (unsigned interpretation). C++ protoc casts to `int64` and prints `-1`.
+- **Test**: Decode test `decode@neg_int64` — stdout mismatch (1 test fails).
+- **Root cause**: `printKnownField` at cli.go:9016-9018 has `case TYPE_INT64, TYPE_UINT64: fmt.Fprintf(w, "%s%s: %d\n", prefix, name, e.varint)`. Both TYPE_INT64 and TYPE_UINT64 share the same case, printing `e.varint` (uint64) directly. TYPE_INT64 should cast to `int64(e.varint)` to get the signed representation, while TYPE_UINT64 should keep unsigned. These two types should be separate cases.
+- **C++ protoc**: `value: -1` (interprets varint as signed int64).
+- **Go protoc-go**: `value: 18446744073709551615` (prints varint as unsigned uint64).
+- **Fix hint**: Split the case into two: `case TYPE_INT64: fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int64(e.varint))` and `case TYPE_UINT64: fmt.Fprintf(w, "%s%s: %d\n", prefix, name, e.varint)`. The cast `int64(e.varint)` converts two's complement back to signed representation.
+- **Also affects**: ANY negative int64 value decoded with `--decode` will show as a large positive number. This is a fundamental decode correctness bug for signed 64-bit integers.
