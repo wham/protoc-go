@@ -860,6 +860,12 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 
 	// Determine if this is a name reservation (first token is a string) or range reservation
 	if p.tok.Peek().Type == tokenizer.TokenString {
+		if p.syntax == "editions" {
+			pk := p.tok.Peek()
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Reserved names must be identifiers in editions, not string literals.", p.filename, pk.Line+1, pk.Column+1))
+			p.skipToToken(";")
+			return nil
+		}
 		// reserved "name1", "name2";
 		stmtPath := append(copyPath(msgPath), 10) // field 10 = reserved_name
 		startNameCount := *nameIdx
@@ -3390,6 +3396,12 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 	startTok := p.tok.Next() // consume "reserved"
 
 	if p.tok.Peek().Type == tokenizer.TokenString {
+		if p.syntax == "editions" {
+			pk := p.tok.Peek()
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Reserved names must be identifiers in editions, not string literals.", p.filename, pk.Line+1, pk.Column+1))
+			p.skipToToken(";")
+			return nil
+		}
 		// reserved "NAME1", "NAME2";
 		stmtPath := append(copyPath(enumPath), 5) // field 5 = reserved_name
 		startNameCount := *nameIdx
