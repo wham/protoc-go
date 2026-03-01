@@ -282,6 +282,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 127. [DONE] Fix `decode@extension_field` — C++ protoc prints extension fields with `[fqn]` syntax (e.g., `[decodeext.extra]: 42`) instead of raw field numbers. Added `decodeExt` type and `allExts` map (extendee FQN → field number → extension info) collection in `findMessageType` and `collectMsgsForDecode`. Threaded `allExts` and message FQN through `printTextProto` and `printKnownField`. Extension fields are now resolved and printed with bracket notation. All 4158/4158 tests pass.
 
+128. [DONE] Fix `decode@wrong_wire` — When a known field is encoded with the wrong wire type (e.g., int32 as fixed32), C++ protoc treats it as an unknown field and prints it raw (e.g., `1: 0x0000002a`). Go was still treating it as a known field and printing the default value. Added `wireTypeMatchesProtoType` function that maps each proto type to its expected wire type, and added the check in `printTextProto`'s known/unknown field classification. All 4168/4168 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
