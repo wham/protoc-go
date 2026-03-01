@@ -1991,9 +1991,10 @@ func validateJsonNameConflicts(orderedFiles []string, parsed map[string]*descrip
 		if fd.GetSyntax() != "proto3" && fd.GetSyntax() != "editions" {
 			continue
 		}
+		fileJsonFormat := fd.GetOptions().GetFeatures().GetJsonFormat()
 		for i, msg := range fd.GetMessageType() {
-			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, false, &errs)
-			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, true, &errs)
+			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, false, fileJsonFormat, &errs)
+			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, true, fileJsonFormat, &errs)
 		}
 	}
 	return errs
@@ -2005,8 +2006,13 @@ type jsonNameEntry struct {
 	isCustom  bool
 }
 
-func collectJsonNameConflictErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, useCustom bool, errs *[]string) {
-	if !msg.GetOptions().GetDeprecatedLegacyJsonFieldConflicts() {
+func collectJsonNameConflictErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, useCustom bool, parentJsonFormat descriptorpb.FeatureSet_JsonFormat, errs *[]string) {
+	// Determine effective json_format: message-level overrides file/parent level
+	effectiveJsonFormat := parentJsonFormat
+	if feat := msg.GetOptions().GetFeatures(); feat != nil && feat.JsonFormat != nil {
+		effectiveJsonFormat = feat.GetJsonFormat()
+	}
+	if !msg.GetOptions().GetDeprecatedLegacyJsonFieldConflicts() && effectiveJsonFormat != descriptorpb.FeatureSet_LEGACY_BEST_EFFORT {
 		seen := make(map[string]jsonNameEntry)
 		for i, field := range msg.GetField() {
 			defaultJsonName := tokenizer.ToJSONName(field.GetName())
@@ -2047,7 +2053,7 @@ func collectJsonNameConflictErrors(filename string, msg *descriptorpb.Descriptor
 			continue
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
-		collectJsonNameConflictErrors(filename, nested, nestedPath, sci, explicitJsonNames, useCustom, errs)
+		collectJsonNameConflictErrors(filename, nested, nestedPath, sci, explicitJsonNames, useCustom, effectiveJsonFormat, errs)
 	}
 }
 
