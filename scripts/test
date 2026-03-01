@@ -647,9 +647,9 @@ run_cli_test() {
     return
   fi
 
-  # Compare stderr (normalized)
+  # Compare stderr (normalized; strip GLOG prefixes from C++ protobuf LOG lines)
   local cpp_stderr go_stderr
-  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/^[EIWF][0-9][0-9][0-9][0-9] [0-9:.]* [0-9]* [^ ]*] //' | sed 's/[[:space:]]*$//' | sed '/^$/d')
   go_stderr=$(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
 
   if [ "$cpp_stderr" != "$go_stderr" ]; then
@@ -657,25 +657,25 @@ run_cli_test() {
     {
       echo "stderr mismatch (exit code=$cpp_exit)"
       diff -u \
-        <(cat "$result_dir/cpp_stderr.txt" | sed 's/[[:space:]]*$//') \
+        <(cat "$result_dir/cpp_stderr.txt" | sed 's/^[EIWF][0-9][0-9][0-9][0-9] [0-9:.]* [0-9]* [^ ]*] //' | sed 's/[[:space:]]*$//') \
         <(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//') \
         2>&1 || true
     } > "$failure_file"
     return
   fi
 
-  # Compare stdout (normalized)
+  # Compare stdout (normalized; use LC_ALL=C for binary-safe sed)
   local cpp_stdout go_stdout
-  cpp_stdout=$(cat "$result_dir/cpp_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
-  go_stdout=$(cat "$result_dir/go_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  cpp_stdout=$(LC_ALL=C cat "$result_dir/cpp_stdout.txt" | LC_ALL=C sed 's/[[:space:]]*$//' | LC_ALL=C sed '/^$/d')
+  go_stdout=$(LC_ALL=C cat "$result_dir/go_stdout.txt" | LC_ALL=C sed 's/[[:space:]]*$//' | LC_ALL=C sed '/^$/d')
 
   if [ "$cpp_stdout" != "$go_stdout" ]; then
     echo "FAIL 0 0" > "$result_file"
     {
       echo "stdout mismatch (exit code=$cpp_exit)"
       diff -u \
-        <(cat "$result_dir/cpp_stdout.txt" | sed 's/[[:space:]]*$//') \
-        <(cat "$result_dir/go_stdout.txt" | sed 's/[[:space:]]*$//') \
+        <(LC_ALL=C cat "$result_dir/cpp_stdout.txt" | LC_ALL=C sed 's/[[:space:]]*$//') \
+        <(LC_ALL=C cat "$result_dir/go_stdout.txt" | LC_ALL=C sed 's/[[:space:]]*$//') \
         2>&1 || true
     } > "$failure_file"
     return

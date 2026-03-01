@@ -9081,10 +9081,41 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		AllowPartial: true,
 		Resolver:     dynamicpb.NewTypes(files),
 	}
+	utf8Retry := false
 	if err := unmarshalOpts.Unmarshal(data, msg); err != nil {
-		reformatProtoTextErrors(err, msgTypeName)
-		fmt.Fprintln(os.Stderr, "Failed to parse input.")
-		os.Exit(1)
+		if strings.Contains(err.Error(), "invalid UTF-8") {
+			utf8Retry = true
+		} else {
+			reformatProtoTextErrors(err, msgTypeName)
+			fmt.Fprintln(os.Stderr, "Failed to parse input.")
+			os.Exit(1)
+		}
+	}
+
+	if utf8Retry {
+		// C++ protoc accepts invalid UTF-8 in string fields during parsing and
+		// only emits a LOG(ERROR) warning during serialization. Go's prototext
+		// rejects it. Clone descriptors with string→bytes to bypass validation.
+		byteFds := cloneFdsStringToBytes(fds)
+		byteFiles, err := protodesc.NewFiles(byteFds)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Failed to parse input.")
+			os.Exit(1)
+		}
+		md2, _ := byteFiles.FindDescriptorByName(fullName)
+		msgDesc2 := md2.(protoreflect.MessageDescriptor)
+		msg = dynamicpb.NewMessage(msgDesc2)
+		unmarshalOpts2 := prototext.UnmarshalOptions{
+			AllowPartial: true,
+			Resolver:     dynamicpb.NewTypes(byteFiles),
+		}
+		if err := unmarshalOpts2.Unmarshal(data, msg); err != nil {
+			reformatProtoTextErrors(err, msgTypeName)
+			fmt.Fprintln(os.Stderr, "Failed to parse input.")
+			os.Exit(1)
+		}
+		// Emit C++ format warnings for string fields with invalid UTF-8
+		emitUtf8SerializeWarnings(msg, msgTypeName, msgDesc)
 	}
 
 	// Check for missing required fields (warning)
@@ -9111,6 +9142,49 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 
 	os.Stdout.Write(out)
 	return nil
+}
+
+// cloneFdsStringToBytes clones a FileDescriptorSet, changing all string fields to bytes.
+func cloneFdsStringToBytes(fds *descriptorpb.FileDescriptorSet) *descriptorpb.FileDescriptorSet {
+	clone := proto.Clone(fds).(*descriptorpb.FileDescriptorSet)
+	for _, fd := range clone.File {
+		for _, msg := range fd.MessageType {
+			convertMsgStringToBytes(msg)
+		}
+	}
+	return clone
+}
+
+func convertMsgStringToBytes(msg *descriptorpb.DescriptorProto) {
+	for _, f := range msg.Field {
+		if f.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING {
+			t := descriptorpb.FieldDescriptorProto_TYPE_BYTES
+			f.Type = &t
+		}
+	}
+	for _, nested := range msg.NestedType {
+		convertMsgStringToBytes(nested)
+	}
+}
+
+// emitUtf8SerializeWarnings emits C++ protoc format warnings for string fields with invalid UTF-8.
+func emitUtf8SerializeWarnings(msg *dynamicpb.Message, msgFQN string, origMsgDesc protoreflect.MessageDescriptor) {
+	origMsgDesc.Fields().Len() // ensure valid
+	for i := 0; i < origMsgDesc.Fields().Len(); i++ {
+		fd := origMsgDesc.Fields().Get(i)
+		if fd.Kind() != protoreflect.StringKind {
+			continue
+		}
+		// The msg was unmarshaled with bytes type, so look up by number
+		bytesFd := msg.Descriptor().Fields().ByNumber(fd.Number())
+		if bytesFd == nil || !msg.Has(bytesFd) {
+			continue
+		}
+		val := msg.Get(bytesFd).Bytes()
+		if !utf8.Valid(val) {
+			fmt.Fprintf(os.Stderr, "String field '%s.%s' contains invalid UTF-8 data when serializing a protocol buffer. Use the 'bytes' type if you intend to send raw bytes. \n", msgFQN, fd.Name())
+		}
+	}
 }
 
 // reformatProtoTextErrors reformats Go prototext errors to match C++ protoc format.
