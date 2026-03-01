@@ -698,6 +698,13 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(valErrors, "\n"))
 	}
 
+	// Detect unused imports (warnings only, no errors)
+	unusedImportWarnings := detectUnusedImports(relFiles, orderedFiles, parsed, parseResults)
+	for _, w := range unusedImportWarnings {
+		fmt.Fprintln(os.Stderr, mapErrorFilename(w, srcTree))
+		hadWarnings = true
+	}
+
 	// Handle --print_free_field_numbers mode
 	if cfg.printFreeFieldNumbers {
 		for _, f := range relFiles {
@@ -1004,6 +1011,257 @@ func findImportLocation(fd *descriptorpb.FileDescriptorProto, importedFile strin
 		}
 	}
 	return 0, 0
+}
+
+// detectUnusedImports checks for imports that are not referenced by any type,
+// extension, or custom option in the importing file. Returns warnings.
+func detectUnusedImports(relFiles []string, orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+	// Build FQN → defining filename map for all symbols
+	fqnToFile := map[string]string{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		prefix := ""
+		if pkg != "" {
+			prefix = pkg
+		}
+		collectFQNsToFile(fd.GetMessageType(), prefix, name, fqnToFile)
+		for _, e := range fd.GetEnumType() {
+			fqn := e.GetName()
+			if prefix != "" {
+				fqn = prefix + "." + e.GetName()
+			}
+			fqnToFile[fqn] = name
+		}
+		for _, svc := range fd.GetService() {
+			fqn := svc.GetName()
+			if prefix != "" {
+				fqn = prefix + "." + svc.GetName()
+			}
+			fqnToFile[fqn] = name
+		}
+	}
+
+	// Build extension (extendee, number) → defining filename map
+	extNumToFile := map[string]map[int32]string{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, ext := range fd.GetExtension() {
+			extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+			if extNumToFile[extendee] == nil {
+				extNumToFile[extendee] = map[int32]string{}
+			}
+			extNumToFile[extendee][ext.GetNumber()] = name
+		}
+		collectMsgExtNumsToFile(fd.GetMessageType(), name, extNumToFile)
+	}
+
+	var warnings []string
+	for _, filename := range relFiles {
+		fd := parsed[filename]
+		if fd == nil {
+			continue
+		}
+
+		// Build set of trackable imports (exclude public imports and deps with public deps)
+		trackable := map[string]bool{}
+		publicIdxSet := map[int]bool{}
+		for _, pubIdx := range fd.GetPublicDependency() {
+			publicIdxSet[int(pubIdx)] = true
+		}
+		for depIdx, dep := range fd.GetDependency() {
+			if publicIdxSet[depIdx] {
+				continue
+			}
+			depFd := parsed[dep]
+			if depFd != nil && len(depFd.GetPublicDependency()) > 0 {
+				continue
+			}
+			trackable[dep] = true
+		}
+
+		if len(trackable) == 0 {
+			continue
+		}
+
+		used := map[string]bool{}
+
+		// Scan type references in the file descriptor
+		markUsedTypes(fd, fqnToFile, used)
+
+		// Scan custom option extension references
+		markUsedExtensions(fd, extNumToFile, used)
+
+		// Emit warnings for unused imports (in dependency order)
+		for _, dep := range fd.GetDependency() {
+			if trackable[dep] && !used[dep] {
+				line, col := findImportLocation(fd, dep)
+				warnings = append(warnings, fmt.Sprintf("%s:%d:%d: warning: Import %s is unused.", filename, line, col, dep))
+			}
+		}
+	}
+
+	return warnings
+}
+
+// collectFQNsToFile recursively collects message/enum FQNs to their defining file.
+func collectFQNsToFile(msgs []*descriptorpb.DescriptorProto, prefix string, filename string, fqnToFile map[string]string) {
+	for _, msg := range msgs {
+		fqn := msg.GetName()
+		if prefix != "" {
+			fqn = prefix + "." + msg.GetName()
+		}
+		fqnToFile[fqn] = filename
+		for _, e := range msg.GetEnumType() {
+			efqn := fqn + "." + e.GetName()
+			fqnToFile[efqn] = filename
+		}
+		collectFQNsToFile(msg.GetNestedType(), fqn, filename, fqnToFile)
+	}
+}
+
+// collectMsgExtNumsToFile collects extension (extendee, number) → filename from nested messages.
+func collectMsgExtNumsToFile(msgs []*descriptorpb.DescriptorProto, filename string, extNumToFile map[string]map[int32]string) {
+	for _, msg := range msgs {
+		for _, ext := range msg.GetExtension() {
+			extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+			if extNumToFile[extendee] == nil {
+				extNumToFile[extendee] = map[int32]string{}
+			}
+			extNumToFile[extendee][ext.GetNumber()] = filename
+		}
+		collectMsgExtNumsToFile(msg.GetNestedType(), filename, extNumToFile)
+	}
+}
+
+// markUsedTypes scans all type references in a FileDescriptorProto and marks
+// the defining files as used.
+func markUsedTypes(fd *descriptorpb.FileDescriptorProto, fqnToFile map[string]string, used map[string]bool) {
+	markFQNUsed := func(typeName string) {
+		fqn := strings.TrimPrefix(typeName, ".")
+		if file, ok := fqnToFile[fqn]; ok {
+			used[file] = true
+		}
+	}
+
+	// Field types in messages
+	var scanMsgs func(msgs []*descriptorpb.DescriptorProto)
+	scanMsgs = func(msgs []*descriptorpb.DescriptorProto) {
+		for _, msg := range msgs {
+			for _, f := range msg.GetField() {
+				if f.GetTypeName() != "" {
+					markFQNUsed(f.GetTypeName())
+				}
+			}
+			for _, ext := range msg.GetExtension() {
+				if ext.GetTypeName() != "" {
+					markFQNUsed(ext.GetTypeName())
+				}
+				if ext.GetExtendee() != "" {
+					markFQNUsed(ext.GetExtendee())
+				}
+			}
+			scanMsgs(msg.GetNestedType())
+		}
+	}
+	scanMsgs(fd.GetMessageType())
+
+	// Top-level extension types and extendees
+	for _, ext := range fd.GetExtension() {
+		if ext.GetTypeName() != "" {
+			markFQNUsed(ext.GetTypeName())
+		}
+		if ext.GetExtendee() != "" {
+			markFQNUsed(ext.GetExtendee())
+		}
+	}
+
+	// Service method input/output types
+	for _, svc := range fd.GetService() {
+		for _, m := range svc.GetMethod() {
+			if m.GetInputType() != "" {
+				markFQNUsed(m.GetInputType())
+			}
+			if m.GetOutputType() != "" {
+				markFQNUsed(m.GetOutputType())
+			}
+		}
+	}
+}
+
+// markUsedExtensions scans unknown fields in all Options messages to find
+// custom extension references and marks the defining files as used.
+func markUsedExtensions(fd *descriptorpb.FileDescriptorProto, extNumToFile map[string]map[int32]string, used map[string]bool) {
+	checkOpts := func(extendee string, opts proto.Message) {
+		if opts == nil {
+			return
+		}
+		raw := opts.ProtoReflect().GetUnknown()
+		if len(raw) == 0 {
+			return
+		}
+		nums := extNumToFile[extendee]
+		if nums == nil {
+			return
+		}
+		for len(raw) > 0 {
+			num, _, n := protowire.ConsumeField(raw)
+			if n < 0 {
+				break
+			}
+			if file, ok := nums[int32(num)]; ok {
+				used[file] = true
+			}
+			raw = raw[n:]
+		}
+	}
+
+	checkOpts("google.protobuf.FileOptions", fd.GetOptions())
+
+	var scanMsgs func(msgs []*descriptorpb.DescriptorProto)
+	scanMsgs = func(msgs []*descriptorpb.DescriptorProto) {
+		for _, msg := range msgs {
+			checkOpts("google.protobuf.MessageOptions", msg.GetOptions())
+			for _, f := range msg.GetField() {
+				checkOpts("google.protobuf.FieldOptions", f.GetOptions())
+			}
+			for _, e := range msg.GetEnumType() {
+				checkOpts("google.protobuf.EnumOptions", e.GetOptions())
+				for _, v := range e.GetValue() {
+					checkOpts("google.protobuf.EnumValueOptions", v.GetOptions())
+				}
+			}
+			for _, oo := range msg.GetOneofDecl() {
+				checkOpts("google.protobuf.OneofOptions", oo.GetOptions())
+			}
+			for _, er := range msg.GetExtensionRange() {
+				checkOpts("google.protobuf.ExtensionRangeOptions", er.GetOptions())
+			}
+			for _, ext := range msg.GetExtension() {
+				checkOpts("google.protobuf.FieldOptions", ext.GetOptions())
+			}
+			scanMsgs(msg.GetNestedType())
+		}
+	}
+	scanMsgs(fd.GetMessageType())
+
+	for _, svc := range fd.GetService() {
+		checkOpts("google.protobuf.ServiceOptions", svc.GetOptions())
+		for _, m := range svc.GetMethod() {
+			checkOpts("google.protobuf.MethodOptions", m.GetOptions())
+		}
+	}
+
+	for _, e := range fd.GetEnumType() {
+		checkOpts("google.protobuf.EnumOptions", e.GetOptions())
+		for _, v := range e.GetValue() {
+			checkOpts("google.protobuf.EnumValueOptions", v.GetOptions())
+		}
+	}
+
+	for _, ext := range fd.GetExtension() {
+		checkOpts("google.protobuf.FieldOptions", ext.GetOptions())
+	}
 }
 
 func parseArgs(args []string) (*config, error) {
