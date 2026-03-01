@@ -256,6 +256,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 114. [DONE] Fix `442_enum_reserved_int32_min` — `parseEnumReserved` checked `startNum > math.MaxInt32` before applying negation, so `-2147483648` (INT32_MIN) was rejected because `2147483648 > MaxInt32`. Fixed by computing `upperBound` based on whether the value is negative: `MaxInt32+1` when negative (allowing INT32_MIN), `MaxInt32` otherwise. Applied same fix to end number in range. All 4039/4039 tests pass.
 
+115. [DONE] Fix `cli@direct_dependencies` — C++ protoc validates that all imports are declared in `--direct_dependencies` (colon-delimited list). Go silently skipped the flag. Added `directDependencies` set and `directDependenciesViolationMsg` to config. Parsed both `--direct_dependencies=` and `--direct_dependencies_violation_msg=` flags. After parsing all files, checks each explicit proto file's imports against the allowed set. Default violation message: `File is imported but not declared in --direct_dependencies: %s`. All 4049/4049 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `validateEnumPrefixConflict` checks enum value names for conflicts after prefix stripping and PascalCasing, matching C++ `CheckEnumValueUniqueness`. `prefixRemoverMaybeRemove` strips the enum type name prefix (lowercased, underscores removed) from value names. `enumValueToPascalCase` converts UPPER_SNAKE_CASE to PascalCase. Skips conflicts where values have the same name (handled by duplicate name check) or same number (aliases). Proto2 enums with `deprecated_legacy_json_field_conflicts` option skip the check. Error location uses SCI path `[enumPath, 2, valueIdx, 1]` (enum value name field).
