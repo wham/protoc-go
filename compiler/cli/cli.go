@@ -9404,8 +9404,11 @@ func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorp
 	}
 
 	// Print unknown fields (in wire order)
-	for _, e := range unknownEntries {
-		printUnknownField(w, e, prefix, indent, allMsgs)
+	// C++ protoc discards unknown fields from map entries during ParseFromString.
+	if msgDesc == nil || !msgDesc.GetOptions().GetMapEntry() {
+		for _, e := range unknownEntries {
+			printUnknownField(w, e, prefix, indent, allMsgs)
+		}
 	}
 }
 
