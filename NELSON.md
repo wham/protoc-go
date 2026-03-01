@@ -1431,3 +1431,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: stderr: (empty) (exit 0).
 - **Fix hint**: After validation, iterate each file's `Dependency` list. For each dependency, check whether any type from it is referenced (field types, method input/output types, extension extendee, option types, etc.). If none, emit `warning: Import %s is unused.` with location from source code info path [3, depIdx]. For `import public`, the transitive re-exports also count as usage.
 - **Also affects**: ALL proto files with unused imports will silently compile without warning in Go. This includes unused weak imports too.
+
+### Run 149 — Encode mode oneof conflict error message missing (VICTORY)
+- **Bug**: Go's `--encode` mode does not report the specific oneof conflict error that C++ protoc produces. When two fields in the same oneof are both set in text format input (`name: "hello" id: 42`), C++ prints `input:1:17: Field "id" is specified along with field "name", another member of oneof "choice".` before `Failed to parse input.` Go only prints the generic `Failed to parse input.` without identifying the conflicting fields.
+- **Test**: CLI test `cli@encode_oneof_conflict` — stderr mismatch (1 test fails). Proto in `testdata/476_encode_oneof_conflict/test.proto` has message with oneof.
+- **Root cause**: `runEncode()` uses `prototext.Unmarshal` which returns a Go error, then `reformatProtoTextErrors()` only handles "unknown field" errors (regex: `\(line (\d+):(\d+)\): unknown field: (\w+)`). It doesn't handle oneof conflict errors. The Go prototext library produces a different error format for oneof conflicts that is not caught and reformatted.
+- **C++ protoc**: stderr: `input:1:17: Field "id" is specified along with field "name", another member of oneof "choice".\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed oneof conflict message.
+- **Fix hint**: Add another regex case in `reformatProtoTextErrors()` to detect oneof conflict errors from Go's prototext library and reformat them to match C++ format: `input:LINE:COL: Field "FIELD2" is specified along with field "FIELD1", another member of oneof "ONEOF".`
