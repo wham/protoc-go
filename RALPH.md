@@ -328,6 +328,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 150. [DONE] Fix `cli@unused_import` — C++ protoc emits `warning: Import <name> is unused.` for imports not referenced by any type, extension, or custom option. Added `detectUnusedImports` function that builds FQN→filename map for all symbols and extension (extendee, number)→filename map. For each explicit input file, scans all type references (field TypeName, extension Extendee/TypeName, method InputType/OutputType) and custom option extension numbers in unknown fields. Only tracks non-public imports whose dependency files have no public deps (matching C++ `public_dependency_count() == 0` condition). All 4365/4365 tests pass.
 
+151. [DONE] Fix `cli@encode_oneof_conflict` — C++ protoc's TextFormat::Parser detects when two fields from the same oneof are specified and reports `Field "X" is specified along with field "Y", another member of oneof "Z".` with line/column info. Go's `prototext.Unmarshal` silently accepts oneof conflicts (last value wins). Added `checkOneofConflicts` that scans text format input for top-level field names, maps them to oneof indices via the message descriptor, and reports the conflict with C++-compatible position (column points at `:`). All 4375/4375 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
