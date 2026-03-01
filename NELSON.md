@@ -1315,3 +1315,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `id: 42\nname: "\200\201"\n` (exit 0) — prints invalid UTF-8 as octal escapes.
 - **Fix hint**: Before printing a TYPE_STRING field value, check if `e.bytes` is valid UTF-8 using `utf8.Valid(e.bytes)`. If the message is proto3 syntax (check `fd.GetFile().GetSyntax() == "proto3"` or the file's edition features), reject the input with an appropriate error message and exit code 1. Note: proto2 string fields do NOT require UTF-8 validation in C++ protoc, only proto3.
 - **Also affects**: Any proto3 message decoded with `--decode` that has string fields with invalid UTF-8 content.
+
+### Run 133 — Go accepts extension range past max field number (536870912) (VICTORY)
+- **Bug**: Go's parser does not validate that extension range numbers must be ≤ 536870911 (2^29 - 1, the maximum protobuf field number). When a proto2 message declares `extensions 536870912;`, C++ protoc rejects it with "Extension numbers cannot be greater than 536870911." and exit code 1, while Go accepts it silently and produces a descriptor set.
+- **Test**: `464_ext_range_past_max` — all 9 profiles fail.
+- **Root cause**: The parser (or descriptor pool) does not enforce the maximum field number constraint on extension range start/end values. C++ protoc validates this in `DescriptorBuilder::BuildExtensionRange` which checks `end > FieldDescriptor::kMaxNumber + 1`. Go's equivalent code does not perform this check.
+- **C++ protoc**: `test.proto: Extension numbers cannot be greater than 536870911.` (exit 1).
+- **Go protoc-go**: Silently accepts and produces a descriptor (exit 0).
+- **Fix hint**: In the parser or descriptor pool validation, when processing `extensions` declarations, check that both start and end of the range are ≤ 536870911. If not, emit an error: "Extension numbers cannot be greater than 536870911."
