@@ -4337,13 +4337,110 @@ func mergeUnknownExtensions(m protoreflect.Message, mergeableFields map[int32]bo
 			if !emitted[e.num] {
 				emitted[e.num] = true
 				result = protowire.AppendTag(result, e.num, protowire.BytesType)
-				result = protowire.AppendBytes(result, merged[e.num])
+				result = protowire.AppendBytes(result, mergeNestedBytes(merged[e.num]))
 			}
 		} else {
 			result = append(result, e.raw...)
 		}
 	}
 	m.SetUnknown(result)
+}
+
+// mergeNestedBytes recursively merges duplicate bytes-type fields within raw
+// protobuf bytes. This handles deep sub-field option merging: when two entries
+// for the same message field exist (e.g., inner { value: "hello" } and
+// inner { num: 42 }), they are merged into one entry (inner { value: "hello",
+// num: 42 }), recursively.
+func mergeNestedBytes(data []byte) []byte {
+	type entry struct {
+		num     protowire.Number
+		wtyp    protowire.Type
+		payload []byte
+		raw     []byte
+	}
+	var entries []entry
+	buf := data
+	for len(buf) > 0 {
+		entryStart := buf
+		num, wtyp, n := protowire.ConsumeTag(buf)
+		if n < 0 {
+			return data
+		}
+		buf = buf[n:]
+		var payload []byte
+		switch wtyp {
+		case protowire.BytesType:
+			v, vn := protowire.ConsumeBytes(buf)
+			if vn < 0 {
+				return data
+			}
+			payload = v
+			buf = buf[vn:]
+		case protowire.VarintType:
+			_, vn := protowire.ConsumeVarint(buf)
+			if vn < 0 {
+				return data
+			}
+			buf = buf[vn:]
+		case protowire.Fixed32Type:
+			_, vn := protowire.ConsumeFixed32(buf)
+			if vn < 0 {
+				return data
+			}
+			buf = buf[vn:]
+		case protowire.Fixed64Type:
+			_, vn := protowire.ConsumeFixed64(buf)
+			if vn < 0 {
+				return data
+			}
+			buf = buf[vn:]
+		case protowire.StartGroupType:
+			_, vn := protowire.ConsumeGroup(num, buf)
+			if vn < 0 {
+				return data
+			}
+			buf = buf[vn:]
+		default:
+			return data
+		}
+		entries = append(entries, entry{num: num, wtyp: wtyp, payload: payload, raw: entryStart[:len(entryStart)-len(buf)]})
+	}
+
+	// Check if any bytes-type field appears more than once
+	counts := make(map[protowire.Number]int)
+	needsMerge := false
+	for _, e := range entries {
+		if e.wtyp == protowire.BytesType {
+			counts[e.num]++
+			if counts[e.num] > 1 {
+				needsMerge = true
+			}
+		}
+	}
+	if !needsMerge {
+		return data
+	}
+
+	merged := make(map[protowire.Number][]byte)
+	for _, e := range entries {
+		if e.wtyp == protowire.BytesType && counts[e.num] > 1 {
+			merged[e.num] = append(merged[e.num], e.payload...)
+		}
+	}
+	emitted := make(map[protowire.Number]bool)
+	var result []byte
+	for _, e := range entries {
+		if e.wtyp == protowire.BytesType && counts[e.num] > 1 {
+			if !emitted[e.num] {
+				emitted[e.num] = true
+				result = protowire.AppendTag(result, e.num, protowire.BytesType)
+				result = protowire.AppendBytes(result, mergeNestedBytes(merged[e.num]))
+			}
+		} else {
+			result = append(result, e.raw...)
+		}
+	}
+	return result
 }
 
 // sourceRetentionFields maps extendee type name (e.g., ".google.protobuf.FieldOptions")

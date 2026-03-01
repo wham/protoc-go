@@ -240,6 +240,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 106. [DONE] Fix `434_incomplete_exponent` — C++ protoc emits `"e" must be followed by exponent.` when a number has `e`/`E` but no digits follow. Added validation in both `readNumber` and `readFloatStartingWithDot` to check that at least one digit follows the exponent prefix. Error position is at the current position after consuming `e` and optional `+`/`-`, matching C++ protoc's column. All 3966/3966 tests pass.
 
+107. [DONE] Fix `435_positive_default` — C++ protoc rejects `+` prefix on integer default values with `Expected integer for field default value.` but Go's integer type check only rejected `TokenString`, `TokenFloat`, and `TokenIdent`, not other token types like `TokenSymbol` (which `+` is). Changed condition from explicit type blacklist to `valTok.Type != tokenizer.TokenInt`, rejecting any non-integer token. All 3975/3975 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `validateEnumPrefixConflict` checks enum value names for conflicts after prefix stripping and PascalCasing, matching C++ `CheckEnumValueUniqueness`. `prefixRemoverMaybeRemove` strips the enum type name prefix (lowercased, underscores removed) from value names. `enumValueToPascalCase` converts UPPER_SNAKE_CASE to PascalCase. Skips conflicts where values have the same name (handled by duplicate name check) or same number (aliases). Proto2 enums with `deprecated_legacy_json_field_conflicts` option skip the check. Error location uses SCI path `[enumPath, 2, valueIdx, 1]` (enum value name field).
