@@ -79,6 +79,17 @@ func (t *Tokenizer) tokenize() {
 		ch := t.input[t.pos]
 		t.comments = append(t.comments, cd)
 
+		// Check for control characters (null byte and unprintable bytes 1-31
+		// excluding whitespace chars that are already consumed by collectComments).
+		if isControlChar(ch) {
+			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Invalid control characters encountered in text."})
+			t.advance()
+			for t.pos < len(t.input) && isControlChar(t.input[t.pos]) {
+				t.advance()
+			}
+			continue
+		}
+
 		if ch == '"' || ch == '\'' {
 			t.readString()
 		} else if ch >= '0' && ch <= '9' {
@@ -244,15 +255,15 @@ func (t *Tokenizer) flushComment(result *TokenComments, buf *strings.Builder, ca
 // readLineCommentText reads text after "//" until end of line, returns text with trailing \n.
 func (t *Tokenizer) readLineCommentText() string {
 	start := t.pos
-	for t.pos < len(t.input) && t.input[t.pos] != '\n' {
+	for t.pos < len(t.input) && t.input[t.pos] != '\n' && t.input[t.pos] != 0 {
 		t.advance()
 	}
 	text := t.input[start:t.pos]
-	if t.pos < len(t.input) {
+	if t.pos < len(t.input) && t.input[t.pos] == '\n' {
 		t.advance() // skip \n
 		return text + "\n"
 	}
-	// EOF without trailing newline
+	// EOF or null byte without trailing newline
 	return text
 }
 
@@ -311,6 +322,11 @@ func (t *Tokenizer) readBlockCommentText(startLine, startCol int) string {
 			continue
 		}
 
+		if ch == 0 {
+			// Null byte terminates block comment (same as EOF in C++ protoc)
+			break
+		}
+
 		buf.WriteByte(ch)
 		t.advance()
 	}
@@ -345,6 +361,10 @@ func (t *Tokenizer) readString() {
 	t.advance() // skip opening quote
 	var sb strings.Builder
 	for t.pos < len(t.input) && t.input[t.pos] != quote {
+		if t.input[t.pos] == 0 {
+			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Unexpected end of string."})
+			break
+		}
 		if t.input[t.pos] == '\n' {
 			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Multiline strings are not allowed. Did you miss a \"?."})
 			break
@@ -640,6 +660,19 @@ func (t *Tokenizer) ExpectString() (Token, error) {
 		return tok, fmt.Errorf("%d:%d: Expected string.", tok.Line+1, tok.Column+1)
 	}
 	return tok, nil
+}
+
+// isControlChar returns true for null byte and unprintable ASCII control characters
+// (bytes 1-31) excluding whitespace characters (tab, newline, carriage return,
+// vertical tab, form feed) which are handled elsewhere.
+func isControlChar(ch byte) bool {
+	if ch == 0 {
+		return true
+	}
+	if ch < ' ' && ch != '\t' && ch != '\n' && ch != '\r' && ch != '\v' && ch != '\f' {
+		return true
+	}
+	return false
 }
 
 func isIdentStart(ch byte) bool {
