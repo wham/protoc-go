@@ -8726,9 +8726,10 @@ func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescri
 	closedEnums := make(map[string]bool)
 	for _, fd := range parsed {
 		pkg := fd.GetPackage()
-		isClosed := fd.GetSyntax() != "proto3"
+		isEditions := fd.GetSyntax() == "editions"
+		isClosed := fd.GetSyntax() != "proto3" && !isEditions
 		for _, msg := range fd.GetMessageType() {
-			collectMsgsForDecode(pkg, "", msg, allMsgs, allEnums, allExts, closedEnums, isClosed)
+			collectMsgsForDecode(pkg, "", msg, allMsgs, allEnums, allExts, closedEnums, isClosed, isEditions, fd)
 		}
 		for _, ed := range fd.GetEnumType() {
 			var fqn string
@@ -8738,7 +8739,11 @@ func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescri
 				fqn = ed.GetName()
 			}
 			allEnums[fqn] = buildEnumValMap(ed)
-			if isClosed {
+			if isEditions {
+				if !isEnumOpen(ed, fd) {
+					closedEnums[fqn] = true
+				}
+			} else if isClosed {
 				closedEnums[fqn] = true
 			}
 		}
@@ -8763,7 +8768,7 @@ func addDecodeExt(allExts map[string]map[int32]*decodeExt, pkg, prefix string, e
 	allExts[extendee][ext.GetNumber()] = &decodeExt{fqn: extFQN, fd: ext}
 }
 
-func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto, out map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, allExts map[string]map[int32]*decodeExt, closedEnums map[string]bool, isClosed bool) {
+func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto, out map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, allExts map[string]map[int32]*decodeExt, closedEnums map[string]bool, isClosed bool, isEditions bool, fd *descriptorpb.FileDescriptorProto) {
 	var fqn string
 	if pkg != "" {
 		fqn = pkg + "." + prefix + msg.GetName()
@@ -8774,7 +8779,11 @@ func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto,
 	for _, ed := range msg.GetEnumType() {
 		enumFQN := fqn + "." + ed.GetName()
 		allEnums[enumFQN] = buildEnumValMap(ed)
-		if isClosed {
+		if isEditions {
+			if !isEnumOpen(ed, fd) {
+				closedEnums[enumFQN] = true
+			}
+		} else if isClosed {
 			closedEnums[enumFQN] = true
 		}
 	}
@@ -8782,7 +8791,7 @@ func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto,
 		addDecodeExt(allExts, pkg, prefix+msg.GetName()+".", ext)
 	}
 	for _, nested := range msg.GetNestedType() {
-		collectMsgsForDecode(pkg, prefix+msg.GetName()+".", nested, out, allEnums, allExts, closedEnums, isClosed)
+		collectMsgsForDecode(pkg, prefix+msg.GetName()+".", nested, out, allEnums, allExts, closedEnums, isClosed, isEditions, fd)
 	}
 }
 
