@@ -8684,11 +8684,17 @@ func sortProtoUnknown(m proto.Message) {
 	ref.SetUnknown(sorted)
 }
 
+// decodeExt holds info about an extension field for --decode mode.
+type decodeExt struct {
+	fqn string
+	fd  *descriptorpb.FieldDescriptorProto
+}
+
 // runDecode implements --decode mode: reads binary protobuf from stdin and
 // prints text format using the schema from parsed proto files.
 func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles []string) error {
 	// Find the message descriptor
-	msgDesc, allMsgs, allEnums := findMessageType(msgTypeName, parsed)
+	msgDesc, allMsgs, allEnums, allExts := findMessageType(msgTypeName, parsed)
 	if msgDesc == nil {
 		return fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)
 	}
@@ -8706,20 +8712,21 @@ func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 	}
 
 	// Print in text format
-	printTextProto(os.Stdout, data, msgDesc, allMsgs, allEnums, 0)
+	printTextProto(os.Stdout, data, msgTypeName, msgDesc, allMsgs, allEnums, allExts, 0)
 	return nil
 }
 
 // findMessageType searches all parsed FileDescriptorProtos for a message
-// with the given fully-qualified name. Returns the descriptor and a map of
-// all message FQNs to their descriptors.
-func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescriptorProto) (*descriptorpb.DescriptorProto, map[string]*descriptorpb.DescriptorProto, map[string]map[int32]string) {
+// with the given fully-qualified name. Returns the descriptor, maps of all
+// messages, enums, and extensions.
+func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescriptorProto) (*descriptorpb.DescriptorProto, map[string]*descriptorpb.DescriptorProto, map[string]map[int32]string, map[string]map[int32]*decodeExt) {
 	allMsgs := make(map[string]*descriptorpb.DescriptorProto)
 	allEnums := make(map[string]map[int32]string)
+	allExts := make(map[string]map[int32]*decodeExt)
 	for _, fd := range parsed {
 		pkg := fd.GetPackage()
 		for _, msg := range fd.GetMessageType() {
-			collectMsgsForDecode(pkg, "", msg, allMsgs, allEnums)
+			collectMsgsForDecode(pkg, "", msg, allMsgs, allEnums, allExts)
 		}
 		for _, ed := range fd.GetEnumType() {
 			var fqn string
@@ -8730,11 +8737,28 @@ func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescri
 			}
 			allEnums[fqn] = buildEnumValMap(ed)
 		}
+		for _, ext := range fd.GetExtension() {
+			addDecodeExt(allExts, pkg, "", ext)
+		}
 	}
-	return allMsgs[fullName], allMsgs, allEnums
+	return allMsgs[fullName], allMsgs, allEnums, allExts
 }
 
-func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto, out map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string) {
+func addDecodeExt(allExts map[string]map[int32]*decodeExt, pkg, prefix string, ext *descriptorpb.FieldDescriptorProto) {
+	extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+	if allExts[extendee] == nil {
+		allExts[extendee] = make(map[int32]*decodeExt)
+	}
+	var extFQN string
+	if pkg != "" {
+		extFQN = pkg + "." + prefix + ext.GetName()
+	} else {
+		extFQN = prefix + ext.GetName()
+	}
+	allExts[extendee][ext.GetNumber()] = &decodeExt{fqn: extFQN, fd: ext}
+}
+
+func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto, out map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, allExts map[string]map[int32]*decodeExt) {
 	var fqn string
 	if pkg != "" {
 		fqn = pkg + "." + prefix + msg.GetName()
@@ -8745,8 +8769,11 @@ func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto,
 	for _, ed := range msg.GetEnumType() {
 		allEnums[fqn+"."+ed.GetName()] = buildEnumValMap(ed)
 	}
+	for _, ext := range msg.GetExtension() {
+		addDecodeExt(allExts, pkg, prefix+msg.GetName()+".", ext)
+	}
 	for _, nested := range msg.GetNestedType() {
-		collectMsgsForDecode(pkg, prefix+msg.GetName()+".", nested, out, allEnums)
+		collectMsgsForDecode(pkg, prefix+msg.GetName()+".", nested, out, allEnums, allExts)
 	}
 }
 
@@ -8867,14 +8894,16 @@ func resolveFieldMsgType(fd *descriptorpb.FieldDescriptorProto, allMsgs map[stri
 // printTextProto prints binary protobuf data in text format using the message
 // schema. Known fields are printed by name, unknown fields by number.
 // This matches C++ protoc's TextFormat::Print behavior for --decode.
-func printTextProto(w *os.File, data []byte, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, indent int) {
+func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, allExts map[string]map[int32]*decodeExt, indent int) {
 	fieldMap := buildFieldMap(msgDesc)
+	extMap := allExts[msgFQN] // extensions for this message type
 
 	// Collect all known and unknown field entries in wire order
 	type fieldEntry struct {
 		num     protowire.Number
 		wtype   protowire.Type
 		known   *descriptorpb.FieldDescriptorProto
+		extFQN  string // non-empty for extension fields
 		varint  uint64
 		fixed32 uint32
 		fixed64 uint64
@@ -8893,7 +8922,14 @@ func printTextProto(w *os.File, data []byte, msgDesc *descriptorpb.DescriptorPro
 		}
 		pos += n
 		fd := fieldMap[int32(num)]
-		entry := fieldEntry{num: num, wtype: wtype, known: fd}
+		var extFQN string
+		if fd == nil && extMap != nil {
+			if ext := extMap[int32(num)]; ext != nil {
+				fd = ext.fd
+				extFQN = ext.fqn
+			}
+		}
+		entry := fieldEntry{num: num, wtype: wtype, known: fd, extFQN: extFQN}
 
 		switch wtype {
 		case protowire.VarintType:
@@ -8973,7 +9009,7 @@ func printTextProto(w *os.File, data []byte, msgDesc *descriptorpb.DescriptorPro
 			packed := entry.bytes
 			ppos := 0
 			for ppos < len(packed) {
-				pe := fieldEntry{num: num, known: fd}
+				pe := fieldEntry{num: num, known: fd, extFQN: extFQN}
 				switch fd.GetType() {
 				case descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
 					descriptorpb.FieldDescriptorProto_TYPE_SFIXED64,
@@ -9023,7 +9059,7 @@ func printTextProto(w *os.File, data []byte, msgDesc *descriptorpb.DescriptorPro
 		return knownEntries[i].num < knownEntries[j].num
 	})
 	for _, e := range knownEntries {
-		printKnownField(w, e, prefix, allMsgs, allEnums, indent)
+		printKnownField(w, e, prefix, allMsgs, allEnums, allExts, indent)
 	}
 
 	// Print unknown fields (in wire order)
@@ -9036,14 +9072,18 @@ func printKnownField(w *os.File, e struct {
 	num     protowire.Number
 	wtype   protowire.Type
 	known   *descriptorpb.FieldDescriptorProto
+	extFQN  string
 	varint  uint64
 	fixed32 uint32
 	fixed64 uint64
 	bytes   []byte
 	group   []byte
-}, prefix string, allMsgs map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, indent int) {
+}, prefix string, allMsgs map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, allExts map[string]map[int32]*decodeExt, indent int) {
 	fd := e.known
 	name := fd.GetName()
+	if e.extFQN != "" {
+		name = "[" + e.extFQN + "]"
+	}
 	t := fd.GetType()
 
 	switch t {
@@ -9100,9 +9140,10 @@ func printKnownField(w *os.File, e struct {
 		}
 	case descriptorpb.FieldDescriptorProto_TYPE_MESSAGE:
 		subMsg := resolveFieldMsgType(fd, allMsgs)
+		subFQN := strings.TrimPrefix(fd.GetTypeName(), ".")
 		if subMsg != nil {
 			fmt.Fprintf(w, "%s%s {\n", prefix, name)
-			printTextProto(w, e.bytes, subMsg, allMsgs, allEnums, indent+1)
+			printTextProto(w, e.bytes, subFQN, subMsg, allMsgs, allEnums, allExts, indent+1)
 			fmt.Fprintf(w, "%s}\n", prefix)
 		} else {
 			fmt.Fprintf(w, "%s%s {\n", prefix, name)
@@ -9111,6 +9152,7 @@ func printKnownField(w *os.File, e struct {
 		}
 	case descriptorpb.FieldDescriptorProto_TYPE_GROUP:
 		subMsg := resolveFieldMsgType(fd, allMsgs)
+		subFQN := strings.TrimPrefix(fd.GetTypeName(), ".")
 		groupName := fd.GetTypeName()
 		if idx := strings.LastIndex(groupName, "."); idx >= 0 {
 			groupName = groupName[idx+1:]
@@ -9118,9 +9160,12 @@ func printKnownField(w *os.File, e struct {
 		if strings.HasPrefix(groupName, ".") {
 			groupName = groupName[1:]
 		}
+		if e.extFQN != "" {
+			groupName = name
+		}
 		if subMsg != nil {
 			fmt.Fprintf(w, "%s%s {\n", prefix, groupName)
-			printTextProto(w, e.group, subMsg, allMsgs, allEnums, indent+1)
+			printTextProto(w, e.group, subFQN, subMsg, allMsgs, allEnums, allExts, indent+1)
 			fmt.Fprintf(w, "%s}\n", prefix)
 		} else {
 			fmt.Fprintf(w, "%s%s {\n", prefix, groupName)
@@ -9138,6 +9183,7 @@ func printUnknownField(w *os.File, e struct {
 	num     protowire.Number
 	wtype   protowire.Type
 	known   *descriptorpb.FieldDescriptorProto
+	extFQN  string
 	varint  uint64
 	fixed32 uint32
 	fixed64 uint64
