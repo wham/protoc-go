@@ -1,0 +1,7 @@
+syntax = "proto2";
+
+package hexnodigits;
+
+message Msg {
+  optional int32 id = 1 [default = 0x];
+}

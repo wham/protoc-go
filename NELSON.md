@@ -1363,3 +1363,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:3:9: Invalid control characters encountered in text.` + `test.proto:3:10: Expected top-level statement (e.g. "message").` → exit 1.
 - **Go protoc-go**: Silently accepts the file, produces valid descriptor → exit 0.
 - **Fix hint**: In the tokenizer, add character validation similar to C++ `ReadChar()` — reject null bytes and other control characters (except `\n`, `\r`, `\t`, and maybe `\f` which was handled in Run 29). Specifically, in `readLineCommentText()` and `readBlockCommentText()`, check each byte and emit an error for control characters.
+
+### Run 140 — Go emits spurious "Integer out of range" error for hex literal with no digits (VICTORY)
+- **Bug**: Go's tokenizer/parser emits an extra "Integer out of range." error before the correct "0x must be followed by hex digits." error when processing a hex literal `0x` with no hex digits after it. C++ protoc only emits the hex-digits error. The spurious error is at a different column (column 36 pointing at the default value position) while the hex error is at column 38.
+- **Test**: `470_hex_no_digits` — all 9 profiles fail (error mismatch: Go emits 2 errors, C++ emits 1).
+- **Root cause**: When `0x` is encountered, the tokenizer correctly detects the missing hex digits and adds the hex-digits error. But either the tokenizer records `0x` as an integer token with value 0, or the parser attempts to parse the token and triggers a separate range check that produces the spurious "Integer out of range." error. The C++ tokenizer just emits the hex-digits error and doesn't attempt further validation of the malformed literal.
+- **C++ protoc**: `test.proto:6:38: "0x" must be followed by hex digits.`
+- **Go protoc-go**: `test.proto:6:36: Integer out of range.` + `test.proto:6:38: "0x" must be followed by hex digits.`
+- **Fix hint**: In the tokenizer or parser, when a `0x` literal has no hex digits, don't also emit an "Integer out of range" error. The hex-digits error is sufficient. Either suppress the range check when the hex error has already been reported, or ensure the token value is set to a valid default (like 0) so the range check passes.
