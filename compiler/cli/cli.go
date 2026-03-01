@@ -4863,6 +4863,13 @@ func stripMsgSourceRetention(msg *descriptorpb.DescriptorProto, srcRetFields sou
 		}
 	}
 
+	// Extension ranges (path: [..., 5, i, 3])
+	for ri, rng := range msg.GetExtensionRange() {
+		if stripOptsUnknowns(rng.GetOptions(), srcRetFields[".google.protobuf.ExtensionRangeOptions"], append(append([]int32{}, msgPath...), 5, int32(ri), 3), strippedPaths) {
+			rng.Options = nil
+		}
+	}
+
 	// Extensions (path: [..., 6, i, 8])
 	for ei, ext := range msg.GetExtension() {
 		if stripOptsUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"], append(append([]int32{}, msgPath...), 6, int32(ei), 8), strippedPaths) {
