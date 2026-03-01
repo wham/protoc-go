@@ -9110,6 +9110,36 @@ func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorp
 		}
 	}
 
+	// Deduplicate oneof fields: for each oneof, keep only the last entry.
+	// This matches C++ protoc's MergeFromString semantics where setting a
+	// oneof field clears the previous member.
+	if msgDesc != nil {
+		fieldToOneof := make(map[int32]int32)
+		for _, f := range msgDesc.GetField() {
+			if f.OneofIndex != nil {
+				fieldToOneof[f.GetNumber()] = f.GetOneofIndex()
+			}
+		}
+		if len(fieldToOneof) > 0 {
+			// Scan backwards to find the last entry for each oneof
+			lastOneofIdx := make(map[int32]int) // oneof index → last knownEntries index
+			for i, e := range knownEntries {
+				if oi, ok := fieldToOneof[int32(e.num)]; ok {
+					lastOneofIdx[oi] = i
+				}
+			}
+			// Filter: keep entries that are not oneof, or are the last for their oneof
+			filtered := knownEntries[:0]
+			for i, e := range knownEntries {
+				oi, isOneof := fieldToOneof[int32(e.num)]
+				if !isOneof || lastOneofIdx[oi] == i {
+					filtered = append(filtered, e)
+				}
+			}
+			knownEntries = filtered
+		}
+	}
+
 	prefix := strings.Repeat("  ", indent)
 
 	// Print known fields first (sorted by field number, map entries sorted by key)
