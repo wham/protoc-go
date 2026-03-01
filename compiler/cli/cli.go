@@ -8743,6 +8743,11 @@ func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		os.Exit(1)
 	}
 
+	// Check for missing required fields (warning, not error)
+	if missing := findMissingRequired(data, msgDesc, allMsgs, ""); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "warning:  Input message is missing required fields:  %s\n", strings.Join(missing, ", "))
+	}
+
 	// Print in text format
 	printTextProto(os.Stdout, data, msgTypeName, msgDesc, allMsgs, allEnums, allExts, closedEnums, 0)
 	return nil
@@ -8952,6 +8957,110 @@ func buildFieldMap(msg *descriptorpb.DescriptorProto) map[int32]*descriptorpb.Fi
 		m[f.GetNumber()] = f
 	}
 	return m
+}
+
+// findMissingRequired returns the names of missing required fields in the given
+// protobuf data, using dot-separated paths for nested messages.
+func findMissingRequired(data []byte, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, prefix string) []string {
+	// Collect which field numbers are present
+	present := make(map[int32]bool)
+	// Also collect bytes for message fields to recurse into
+	type msgFieldData struct {
+		fd   *descriptorpb.FieldDescriptorProto
+		data []byte
+	}
+	var msgFields []msgFieldData
+	fieldMap := buildFieldMap(msgDesc)
+
+	pos := 0
+	for pos < len(data) {
+		num, wtype, n := protowire.ConsumeTag(data[pos:])
+		if n < 0 {
+			break
+		}
+		pos += n
+		present[int32(num)] = true
+		switch wtype {
+		case protowire.VarintType:
+			_, vn := protowire.ConsumeVarint(data[pos:])
+			if vn < 0 {
+				return nil
+			}
+			pos += vn
+		case protowire.Fixed64Type:
+			pos += 8
+		case protowire.Fixed32Type:
+			pos += 4
+		case protowire.BytesType:
+			v, vn := protowire.ConsumeBytes(data[pos:])
+			if vn < 0 {
+				return nil
+			}
+			pos += vn
+			fd := fieldMap[int32(num)]
+			if fd != nil && isMessageField(fd) {
+				msgFields = append(msgFields, msgFieldData{fd, v})
+			}
+		case protowire.StartGroupType:
+			// Skip group contents
+			depth := 1
+			for pos < len(data) && depth > 0 {
+				_, gType, gn := protowire.ConsumeTag(data[pos:])
+				if gn < 0 {
+					return nil
+				}
+				pos += gn
+				switch gType {
+				case protowire.StartGroupType:
+					depth++
+				case protowire.EndGroupType:
+					depth--
+				case protowire.VarintType:
+					_, vn := protowire.ConsumeVarint(data[pos:])
+					if vn < 0 {
+						return nil
+					}
+					pos += vn
+				case protowire.Fixed64Type:
+					pos += 8
+				case protowire.Fixed32Type:
+					pos += 4
+				case protowire.BytesType:
+					_, vn := protowire.ConsumeBytes(data[pos:])
+					if vn < 0 {
+						return nil
+					}
+					pos += vn
+				}
+			}
+		}
+	}
+
+	var missing []string
+	// Check required fields at this level
+	for _, f := range msgDesc.GetField() {
+		if f.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REQUIRED && !present[f.GetNumber()] {
+			name := f.GetName()
+			if prefix != "" {
+				name = prefix + "." + name
+			}
+			missing = append(missing, name)
+		}
+	}
+
+	// Recurse into present message fields to check their required fields
+	for _, mf := range msgFields {
+		subMsg := resolveFieldMsgType(mf.fd, allMsgs)
+		if subMsg != nil {
+			subPrefix := mf.fd.GetName()
+			if prefix != "" {
+				subPrefix = prefix + "." + subPrefix
+			}
+			missing = append(missing, findMissingRequired(mf.data, subMsg, allMsgs, subPrefix)...)
+		}
+	}
+
+	return missing
 }
 
 func isMessageField(fd *descriptorpb.FieldDescriptorProto) bool {
