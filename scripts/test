@@ -1015,6 +1015,7 @@ DECODE_TESTS=(
   "extension_field|testdata/454_decode_extension|decodeext.Base|0a026869a0062a"
   "wrong_wire|testdata/455_decode_wrong_wire|decodewire.Record|0d2a00000012026f6b"
   "map_sort|testdata/456_decode_map_sort|decodemapsort.Config|0a0b0a0774696d656f7574101e0a0b0a07726574726965731003120474657374"
+  "proto2_unknown_enum|testdata/457_decode_proto2_unknown_enum|decode_p2_enum.Record|086312026f6b"
 )
 
 for decode_spec in "${DECODE_TESTS[@]}"; do
