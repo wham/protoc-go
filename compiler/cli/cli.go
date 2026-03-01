@@ -1346,7 +1346,7 @@ func validateJstypeNonInt64(orderedFiles []string, parsed map[string]*descriptor
 
 func collectJstypeErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
 	for i, field := range msg.GetField() {
-		if field.Options != nil && field.Options.Jstype != nil {
+		if field.Options != nil && field.Options.Jstype != nil && field.GetOptions().GetJstype() != descriptorpb.FieldOptions_JS_NORMAL {
 			if !isJstypeAllowedType(field.GetType()) {
 				fieldPath := append(append([]int32{}, msgPath...), 2, int32(i), 5)
 				line, col := findLocationByPath(fieldPath, sci)
@@ -1356,7 +1356,7 @@ func collectJstypeErrors(filename string, msg *descriptorpb.DescriptorProto, msg
 	}
 	// Check message-level extensions
 	for i, ext := range msg.GetExtension() {
-		if ext.Options != nil && ext.Options.Jstype != nil {
+		if ext.Options != nil && ext.Options.Jstype != nil && ext.GetOptions().GetJstype() != descriptorpb.FieldOptions_JS_NORMAL {
 			if !isJstypeAllowedType(ext.GetType()) {
 				extPath := append(append([]int32{}, msgPath...), 6, int32(i), 5)
 				line, col := findLocationByPath(extPath, sci)
