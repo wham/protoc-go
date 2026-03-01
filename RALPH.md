@@ -324,6 +324,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 148. [DONE] Fix `cli@descriptor_set_in_import` — `--descriptor_set_in` flag was parsed but ignored. Implemented loading: reads the FileDescriptorSet from the specified file, unmarshals it, and pre-populates the `parsed` map and `orderedFiles` with its FileDescriptorProto entries before `parseRecursive` runs. This allows imports to resolve against pre-compiled descriptors without needing the .proto source files. All 4354/4354 tests pass.
 
+149. [DONE] Fix `cli@encode_field_order` — `runEncode` used `proto.MarshalOptions{Deterministic: deterministic}` where `deterministic` was only true with `--deterministic_output` flag. `dynamicpb.Message.Range()` iterates a Go map with non-deterministic order, so fields could appear in any order. C++ protoc always serializes in field number order. Changed to always use `Deterministic: true` in `runEncode`. Removed unused `deterministic` parameter. All 4355/4355 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
