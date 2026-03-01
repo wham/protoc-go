@@ -1,0 +1,10 @@
+syntax = "proto2";
+
+package unicoderange;
+
+// \U with a code point above U+10FFFF should be rejected.
+// C++ protoc emits: "Expected eight hex digits up to 10ffff for \U escape sequence"
+// Go silently accepts it and stores the literal \U00200000 text as the default value.
+message Msg {
+  optional string s = 1 [default = "\U00200000"];
+}

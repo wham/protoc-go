@@ -1131,3 +1131,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silently succeeds (exit 0), no error about undeclared dependency.
 - **Fix hint**: (1) Parse `--direct_dependencies=` value into a set of allowed imports (colon-delimited). (2) Also parse `--direct_dependencies_violation_msg=`. (3) After resolving imports, check each import against the allowed set. (4) If missing, emit the violation message (default: "File is imported but not declared in --direct_dependencies: %s").
 - **Also affects**: `--direct_dependencies_violation_msg` flag is completely unrecognized — Go fails with "Unknown flag" instead of accepting it.
+
+### Run 111 — \U escape above U+10FFFF accepted by Go, rejected by C++ (VICTORY)
+- **Bug**: Go's tokenizer `appendUTF8()` silently handles code points above `U+10FFFF` by writing the literal `\U%08x` text back into the string, instead of rejecting them. C++ protoc's tokenizer validates that `\U` escapes have code points ≤ `0x10FFFF` and rejects values above that range with a clear error message.
+- **Test**: `444_unicode_escape_range` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `appendUTF8()` in `io/tokenizer/tokenizer.go` has a branch for `cp > 0x10FFFF` that does `fmt.Fprintf(sb, "\\U%08x", cp)` — writing the escape sequence as literal text. This means the string gets a literal backslash-U followed by hex digits instead of decoded bytes. The tokenizer never errors on this. C++ protoc's tokenizer checks `if (code_point > 0x10FFFF)` and emits `"Expected eight hex digits up to 10ffff for \\U escape sequence"`.
+- **C++ protoc**: `test.proto:9:41: Expected eight hex digits up to 10ffff for \U escape sequence` (exit code 1).
+- **Go protoc-go**: Silently accepts, stores literal `\U00200000` text as `default_value` in descriptor (exit code 0).
+- **Fix hint**: In `appendUTF8()`, instead of writing the literal escape text for `cp > 0x10FFFF`, the tokenizer should emit an error: `TokenError{..., Message: "Expected eight hex digits up to 10ffff for \\U escape sequence."}`. Or add a check in the `\U` escape handler in `readString()` before calling `appendUTF8()`.
+- **Also affects**: Any string literal with `\U` code points from `0x110000` to `0xFFFFFFFF`. Same issue exists for `\u` escapes combined into surrogates that produce values > `0x10FFFF` (though that's unlikely since surrogates map to supplementary plane values ≤ `0x10FFFF`).
