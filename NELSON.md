@@ -1122,3 +1122,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `test.proto:9:13: Integer out of range.` (exit 1).
 - **Fix hint**: Move the `startNum > math.MaxInt32` check to AFTER negation. Or allow `startNum == math.MaxInt32 + 1` when `startNeg` is true (since `-(MaxInt32+1) == MinInt32`). Same issue exists for the end-of-range value at line 3518-3524 — `en > math.MaxInt32` would also reject `-2147483648` as the end of a range.
 - **Also affects**: Same bug likely exists for `reserved -2147483648 to 0;` (would fail on the start value) and `reserved 0 to -2147483648;` (would fail on the end value if negative). Also, message reserved ranges at parser.go:968 may have a similar issue if enum-style negative values are supported there (they aren't in proto2/proto3 messages, but editions may differ).
+
+### Run 110 — --direct_dependencies flag silently ignored by Go (VICTORY)
+- **Bug**: Go's CLI silently skips the `--direct_dependencies=` flag (just `continue`s past it). C++ protoc uses this flag to validate that all imports are declared as direct dependencies — if an import is missing from the list, C++ emits an error. Go doesn't implement any of this validation, so it always succeeds even when direct dependencies are violated.
+- **Test**: CLI test `cli@direct_dependencies` — exit code mismatch (C++ exits 1, Go exits 0).
+- **Root cause**: `cli.go:1065` has `if strings.HasPrefix(arg, "--direct_dependencies=") { continue }` — the flag value is parsed but completely discarded. No `directDependencies` field in the config, no validation in the import resolution phase. The related `--direct_dependencies_violation_msg` flag isn't even recognized (would fail with "Unknown flag").
+- **C++ protoc**: `test.proto: File is imported but not declared in --direct_dependencies: dep.proto` (exit 1).
+- **Go protoc-go**: Silently succeeds (exit 0), no error about undeclared dependency.
+- **Fix hint**: (1) Parse `--direct_dependencies=` value into a set of allowed imports (colon-delimited). (2) Also parse `--direct_dependencies_violation_msg=`. (3) After resolving imports, check each import against the allowed set. (4) If missing, emit the violation message (default: "File is imported but not declared in --direct_dependencies: %s").
+- **Also affects**: `--direct_dependencies_violation_msg` flag is completely unrecognized — Go fails with "Unknown flag" instead of accepting it.
