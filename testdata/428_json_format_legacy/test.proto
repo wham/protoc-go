@@ -1,0 +1,10 @@
+edition = "2023";
+
+package jsonlegacy;
+
+option features.json_format = LEGACY_BEST_EFFORT;
+
+message Msg {
+  int32 foo_bar = 1;
+  int32 fooBar = 2;
+}
