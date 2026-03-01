@@ -1067,6 +1067,10 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
+		if arg == "--experimental_allow_proto3_optional" {
+			continue
+		}
+
 		if strings.HasPrefix(arg, "--enable_codegen_trace") {
 			continue
 		}

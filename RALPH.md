@@ -262,6 +262,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 117. [DONE] Fix `cli@fatal_warnings_ext` — `--fatal_warnings` flag was parsed but ignored. Added `fatalWarnings` config field and `hadWarnings` tracking. When `fatalWarnings` is set and warnings were emitted, `Run` returns an error (exit code 1). Also added `mapErrorFilename` helper that maps virtual filenames back to disk paths in warning output using `srcTree.VirtualFileToDiskFile`, matching C++ protoc's `ErrorPrinter` behavior. All 4068/4068 tests pass.
 
+118. [DONE] Fix `cli@experimental_allow_proto3_optional` — C++ protoc recognizes `--experimental_allow_proto3_optional` as a no-op boolean flag (proto3 optional is now fully supported) and silently accepts it. Go fell through to the generic unknown-flag handler and rejected it with "Missing value for flag". Added `continue` case in `parseArgs()` alongside other no-op flags. All 4069/4069 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `validateEnumPrefixConflict` checks enum value names for conflicts after prefix stripping and PascalCasing, matching C++ `CheckEnumValueUniqueness`. `prefixRemoverMaybeRemove` strips the enum type name prefix (lowercased, underscores removed) from value names. `enumValueToPascalCase` converts UPPER_SNAKE_CASE to PascalCase. Skips conflicts where values have the same name (handled by duplicate name check) or same number (aliases). Proto2 enums with `deprecated_legacy_json_field_conflicts` option skip the check. Error location uses SCI path `[enumPath, 2, valueIdx, 1]` (enum value name field).
