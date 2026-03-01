@@ -304,6 +304,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 138. [DONE] Fix `decode@missing_required` — C++ protoc emits `warning:  Input message is missing required fields:  field1, field2` to stderr when decoding a message with missing required fields (still outputs decoded text and exits 0). Added `findMissingRequired` that recursively checks all required fields in the message and its sub-messages. Called from `runDecode` after validation. All 4267/4267 tests pass.
 
+139. [DONE] Fix `decode@truncated` — C++ protoc only prints `Failed to parse input.` for truncated/corrupt wire data, not internal validation details like `invalid bytes`. Go was printing both lines. Added `utf8ValidationError` type so only UTF-8 errors are printed before `Failed to parse input.` (matching C++ LOG(ERROR) behavior). All 4277/4277 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printKnownField` TYPE_INT64 values are cast to `int64` before formatting with `%d` so negative values print correctly (e.g., `-1` instead of `18446744073709551615`). TYPE_UINT64 stays as `uint64`. TYPE_INT32 was already cast to `int32`.
