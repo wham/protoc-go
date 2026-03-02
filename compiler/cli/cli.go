@@ -1490,6 +1490,18 @@ func parseArgs(args []string) (*config, error) {
 			}
 			continue
 		}
+		if arg == "--error_format" {
+			if i+1 < len(args) {
+				i++
+				cfg.errorFormat = args[i]
+				if cfg.errorFormat != "gcc" && cfg.errorFormat != "msvs" {
+					return nil, fmt.Errorf("Unknown error format: %s", cfg.errorFormat)
+				}
+			} else {
+				return nil, fmt.Errorf("Missing value for flag: %s", arg)
+			}
+			continue
+		}
 
 		if arg == "--fatal_warnings" {
 			cfg.fatalWarnings = true

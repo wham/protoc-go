@@ -496,3 +496,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 184. [DONE] Fix `cli@dup_dso` — C++ protoc rejects duplicate `--descriptor_set_out` flags with `--descriptor_set_out may only be passed once.` but Go silently accepted the second one. Added `cfg.descriptorSetOut != ""` check before setting the value in both `--descriptor_set_out` and `-o` flag handlers. All 5113/5113 tests pass.
 
 185. [DONE] Fix `cli@dependency_out_space` — C++ protoc accepts both `--dependency_out=FILE` and `--dependency_out FILE` (space-separated), but Go only handled the `=` form. Added `arg == "--dependency_out"` check that consumes the next argument as value, matching the `--descriptor_set_out` pattern. All 5114/5114 tests pass.
+
+186. [DONE] Fix `cli@decode_encode_mutex` — C++ protoc rejects simultaneous `--encode` and `--decode` (or `--decode_raw`) with `Only one of --encode and --decode can be specified.` (exit 1). Added `codecCount` check after `parseArgs` that counts how many of `decodeRaw`, `decodeType`, and `encodeType` are set, rejecting if more than one. All 5115/5115 tests pass.
