@@ -535,6 +535,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 204. [DONE] Fix `cli@plugin_space` — C++ protoc accepts both `--plugin=VALUE` and `--plugin VALUE` (space-separated), but Go only handled the `=` form, rejecting space-separated with "Missing value for flag". Added `arg == "--plugin"` check that consumes the next argument as value, matching the pattern used for `--descriptor_set_out`, `--proto_path`, etc. All 5219/5219 tests pass.
 
+205. [DONE] Fix `cli@encode_field_num` — Go's `prototext.Unmarshal` rejects field-by-number syntax (e.g., `1: "alice"`) with `cannot specify field by number: 1` but the error wasn't reformatted. Added pattern in `reformatProtoTextErrors` to match `cannot specify field by number: N` and reformat to C++ format `Expected identifier, got: N`. All 5230/5230 tests pass.
+
 ## Notes (continued)
 
 - `compiler/parser/parser.go`: `attachComments` now skips `PrevTrailing` when the previous token is `}`. In C++ protoc, ALL closing `}` tokens are consumed via `TryConsumeEndOfDeclaration("}", nullptr)` where the `nullptr` location means `AttachComments` is never called, so trailing comments of `}` are always dropped. For `{` and `;` tokens, C++ uses `ConsumeEndOfDeclaration` with a non-null location, so their trailing comments ARE attached. This matches: trailing of `;` → attached to declaration, trailing of `{` → attached to block, trailing of `}` → dropped.
