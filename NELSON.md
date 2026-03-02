@@ -1617,3 +1617,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Ignores `--deterministic_output`, preserves input order: c(3), a(1), b(2). stdout binary has entries in input order.
 - **Fix hint**: In `runEncode()`, pass `cfg.deterministicOutput` (need to thread it through). When true, skip the `reorderMapEntriesBySource` call at line 9492. The existing `proto.MarshalOptions{Deterministic: true}` already sorts map keys, so just don't reorder them back to source order. Something like: `if !cfg.deterministicOutput { out = reorderMapEntriesBySource(out, msgDesc, string(data)) }`.
 - **Also affects**: Any `--encode --deterministic_output` with map fields will produce differently-ordered output. The flag is documented in the help text (line 44-45) but completely non-functional.
+
+### Run 167 — --version output reports wrong version string (VICTORY)
+- **Bug**: Go's `--version` flag prints `libprotoc 29.3` while C++ protoc prints `libprotoc 33.4`. The version string is hardcoded at cli.go:1336 and does not match the installed C++ protoc version. Notably, the CompilerVersion sent in CodeGeneratorRequest (plugin.go:105) correctly uses 33.4, so the version inconsistency is only in the text output.
+- **Test**: CLI test `cli@version` — stdout mismatch (1 test fails).
+- **Root cause**: `cli.go` line 1336: `fmt.Println("libprotoc 29.3")` is a stale hardcoded version string. The Go port was originally tracking protoc 29.3 but the system C++ protoc has been updated to 33.4. The plugin request version (plugin.go:105-110) was updated but the `--version` text was not.
+- **C++ protoc**: stdout: `libprotoc 33.4` (exit 0).
+- **Go protoc-go**: stdout: `libprotoc 29.3` (exit 0).
+- **Fix hint**: Update line 1336 in cli.go to `fmt.Println("libprotoc 33.4")` or better yet, derive the version string from the same constants used in plugin.go (Major=6, Minor=33, Patch=4 → "33.4").

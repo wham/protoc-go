@@ -778,6 +778,7 @@ CLI_TESTS=(
   "decode_bad_type|--decode=basic.NoSuchType -I testdata/01_basic_message testdata/01_basic_message/basic.proto|x"
   "encode_closed_enum|--encode=encclosed.Record -I testdata/490_encode_closed_enum testdata/490_encode_closed_enum/test.proto|s: 99 label: \"test\""
   "encode_deterministic_map|--deterministic_output --encode=encmapord.Config -I testdata/482_encode_map_order testdata/482_encode_map_order/test.proto|tags { key: \"c\" value: 3 } tags { key: \"a\" value: 1 } tags { key: \"b\" value: 2 } label: \"ok\""
+  "version|--version"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
