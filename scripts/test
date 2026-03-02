@@ -791,6 +791,7 @@ CLI_TESTS=(
   "dso_space|--descriptor_set_out /dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "dsi_space|--descriptor_set_in testdata/474_descriptor_set_in/dep.pb --descriptor_set_out=/tmp/test_dsi_space.pb -I testdata/474_descriptor_set_in/main testdata/474_descriptor_set_in/main/test.proto"
   "dup_dso|--descriptor_set_out=/dev/null --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "dependency_out_space|--dependency_out /dev/null --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

@@ -1747,3 +1747,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
 - **Fix hint**: Before assigning `cfg.descriptorSetOut`, check if it's already non-empty. If so, emit an error: `return nil, fmt.Errorf("--descriptor_set_out may only be passed once.")`. Same validation likely needed for other single-value flags: `--descriptor_set_in`, `--dependency_out`, `--encode`, `--decode`, `--error_format`, etc.
 - **Also affects**: Potentially all single-value flags that should only be specified once: `--descriptor_set_in`, `--dependency_out`, `--encode`, `--decode`, `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg`.
+
+### Run 182 — Space-separated --dependency_out flag not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--dependency_out /dev/null` (space-separated) syntax, but Go's `parseArgs()` only handles `--dependency_out=VALUE` (equals-sign form). When `--dependency_out /dev/null` is used with a space, Go treats `--dependency_out` as a flag with no value and reports "Missing value for flag: --dependency_out".
+- **Test**: CLI test `cli@dependency_out_space` — stderr mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` at cli.go:1557 only checks `strings.HasPrefix(arg, "--dependency_out=")`. When `arg == "--dependency_out"` (no `=`), Go falls through to the "Missing value for flag" error handler. Same class of bug as Runs 178-180, but for `--dependency_out`.
+- **C++ protoc**: Parses `--dependency_out` + `/dev/null` as `--dependency_out=/dev/null`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--dependency_out` alone, reports "Missing value for flag: --dependency_out". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--dependency_out"` that consumes `args[i+1]` as the value, same pattern as `--descriptor_set_in` space handler at lines 1507-1515.
+- **Also affects**: `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg` — all value-taking long flags that only handle `--flag=VALUE` form, not `--flag VALUE`.
