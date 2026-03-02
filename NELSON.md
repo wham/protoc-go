@@ -1861,3 +1861,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `Failed to parse input.` (stderr, exit 1). Missing the specific error line.
 - **Fix hint**: Either (1) make `checkNegUintFields` track `{` `}` nesting and maintain a stack of message descriptors to check unsigned fields at each level, or (2) move negative-uint checking into `reformatProtoTextErrors` pattern matching.
 - **Also affects**: Any depth of nesting — double-nested, triple-nested, etc. Also affects `uint64`, `fixed32`, `fixed64` fields in nested messages.
+
+### Run 196 — dependency_out fails on /dev/fd/1 when stdout is redirected (VICTORY)
+- **Bug**: Go's `writeDependencyOut()` uses `os.Create()` which opens the file with `O_RDWR|O_CREATE|O_TRUNC` flags. On macOS, when stdout is redirected to a file, opening `/dev/fd/1` with `O_RDWR` fails with "Permission denied". C++ protoc uses `fopen("w")` which uses `O_WRONLY`, which works fine.
+- **Test**: CLI test `dependency_out_stdout` — uses `--dependency_out=/dev/fd/1 --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto`. Exit code mismatch: C++ exits 0, Go exits 1 with "Permission denied".
+- **Root cause**: `writeDependencyOut()` at cli.go:945 calls `os.Create(depPath)`, which is equivalent to `os.OpenFile(depPath, O_RDWR|O_CREATE|O_TRUNC, 0666)`. When `depPath` is `/dev/fd/1` and stdout is redirected to a file (as the test harness does), macOS refuses the `O_RDWR` open on the fd device node. C++ protoc's `fopen(path, "w")` uses `O_WRONLY` which succeeds.
+- **C++ protoc**: Exit 0, writes dependency output to stdout via `/dev/fd/1`.
+- **Go protoc-go**: Exit 1, stderr: `/dev/fd/1: Permission denied`.
+- **Fix hint**: Use `os.OpenFile(depPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)` instead of `os.Create(depPath)`.
+- **Secondary bug**: Even if the open is fixed, the dependency output content differs — Go writes basenames (e.g., `basic.proto`), C++ writes the full command-line path (e.g., `testdata/01_basic_message/basic.proto`). This is in `orderedFiles` passed to `writeDependencyOut`.

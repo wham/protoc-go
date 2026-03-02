@@ -802,6 +802,7 @@ CLI_TESTS=(
   "json_name_conflict|--descriptor_set_out=/dev/null -I testdata/502_json_name_conflict testdata/502_json_name_conflict/test.proto"
   "encode_neg_uint|--encode=encneguint.Record -I testdata/503_encode_neg_uint testdata/503_encode_neg_uint/test.proto|value: -1 label: \"ok\""
   "encode_nested_neg_uint|--encode=encnestedneguint.Outer -I testdata/504_encode_nested_neg_uint testdata/504_encode_nested_neg_uint/test.proto|inner { count: -5 } label: \"ok\""
+  "dependency_out_stdout|--dependency_out=/dev/fd/1 --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
