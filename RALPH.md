@@ -350,6 +350,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 161. [DONE] Fix `decode@edition_implicit_default` — Edition 2023 files with file-level `features.field_presence = IMPLICIT` should suppress default-value singular scalar fields in `--decode` text output, like proto3. Extended `noPresenceMsgs` collection in `findMessageType` to include editions files with IMPLICIT field presence (was only proto3). Added `fieldHasExplicitPresence` helper so per-field `features.field_presence = EXPLICIT` overrides are respected. All 4951/4951 tests pass.
 
+162. [DONE] Fix `decode@packed_enum_unknown` — In proto2 (closed enums), unknown enum values inside packed repeated enum fields were printed as known fields (`s: 99`) instead of unknown fields (`1: 99`). The packed unpacking loop added all entries to `knownEntries` without checking enum validity. Added closed enum check inside the packed loop: if the enum is closed and the value is not in the defined set, route to `unknownEntries` instead. All 4962/4962 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printTextProto` now adds default entries for missing map entry fields. C++ protoc's `TextFormat::Printer::PrintMessage` has special handling: for map entries, it always prints both `descriptor->field(0)` (key) and `descriptor->field(1)` (value) regardless of whether they appear in the wire data. Missing string keys appear as `key: ""`, missing int keys as `key: 0`, etc. This is implemented by checking `msgDesc.GetOptions().GetMapEntry()`, scanning for present field numbers, and adding synthetic entries with appropriate wire types and zero/empty default values for any missing fields.
