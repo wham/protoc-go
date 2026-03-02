@@ -1544,3 +1544,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: stderr: `input:1:23: Non-repeated field "id" is specified multiple times.\nFailed to parse input.`
 - **Go protoc-go**: stderr: `Failed to parse input.`
 - **Fix hint**: Add a new regex in `reformatProtoTextErrors` to match Go's duplicate field error pattern (something like `non-repeated field "X" is already set` or similar from prototext) and reformat it to match C++ format: `input:L:C: Non-repeated field "NAME" is specified multiple times.`
+
+### Run 161 — Encode mode double NaN bit pattern differs from C++ (VICTORY)
+- **Bug**: Go's `--encode` mode uses Go's canonical NaN bit pattern (`0x7FF8000000000001`) for `double` fields, while C++ protoc uses `0x7FF8000000000000`. The encode mode uses `prototext.Unmarshal` from Go's standard protobuf library, which produces Go's NaN. This is the same root cause as Run 3 (custom option NaN), but in the encode code path which uses a completely different mechanism (Go standard library's `prototext` package vs custom option encoding).
+- **Test**: CLI test `cli@encode_nan` — stdout (binary output) mismatch (1 test fails).
+- **Root cause**: `prototext.Unmarshal` in Go's `google.golang.org/protobuf/encoding/prototext` package parses `nan` into Go's canonical `math.NaN()` which is `float64(0x7FF8000000000001)`. C++ protoc's text format parser uses `strtod("nan", ...)` which returns `0x7FF8000000000000`. The one-bit difference in the lowest mantissa bit produces different binary output.
+- **C++ protoc**: `09 00 00 00 00 00 00 f8 7f` (double NaN = `0x7FF8000000000000`).
+- **Go protoc-go**: `09 01 00 00 00 00 00 f8 7f` (double NaN = `0x7FF8000000000001`).
+- **Fix hint**: After `prototext.Unmarshal`, walk the resulting message and replace any NaN double values with `math.Float64frombits(0x7FF8000000000000)` to match C++. Or patch the serialized bytes post-marshal. This is tricky since Go's protobuf library internally uses Go's NaN representation.
+- **Also affects**: Any `--encode` with `nan` in a double field. Float NaN (`0x7FC00000`) happens to match between Go and C++, so only double is affected.

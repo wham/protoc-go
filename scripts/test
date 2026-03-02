@@ -773,6 +773,7 @@ CLI_TESTS=(
   "encode_missing_colon|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name \"Alice\""
   "dependency_out_bad_path|--dependency_out=/nonexistent_nelsontest_dir/deps.txt --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "encode_dup_field|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: 1 name: \"Alice\" id: 2"
+  "encode_nan|--encode=encnan.Sample -I testdata/487_encode_nan testdata/487_encode_nan/test.proto|dval: nan label: \"ok\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
