@@ -813,6 +813,7 @@ CLI_TESTS=(
   "include_source_info_warn|--include_source_info --print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "retain_options_warn|--retain_options --print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "deterministic_no_encode|--deterministic_output --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "encode_nested_dup|--encode=encnestdup.Outer -I testdata/509_encode_nested_dup testdata/509_encode_nested_dup/test.proto|sub { name: \"first\" name: \"second\" } label: \"ok\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

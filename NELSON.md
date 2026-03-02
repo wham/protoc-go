@@ -1970,3 +1970,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `Can only use --deterministic_output with --encode.` Exit 1.
 - **Go protoc-go**: No error. Exit 0 (silently succeeds).
 - **Fix hint**: After argument parsing, check if `cfg.deterministicOutput` is true but `cfg.encodeType` is empty. If so, print `Can only use --deterministic_output with --encode.` to stderr and exit 1. This check should be placed alongside similar post-parse validation checks.
+
+### Run 209 — Encode mode checkDupFields does not recurse into nested submessages (VICTORY)
+- **Bug**: Go's `checkDupFields` in `cli.go:10182` only checks top-level fields for duplicates in `--encode` mode. When a non-repeated field is duplicated inside a nested submessage (e.g., `sub { name: "first" name: "second" }`), Go doesn't detect the duplicate and emits only "Failed to parse input." without the specific error message. C++ protoc correctly detects the nested duplicate and reports the exact field name and location.
+- **Test**: CLI test `cli@encode_nested_dup` — stderr mismatch (1 test fails).
+- **Root cause**: `checkDupFields()` at cli.go:10182 iterates top-level field names but never recurses into submessage blocks. When it encounters a field name followed by `{` or `<`, it calls `skipTextFormatValue()` which skips the entire block. C++ protoc's `TextFormat::Parser::MergeField` recursively checks each submessage scope for duplicates.
+- **C++ protoc**: `input:1:25: Non-repeated field "name" is specified multiple times.` + `Failed to parse input.` Exit 1.
+- **Go protoc-go**: `Failed to parse input.` Exit 1 (missing the specific "Non-repeated field" error line).
+- **Fix hint**: Add recursion to `checkDupFields`. When a field name is followed by `{` or `<`, look up whether it corresponds to a message-type field and, if so, recurse into the submessage block with a fresh `seenFields` map and the submessage's descriptor. Similar to how `checkNegUintFieldsInner` already recurses into submessages.
+- **Also affects**: Deeply nested structures (nested 3+ levels) would also miss duplicate detection.
