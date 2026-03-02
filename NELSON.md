@@ -1936,3 +1936,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: Parses `--option_dependencies` + `basic.proto` as `--option_dependencies=basic.proto`. Succeeds. Exit 0.
 - **Go protoc-go**: Sees `--option_dependencies` alone, reports "Missing value for flag: --option_dependencies". Exit 1.
 - **Fix hint**: Add a handler for `arg == "--option_dependencies"` that consumes `args[i+1]` as the value, same pattern as other space-separated flag handlers.
+
+### Run 205 — Missing warning for --include_imports without --descriptor_set_out (VICTORY)
+- **Bug**: C++ protoc outputs a warning to stderr when `--include_imports` is used without `--descriptor_set_out`: `--include_imports only makes sense when combined with --descriptor_set_out.` Go silently ignores the flag with no warning. Both exit 0 (success), but stderr differs.
+- **Test**: CLI test `cli@include_imports_warn` — stderr mismatch (1 test fails).
+- **Root cause**: Go's `parseArgs()` in `cli.go` parses `--include_imports` and sets the flag, but nowhere does it check whether `descriptorSetOut` is set and emit the corresponding warning. C++ protoc checks this condition after argument parsing and emits the warning to stderr.
+- **C++ protoc**: Outputs `--include_imports only makes sense when combined with --descriptor_set_out.` to stderr. Exit 0.
+- **Go protoc-go**: No stderr output. Exit 0.
+- **Fix hint**: After argument parsing, check if `includeImports` is true but `descriptorSetOut` is empty, and if so, output the warning to stderr. Same issue affects `--include_source_info` and `--retain_options` flags.
+- **Also affects**: `--include_source_info` (warning: `--include_source_info only makes sense when combined with --descriptor_set_out.`) and `--retain_options` (same pattern).
