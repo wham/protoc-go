@@ -1987,3 +1987,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `/dep.proto: File not found.` + `test.proto:3:1: Import "/dep.proto" was not found or had errors.` + `test.proto:5:3: "Base" is not defined.` Exit 1.
 - **Go protoc-go**: Resolves `/dep.proto` as `dep.proto` relative to proto_path, finds the file, succeeds. Exit 0.
 - **Fix hint**: In the importer's file resolution, check if the import path starts with `/`. If so, either (1) treat it as an absolute path (don't prepend proto_path roots), matching C++ behavior, or (2) reject it with an explicit error. The C++ behavior is to search literally for the absolute path, not to strip the leading slash.
+
+### Run 211 — --decode combined with --descriptor_set_out not rejected by Go (VICTORY)
+- **Bug**: C++ protoc rejects combining `--decode` (or `--encode`) with `--descriptor_set_out`, printing `Cannot use --encode or --decode and generate descriptors at the same time.` and exiting with code 1. Go silently accepts the combination and exits 0, ignoring the `--descriptor_set_out` flag entirely.
+- **Test**: CLI test `cli@decode_with_dso` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: Go's `parseArgs()` in `cli.go` doesn't validate mutual exclusion between encode/decode modes and descriptor set output. After parsing, it processes `--decode` mode first (before `--descriptor_set_out` output), so the descriptor set output is never reached. C++ protoc validates this combination after argument parsing and rejects it upfront.
+- **C++ protoc**: `Cannot use --encode or --decode and generate descriptors at the same time.` Exit 1.
+- **Go protoc-go**: No error output. Exit 0.
+- **Fix hint**: After argument parsing, check if `(cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw)` AND `cfg.descriptorSetOut != ""`. If both conditions are true, emit: `return nil, fmt.Errorf("Cannot use --encode or --decode and generate descriptors at the same time.")`.
+- **Also affects**: `--encode` + `--descriptor_set_out` has the same bug. `--decode_raw` + `--descriptor_set_out` likely too.
