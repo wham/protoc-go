@@ -1333,7 +1333,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--version" {
-			fmt.Println("libprotoc 29.3")
+			fmt.Println("libprotoc 33.4")
 			os.Exit(0)
 		}
 
