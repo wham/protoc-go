@@ -489,6 +489,10 @@ func Run(args []string) error {
 		return fmt.Errorf("Missing output directives.")
 	}
 
+	if (cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw) && cfg.descriptorSetOut != "" {
+		return fmt.Errorf("Cannot use --encode or --decode and generate descriptors at the same time.")
+	}
+
 	if cfg.deterministicOutput && cfg.encodeType == "" {
 		return fmt.Errorf("Can only use --deterministic_output with --encode.")
 	}
