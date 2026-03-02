@@ -9513,12 +9513,28 @@ func canonicalizeNaN(msg *dynamicpb.Message) {
 				}
 			}
 		} else if fd.IsMap() {
-			v.Map().Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
-				if fd.MapValue().Kind() == protoreflect.MessageKind {
+			m := v.Map()
+			switch fd.MapValue().Kind() {
+			case protoreflect.DoubleKind:
+				m.Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
+					if math.IsNaN(mv.Float()) {
+						m.Set(k, protoreflect.ValueOfFloat64(math.Float64frombits(0x7FF8000000000000)))
+					}
+					return true
+				})
+			case protoreflect.FloatKind:
+				m.Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
+					if math.IsNaN(float64(float32(mv.Float()))) {
+						m.Set(k, protoreflect.ValueOfFloat32(math.Float32frombits(0x7FC00000)))
+					}
+					return true
+				})
+			case protoreflect.MessageKind, protoreflect.GroupKind:
+				m.Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
 					canonicalizeNaN(mv.Message().(*dynamicpb.Message))
-				}
-				return true
-			})
+					return true
+				})
+			}
 		} else {
 			switch fd.Kind() {
 			case protoreflect.DoubleKind:
