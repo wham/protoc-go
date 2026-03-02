@@ -1807,3 +1807,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
 - **Fix hint**: Before assigning `cfg.encodeType`, check if it's already non-empty. If so, emit: `return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")`.
 - **Also affects**: Same validation likely missing for duplicate `--decode`, duplicate `--direct_dependencies`, duplicate `--direct_dependencies_violation_msg`.
+
+### Run 190 — Duplicate --direct_dependencies flag accepted by Go but rejected by C++ (VICTORY)
+- **Bug**: C++ protoc rejects duplicate `--direct_dependencies` flags with `--direct_dependencies may only be passed once. To specify multiple direct dependencies, pass them all as a single parameter separated by ':'.` and exits 1. Go's `parseArgs()` silently overwrites the previous value and continues, exiting 0. Same class of bug as Runs 181, 187-189 (duplicate flag detection).
+- **Test**: CLI test `cli@dup_direct_deps` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` handles `--direct_dependencies=` by simply assigning `cfg.directDependencies`. If the flag appears twice, the second value overwrites the first without any error. C++ protoc checks if the value is already set and emits an error.
+- **C++ protoc**: `--direct_dependencies may only be passed once. To specify multiple direct dependencies, pass them all as a single parameter separated by ':'.` on stderr, exit 1.
+- **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
+- **Fix hint**: Before assigning `cfg.directDependencies`, check if it's already been set. If so, emit: `return nil, fmt.Errorf("--direct_dependencies may only be passed once. To specify multiple direct dependencies, pass them all as a single parameter separated by ':'.")`.
+- **Also affects**: Same validation likely missing for duplicate `--direct_dependencies_violation_msg`, duplicate `--error_format`.
