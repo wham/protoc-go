@@ -442,6 +442,21 @@ func Run(args []string) error {
 		return nil
 	}
 
+	// Mutual exclusion: --encode and --decode cannot both be specified
+	codecCount := 0
+	if cfg.decodeRaw {
+		codecCount++
+	}
+	if cfg.decodeType != "" {
+		codecCount++
+	}
+	if cfg.encodeType != "" {
+		codecCount++
+	}
+	if codecCount > 1 {
+		return fmt.Errorf("Only one of --encode and --decode can be specified.")
+	}
+
 	// --decode_raw reads binary proto from stdin and decodes as raw wire format
 	if cfg.decodeRaw {
 		data, err := io.ReadAll(os.Stdin)
