@@ -10402,6 +10402,18 @@ func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorp
 					ppos += vn
 					pe.varint = v
 				}
+				// For closed enums, unknown values become unknown fields
+				if fd.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && pe.wtype == protowire.VarintType {
+					tn := strings.TrimPrefix(fd.GetTypeName(), ".")
+					if closedEnums[tn] {
+						valMap := allEnums[tn]
+						if _, ok := valMap[int32(pe.varint)]; !ok {
+							ue := fieldEntry{num: num, wtype: protowire.VarintType, varint: pe.varint}
+							unknownEntries = append(unknownEntries, ue)
+							continue
+						}
+					}
+				}
 				knownEntries = append(knownEntries, pe)
 			}
 		} else if fd != nil && wireTypeMatchesProtoType(wtype, fd.GetType()) {
