@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package decodepackedtrunc;
+
+message Record {
+  repeated fixed32 vals = 1;
+  string label = 2;
+}
