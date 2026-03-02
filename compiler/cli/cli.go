@@ -8935,6 +8935,17 @@ func reorderMapEntriesBySource(out []byte, msgDesc protoreflect.MessageDescripto
 		if len(sourceKeys) == 0 {
 			continue
 		}
+		// Normalize bool text keys ("true"/"false") to varint representation ("1"/"0")
+		if fd.MapKey().Kind() == protoreflect.BoolKind {
+			for k := range sourceKeys {
+				switch sourceKeys[k] {
+				case "true":
+					sourceKeys[k] = "1"
+				case "false":
+					sourceKeys[k] = "0"
+				}
+			}
+		}
 		out = reorderWireEntriesByKeys(out, fd.Number(), sourceKeys)
 	}
 	return out
