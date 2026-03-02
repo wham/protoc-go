@@ -10084,25 +10084,27 @@ func checkClosedEnumValues(data []byte, msgDesc protoreflect.MessageDescriptor) 
 
 // checkNegUintFields scans text format input for negative values on unsigned
 // integer fields. C++ protoc's ConsumeUnsignedInteger rejects `-` with
-// "Expected integer, got: -".
+// "Expected integer, got: -". Recurses into nested messages.
 func checkNegUintFields(data []byte, msgDesc protoreflect.MessageDescriptor) string {
+	_, _, _, err := checkNegUintFieldsInner(data, 0, 1, 1, msgDesc)
+	return err
+}
+
+func checkNegUintFieldsInner(data []byte, i, line, col int, msgDesc protoreflect.MessageDescriptor) (int, int, int, string) {
 	uintFields := map[string]bool{}
+	msgFields := map[string]protoreflect.MessageDescriptor{}
 	fields := msgDesc.Fields()
-	for i := 0; i < fields.Len(); i++ {
-		fd := fields.Get(i)
+	for fi := 0; fi < fields.Len(); fi++ {
+		fd := fields.Get(fi)
 		switch fd.Kind() {
 		case protoreflect.Uint32Kind, protoreflect.Uint64Kind,
 			protoreflect.Fixed32Kind, protoreflect.Fixed64Kind:
 			uintFields[string(fd.Name())] = true
+		case protoreflect.MessageKind, protoreflect.GroupKind:
+			msgFields[string(fd.Name())] = fd.Message()
 		}
 	}
-	if len(uintFields) == 0 {
-		return ""
-	}
 
-	line := 1
-	col := 1
-	i := 0
 	for i < len(data) {
 		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
 			col++
@@ -10114,6 +10116,11 @@ func checkNegUintFields(data []byte, msgDesc protoreflect.MessageDescriptor) str
 			col = 1
 			i++
 			continue
+		}
+		if data[i] == '}' || data[i] == '>' {
+			i++
+			col++
+			return i, line, col, ""
 		}
 		if isLetter(data[i]) || data[i] == '_' {
 			start := i
@@ -10134,9 +10141,21 @@ func checkNegUintFields(data []byte, msgDesc protoreflect.MessageDescriptor) str
 					col++
 				}
 				if uintFields[fieldName] && i < len(data) && data[i] == '-' {
-					return fmt.Sprintf("input:%d:%d: Expected integer, got: -", line, col)
+					return i, line, col, fmt.Sprintf("input:%d:%d: Expected integer, got: -", line, col)
 				}
 				i, line, col = skipTextFormatValue(data, i, line, col)
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				i++
+				col++
+				if subMsg, ok := msgFields[fieldName]; ok {
+					var errStr string
+					i, line, col, errStr = checkNegUintFieldsInner(data, i, line, col, subMsg)
+					if errStr != "" {
+						return i, line, col, errStr
+					}
+				} else {
+					i, line, col = skipBracedBlock(data, i, line, col)
+				}
 			} else {
 				i, line, col = skipTextFormatValue(data, i, line, col)
 			}
@@ -10145,7 +10164,7 @@ func checkNegUintFields(data []byte, msgDesc protoreflect.MessageDescriptor) str
 		i++
 		col++
 	}
-	return ""
+	return i, line, col, ""
 }
 
 // checkOneofConflicts scans text format input for oneof field conflicts.
@@ -10334,6 +10353,44 @@ func skipTextFormatValue(data []byte, i, line, col int) (int, int, int) {
 		}
 	}
 
+	return i, line, col
+}
+
+// skipBracedBlock skips content inside a `{...}` or `<...>` block (already past opening brace).
+func skipBracedBlock(data []byte, i, line, col int) (int, int, int) {
+	depth := 1
+	for i < len(data) && depth > 0 {
+		switch data[i] {
+		case '{', '<':
+			depth++
+		case '}', '>':
+			depth--
+		case '"', '\'':
+			quote := data[i]
+			i++
+			col++
+			for i < len(data) && data[i] != quote {
+				if data[i] == '\\' && i+1 < len(data) {
+					i++
+					col++
+				}
+				if data[i] == '\n' {
+					line++
+					col = 1
+				} else {
+					col++
+				}
+				i++
+			}
+		case '\n':
+			line++
+			col = 0
+		}
+		if i < len(data) {
+			col++
+			i++
+		}
+	}
 	return i, line, col
 }
 

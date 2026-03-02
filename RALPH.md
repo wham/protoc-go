@@ -517,6 +517,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 195. [DONE] Fix `cli@json_name_conflict` — C++ protoc emits warnings (not errors) for JSON name conflicts in proto2 files. `validateJsonNameConflicts` was skipping proto2 entirely. Extended to process proto2 files and return warnings separately from proto3/editions errors. Warnings are prefixed with `warning:` and printed to stderr without causing compilation failure. All 5152/5152 tests pass.
 
+196. [DONE] Fix `cli@encode_neg_uint` — C++ protoc's `ConsumeUnsignedInteger` rejects `-` on unsigned integer fields (uint32, uint64, fixed32, fixed64) with `Expected integer, got: -`. Added `checkNegUintFields` pre-scan in `runEncode` that detects negative values on unsigned fields and reports the error at the `-` position. All 5173/5173 tests pass.
+
 ## Notes (continued)
 
 - `compiler/parser/parser.go`: `attachComments` now skips `PrevTrailing` when the previous token is `}`. In C++ protoc, ALL closing `}` tokens are consumed via `TryConsumeEndOfDeclaration("}", nullptr)` where the `nullptr` location means `AttachComments` is never called, so trailing comments of `}` are always dropped. For `{` and `;` tokens, C++ uses `ConsumeEndOfDeclaration` with a non-null location, so their trailing comments ARE attached. This matches: trailing of `;` → attached to declaration, trailing of `{` → attached to block, trailing of `}` → dropped.
