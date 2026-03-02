@@ -10180,26 +10180,31 @@ func findTokenAfterIdent(data []byte, line, col int) (int, int, string) {
 // C++ protoc's TextFormat::Parser checks HasField before setting a value and reports:
 // Non-repeated field "X" is specified multiple times.
 func checkDupFields(data []byte, msgDesc protoreflect.MessageDescriptor) string {
-	// Build set of non-repeated non-message field names
+	_, _, _, err := checkDupFieldsInner(data, 0, 1, 1, msgDesc)
+	return err
+}
+
+func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.MessageDescriptor) (int, int, int, string) {
 	nonRepeatedScalar := map[string]bool{}
+	msgFieldDescs := map[string]protoreflect.MessageDescriptor{}
 	fields := msgDesc.Fields()
-	for i := 0; i < fields.Len(); i++ {
-		fd := fields.Get(i)
-		if fd.Cardinality() != protoreflect.Repeated &&
-			fd.Kind() != protoreflect.MessageKind &&
-			fd.Kind() != protoreflect.GroupKind {
+	for k := 0; k < fields.Len(); k++ {
+		fd := fields.Get(k)
+		if fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind {
+			msgFieldDescs[string(fd.Name())] = fd.Message()
+		} else if fd.Cardinality() != protoreflect.Repeated {
 			nonRepeatedScalar[string(fd.Name())] = true
 		}
 	}
-	if len(nonRepeatedScalar) == 0 {
-		return ""
-	}
 
 	seenFields := map[string]bool{}
-	line := 1
-	col := 1
-	i := 0
+	i := pos
 	for i < len(data) {
+		if data[i] == '}' || data[i] == '>' {
+			i++
+			col++
+			return i, line, col, ""
+		}
 		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
 			col++
 			i++
@@ -10226,14 +10231,45 @@ func checkDupFields(data []byte, msgDesc protoreflect.MessageDescriptor) string 
 			if i < len(data) && data[i] == ':' {
 				if nonRepeatedScalar[fieldName] {
 					if seenFields[fieldName] {
-						return fmt.Sprintf("input:%d:%d: Non-repeated field \"%s\" is specified multiple times.",
+						return i, line, col, fmt.Sprintf("input:%d:%d: Non-repeated field \"%s\" is specified multiple times.",
 							line, colonCol, fieldName)
 					}
 					seenFields[fieldName] = true
 				}
 				i++
 				col++
-				i, line, col = skipTextFormatValue(data, i, line, col)
+				// Skip whitespace after colon to check for submessage brace
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					i++
+					col++
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					if subMsg, ok := msgFieldDescs[fieldName]; ok {
+						i++
+						col++
+						var err string
+						i, line, col, err = checkDupFieldsInner(data, i, line, col, subMsg)
+						if err != "" {
+							return i, line, col, err
+						}
+					} else {
+						i, line, col = skipTextFormatValue(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				if subMsg, ok := msgFieldDescs[fieldName]; ok {
+					i++
+					col++
+					var err string
+					i, line, col, err = checkDupFieldsInner(data, i, line, col, subMsg)
+					if err != "" {
+						return i, line, col, err
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
 			} else {
 				i, line, col = skipTextFormatValue(data, i, line, col)
 			}
@@ -10242,7 +10278,7 @@ func checkDupFields(data []byte, msgDesc protoreflect.MessageDescriptor) string 
 		i++
 		col++
 	}
-	return ""
+	return i, line, col, ""
 }
 
 // checkClosedEnumValues scans text format input for enum fields with values
