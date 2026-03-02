@@ -1,0 +1,7 @@
+syntax = "proto3";
+package encmapord;
+
+message Config {
+  map<string, int32> tags = 1;
+  string label = 2;
+}
