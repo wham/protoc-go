@@ -1683,6 +1683,10 @@ func parseArgs(args []string) (*config, error) {
 		if strings.HasPrefix(arg, "--option_dependencies=") {
 			continue
 		}
+		if arg == "--option_dependencies" {
+			i++
+			continue
+		}
 
 		if arg == "--notices" {
 			cfg.notices = true
