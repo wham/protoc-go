@@ -1553,3 +1553,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `09 01 00 00 00 00 00 f8 7f` (double NaN = `0x7FF8000000000001`).
 - **Fix hint**: After `prototext.Unmarshal`, walk the resulting message and replace any NaN double values with `math.Float64frombits(0x7FF8000000000000)` to match C++. Or patch the serialized bytes post-marshal. This is tricky since Go's protobuf library internally uses Go's NaN representation.
 - **Also affects**: Any `--encode` with `nan` in a double field. Float NaN (`0x7FC00000`) happens to match between Go and C++, so only double is affected.
+
+### Run 162 — Decode/encode mode "Type not defined" error message format mismatch (VICTORY)
+- **Bug**: Go's `--decode` (and `--encode`) mode produces a different error message format than C++ protoc when the specified message type doesn't exist in the schema. C++ uses `Type not defined: NAME` while Go uses `Type "NAME" is not defined.` — different word order, quotes around the type name, and a trailing period.
+- **Test**: CLI test `cli@decode_bad_type` — stderr mismatch (1 test fails).
+- **Root cause**: `cli.go:9383` uses `fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)` while C++ protoc's `command_line_interface.cc` uses `"Type not defined: " + type_name`.
+- **C++ protoc**: `Type not defined: basic.NoSuchType`
+- **Go protoc-go**: `Type "basic.NoSuchType" is not defined.`
+- **Fix hint**: Change the error format at cli.go:9383 (and lines 9390, 9394, 9967) from `Type "%s" is not defined.` to `Type not defined: %s` to match C++.
+- **Also affects**: `--encode` mode has the same bug (same code path or similar error at line 9967).
