@@ -356,6 +356,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 208. [DONE] Fix `cli@include_source_info_warn` — C++ protoc emits `--include_source_info only makes sense when combined with --descriptor_set_out.` warning to stderr when `--include_source_info` is used without `--descriptor_set_out`. Added the check in `Run()` right after the `--include_imports` warning, matching the same pattern. All 5233/5233 tests pass.
 
+209. [DONE] Fix `cli@retain_options_warn` — C++ protoc emits `--retain_options only makes sense when combined with --descriptor_set_out.` warning to stderr when `--retain_options` is used without `--descriptor_set_out`. Added the check in `Run()` right after the `--include_source_info` warning, matching the same pattern. All 5234/5234 tests pass.
+
 ## Notes
 
 - `compiler/cli/cli.go`: `printTextProto` now adds default entries for missing map entry fields. C++ protoc's `TextFormat::Printer::PrintMessage` has special handling: for map entries, it always prints both `descriptor->field(0)` (key) and `descriptor->field(1)` (value) regardless of whether they appear in the wire data. Missing string keys appear as `key: ""`, missing int keys as `key: 0`, etc. This is implemented by checking `msgDesc.GetOptions().GetMapEntry()`, scanning for present field numbers, and adding synthetic entries with appropriate wire types and zero/empty default values for any missing fields.
