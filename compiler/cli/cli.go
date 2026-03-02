@@ -731,7 +731,7 @@ func Run(args []string) error {
 
 	// Handle --encode mode
 	if cfg.encodeType != "" {
-		return runEncode(cfg.encodeType, parsed, orderedFiles)
+		return runEncode(cfg.encodeType, parsed, orderedFiles, cfg.deterministicOutput)
 	}
 
 	// Collect source-retention extension field numbers (grouped by extendee type)
@@ -9370,7 +9370,7 @@ type decodeExt struct {
 
 // runEncode implements --encode mode: reads text format protobuf from stdin
 // and writes binary protobuf to stdout using the schema from parsed proto files.
-func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles []string) error {
+func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles []string, deterministicOutput bool) error {
 	// Build a FileDescriptorSet from parsed files in dependency order
 	fds := &descriptorpb.FileDescriptorSet{}
 	for _, name := range orderedFiles {
@@ -9488,8 +9488,11 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 
 	// C++ protoc preserves map entry insertion order (from text format source),
 	// but Go's Deterministic marshal sorts map keys alphabetically.
-	// Reorder map entries to match source order.
-	out = reorderMapEntriesBySource(out, msgDesc, string(data))
+	// Reorder map entries to match source order, unless --deterministic_output
+	// is set (which means C++ also sorts by key).
+	if !deterministicOutput {
+		out = reorderMapEntriesBySource(out, msgDesc, string(data))
+	}
 
 	os.Stdout.Write(out)
 	return nil
