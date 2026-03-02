@@ -1920,3 +1920,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: Parses `--plugin` + `protoc-gen-dump=path` as `--plugin=protoc-gen-dump=path`. Succeeds. Exit 0.
 - **Go protoc-go**: Sees `--plugin` alone, reports "Missing value for flag: --plugin". Exit 1.
 - **Fix hint**: Add a handler for `arg == "--plugin"` that consumes `args[i+1]` as the value, same pattern as other space-separated flag handlers.
+
+### Run 203 — Encode mode missing detailed parse error for numeric field name (VICTORY)
+- **Bug**: Go's encode mode (text format parser) omits the detailed parse error message when stdin contains an integer where a field name is expected. C++ protoc outputs `input:1:1: Expected identifier, got: 1` followed by `Failed to parse input.`, while Go only outputs `Failed to parse input.` without the location-specific error.
+- **Test**: CLI test `cli@encode_field_num` — stderr mismatch (1 test fails).
+- **Root cause**: Go's encode mode uses the `prototext` library from `google.golang.org/protobuf` for text format parsing. When parsing fails, the library returns an error, but the Go CLI only prints `Failed to parse input.` without surfacing the detailed error from the text format parser. C++ protoc's text format parser calls `AddError` with location info which gets printed before the generic failure message.
+- **C++ protoc**: `input:1:1: Expected identifier, got: 1\nFailed to parse input.`
+- **Go protoc-go**: `Failed to parse input.`
+- **Fix hint**: In the encode mode handler, after `prototext.Unmarshal` fails, print the error returned by the library (which should contain location and detail info like `Expected identifier, got: 1`) before printing `Failed to parse input.`. Format it as `input:LINE:COL: MESSAGE` to match C++ output.
