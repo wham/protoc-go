@@ -1720,3 +1720,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Sees `--proto_path` alone, falls through to "Missing value for flag: --proto_path". Exit 1.
 - **Fix hint**: Add a handler for `arg == "--proto_path"` that consumes `args[i+1]` as the value: `if arg == "--proto_path" { if i+1 < len(args) { i++; /* parse args[i] as proto_path */ } else { return nil, fmt.Errorf("Missing value for flag: %s", arg) }; continue }`. Same pattern as the `--encode`/`--decode` space handlers already added at lines 1487-1509.
 - **Also affects**: `--descriptor_set_out`, `--descriptor_set_in`, `--dependency_out`, `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg`, `--plugin` — all flags that take a value and only handle `--flag=VALUE` form, not `--flag VALUE`.
+
+### Run 179 — Space-separated --descriptor_set_out flag not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--descriptor_set_out /dev/null` (space-separated) syntax, but Go's `parseArgs()` only handles `--descriptor_set_out=VALUE` (equals-sign form). When `--descriptor_set_out /dev/null` is used with a space, Go treats `--descriptor_set_out` as a flag with no value and reports "Missing value for flag: --descriptor_set_out".
+- **Test**: CLI test `cli@dso_space` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` at cli.go:1431 only checks `strings.HasPrefix(arg, "--descriptor_set_out=")`. When `arg == "--descriptor_set_out"` (no `=`), Go falls through to the "Missing value for flag" error handler. Same class of bug as Run 178 (`--proto_path` space), but affecting a different flag.
+- **C++ protoc**: Parses `--descriptor_set_out` + `/dev/null` as `--descriptor_set_out=/dev/null`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--descriptor_set_out` alone, falls through to "Missing value for flag: --descriptor_set_out". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--descriptor_set_out"` that consumes `args[i+1]` as the value, similar to the `--encode`/`--decode` space handlers. Same pattern needed for `--error_format`, `--descriptor_set_in`, `--dependency_out`, `--direct_dependencies`, `--direct_dependencies_violation_msg`, `--plugin`.
+- **Also affects**: All value-taking long flags that only handle `--flag=VALUE` form.
