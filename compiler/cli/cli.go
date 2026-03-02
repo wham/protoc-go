@@ -1446,8 +1446,28 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
+		if arg == "--encode" {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				cfg.encodeType = args[i]
+			} else {
+				return nil, fmt.Errorf("Missing value for flag: %s", arg)
+			}
+			continue
+		}
+
 		if strings.HasPrefix(arg, "--decode=") {
 			cfg.decodeType = arg[len("--decode="):]
+			continue
+		}
+
+		if arg == "--decode" {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				cfg.decodeType = args[i]
+			} else {
+				return nil, fmt.Errorf("Missing value for flag: %s\nTo decode an unknown message, use --decode_raw.", arg)
+			}
 			continue
 		}
 
@@ -1532,9 +1552,6 @@ func parseArgs(args []string) (*config, error) {
 			if idx := strings.Index(arg, "="); idx >= 0 {
 				flagName := arg[:idx]
 				return nil, fmt.Errorf("Unknown flag: %s", flagName)
-			}
-			if arg == "--decode" {
-				return nil, fmt.Errorf("Missing value for flag: %s\nTo decode an unknown message, use --decode_raw.", arg)
 			}
 			return nil, fmt.Errorf("Missing value for flag: %s", arg)
 		}
