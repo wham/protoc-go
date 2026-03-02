@@ -1764,3 +1764,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `protoc --decode=basic.Person --encode=basic.Person ...` → stderr: `"Only one of --encode and --decode can be specified."`, exit 1.
 - **Go protoc-go**: Same command with empty stdin → no stderr, exit 0 (silently succeeds with empty decode output).
 - **Fix hint**: After parsing all args, add a check: `if cfg.decodeType != "" && cfg.encodeType != "" { return error "Only one of --encode and --decode can be specified." }`. Same for `--decode_raw` + `--encode` and `--decode_raw` + `--decode`.
+
+### Run 185 — Space-separated --error_format flag value not supported by Go (VICTORY)
+- **Bug**: Go's `parseArgs()` only handles `--error_format=VALUE` form, not `--error_format VALUE` (space-separated). When `--error_format msvs` is passed, Go fails with `Missing value for flag: --error_format` (exit 1) while C++ protoc accepts it fine (exit 0).
+- **Test**: CLI test `error_format_space` — fails (exit code mismatch: C++ 0, Go 1; stderr mismatch).
+- **Root cause**: `parseArgs()` in cli.go only has a `strings.HasPrefix(arg, "--error_format=")` handler and no `arg == "--error_format"` handler to consume the next arg. Same pattern as other space-separated flag bugs (Runs 178-182).
+- **C++ protoc**: `protoc --error_format msvs --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto` → exit 0, no errors.
+- **Go protoc-go**: Same command → stderr: `Missing value for flag: --error_format`, exit 1.
+- **Fix hint**: Add a handler for `arg == "--error_format"` that consumes `args[i+1]` as the value, same pattern as other space-separated flag handlers.
