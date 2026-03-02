@@ -1676,3 +1676,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: Decodes correctly: `name: "hello"\nInner {\n  label: "test"\n  Deep {\n    value: 42\n  }\n}` exit 0.
 - **Go protoc-go**: `Failed to parse input.` exit 1.
 - **Fix hint**: In the decode mode's group handling, ensure that when a group field is encountered inside another group, the inner group's field descriptor is properly resolved from the parent group's message type (not the top-level message type). The inner group's message type needs to be looked up in the enclosing group's descriptor, not the root message.
+
+### Run 174 — Encode mode missing-required-field order differs from C++ (VICTORY)
+- **Bug**: Go's encode mode lists missing required fields in depth-first order, while C++ protoc lists them in field-number order within each message level (breadth-first). When encoding a message with nested required fields at different depths, the warning message differs.
+- **Test**: CLI test `cli@encode_req_order` — `testdata/496_encode_req_order` with input `mid { deep { } }`. Message `Outer` has `optional Mid mid = 1`, `Mid` has `optional Deep deep = 1; required int32 x = 2;`, `Deep` has `required string name = 1;`.
+- **Root cause**: Go's `collectMissingRequired` (or equivalent) recurses depth-first into sub-messages before checking sibling required fields. So it finds `mid.deep.name` (deep nesting) before `mid.x` (same level). C++ collects missing fields in field-number order within each message, producing `mid.x, mid.deep.name` (field 2 before field 1's sub-field).
+- **C++ protoc**: `warning:  Input message is missing required fields:  mid.x, mid.deep.name` (field-number order within each level).
+- **Go protoc-go**: `warning:  Input message is missing required fields:  mid.deep.name, mid.x` (depth-first order).
+- **Fix hint**: Change the missing-required-field collection to process all fields in a message before recursing into sub-messages. Or collect all missing fields and sort them by depth/field-number to match C++ order.

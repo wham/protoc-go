@@ -1,0 +1,12 @@
+syntax = "proto2";
+package encreqord;
+message Outer {
+  optional Mid mid = 1;
+}
+message Mid {
+  optional Deep deep = 1;
+  required int32 x = 2;
+}
+message Deep {
+  required string name = 1;
+}
