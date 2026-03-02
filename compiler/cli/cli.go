@@ -713,7 +713,12 @@ func Run(args []string) error {
 	// Phase 2: Descriptor validation — only runs when no build errors (C++ had_errors_ gate)
 	var valErrors []string
 	if len(dupNameErrs) == 0 {
-		valErrors = append(valErrors, validateJsonNameConflicts(orderedFiles, parsed, explicitJsonNames)...)
+		jsonErrs, jsonWarns := validateJsonNameConflicts(orderedFiles, parsed, explicitJsonNames)
+		valErrors = append(valErrors, jsonErrs...)
+		for _, w := range jsonWarns {
+			fmt.Fprintln(os.Stderr, mapErrorFilename(w, srcTree))
+			hadWarnings = true
+		}
 	}
 	valErrors = append(valErrors, validatePackedNonRepeated(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateLazyNonMessage(orderedFiles, parsed)...)
@@ -2773,21 +2778,33 @@ func findEnumValueNameLocation(enumPath []int32, valueIdx int, sci *descriptorpb
 
 // validateJsonNameConflicts checks that no two fields in a message have conflicting JSON names.
 // C++ protoc runs two passes: one for default-only names, one considering custom json_names.
-func validateJsonNameConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool) []string {
-	var errs []string
+// Proto3/editions conflicts are errors; proto2 conflicts are warnings.
+func validateJsonNameConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool) (errors []string, warnings []string) {
 	for _, name := range orderedFiles {
 		fd := parsed[name]
-		// C++ protoc only treats JSON name conflicts as errors in proto3/editions, not proto2
-		if fd.GetSyntax() != "proto3" && fd.GetSyntax() != "editions" {
-			continue
-		}
+		isProto2 := fd.GetSyntax() != "proto3" && fd.GetSyntax() != "editions"
 		fileJsonFormat := fd.GetOptions().GetFeatures().GetJsonFormat()
+		var msgs []string
 		for i, msg := range fd.GetMessageType() {
-			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, false, fileJsonFormat, &errs)
-			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, true, fileJsonFormat, &errs)
+			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, false, fileJsonFormat, &msgs)
+			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, true, fileJsonFormat, &msgs)
+		}
+		if isProto2 {
+			for _, m := range msgs {
+				// Insert "warning: " after "file:line:col: "
+				idx := strings.Index(m, ": ")
+				if idx >= 0 {
+					pos := idx + 2
+					warnings = append(warnings, m[:pos]+"warning: "+m[pos:])
+				} else {
+					warnings = append(warnings, m)
+				}
+			}
+		} else {
+			errors = append(errors, msgs...)
 		}
 	}
-	return errs
+	return errors, warnings
 }
 
 type jsonNameEntry struct {
