@@ -474,3 +474,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 173. [DONE] Fix `cli@encode_space_flag` — C++ protoc accepts both `--encode=TYPE` and `--encode TYPE` (space-separated), same for `--decode`. Go only handled the `=` form, rejecting space-separated with "Missing value for flag". Added bare `--encode` and `--decode` handling in `parseArgs` that consumes the next arg as value (if present and not starting with `-`). All 5042/5042 tests pass.
 
 174. [DONE] Fix `cli@encode_group_missing_req` — `collectMissingRequired` only recursed into `MessageKind` singular fields, missing `GroupKind` and repeated message/group fields. Added `GroupKind` check and list iteration with `result[i]` prefix notation for repeated fields. All 5053/5053 tests pass.
+
+175. [DONE] Fix `cli@short_o_flag` — C++ protoc supports `-oFILE` as a short form of `--descriptor_set_out=FILE` (single-dash, value immediately follows flag). Added `-o` handling in `parseArgs`: extracts value from `arg[2:]` or consumes next argument if empty, sets `cfg.descriptorSetOut`. All 5054/5054 tests pass.

@@ -1395,6 +1395,16 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
+		if strings.HasPrefix(arg, "-o") && !strings.HasPrefix(arg, "--") {
+			val := arg[2:]
+			if val == "" && i+1 < len(args) {
+				i++
+				val = args[i]
+			}
+			cfg.descriptorSetOut = val
+			continue
+		}
+
 		if arg == "--include_imports" {
 			cfg.includeImports = true
 			continue
