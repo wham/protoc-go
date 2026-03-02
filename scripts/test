@@ -769,6 +769,7 @@ CLI_TESTS=(
   "encode_ext_order|--encode=encextord.Msg -I testdata/477_encode_ext_order testdata/477_encode_ext_order/test.proto|name: \"ab\" [encextord.extra]: 5"
   "encode_invalid_utf8|--encode=encutf8.Record -I testdata/478_encode_invalid_utf8 testdata/478_encode_invalid_utf8/test.proto|text: \"hello\\377world\" id: 1"
   "encode_map_order|--encode=encmapord.Config -I testdata/482_encode_map_order testdata/482_encode_map_order/test.proto|tags { key: \"c\" value: 3 } tags { key: \"a\" value: 1 } tags { key: \"b\" value: 2 } label: \"ok\""
+  "encode_missing_colon|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name \"Alice\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
