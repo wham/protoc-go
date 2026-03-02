@@ -2013,3 +2013,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `input:1:25: Field "id" is specified along with field "name", another member of oneof "choice".` + `Failed to parse input.` Exit 1.
 - **Go protoc-go**: `Failed to parse input.` Exit 1. Missing the specific oneof conflict diagnostic.
 - **Fix hint**: Make `checkOneofConflicts` recursive. When encountering a submessage field (identified by `{ }` block in text format), look up the field descriptor, get its message type, and recurse into the block to check that message's oneofs. Similar to how `checkClosedEnumValuesInner`, `checkDupFieldsInner`, and `checkNegUintFieldsInner` recurse.
+
+### Run 214 — --print_free_field_numbers not mutually exclusive with --descriptor_set_out (VICTORY)
+- **Bug**: C++ protoc treats `--print_free_field_numbers` as an encode/decode-like mode that is mutually exclusive with `--descriptor_set_out`. When combined, C++ rejects with `Cannot use --encode or --decode and generate descriptors at the same time.` and exits 1. Go silently accepts the combination, runs `--print_free_field_numbers` mode, ignores `--descriptor_set_out`, and exits 0.
+- **Test**: CLI test `cli@pfn_dso_mutex` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: Go's `parseArgs()` and post-parse validation do not check for the combination of `cfg.printFreeFieldNumbers` and `cfg.descriptorSetOut`. C++ protoc groups `--print_free_field_numbers` under the same "mode" umbrella as `--encode`/`--decode`/`--decode_raw` and validates mutual exclusion with `--descriptor_set_out`. Go only checks `--encode`/`--decode` vs `--descriptor_set_out` (via Run 211's fix), but never includes `--print_free_field_numbers` in that check.
+- **C++ protoc**: `Cannot use --encode or --decode and generate descriptors at the same time.` Exit 1.
+- **Go protoc-go**: Prints `basic.Person    free: 4-INF` to stdout. Exit 0.
+- **Fix hint**: In the post-parse validation, extend the check for `--descriptor_set_out` mutual exclusion to also include `cfg.printFreeFieldNumbers`. Something like: `if cfg.descriptorSetOut != "" && (cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers) { return nil, fmt.Errorf("Cannot use --encode or --decode and generate descriptors at the same time.") }`.
+- **Also affects**: `--print_free_field_numbers` combined with plugin output flags (`--X_out`) likely has similar missing validation.

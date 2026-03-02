@@ -817,6 +817,7 @@ CLI_TESTS=(
   "decode_with_dso|--decode=basic.Person --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
   "encode_nested_closed_enum|--encode=nestedclosedenum.Outer -I testdata/511_encode_nested_closed_enum testdata/511_encode_nested_closed_enum/test.proto|inner { status: 99 label: \"test\" } name: \"ok\""
   "encode_nested_oneof|--encode=encnestedoneof.Outer -I testdata/512_encode_nested_oneof testdata/512_encode_nested_oneof/test.proto|inner { name: \"hello\" id: 42 label: \"x\" } tag: \"ok\""
+  "pfn_dso_mutex|--print_free_field_numbers --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
