@@ -481,19 +481,21 @@ func Run(args []string) error {
 	var orderedFiles []string
 	var collectErrors []string
 
-	// Load --descriptor_set_in descriptors
+	// Load --descriptor_set_in descriptors (colon-delimited list of files)
 	if cfg.descriptorSetIn != "" {
-		data, err := os.ReadFile(cfg.descriptorSetIn)
-		if err != nil {
-			return fmt.Errorf("%s: %s", cfg.descriptorSetIn, err.Error())
-		}
-		var fds descriptorpb.FileDescriptorSet
-		if err := proto.Unmarshal(data, &fds); err != nil {
-			return fmt.Errorf("%s: Unable to parse.", cfg.descriptorSetIn)
-		}
-		for _, fd := range fds.GetFile() {
-			parsed[fd.GetName()] = fd
-			orderedFiles = append(orderedFiles, fd.GetName())
+		for _, dsFile := range strings.Split(cfg.descriptorSetIn, ":") {
+			data, err := os.ReadFile(dsFile)
+			if err != nil {
+				return fmt.Errorf("%s: %s", dsFile, err.Error())
+			}
+			var fds descriptorpb.FileDescriptorSet
+			if err := proto.Unmarshal(data, &fds); err != nil {
+				return fmt.Errorf("%s: Unable to parse.", dsFile)
+			}
+			for _, fd := range fds.GetFile() {
+				parsed[fd.GetName()] = fd
+				orderedFiles = append(orderedFiles, fd.GetName())
+			}
 		}
 	}
 
