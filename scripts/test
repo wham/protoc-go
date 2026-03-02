@@ -794,6 +794,7 @@ CLI_TESTS=(
   "dependency_out_space|--dependency_out /dev/null --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "decode_encode_mutex|--decode=basic.Person --encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
   "error_format_space|--error_format msvs --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "dup_dsi|--descriptor_set_in=testdata/474_descriptor_set_in/dep.pb --descriptor_set_in=testdata/474_descriptor_set_in/dep.pb --descriptor_set_out=/tmp/test_dup_dsi.pb -I testdata/474_descriptor_set_in/main testdata/474_descriptor_set_in/main/test.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

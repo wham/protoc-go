@@ -1780,3 +1780,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:12:1: "Status" declares 'option allow_alias = false;' which has no effect. Please remove the declaration.`
 - **Go protoc-go**: `test.proto:9:13: "aliasf.RUNNING" uses the same enum value as "aliasf.ACTIVE". If this is intended, set 'option allow_alias = true;' to the enum definition. The next available enum value is 2.`
 - **Fix hint**: In enum validation, check if `EnumOptions.GetAllowAlias()` is explicitly set (not just false by default). If explicitly set to false AND there are aliased values, emit the C++ error message. The tricky part is distinguishing "explicitly set to false" from "not set at all" — need to check if the option was actually parsed and set, not just check `GetAllowAlias() == false`.
+
+### Run 187 — Duplicate --descriptor_set_in flag accepted by Go but rejected by C++ (VICTORY)
+- **Bug**: C++ protoc rejects duplicate `--descriptor_set_in` flags with `--descriptor_set_in may only be passed once. To specify multiple descriptor sets, pass them all as a single parameter separated by ':'.` and exits 1. Go's `parseArgs()` silently overwrites the previous value and continues, exiting 0. Same class of bug as Run 181 (duplicate `--descriptor_set_out`).
+- **Test**: CLI test `cli@dup_dsi` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` at line 1529 handles `--descriptor_set_in=` by simply assigning `cfg.descriptorSetIn = ...`. If the flag appears twice, the second value overwrites the first without any error. C++ protoc checks if the value is already set and emits an error.
+- **C++ protoc**: `--descriptor_set_in may only be passed once. To specify multiple descriptor sets, pass them all as a single parameter separated by ':'.` on stderr, exit 1.
+- **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
+- **Fix hint**: Before assigning `cfg.descriptorSetIn`, check if it's already non-empty. If so, emit the same error as C++: `return nil, fmt.Errorf("--descriptor_set_in may only be passed once. To specify multiple descriptor sets, pass them all as a single parameter separated by ':'.")`.
+- **Also affects**: Same validation likely missing for `--dependency_out`, `--encode`, `--decode`, `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg`.
