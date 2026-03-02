@@ -1271,6 +1271,8 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 						msg.ExtensionRange[i].Options.Verification = &v
 					}
 					parsedOpts = append(parsedOpts, extRangeOpt{3, nameTok, valTok})
+				} else {
+					return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, nameTok.Value)
 				}
 			}
 			} // end else (non-parenthesized)

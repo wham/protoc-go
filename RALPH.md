@@ -529,6 +529,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 201. [DONE] Fix `cli@bare_i_flag` — C++ protoc emits `Missing value for flag: -I` when `-I` is passed without a following path argument. Go silently added an empty string to `cfg.protoPaths`. Added `path == ""` check after attempting to consume the next arg, returning the error. All 5207/5207 tests pass.
 
+202. [DONE] Fix `cli@direct_deps_space` — C++ protoc accepts both `--direct_dependencies=DEPS` and `--direct_dependencies DEPS` (space-separated), but Go only handled the `=` form. Added `arg == "--direct_dependencies"` check that consumes the next argument as value. Also added space-separated handling for `--direct_dependencies_violation_msg`. All 5208/5208 tests pass.
+
 ## Notes (continued)
 
 - `compiler/parser/parser.go`: `attachComments` now skips `PrevTrailing` when the previous token is `}`. In C++ protoc, ALL closing `}` tokens are consumed via `TryConsumeEndOfDeclaration("}", nullptr)` where the `nullptr` location means `AttachComments` is never called, so trailing comments of `}` are always dropped. For `{` and `;` tokens, C++ uses `ConsumeEndOfDeclaration` with a non-null location, so their trailing comments ARE attached. This matches: trailing of `;` → attached to declaration, trailing of `{` → attached to block, trailing of `}` → dropped.
