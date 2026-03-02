@@ -527,6 +527,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 200. [DONE] Fix `506_trailing_comma_aggregate` — C++ protoc's TextFormat parser rejects trailing commas in array list syntax (e.g., `values: [1, 2, 3,]`) with type-specific errors like `Expected integer, got: ]`. Go's aggregate parser silently consumed trailing commas. Added `TrailingCommaToken` field to `AggregateField`, detection in both `consumeAggregate` and `consumeAggregateAngle` list parsing, and `aggregateTrailingTokenError` error type with type-aware messages (integer/double/string/identifier based on field type). All 5206/5206 tests pass.
 
+201. [DONE] Fix `cli@bare_i_flag` — C++ protoc emits `Missing value for flag: -I` when `-I` is passed without a following path argument. Go silently added an empty string to `cfg.protoPaths`. Added `path == ""` check after attempting to consume the next arg, returning the error. All 5207/5207 tests pass.
+
 ## Notes (continued)
 
 - `compiler/parser/parser.go`: `attachComments` now skips `PrevTrailing` when the previous token is `}`. In C++ protoc, ALL closing `}` tokens are consumed via `TryConsumeEndOfDeclaration("}", nullptr)` where the `nullptr` location means `AttachComments` is never called, so trailing comments of `}` are always dropped. For `{` and `;` tokens, C++ uses `ConsumeEndOfDeclaration` with a non-null location, so their trailing comments ARE attached. This matches: trailing of `;` → attached to declaration, trailing of `{` → attached to block, trailing of `}` → dropped.
