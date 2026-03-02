@@ -9606,6 +9606,11 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
 		os.Exit(1)
 	}
+	if negErr := checkNegUintFields(data, msgDesc); negErr != "" {
+		fmt.Fprintln(os.Stderr, negErr)
+		fmt.Fprintln(os.Stderr, "Failed to parse input.")
+		os.Exit(1)
+	}
 	if conflictErr := checkOneofConflicts(data, msgDesc); conflictErr != "" {
 		fmt.Fprintln(os.Stderr, conflictErr)
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
@@ -10064,6 +10069,72 @@ func checkClosedEnumValues(data []byte, msgDesc protoreflect.MessageDescriptor) 
 						// Was just a `-`, not a number; reset
 						i = valStart
 					}
+				}
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
+		}
+		i++
+		col++
+	}
+	return ""
+}
+
+// checkNegUintFields scans text format input for negative values on unsigned
+// integer fields. C++ protoc's ConsumeUnsignedInteger rejects `-` with
+// "Expected integer, got: -".
+func checkNegUintFields(data []byte, msgDesc protoreflect.MessageDescriptor) string {
+	uintFields := map[string]bool{}
+	fields := msgDesc.Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		switch fd.Kind() {
+		case protoreflect.Uint32Kind, protoreflect.Uint64Kind,
+			protoreflect.Fixed32Kind, protoreflect.Fixed64Kind:
+			uintFields[string(fd.Name())] = true
+		}
+	}
+	if len(uintFields) == 0 {
+		return ""
+	}
+
+	line := 1
+	col := 1
+	i := 0
+	for i < len(data) {
+		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
+			col++
+			i++
+			continue
+		}
+		if data[i] == '\n' {
+			line++
+			col = 1
+			i++
+			continue
+		}
+		if isLetter(data[i]) || data[i] == '_' {
+			start := i
+			for i < len(data) && (isAlphanumeric(data[i]) || data[i] == '_') {
+				i++
+				col++
+			}
+			fieldName := string(data[start:i])
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				i++
+				col++
+			}
+			if i < len(data) && data[i] == ':' {
+				i++
+				col++
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					i++
+					col++
+				}
+				if uintFields[fieldName] && i < len(data) && data[i] == '-' {
+					return fmt.Sprintf("input:%d:%d: Expected integer, got: -", line, col)
 				}
 				i, line, col = skipTextFormatValue(data, i, line, col)
 			} else {
