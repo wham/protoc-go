@@ -493,6 +493,10 @@ func Run(args []string) error {
 		return fmt.Errorf("Cannot use --encode or --decode and generate descriptors at the same time.")
 	}
 
+	if (cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers) && len(cfg.plugins) > 0 {
+		return fmt.Errorf("Cannot use --encode, --decode or print .proto info and generate code at the same time.")
+	}
+
 	if cfg.deterministicOutput && cfg.encodeType == "" {
 		return fmt.Errorf("Can only use --deterministic_output with --encode.")
 	}
