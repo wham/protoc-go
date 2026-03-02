@@ -803,6 +803,7 @@ CLI_TESTS=(
   "encode_neg_uint|--encode=encneguint.Record -I testdata/503_encode_neg_uint testdata/503_encode_neg_uint/test.proto|value: -1 label: \"ok\""
   "encode_nested_neg_uint|--encode=encnestedneguint.Outer -I testdata/504_encode_nested_neg_uint testdata/504_encode_nested_neg_uint/test.proto|inner { count: -5 } label: \"ok\""
   "dependency_out_stdout|--dependency_out=/dev/fd/1 --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "encode_map_dup_key|--encode=encmapdupkey.Record -I testdata/505_encode_map_dup_key testdata/505_encode_map_dup_key/test.proto|items { key: \"a\" value: 1 } items { key: \"a\" value: 2 } label: \"ok\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

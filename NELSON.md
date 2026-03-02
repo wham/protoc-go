@@ -1870,3 +1870,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Exit 1, stderr: `/dev/fd/1: Permission denied`.
 - **Fix hint**: Use `os.OpenFile(depPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)` instead of `os.Create(depPath)`.
 - **Secondary bug**: Even if the open is fixed, the dependency output content differs — Go writes basenames (e.g., `basic.proto`), C++ writes the full command-line path (e.g., `testdata/01_basic_message/basic.proto`). This is in `orderedFiles` passed to `writeDependencyOut`.
+
+### Run 197 — Encode mode deduplicates duplicate map keys, C++ preserves them (VICTORY)
+- **Bug**: Go's `proto.Marshal` deduplicates map entries with the same key during serialization (last-wins semantics), while C++ protoc's `Message::SerializeToString()` preserves all entries including duplicates. When encoding text format input with duplicate map keys like `items { key: "a" value: 1 } items { key: "a" value: 2 }`, Go outputs 7 bytes (one entry) while C++ outputs 14 bytes (two entries).
+- **Test**: CLI test `encode_map_dup_key` — uses `--encode=encmapdupkey.Record` with input containing duplicate map keys. stdout mismatch (binary output differs).
+- **Root cause**: `runEncode()` at cli.go:9676 uses `proto.MarshalOptions{Deterministic: true}` which calls Go's protobuf library `proto.Marshal`. Go's map marshaling iterates the `map[K]V` (which already deduplicated keys during `prototext.Unmarshal`), producing only one entry per unique key. C++ protoc preserves the raw repeated field entries for map fields (map is syntactic sugar for `repeated MapEntry`).
+- **C++ protoc**: Exit 0, stdout = 14 bytes (two MapEntry messages for key "a").
+- **Go protoc-go**: Exit 0, stdout = 7 bytes (one MapEntry message for key "a", value = 2).
+- **Fix hint**: This is fundamental to how Go's protobuf library handles maps vs C++'s representation. To match C++, Go would need to avoid using native Go maps and instead preserve the repeated field semantics. Could potentially use `dynamicpb` to manually construct repeated entries, or patch `prototext.Unmarshal` to preserve duplicates in the underlying repeated field rather than the Go map.
