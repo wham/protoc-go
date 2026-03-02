@@ -1370,8 +1370,18 @@ func parseArgs(args []string) (*config, error) {
 			os.Exit(0)
 		}
 
-		if strings.HasPrefix(arg, "--proto_path=") {
-			val := arg[len("--proto_path="):]
+		if strings.HasPrefix(arg, "--proto_path=") || arg == "--proto_path" {
+			var val string
+			if arg == "--proto_path" {
+				if i+1 < len(args) {
+					i++
+					val = args[i]
+				} else {
+					return cfg, fmt.Errorf("Missing value for flag: --proto_path")
+				}
+			} else {
+				val = arg[len("--proto_path="):]
+			}
 			if eqIdx := strings.Index(val, "="); eqIdx >= 0 {
 				cfg.protoPathMappings = append(cfg.protoPathMappings, importer.Mapping{
 					VirtualPath: val[:eqIdx],

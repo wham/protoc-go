@@ -1,0 +1,6 @@
+syntax = "proto3";
+package diamond;
+import "d.proto";
+message CMsg {
+  DMsg ref = 1;
+}

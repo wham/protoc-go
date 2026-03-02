@@ -1,0 +1,5 @@
+syntax = "proto3";
+package diamond;
+message DMsg {
+  int32 id = 1;
+}
