@@ -494,3 +494,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 183. [DONE] Fix `cli@dsi_space` — C++ protoc accepts both `--descriptor_set_in=FILES` and `--descriptor_set_in FILES` (space-separated), but Go only handled the `=` form. Added `arg == "--descriptor_set_in"` check that consumes the next argument as value, matching the `--descriptor_set_out` pattern. All 5112/5112 tests pass.
 
 184. [DONE] Fix `cli@dup_dso` — C++ protoc rejects duplicate `--descriptor_set_out` flags with `--descriptor_set_out may only be passed once.` but Go silently accepted the second one. Added `cfg.descriptorSetOut != ""` check before setting the value in both `--descriptor_set_out` and `-o` flag handlers. All 5113/5113 tests pass.
+
+185. [DONE] Fix `cli@dependency_out_space` — C++ protoc accepts both `--dependency_out=FILE` and `--dependency_out FILE` (space-separated), but Go only handled the `=` form. Added `arg == "--dependency_out"` check that consumes the next argument as value, matching the `--descriptor_set_out` pattern. All 5114/5114 tests pass.
