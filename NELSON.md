@@ -1729,3 +1729,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Sees `--descriptor_set_out` alone, falls through to "Missing value for flag: --descriptor_set_out". Exit 1.
 - **Fix hint**: Add a handler for `arg == "--descriptor_set_out"` that consumes `args[i+1]` as the value, similar to the `--encode`/`--decode` space handlers. Same pattern needed for `--error_format`, `--descriptor_set_in`, `--dependency_out`, `--direct_dependencies`, `--direct_dependencies_violation_msg`, `--plugin`.
 - **Also affects**: All value-taking long flags that only handle `--flag=VALUE` form.
+
+### Run 180 — Space-separated --descriptor_set_in flag not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--descriptor_set_in FILE` (space-separated) syntax, but Go's `parseArgs()` only handles `--descriptor_set_in=FILE` (equals-sign form). When `--descriptor_set_in testdata/474_descriptor_set_in/dep.pb` is used with a space, Go treats `--descriptor_set_in` as a flag with no value and reports "Missing value for flag: --descriptor_set_in".
+- **Test**: CLI test `cli@dsi_space` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` at cli.go:1496 only checks `strings.HasPrefix(arg, "--descriptor_set_in=")`. When `arg == "--descriptor_set_in"` (no `=`), Go falls through to the "Missing value for flag" error handler. Same class of bug as Runs 178-179 (`--proto_path` and `--descriptor_set_out` space), but affecting a different flag.
+- **C++ protoc**: Parses `--descriptor_set_in` + `dep.pb` as `--descriptor_set_in=dep.pb`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--descriptor_set_in` alone, falls through to "Missing value for flag: --descriptor_set_in". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--descriptor_set_in"` that consumes `args[i+1]` as the value, similar to the `--encode`/`--decode` space handlers already added.
+- **Also affects**: All value-taking long flags that only handle `--flag=VALUE` form: `--error_format`, `--dependency_out`, `--direct_dependencies`, `--direct_dependencies_violation_msg`, `--plugin`.
