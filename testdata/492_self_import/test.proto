@@ -1,0 +1,6 @@
+syntax = "proto3";
+package selfimport;
+import "test.proto";
+message Foo {
+  int32 id = 1;
+}

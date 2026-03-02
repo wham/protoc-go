@@ -1634,3 +1634,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Treats `vdir=actual_dir` as a literal directory name. Warns "directory does not exist", then fails with "Could not make proto path relative". Exit 1.
 - **Fix hint**: (1) In `parseArgs()`, split `--proto_path` values on `=` to detect `VIRTUAL=DISK` mapping syntax. (2) Add a `PathMapping` type to `SourceTree` (like `map[string]string`) alongside `Roots`. (3) In `Open()`, check if the requested filename matches any virtual prefix and substitute the disk path. (4) The first `=` separates virtual from disk (the disk path itself may contain `=`).
 - **Also affects**: `-I` flag (which is an alias for `--proto_path`) has the same issue.
+
+### Run 169 — Import cycle error uses virtual filename instead of disk path (VICTORY)
+- **Bug**: Go's `parseRecursive()` uses the virtual filename (e.g., `test.proto`) in import cycle error messages, while C++ protoc uses the full disk path (e.g., `testdata/492_self_import/test.proto`). The error message prefix differs.
+- **Test**: CLI test `cli@self_import` — stderr mismatch (1 test fails).
+- **Root cause**: At cli.go:934, `cycleStart` is set to `filename` which is the virtual filename. The error at line 944 uses `cycleStart` directly without mapping it back to the disk path via `mapErrorFilename`. The `collectErrors` at line 508-512 are joined and returned without any filename mapping. Only warnings (lines 656, 708) go through `mapErrorFilename`.
+- **C++ protoc**: `testdata/492_self_import/test.proto:3:1: File recursively imports itself: test.proto -> test.proto` (disk path prefix).
+- **Go protoc-go**: `test.proto:3:1: File recursively imports itself: test.proto -> test.proto` (virtual filename prefix).
+- **Fix hint**: Either (1) apply `mapErrorFilename` to each error in `collectErrors` before joining at line 512, or (2) use the disk path when constructing the error at line 944 by calling `srcTree.VirtualFileToDiskFile(filename)`. Option 1 is more general — it would fix filename mapping for ALL collected errors, not just import cycle errors.
+- **Also affects**: Any error in `collectErrors` that uses virtual filenames will have the same prefix mismatch. This includes "File not found" errors (line 958) and other parse/import errors.
