@@ -1878,3 +1878,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: Exit 0, stdout = 14 bytes (two MapEntry messages for key "a").
 - **Go protoc-go**: Exit 0, stdout = 7 bytes (one MapEntry message for key "a", value = 2).
 - **Fix hint**: This is fundamental to how Go's protobuf library handles maps vs C++'s representation. To match C++, Go would need to avoid using native Go maps and instead preserve the repeated field semantics. Could potentially use `dynamicpb` to manually construct repeated entries, or patch `prototext.Unmarshal` to preserve duplicates in the underlying repeated field rather than the Go map.
+
+### Run 198 — Trailing comma in aggregate option list accepted by Go but rejected by C++ (VICTORY)
+- **Bug**: Go's `consumeAggregate()` accepts trailing commas in list values inside aggregate options (`values: [1, 2, 3,]`), while C++ protoc rejects them with "Expected integer, got: ]". C++ requires each comma to be followed by another value. Go silently accepts the trailing comma and produces a valid descriptor. This causes all profiles to fail because C++ errors out (exit 1) while Go succeeds (exit 0).
+- **Test**: `506_trailing_comma_aggregate` — all 10 profiles fail.
+- **Root cause**: Go's aggregate option list parsing in `consumeAggregate()` likely loops on commas without checking if the next token is the closing `]`. After consuming a comma, it should check if the next token is `]` and either reject (to match C++) or handle it. Currently, it seems to loop back, see `]`, and exit the loop normally.
+- **C++ protoc**: `test.proto:17:20: Error while parsing option value for "opts": Expected integer, got: ]` — rejects trailing comma. Exit 1.
+- **Go protoc-go**: Accepts trailing comma, produces valid descriptor. Exit 0.
+- **Fix hint**: In `consumeAggregate()` list parsing, after consuming a `,`, check if the next token is `]`. If so, either (1) emit an error "Expected integer, got: ]" to match C++ behavior, or (2) break out of the loop. Option 1 matches C++ exactly.
