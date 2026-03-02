@@ -940,11 +940,15 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 				nextFile = filename // self-import
 			}
 			line, col := findImportLocation(cycleStartFd, nextFile)
+			displayName := cycleStart
+			if dp, ok := srcTree.VirtualFileToDiskFile(cycleStart); ok {
+				displayName = dp
+			}
 			if collectErrors != nil {
-				*collectErrors = append(*collectErrors, fmt.Sprintf("%s:%d:%d: File recursively imports itself: %s", cycleStart, line, col, chain))
+				*collectErrors = append(*collectErrors, fmt.Sprintf("%s:%d:%d: File recursively imports itself: %s", displayName, line, col, chain))
 				return false, nil
 			}
-			return false, fmt.Errorf("%s:%d:%d: File recursively imports itself: %s", cycleStart, line, col, chain)
+			return false, fmt.Errorf("%s:%d:%d: File recursively imports itself: %s", displayName, line, col, chain)
 		}
 	}
 
