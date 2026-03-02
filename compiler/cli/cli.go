@@ -1548,11 +1548,17 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--encode=") {
+			if cfg.encodeType != "" || cfg.decodeType != "" || cfg.decodeRaw {
+				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
+			}
 			cfg.encodeType = arg[len("--encode="):]
 			continue
 		}
 
 		if arg == "--encode" {
+			if cfg.encodeType != "" || cfg.decodeType != "" || cfg.decodeRaw {
+				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
+			}
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++
 				cfg.encodeType = args[i]
@@ -1563,11 +1569,17 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--decode=") {
+			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw {
+				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
+			}
 			cfg.decodeType = arg[len("--decode="):]
 			continue
 		}
 
 		if arg == "--decode" {
+			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw {
+				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
+			}
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++
 				cfg.decodeType = args[i]
@@ -1578,6 +1590,9 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--decode_raw" {
+			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw {
+				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
+			}
 			cfg.decodeRaw = true
 			continue
 		}
