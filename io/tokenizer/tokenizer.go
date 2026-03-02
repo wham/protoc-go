@@ -234,9 +234,19 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 		}
 	}
 
-	// Whatever remains in the buffer is the leading comment
+	// C++ protoc flushes the comment buffer when the next token is }, ], or )
+	// (end of scope). The flushed comment becomes trailing (if canAttachToPrev)
+	// or detached (if not). Otherwise it becomes leading of the next token.
 	if hasComment {
-		result.Leading = commentBuf.String()
+		if t.pos < len(t.input) && (t.input[t.pos] == '}' || t.input[t.pos] == ']' || t.input[t.pos] == ')') {
+			if canAttachToPrev {
+				result.PrevTrailing = commentBuf.String()
+			} else {
+				result.Detached = append(result.Detached, commentBuf.String())
+			}
+		} else {
+			result.Leading = commentBuf.String()
+		}
 	}
 
 	return result
