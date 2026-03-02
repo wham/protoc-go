@@ -508,6 +508,9 @@ func Run(args []string) error {
 	if cfg.includeImports && cfg.descriptorSetOut == "" {
 		fmt.Fprintln(os.Stderr, "--include_imports only makes sense when combined with --descriptor_set_out.")
 	}
+	if cfg.includeSourceInfo && cfg.descriptorSetOut == "" {
+		fmt.Fprintln(os.Stderr, "--include_source_info only makes sense when combined with --descriptor_set_out.")
+	}
 
 	// Make proto files relative to source tree
 	relFiles := make([]string, len(cfg.protoFiles))
