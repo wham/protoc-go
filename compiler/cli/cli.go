@@ -10068,6 +10068,14 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte) {
 		return
 	}
 
+	// Go: "proto: (line L:C): cannot specify field by number: N"
+	// C++: "input:L:C: Expected identifier, got: N"
+	reFieldNum := regexp.MustCompile(`\(line (\d+):(\d+)\): cannot specify field by number: (\d+)`)
+	if m := reFieldNum.FindStringSubmatch(errStr); m != nil {
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected identifier, got: %s\n", m[1], m[2], m[3])
+		return
+	}
+
 	// Go: "proto: syntax error (line L:C): missing field separator :"
 	// C++: "input:L:C: Expected ":", found "TOKEN"."
 	reSep := regexp.MustCompile(`\(line (\d+):(\d+)\): missing field separator :`)
