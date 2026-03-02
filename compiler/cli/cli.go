@@ -1548,7 +1548,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--encode=") {
-			if cfg.encodeType != "" || cfg.decodeType != "" || cfg.decodeRaw {
+			if cfg.encodeType != "" || cfg.decodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
 				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
 			}
 			cfg.encodeType = arg[len("--encode="):]
@@ -1556,7 +1556,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--encode" {
-			if cfg.encodeType != "" || cfg.decodeType != "" || cfg.decodeRaw {
+			if cfg.encodeType != "" || cfg.decodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
 				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
 			}
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
@@ -1569,7 +1569,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--decode=") {
-			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw {
+			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
 				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
 			}
 			cfg.decodeType = arg[len("--decode="):]
@@ -1577,7 +1577,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--decode" {
-			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw {
+			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
 				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
 			}
 			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
@@ -1590,7 +1590,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--decode_raw" {
-			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw {
+			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
 				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
 			}
 			cfg.decodeRaw = true
@@ -1598,6 +1598,9 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--print_free_field_numbers" {
+			if cfg.encodeType != "" || cfg.decodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
+				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
+			}
 			cfg.printFreeFieldNumbers = true
 			continue
 		}
