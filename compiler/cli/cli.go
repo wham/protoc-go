@@ -1558,6 +1558,13 @@ func parseArgs(args []string) (*config, error) {
 			cfg.dependencyOut = arg[len("--dependency_out="):]
 			continue
 		}
+		if arg == "--dependency_out" {
+			if i+1 < len(args) {
+				i++
+				cfg.dependencyOut = args[i]
+			}
+			continue
+		}
 
 		if strings.HasPrefix(arg, "--direct_dependencies=") {
 			cfg.directDependenciesSet = true
