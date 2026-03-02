@@ -819,6 +819,7 @@ CLI_TESTS=(
   "encode_nested_oneof|--encode=encnestedoneof.Outer -I testdata/512_encode_nested_oneof testdata/512_encode_nested_oneof/test.proto|inner { name: \"hello\" id: 42 label: \"x\" } tag: \"ok\""
   "pfn_dso_mutex|--print_free_field_numbers --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "pfn_plugin_mutex|--print_free_field_numbers --dump_out=/tmp/dump -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "decode_raw_plugin_mutex|--decode_raw --dump_out=/tmp/test_decode_raw_plugin -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

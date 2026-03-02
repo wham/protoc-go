@@ -2031,3 +2031,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Prints `basic.Person    free: 4-INF` to stdout. Exit 0.
 - **Fix hint**: After argument parsing, check if `cfg.printFreeFieldNumbers` is true AND `len(cfg.plugins) > 0`. If both conditions are true, emit: `return nil, fmt.Errorf("Cannot use --encode, --decode or print .proto info and generate code at the same time.")`. Same check should apply to `--encode` and `--decode` with plugin output flags.
 - **Also affects**: `--encode` + `--X_out` and `--decode` + `--X_out` likely have the same missing validation bug.
+
+### Run 216 — --decode_raw not mutually exclusive with --X_out plugin flags (VICTORY)
+- **Bug**: Go's post-parse validation does not check for mutual exclusion between `--decode_raw` and plugin output flags (`--X_out`). C++ protoc groups `--decode_raw` under the "decode" mode and validates it cannot be combined with any code generation output. Go allows both and happily decodes stdin while ignoring or running the plugin.
+- **Test**: CLI test `decode_raw_plugin_mutex` — `--decode_raw --dump_out=/tmp/test -I testdata/01_basic_message testdata/01_basic_message/basic.proto` with stdin `" "`.
+- **Root cause**: Go's argument validation does not treat `cfg.decodeRaw` as part of the encode/decode mode that should be mutually exclusive with code generation output. The validation at line 488-493 checks `len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers && ...` to ensure at least ONE output mode, but never checks that decode_raw precludes plugin output.
+- **C++ protoc**: `Cannot use --encode, --decode or print .proto info and generate code at the same time.` Exit 1.
+- **Go protoc-go**: `4: 10` (raw decode output). Exit 0. Silently processes both.
+- **Fix hint**: After argument parsing, check if `cfg.decodeRaw` is true AND (`len(cfg.plugins) > 0` OR `cfg.descriptorSetOut != ""`). If so, emit the mutual exclusion error.
+- **Also affects**: `--decode_raw` + `--descriptor_set_out` likely has the same missing validation bug.
