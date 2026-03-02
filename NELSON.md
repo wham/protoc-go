@@ -1590,3 +1590,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
   }
   ```
 - **Also affects**: Any `--encode` with `nan` in a `map<K, double>` or `map<K, float>` field. Singular and repeated double/float NaN values ARE canonicalized (fixed in Run 161).
+
+### Run 164 — Trailing comment before closing brace dropped from SCI (VICTORY)
+- **Bug**: Go's source code info does not capture comments between the last field in a message and the closing `}` brace. C++ protoc treats such comments as `trailing_comments` on the last field's SCI entry. Go drops them entirely — the comment is not attached to any SCI location.
+- **Test**: `489_trailing_comment_before_close` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: When parsing a message body, after the last field is parsed and before the closing `}` is consumed, any comments on the intervening lines should be collected as trailing comments for the last declaration. Go's comment collection logic does not assign these comments to the preceding declaration — they are consumed by the `}` token processing but never attached to any SCI entry.
+- **C++ protoc**: path=[4,0,2,0] (the field `name`) has `trailing_comments: " trailing on last field before close\n"`.
+- **Go protoc-go**: path=[4,0,2,0] has NO `trailing_comments`. The comment is completely lost.
+- **Fix hint**: After parsing each declaration in a message body, before consuming the next token (which could be `}`), check if there are pending comments and attach them as trailing comments to the previous declaration's SCI entry. This is similar to the fix needed for Run 62 (comment after opening brace) but affects the opposite end of the scope.
+- **Also affects**: Same bug likely exists for comments before `}` in enums, services, oneofs, and extend blocks — any scope where a comment appears after the last declaration and before the closing brace.
