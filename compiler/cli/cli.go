@@ -9400,7 +9400,13 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		return fmt.Errorf("Failed to read input.")
 	}
 
-	// Check for oneof conflicts before unmarshalling (prototext silently accepts them)
+	// Check for duplicate non-repeated fields and oneof conflicts before unmarshalling
+	// (prototext silently accepts both). C++ checks both in MergeField during parsing.
+	if dupErr := checkDupFields(data, msgDesc); dupErr != "" {
+		fmt.Fprintln(os.Stderr, dupErr)
+		fmt.Fprintln(os.Stderr, "Failed to parse input.")
+		os.Exit(1)
+	}
 	if conflictErr := checkOneofConflicts(data, msgDesc); conflictErr != "" {
 		fmt.Fprintln(os.Stderr, conflictErr)
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
@@ -9619,6 +9625,75 @@ func findTokenAfterIdent(data []byte, line, col int) (int, int, string) {
 	}
 	// Single symbol
 	return tokLine, tokCol, string(data[tokStart : tokStart+1])
+}
+
+// checkDupFields scans text format input for duplicate non-repeated scalar fields.
+// C++ protoc's TextFormat::Parser checks HasField before setting a value and reports:
+// Non-repeated field "X" is specified multiple times.
+func checkDupFields(data []byte, msgDesc protoreflect.MessageDescriptor) string {
+	// Build set of non-repeated non-message field names
+	nonRepeatedScalar := map[string]bool{}
+	fields := msgDesc.Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		if fd.Cardinality() != protoreflect.Repeated &&
+			fd.Kind() != protoreflect.MessageKind &&
+			fd.Kind() != protoreflect.GroupKind {
+			nonRepeatedScalar[string(fd.Name())] = true
+		}
+	}
+	if len(nonRepeatedScalar) == 0 {
+		return ""
+	}
+
+	seenFields := map[string]bool{}
+	line := 1
+	col := 1
+	i := 0
+	for i < len(data) {
+		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
+			col++
+			i++
+			continue
+		}
+		if data[i] == '\n' {
+			line++
+			col = 1
+			i++
+			continue
+		}
+		if isLetter(data[i]) || data[i] == '_' {
+			start := i
+			for i < len(data) && (isAlphanumeric(data[i]) || data[i] == '_') {
+				i++
+				col++
+			}
+			fieldName := string(data[start:i])
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				i++
+				col++
+			}
+			colonCol := col
+			if i < len(data) && data[i] == ':' {
+				if nonRepeatedScalar[fieldName] {
+					if seenFields[fieldName] {
+						return fmt.Sprintf("input:%d:%d: Non-repeated field \"%s\" is specified multiple times.",
+							line, colonCol, fieldName)
+					}
+					seenFields[fieldName] = true
+				}
+				i++
+				col++
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
+		}
+		i++
+		col++
+	}
+	return ""
 }
 
 // checkOneofConflicts scans text format input for oneof field conflicts.
