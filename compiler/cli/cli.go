@@ -10404,6 +10404,10 @@ func validateProtoWithSchema(data []byte, msgFQN string, msgDesc *descriptorpb.D
 					if !utf8.Valid(v) {
 						return &utf8ValidationError{msg: fmt.Sprintf("String field '%s.%s' contains invalid UTF-8 data when parsing a protocol buffer. Use the 'bytes' type if you intend to send raw bytes. ", msgFQN, fd.GetName())}
 					}
+				} else if fd.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED && isPackableType(fd.GetType()) {
+					if err := validatePackedData(v, fd.GetType()); err != nil {
+						return err
+					}
 				}
 			}
 		case protowire.StartGroupType:
@@ -10447,6 +10451,35 @@ func validateProtoWithSchema(data []byte, msgFQN string, msgDesc *descriptorpb.D
 			}
 		default:
 			return fmt.Errorf("unknown wire type %d", wtype)
+		}
+	}
+	return nil
+}
+
+// validatePackedData checks that packed repeated field data is well-formed.
+func validatePackedData(data []byte, typ descriptorpb.FieldDescriptorProto_Type) error {
+	switch typ {
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		if len(data)%8 != 0 {
+			return fmt.Errorf("invalid packed fixed64")
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
+		if len(data)%4 != 0 {
+			return fmt.Errorf("invalid packed fixed32")
+		}
+	default:
+		// Varint-encoded types: validate each varint
+		pos := 0
+		for pos < len(data) {
+			_, vn := protowire.ConsumeVarint(data[pos:])
+			if vn < 0 {
+				return fmt.Errorf("invalid packed varint")
+			}
+			pos += vn
 		}
 	}
 	return nil

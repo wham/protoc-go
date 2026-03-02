@@ -482,3 +482,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 177. [DONE] Fix `cli@encode_req_order` — C++ protoc's `FindInitializationErrors` does two passes: first collects missing required fields at the current level, then recurses into set sub-message fields. Go's `collectMissingRequired` did one pass (interleaving required checks with recursion), producing wrong order. Split into two passes matching C++. All 5076/5076 tests pass.
 
 178. [DONE] Fix `cli@descriptor_set_in_multi` — `--descriptor_set_in` accepts a colon-delimited list of FileDescriptorSet files, but Go treated the entire string as a single file path. Split on `:` and load each file separately. All 5087/5087 tests pass.
+
+179. [DONE] Fix `cli@response_file` — C++ protoc supports `@filename` arguments that read options/filenames from a file (one per line). Added `expandResponseFiles` function in `Run` that expands `@filename` args before `parseArgs`. Reads file contents, splits by newline, skips empty lines. Matches C++ `ExpandArgumentFile` behavior. All 5098/5098 tests pass.
