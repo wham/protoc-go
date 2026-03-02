@@ -533,6 +533,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 203. [DONE] Fix `507_extrange_builtin_option` — C++ protoc rejects unknown non-parenthesized option names on extension ranges (e.g., `deprecated = true`) with `Option "NAME" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).` The only valid non-parenthesized simple-value option on `ExtensionRangeOptions` is `verification`. Added error return in `parseExtensionRange` when `nameTok.Value != "verification"` in the simple value branch. All 5218/5218 tests pass.
 
+204. [DONE] Fix `cli@plugin_space` — C++ protoc accepts both `--plugin=VALUE` and `--plugin VALUE` (space-separated), but Go only handled the `=` form, rejecting space-separated with "Missing value for flag". Added `arg == "--plugin"` check that consumes the next argument as value, matching the pattern used for `--descriptor_set_out`, `--proto_path`, etc. All 5219/5219 tests pass.
+
 ## Notes (continued)
 
 - `compiler/parser/parser.go`: `attachComments` now skips `PrevTrailing` when the previous token is `}`. In C++ protoc, ALL closing `}` tokens are consumed via `TryConsumeEndOfDeclaration("}", nullptr)` where the `nullptr` location means `AttachComments` is never called, so trailing comments of `}` are always dropped. For `{` and `;` tokens, C++ uses `ConsumeEndOfDeclaration` with a non-null location, so their trailing comments ARE attached. This matches: trailing of `;` → attached to declaration, trailing of `{` → attached to block, trailing of `}` → dropped.
