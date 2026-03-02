@@ -553,6 +553,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 213. [DONE] Fix `cli@decode_with_dso` — C++ protoc rejects combining `--encode`/`--decode`/`--decode_raw` with `--descriptor_set_out` with `Cannot use --encode or --decode and generate descriptors at the same time.` (exit 1) but Go silently accepted the combination. Added check after "Missing output directives" that validates `(decodeType || encodeType || decodeRaw) && descriptorSetOut != ""`. All 5257/5257 tests pass.
 
+214. [DONE] Fix `cli@encode_nested_closed_enum` — `checkClosedEnumValues` only checked top-level fields, not nested message fields. Refactored into recursive `checkClosedEnumValuesInner` (matching `checkNegUintFieldsInner` pattern) that builds both `closedEnums` and `msgFields` maps, and recurses into braced blocks for message-type fields. All 5268/5268 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
