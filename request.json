@@ -1,21 +1,40 @@
 {
   "fileToGenerate": [
-    "b.proto"
+    "main.proto"
   ],
   "protoFile": [
     {
-      "name": "a.proto",
-      "package": "dup",
+      "name": "dep.proto",
+      "package": "partial",
       "messageType": [
         {
-          "name": "Msg",
+          "name": "Dependency",
           "field": [
             {
-              "name": "x",
+              "name": "value",
               "number": 1,
               "label": "LABEL_OPTIONAL",
+              "type": "TYPE_STRING",
+              "jsonName": "value"
+            },
+            {
+              "name": "id",
+              "number": 2,
+              "label": "LABEL_OPTIONAL",
               "type": "TYPE_INT32",
-              "jsonName": "x"
+              "jsonName": "id"
+            }
+          ]
+        },
+        {
+          "name": "Helper",
+          "field": [
+            {
+              "name": "data",
+              "number": 1,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_STRING",
+              "jsonName": "data"
             }
           ]
         }
@@ -26,8 +45,8 @@
             "span": [
               0,
               0,
-              2,
-              28
+              11,
+              1
             ]
           },
           {
@@ -45,9 +64,9 @@
               2
             ],
             "span": [
-              1,
+              2,
               0,
-              12
+              16
             ]
           },
           {
@@ -56,9 +75,10 @@
               0
             ],
             "span": [
-              2,
+              4,
               0,
-              28
+              7,
+              1
             ]
           },
           {
@@ -68,9 +88,9 @@
               1
             ],
             "span": [
-              2,
+              4,
               8,
-              11
+              18
             ]
           },
           {
@@ -81,9 +101,9 @@
               0
             ],
             "span": [
+              5,
               2,
-              14,
-              26
+              19
             ]
           },
           {
@@ -95,9 +115,9 @@
               5
             ],
             "span": [
+              5,
               2,
-              14,
-              19
+              8
             ]
           },
           {
@@ -109,9 +129,9 @@
               1
             ],
             "span": [
-              2,
-              20,
-              21
+              5,
+              9,
+              14
             ]
           },
           {
@@ -123,9 +143,143 @@
               3
             ],
             "span": [
+              5,
+              17,
+              18
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
               2,
-              24,
-              25
+              1
+            ],
+            "span": [
+              6,
+              2,
+              15
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              5
+            ],
+            "span": [
+              6,
+              2,
+              7
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              1
+            ],
+            "span": [
+              6,
+              8,
+              10
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              3
+            ],
+            "span": [
+              6,
+              13,
+              14
+            ]
+          },
+          {
+            "path": [
+              4,
+              1
+            ],
+            "span": [
+              9,
+              0,
+              11,
+              1
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              1
+            ],
+            "span": [
+              9,
+              8,
+              14
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0
+            ],
+            "span": [
+              10,
+              2,
+              18
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0,
+              5
+            ],
+            "span": [
+              10,
+              2,
+              8
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              10,
+              9,
+              13
+            ]
+          },
+          {
+            "path": [
+              4,
+              1,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              10,
+              16,
+              17
             ]
           }
         ]
@@ -133,21 +287,29 @@
       "syntax": "proto3"
     },
     {
-      "name": "b.proto",
-      "package": "dup",
+      "name": "main.proto",
+      "package": "partial",
       "dependency": [
-        "a.proto"
+        "dep.proto"
       ],
       "messageType": [
         {
-          "name": "Msg",
+          "name": "Main",
           "field": [
             {
-              "name": "y",
+              "name": "name",
               "number": 1,
               "label": "LABEL_OPTIONAL",
-              "type": "TYPE_INT32",
-              "jsonName": "y"
+              "type": "TYPE_STRING",
+              "jsonName": "name"
+            },
+            {
+              "name": "dep",
+              "number": 2,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_MESSAGE",
+              "typeName": ".partial.Dependency",
+              "jsonName": "dep"
             }
           ]
         }
@@ -158,8 +320,8 @@
             "span": [
               0,
               0,
-              3,
-              28
+              9,
+              1
             ]
           },
           {
@@ -177,9 +339,9 @@
               2
             ],
             "span": [
-              1,
+              2,
               0,
-              12
+              16
             ]
           },
           {
@@ -188,9 +350,9 @@
               0
             ],
             "span": [
-              2,
+              4,
               0,
-              17
+              19
             ]
           },
           {
@@ -199,9 +361,10 @@
               0
             ],
             "span": [
-              3,
+              6,
               0,
-              28
+              9,
+              1
             ]
           },
           {
@@ -211,9 +374,9 @@
               1
             ],
             "span": [
-              3,
+              6,
               8,
-              11
+              12
             ]
           },
           {
@@ -224,9 +387,9 @@
               0
             ],
             "span": [
-              3,
-              14,
-              26
+              7,
+              2,
+              18
             ]
           },
           {
@@ -238,9 +401,9 @@
               5
             ],
             "span": [
-              3,
-              14,
-              19
+              7,
+              2,
+              8
             ]
           },
           {
@@ -252,9 +415,9 @@
               1
             ],
             "span": [
-              3,
-              20,
-              21
+              7,
+              9,
+              13
             ]
           },
           {
@@ -266,9 +429,64 @@
               3
             ],
             "span": [
-              3,
-              24,
-              25
+              7,
+              16,
+              17
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1
+            ],
+            "span": [
+              8,
+              2,
+              21
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              6
+            ],
+            "span": [
+              8,
+              2,
+              12
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              1
+            ],
+            "span": [
+              8,
+              13,
+              16
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              3
+            ],
+            "span": [
+              8,
+              19,
+              20
             ]
           }
         ]
@@ -278,21 +496,29 @@
   ],
   "sourceFileDescriptors": [
     {
-      "name": "b.proto",
-      "package": "dup",
+      "name": "main.proto",
+      "package": "partial",
       "dependency": [
-        "a.proto"
+        "dep.proto"
       ],
       "messageType": [
         {
-          "name": "Msg",
+          "name": "Main",
           "field": [
             {
-              "name": "y",
+              "name": "name",
               "number": 1,
               "label": "LABEL_OPTIONAL",
-              "type": "TYPE_INT32",
-              "jsonName": "y"
+              "type": "TYPE_STRING",
+              "jsonName": "name"
+            },
+            {
+              "name": "dep",
+              "number": 2,
+              "label": "LABEL_OPTIONAL",
+              "type": "TYPE_MESSAGE",
+              "typeName": ".partial.Dependency",
+              "jsonName": "dep"
             }
           ]
         }
@@ -303,8 +529,8 @@
             "span": [
               0,
               0,
-              3,
-              28
+              9,
+              1
             ]
           },
           {
@@ -322,9 +548,9 @@
               2
             ],
             "span": [
-              1,
+              2,
               0,
-              12
+              16
             ]
           },
           {
@@ -333,9 +559,9 @@
               0
             ],
             "span": [
-              2,
+              4,
               0,
-              17
+              19
             ]
           },
           {
@@ -344,9 +570,10 @@
               0
             ],
             "span": [
-              3,
+              6,
               0,
-              28
+              9,
+              1
             ]
           },
           {
@@ -356,9 +583,9 @@
               1
             ],
             "span": [
-              3,
+              6,
               8,
-              11
+              12
             ]
           },
           {
@@ -369,9 +596,9 @@
               0
             ],
             "span": [
-              3,
-              14,
-              26
+              7,
+              2,
+              18
             ]
           },
           {
@@ -383,9 +610,9 @@
               5
             ],
             "span": [
-              3,
-              14,
-              19
+              7,
+              2,
+              8
             ]
           },
           {
@@ -397,9 +624,9 @@
               1
             ],
             "span": [
-              3,
-              20,
-              21
+              7,
+              9,
+              13
             ]
           },
           {
@@ -411,9 +638,64 @@
               3
             ],
             "span": [
-              3,
-              24,
-              25
+              7,
+              16,
+              17
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1
+            ],
+            "span": [
+              8,
+              2,
+              21
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              6
+            ],
+            "span": [
+              8,
+              2,
+              12
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              1
+            ],
+            "span": [
+              8,
+              13,
+              16
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              1,
+              3
+            ],
+            "span": [
+              8,
+              19,
+              20
             ]
           }
         ]

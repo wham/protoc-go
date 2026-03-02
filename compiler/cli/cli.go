@@ -398,6 +398,7 @@ type config struct {
 	directDependenciesViolationMsg  string
 	fatalWarnings                   bool
 	retainOptions                   bool
+	dependencyOut                   string
 }
 
 // Run executes the protocol buffer compiler with the given command-line arguments.
@@ -812,6 +813,13 @@ func Run(args []string) error {
 		}
 	}
 
+	// Handle dependency output
+	if cfg.dependencyOut != "" && cfg.descriptorSetOut != "" {
+		if err := writeDependencyOut(cfg.dependencyOut, cfg.descriptorSetOut, orderedFiles); err != nil {
+			return err
+		}
+	}
+
 	// Handle plugin outputs
 	for _, plug := range cfg.plugins {
 		// Build source file descriptors in dependency order (matching protoFile order)
@@ -868,6 +876,36 @@ func writeDescriptorSet(path string, data []byte) error {
 	}
 	defer f.Close()
 	_, err = f.Write(data)
+	return err
+}
+
+func writeDependencyOut(depPath, target string, orderedFiles []string) error {
+	var buf strings.Builder
+	buf.WriteString(target)
+	buf.WriteString(":")
+	for i, name := range orderedFiles {
+		if i > 0 {
+			buf.WriteString(" \\\n ")
+		} else {
+			buf.WriteString(" ")
+		}
+		buf.WriteString(name)
+	}
+	buf.WriteString("\n")
+
+	f, err := os.Create(depPath)
+	if err != nil {
+		if pe, ok := err.(*os.PathError); ok {
+			errMsg := pe.Err.Error()
+			if len(errMsg) > 0 {
+				errMsg = strings.ToUpper(errMsg[:1]) + errMsg[1:]
+			}
+			return fmt.Errorf("%s: %s", depPath, errMsg)
+		}
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write([]byte(buf.String()))
 	return err
 }
 
@@ -1404,6 +1442,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--dependency_out=") {
+			cfg.dependencyOut = arg[len("--dependency_out="):]
 			continue
 		}
 
