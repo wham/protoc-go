@@ -9883,9 +9883,11 @@ func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescri
 		isEditions := fd.GetSyntax() == "editions"
 		isClosed := fd.GetSyntax() != "proto3" && !isEditions
 		isProto3 := fd.GetSyntax() == "proto3"
+		fileImplicit := isEditions &&
+			fd.GetOptions().GetFeatures().GetFieldPresence() == descriptorpb.FeatureSet_IMPLICIT
 		for _, msg := range fd.GetMessageType() {
 			collectMsgsForDecode(pkg, "", msg, allMsgs, allEnums, allExts, closedEnums, isClosed, isEditions, fd)
-			if isProto3 {
+			if isProto3 || fileImplicit {
 				collectUtf8Msgs(pkg, "", msg, utf8Msgs)
 				collectNoPresenceMsgs(pkg, "", msg, noPresenceMsgs)
 			}
@@ -9980,6 +9982,17 @@ func collectNoPresenceMsgs(pkg, prefix string, msg *descriptorpb.DescriptorProto
 	for _, nested := range msg.GetNestedType() {
 		collectNoPresenceMsgs(pkg, prefix+msg.GetName()+".", nested, noPresenceMsgs)
 	}
+}
+
+// fieldHasExplicitPresence returns true if the field has per-field
+// features.field_presence = EXPLICIT or LEGACY_REQUIRED, overriding
+// the message/file-level implicit presence.
+func fieldHasExplicitPresence(fd *descriptorpb.FieldDescriptorProto) bool {
+	if fd.GetOptions().GetFeatures() == nil || fd.GetOptions().GetFeatures().FieldPresence == nil {
+		return false
+	}
+	fp := fd.GetOptions().GetFeatures().GetFieldPresence()
+	return fp == descriptorpb.FeatureSet_EXPLICIT || fp == descriptorpb.FeatureSet_LEGACY_REQUIRED
 }
 
 func buildEnumValMap(ed *descriptorpb.EnumDescriptorProto) map[int32]string {
@@ -10514,7 +10527,8 @@ func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorp
 			if fd != nil && fd.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED &&
 				fd.OneofIndex == nil &&
 				fd.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE &&
-				fd.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+				fd.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP &&
+				!fieldHasExplicitPresence(fd) {
 				// Implicit presence field: skip if default value
 				isDefault := false
 				switch e.wtype {
