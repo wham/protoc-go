@@ -489,6 +489,10 @@ func Run(args []string) error {
 		return fmt.Errorf("Missing output directives.")
 	}
 
+	if cfg.deterministicOutput && cfg.encodeType == "" {
+		return fmt.Errorf("Can only use --deterministic_output with --encode.")
+	}
+
 	// Default proto path
 	if len(cfg.protoPaths) == 0 && len(cfg.protoPathMappings) == 0 {
 		cfg.protoPaths = []string{"."}
