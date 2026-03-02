@@ -805,6 +805,7 @@ CLI_TESTS=(
   "dependency_out_stdout|--dependency_out=/dev/fd/1 --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "encode_map_dup_key|--encode=encmapdupkey.Record -I testdata/505_encode_map_dup_key testdata/505_encode_map_dup_key/test.proto|items { key: \"a\" value: 1 } items { key: \"a\" value: 2 } label: \"ok\""
   "bare_i_flag|-I"
+  "direct_deps_space|--direct_dependencies basic.proto --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

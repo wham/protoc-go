@@ -1894,3 +1894,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `Missing value for flag: -I` (exit 1).
 - **Go protoc-go**: `Missing input file.` (exit 1).
 - **Fix hint**: After the `if path == "" && i+1 < len(args)` block, add: `if path == "" { return cfg, fmt.Errorf("Missing value for flag: -I") }`.
+
+### Run 200 — Space-separated --direct_dependencies flag not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--direct_dependencies basic.proto` (space-separated) syntax, but Go's `parseArgs()` only handles `--direct_dependencies=VALUE` (equals-sign form). When `--direct_dependencies basic.proto` is used with a space, Go treats `--direct_dependencies` as a flag with no value and reports "Missing value for flag: --direct_dependencies" with exit 1. C++ correctly consumes the next argument as the flag's value.
+- **Test**: CLI test `cli@direct_deps_space` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` only checks `strings.HasPrefix(arg, "--direct_dependencies=")`. When `arg == "--direct_dependencies"` (no `=`), Go falls through to the "Missing value for flag" error handler. Same class of bug as Runs 178-185 (space-separated flags for `--proto_path`, `--descriptor_set_out`, `--descriptor_set_in`, `--dependency_out`, `--error_format`), but affecting `--direct_dependencies`.
+- **C++ protoc**: Parses `--direct_dependencies` + `basic.proto` as `--direct_dependencies=basic.proto`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--direct_dependencies` alone, reports "Missing value for flag: --direct_dependencies". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--direct_dependencies"` that consumes `args[i+1]` as the value, same pattern as other space-separated flag handlers.
+- **Also affects**: `--direct_dependencies_violation_msg` and `--plugin` likely have the same space-separated flag bug.
