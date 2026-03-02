@@ -9461,6 +9461,9 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		fmt.Fprintf(os.Stderr, "warning:  Input message is missing required fields:  %s\n", strings.Join(missing, ", "))
 	}
 
+	// Replace Go's NaN (0x7FF8000000000001) with C++ canonical NaN (0x7FF8000000000000)
+	canonicalizeNaN(msg)
+
 	// Serialize to binary and write to stdout.
 	// Always use Deterministic: true so fields are in field number order,
 	// matching C++ protoc's Message::SerializeToString().
@@ -9485,6 +9488,53 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 
 	os.Stdout.Write(out)
 	return nil
+}
+
+// canonicalizeNaN walks a dynamic message and replaces Go's NaN bit pattern
+// (0x7FF8000000000001 for double, 0x7FC00001 for float) with C++ canonical NaN
+// (0x7FF8000000000000 for double, 0x7FC00000 for float).
+func canonicalizeNaN(msg *dynamicpb.Message) {
+	msg.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		if fd.IsList() {
+			list := v.List()
+			for i := 0; i < list.Len(); i++ {
+				elem := list.Get(i)
+				switch fd.Kind() {
+				case protoreflect.DoubleKind:
+					if math.IsNaN(elem.Float()) {
+						list.Set(i, protoreflect.ValueOfFloat64(math.Float64frombits(0x7FF8000000000000)))
+					}
+				case protoreflect.FloatKind:
+					if math.IsNaN(float64(float32(elem.Float()))) {
+						list.Set(i, protoreflect.ValueOfFloat32(math.Float32frombits(0x7FC00000)))
+					}
+				case protoreflect.MessageKind, protoreflect.GroupKind:
+					canonicalizeNaN(elem.Message().(*dynamicpb.Message))
+				}
+			}
+		} else if fd.IsMap() {
+			v.Map().Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
+				if fd.MapValue().Kind() == protoreflect.MessageKind {
+					canonicalizeNaN(mv.Message().(*dynamicpb.Message))
+				}
+				return true
+			})
+		} else {
+			switch fd.Kind() {
+			case protoreflect.DoubleKind:
+				if math.IsNaN(v.Float()) {
+					msg.Set(fd, protoreflect.ValueOfFloat64(math.Float64frombits(0x7FF8000000000000)))
+				}
+			case protoreflect.FloatKind:
+				if math.IsNaN(float64(float32(v.Float()))) {
+					msg.Set(fd, protoreflect.ValueOfFloat32(math.Float32frombits(0x7FC00000)))
+				}
+			case protoreflect.MessageKind, protoreflect.GroupKind:
+				canonicalizeNaN(v.Message().(*dynamicpb.Message))
+			}
+		}
+		return true
+	})
 }
 
 // cloneFdsStringToBytes clones a FileDescriptorSet, changing all string fields to bytes.
