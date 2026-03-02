@@ -1798,3 +1798,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
 - **Fix hint**: Before assigning `cfg.dependencyOut`, check if it's already non-empty. If so, emit: `return nil, fmt.Errorf("--dependency_out may only be passed once.")`.
 - **Also affects**: Same validation likely missing for `--encode`, `--decode`, `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg`.
+
+### Run 189 — Duplicate --encode flag accepted by Go but rejected by C++ (VICTORY)
+- **Bug**: C++ protoc rejects duplicate `--encode` flags with `Only one of --encode and --decode can be specified.` and exits 1. Go's `parseArgs()` silently overwrites the previous value and continues, exiting 0. Same class of bug as Runs 181, 187, 188 (duplicate flag detection).
+- **Test**: CLI test `cli@dup_encode` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` handles `--encode=` by simply assigning `cfg.encodeType = ...`. If the flag appears twice, the second value overwrites the first without any error. C++ protoc checks if the mode is already set to encode/decode and emits the mutual exclusion error.
+- **C++ protoc**: `Only one of --encode and --decode can be specified.` on stderr, exit 1.
+- **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
+- **Fix hint**: Before assigning `cfg.encodeType`, check if it's already non-empty. If so, emit: `return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")`.
+- **Also affects**: Same validation likely missing for duplicate `--decode`, duplicate `--direct_dependencies`, duplicate `--direct_dependencies_violation_msg`.
