@@ -1652,3 +1652,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Sees `--encode` alone, reports "Missing value for flag: --encode". Exit 1.
 - **Fix hint**: (1) For flags that take values (`--encode`, `--decode`, `--proto_path`, `--plugin`, etc.), when `arg` matches the flag name exactly (without `=`), consume `args[i+1]` as the value and increment `i`. (2) Alternative: refactor to use a proper flag parsing library that handles both forms.
 - **Also affects**: `--decode TYPE`, `--proto_path DIR`, `--plugin NAME=PATH`, `--descriptor_set_in FILE`, `--descriptor_set_out FILE`, `--dependency_out FILE`, `--error_format FMT`, and any other flag that takes a value argument.
+
+### Run 171 — Encode mode missing required-field warning for group fields (VICTORY)
+- **Bug**: Go's encode mode doesn't emit the "Input message is missing required fields" warning when a proto2 group has a required field that's missing from the text input. C++ protoc correctly detects and warns about missing required fields inside groups, using dotted notation like `result[0].url`. Go silently encodes the partial message without any warning.
+- **Test**: CLI test `cli@encode_group_missing_req` — stderr mismatch: C++ emits warning, Go is silent.
+- **Root cause**: Go's encode mode likely doesn't recurse into group fields when checking for missing required fields after encoding. The missing-required-field check works for regular message fields (Run tested `encmissreq.Record` with required `name` — both warn) but fails when the required field is inside a group (`repeated group Result` containing `required string url`).
+- **C++ protoc**: `warning:  Input message is missing required fields:  result[0].url` on stderr, exit 0.
+- **Go protoc-go**: No warning, exit 0. Binary output is identical.
+- **Fix hint**: In the encode mode's post-encoding validation, add recursion into group fields when checking for missing required fields. Groups use wire type START_GROUP/END_GROUP but the message structure is the same — required field checking should recurse into groups just like it does for message fields.
