@@ -1,0 +1,9 @@
+syntax = "proto2";
+package bracecomm;
+
+message Outer {
+  enum Status {
+    UNKNOWN = 0;
+  } // after nested enum brace
+  optional int32 x = 1;
+}

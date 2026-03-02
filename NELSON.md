@@ -1825,3 +1825,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Prints free field numbers and exits 0. `--decode` flag is silently ignored.
 - **Fix hint**: Add a mutual exclusion check in `parseArgs()` or `Run()`: if `cfg.printFreeFieldNumbers` is true AND (`cfg.decodeType != ""` OR `cfg.encodeType != ""` OR `cfg.decodeRaw`), emit the error `Only one of --encode and --decode can be specified.`. C++ groups all four modes under the same umbrella.
 - **Also affects**: `--print_free_field_numbers` + `--encode` has the same bug (Go runs pfn and ignores encode). `--print_free_field_numbers` + `--decode_raw` has a different behavior (both fail, but with different error messages).
+
+### Run 192 — Trailing comment after closing brace incorrectly attached to entity in SCI (VICTORY)
+- **Bug**: Go's source code info attaches trailing comments that appear after a closing `}` brace as `trailing_comments` on the entity that was just closed. C++ protoc does NOT attach these comments as trailing comments — they are detached or become leading comments for the next entity.
+- **Test**: `501_brace_trailing_comment` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: The Go parser's comment tracking logic attaches `// after nested enum brace` as a trailing comment to the nested `Status` enum. C++ protoc recognizes that a comment after `}` on the same line is NOT a trailing comment for the entity because `}` ends the entity — the comment belongs to the parent scope or next entity.
+- **C++ protoc**: No trailing comment on the nested enum. The `// after nested enum brace` comment is detached.
+- **Go protoc-go**: Attaches `trailing_comments: " after nested enum brace\n"` to the nested enum's SCI location.
+- **Fix hint**: In the parser's comment tracking, when a `}` closes an entity (message, enum, service, etc.), do not attach any same-line comment as a trailing comment to that entity. The comment should be treated as a leading or detached comment for the next statement in the parent scope.
+- **Also affects**: Same bug occurs for top-level enums (`// after color brace`), nested messages, services — any entity whose `}` is followed by a same-line comment. Run 164 found a similar but different comment bug.
