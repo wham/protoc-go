@@ -1588,10 +1588,16 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--dependency_out=") {
+			if cfg.dependencyOut != "" {
+				return cfg, fmt.Errorf("--dependency_out may only be passed once.")
+			}
 			cfg.dependencyOut = arg[len("--dependency_out="):]
 			continue
 		}
 		if arg == "--dependency_out" {
+			if cfg.dependencyOut != "" {
+				return cfg, fmt.Errorf("--dependency_out may only be passed once.")
+			}
 			if i+1 < len(args) {
 				i++
 				cfg.dependencyOut = args[i]
