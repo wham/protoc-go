@@ -1429,6 +1429,9 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--descriptor_set_out=") || arg == "--descriptor_set_out" {
+			if cfg.descriptorSetOut != "" {
+				return cfg, fmt.Errorf("--descriptor_set_out may only be passed once.")
+			}
 			if arg == "--descriptor_set_out" {
 				if i+1 < len(args) {
 					i++
@@ -1443,6 +1446,9 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "-o") && !strings.HasPrefix(arg, "--") {
+			if cfg.descriptorSetOut != "" {
+				return cfg, fmt.Errorf("--descriptor_set_out may only be passed once.")
+			}
 			val := arg[2:]
 			if val == "" && i+1 < len(args) {
 				i++
