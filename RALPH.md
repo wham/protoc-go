@@ -557,6 +557,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 215. [DONE] Fix `cli@encode_nested_oneof` — `checkOneofConflicts` only checked top-level fields for oneof conflicts, not nested message fields. Refactored into recursive `checkOneofConflictsInner` (matching `checkDupFieldsInner` pattern) that builds both `fieldToOneof` and `msgFieldDescs` maps, handles `}` / `>` closing braces, and recurses into braced blocks for message-type fields (with and without colon). All 5279/5279 tests pass.
 
+216. [DONE] Fix `cli@pfn_dso_mutex` — C++ protoc rejects `--print_free_field_numbers` combined with `--descriptor_set_out` with `Cannot use --encode or --decode and generate descriptors at the same time.` (exit 1) but Go silently accepted the combination. Added `cfg.printFreeFieldNumbers` to the existing codec+dso mutual exclusion check. All 5280/5280 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
