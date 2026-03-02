@@ -10514,16 +10514,22 @@ func checkNegUintFieldsInner(data []byte, i, line, col int, msgDesc protoreflect
 // C++ protoc's TextFormat::Parser detects when two fields from the same oneof
 // are specified and reports: Field "X" is specified along with field "Y",
 // another member of oneof "Z".
+// Recurses into nested messages.
 func checkOneofConflicts(data []byte, msgDesc protoreflect.MessageDescriptor) string {
-	// Build field name → oneof index and oneof index → name maps
+	_, _, _, err := checkOneofConflictsInner(data, 0, 1, 1, msgDesc)
+	return err
+}
+
+func checkOneofConflictsInner(data []byte, pos, line, col int, msgDesc protoreflect.MessageDescriptor) (int, int, int, string) {
 	type fieldOneofInfo struct {
 		oneofIdx  int
 		oneofName string
 	}
 	fieldToOneof := map[string]fieldOneofInfo{}
+	msgFieldDescs := map[string]protoreflect.MessageDescriptor{}
 	fields := msgDesc.Fields()
-	for i := 0; i < fields.Len(); i++ {
-		fd := fields.Get(i)
+	for k := 0; k < fields.Len(); k++ {
+		fd := fields.Get(k)
 		od := fd.ContainingOneof()
 		if od != nil && !od.IsSynthetic() {
 			fieldToOneof[string(fd.Name())] = fieldOneofInfo{
@@ -10531,23 +10537,18 @@ func checkOneofConflicts(data []byte, msgDesc protoreflect.MessageDescriptor) st
 				oneofName: string(od.Name()),
 			}
 		}
-	}
-	if len(fieldToOneof) == 0 {
-		return ""
+		if fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind {
+			msgFieldDescs[string(fd.Name())] = fd.Message()
+		}
 	}
 
-	// Scan the text format for field names at the top level
-	// Track which oneof has been set and by which field
 	type oneofState struct {
 		fieldName string
 	}
 	oneofSet := map[int]oneofState{}
 
-	line := 1
-	col := 1
-	i := 0
+	i := pos
 	for i < len(data) {
-		// Skip whitespace
 		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
 			col++
 			i++
@@ -10559,18 +10560,20 @@ func checkOneofConflicts(data []byte, msgDesc protoreflect.MessageDescriptor) st
 			i++
 			continue
 		}
+		if data[i] == '}' || data[i] == '>' {
+			i++
+			col++
+			return i, line, col, ""
+		}
 
-		// Try to read an identifier (field name)
 		if isLetter(data[i]) || data[i] == '_' {
 			start := i
-			startCol := col
 			for i < len(data) && (isAlphanumeric(data[i]) || data[i] == '_') {
 				i++
 				col++
 			}
 			fieldName := string(data[start:i])
 
-			// Skip whitespace to find ':'
 			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
 				i++
 				col++
@@ -10578,32 +10581,64 @@ func checkOneofConflicts(data []byte, msgDesc protoreflect.MessageDescriptor) st
 
 			colonCol := col
 			if i < len(data) && data[i] == ':' {
-				// This is a field: value pair
 				if info, ok := fieldToOneof[fieldName]; ok {
 					if prev, exists := oneofSet[info.oneofIdx]; exists {
-						return fmt.Sprintf("input:%d:%d: Field \"%s\" is specified along with field \"%s\", another member of oneof \"%s\".",
+						return i, line, col, fmt.Sprintf("input:%d:%d: Field \"%s\" is specified along with field \"%s\", another member of oneof \"%s\".",
 							line, colonCol, fieldName, prev.fieldName, info.oneofName)
 					}
 					oneofSet[info.oneofIdx] = oneofState{fieldName: fieldName}
 				}
 				i++
 				col++
-				// Skip the value (we need to handle strings, numbers, etc.)
-				i, line, col = skipTextFormatValue(data, i, line, col)
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					i++
+					col++
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					if subMsg, ok := msgFieldDescs[fieldName]; ok {
+						i++
+						col++
+						var errStr string
+						i, line, col, errStr = checkOneofConflictsInner(data, i, line, col, subMsg)
+						if errStr != "" {
+							return i, line, col, errStr
+						}
+					} else {
+						i, line, col = skipTextFormatValue(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				if info, ok := fieldToOneof[fieldName]; ok {
+					if prev, exists := oneofSet[info.oneofIdx]; exists {
+						return i, line, col, fmt.Sprintf("input:%d:%d: Field \"%s\" is specified along with field \"%s\", another member of oneof \"%s\".",
+							line, colonCol, fieldName, prev.fieldName, info.oneofName)
+					}
+					oneofSet[info.oneofIdx] = oneofState{fieldName: fieldName}
+				}
+				if subMsg, ok := msgFieldDescs[fieldName]; ok {
+					i++
+					col++
+					var errStr string
+					i, line, col, errStr = checkOneofConflictsInner(data, i, line, col, subMsg)
+					if errStr != "" {
+						return i, line, col, errStr
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
 			} else {
-				// Could be a message field without colon (submessage)
-				_ = startCol
 				i, line, col = skipTextFormatValue(data, i, line, col)
 			}
 			continue
 		}
 
-		// Skip any other character
 		i++
 		col++
 	}
 
-	return ""
+	return i, line, col, ""
 }
 
 func isLetter(b byte) bool {
