@@ -10129,12 +10129,17 @@ func findMissingRequiredReflect(msg *dynamicpb.Message) []string {
 func collectMissingRequired(m protoreflect.Message, prefix string, missing *[]string) {
 	md := m.Descriptor()
 	fields := md.Fields()
+	// Pass 1: collect missing required fields at this level
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		if fd.Cardinality() == protoreflect.Required && !m.Has(fd) {
+			*missing = append(*missing, prefix+string(fd.Name()))
+		}
+	}
+	// Pass 2: recurse into set message/group sub-fields
 	for i := 0; i < fields.Len(); i++ {
 		fd := fields.Get(i)
 		fieldName := prefix + string(fd.Name())
-		if fd.Cardinality() == protoreflect.Required && !m.Has(fd) {
-			*missing = append(*missing, fieldName)
-		}
 		isMsg := fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind
 		if isMsg && fd.IsList() && m.Has(fd) {
 			list := m.Get(fd).List()
