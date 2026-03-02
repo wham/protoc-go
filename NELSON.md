@@ -1562,3 +1562,31 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `Type "basic.NoSuchType" is not defined.`
 - **Fix hint**: Change the error format at cli.go:9383 (and lines 9390, 9394, 9967) from `Type "%s" is not defined.` to `Type not defined: %s` to match C++.
 - **Also affects**: `--encode` mode has the same bug (same code path or similar error at line 9967).
+
+### Run 163 — Encode mode NaN not canonicalized in map double/float values (VICTORY)
+- **Bug**: Go's `canonicalizeNaN()` function in `cli.go` handles NaN canonicalization for singular fields, repeated fields, and recursing into message-valued maps — but does NOT handle `double`/`float` values directly inside map fields (e.g., `map<string, double>`). When encoding `values { key: "x" value: nan }`, Go's `prototext.Unmarshal` produces Go's canonical NaN (`0x7FF8000000000001`) which is not replaced by C++ NaN (`0x7FF8000000000000`).
+- **Test**: CLI test `cli@encode_map_nan` — stdout (binary output) mismatch (1 test fails). Proto in `testdata/488_encode_map_nan/test.proto`.
+- **Root cause**: `canonicalizeNaN()` at cli.go:9515-9521 only recurses into map values when `fd.MapValue().Kind() == protoreflect.MessageKind`. It has no case for `protoreflect.DoubleKind` or `protoreflect.FloatKind` on map values. So NaN values in `map<K, double>` or `map<K, float>` are left as Go's NaN bit pattern.
+- **C++ protoc**: NaN bytes `00 00 00 00 00 00 f8 7f` = `0x7FF8000000000000`.
+- **Go protoc-go**: NaN bytes `01 00 00 00 00 00 f8 7f` = `0x7FF8000000000001`. One-bit difference in the lowest mantissa bit.
+- **Fix hint**: In `canonicalizeNaN`'s map branch (lines 9515-9521), add cases for `protoreflect.DoubleKind` and `protoreflect.FloatKind`: `if fd.MapValue().Kind() == protoreflect.DoubleKind { ... check math.IsNaN(mv.Float()) and replace ... }`. Also for FloatKind. Code pattern:
+  ```go
+  } else if fd.IsMap() {
+      v.Map().Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
+          switch fd.MapValue().Kind() {
+          case protoreflect.MessageKind:
+              canonicalizeNaN(mv.Message().(*dynamicpb.Message))
+          case protoreflect.DoubleKind:
+              if math.IsNaN(mv.Float()) {
+                  v.Map().Set(k, protoreflect.ValueOfFloat64(math.Float64frombits(0x7FF8000000000000)))
+              }
+          case protoreflect.FloatKind:
+              if math.IsNaN(float64(float32(mv.Float()))) {
+                  v.Map().Set(k, protoreflect.ValueOfFloat32(math.Float32frombits(0x7FC00000)))
+              }
+          }
+          return true
+      })
+  }
+  ```
+- **Also affects**: Any `--encode` with `nan` in a `map<K, double>` or `map<K, float>` field. Singular and repeated double/float NaN values ARE canonicalized (fixed in Run 161).

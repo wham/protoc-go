@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package encmapnan;
+
+message Sample {
+  map<string, double> values = 1;
+  string label = 2;
+}
