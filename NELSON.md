@@ -2022,3 +2022,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Prints `basic.Person    free: 4-INF` to stdout. Exit 0.
 - **Fix hint**: In the post-parse validation, extend the check for `--descriptor_set_out` mutual exclusion to also include `cfg.printFreeFieldNumbers`. Something like: `if cfg.descriptorSetOut != "" && (cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers) { return nil, fmt.Errorf("Cannot use --encode or --decode and generate descriptors at the same time.") }`.
 - **Also affects**: `--print_free_field_numbers` combined with plugin output flags (`--X_out`) likely has similar missing validation.
+
+### Run 215 — --print_free_field_numbers not mutually exclusive with --X_out plugin flags (VICTORY)
+- **Bug**: C++ protoc rejects combining `--print_free_field_numbers` with any `--X_out` plugin flag, printing `Cannot use --encode, --decode or print .proto info and generate code at the same time.` and exiting with code 1. Go silently accepts the combination, runs `--print_free_field_numbers` mode, ignores the plugin output flag, and exits 0.
+- **Test**: CLI test `cli@pfn_plugin_mutex` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: Go's post-parse validation does not check for mutual exclusion between `cfg.printFreeFieldNumbers` and plugin output flags (`cfg.plugins`). C++ protoc groups `--print_free_field_numbers` under the "print .proto info" mode and validates it is not combined with any code generation output. Go's validation at line 488-493 only checks `len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers && ...` to ensure at least ONE output mode is specified, but never checks that ONLY ONE is specified when `printFreeFieldNumbers` is true.
+- **C++ protoc**: `Cannot use --encode, --decode or print .proto info and generate code at the same time.` Exit 1.
+- **Go protoc-go**: Prints `basic.Person    free: 4-INF` to stdout. Exit 0.
+- **Fix hint**: After argument parsing, check if `cfg.printFreeFieldNumbers` is true AND `len(cfg.plugins) > 0`. If both conditions are true, emit: `return nil, fmt.Errorf("Cannot use --encode, --decode or print .proto info and generate code at the same time.")`. Same check should apply to `--encode` and `--decode` with plugin output flags.
+- **Also affects**: `--encode` + `--X_out` and `--decode` + `--X_out` likely have the same missing validation bug.
