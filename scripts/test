@@ -772,6 +772,7 @@ CLI_TESTS=(
   "encode_bool_map_order|--encode=boolmapord.Settings -I testdata/483_encode_bool_map_order testdata/483_encode_bool_map_order/test.proto|flags { key: true value: \"yes\" } flags { key: false value: \"no\" }"
   "encode_missing_colon|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name \"Alice\""
   "dependency_out_bad_path|--dependency_out=/nonexistent_nelsontest_dir/deps.txt --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "encode_dup_field|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: 1 name: \"Alice\" id: 2"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

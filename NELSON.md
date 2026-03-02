@@ -1536,3 +1536,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `s: UNKNOWN\ns: ACTIVE\nlabel: "ok"\n1: 99\n` (moves unknown value 99 to unknown fields, printed as `1: 99`).
 - **Go protoc-go**: `s: UNKNOWN\ns: ACTIVE\ns: 99\nlabel: "ok"\n` (keeps unknown value as known field, printed as `s: 99`).
 - **Fix hint**: After unpacking each packed varint entry for an enum type, check if the value is in the closed enum's value map. If not, add it to `unknownEntries` instead of `knownEntries`. Add the same check as lines 10409-10417 inside the packed unpacking loop (around line 10403-10405).
+
+### Run 160 — Encode mode drops detailed error for duplicate non-repeated field (VICTORY)
+- **Bug**: Go's `--encode` mode swallows the detailed error message when a non-repeated field is specified multiple times in text format input. C++ protoc reports the field name and location; Go only prints the generic "Failed to parse input." message.
+- **Test**: CLI test `cli@encode_dup_field` — stderr mismatch (1 test fails).
+- **Root cause**: `reformatProtoTextErrors()` at cli.go:9527 only handles two error patterns: "unknown field" and "missing field separator". When `prototext.Unmarshal` returns a duplicate-field error (different pattern), `reformatProtoTextErrors` doesn't match it and returns without printing anything specific. Only the generic "Failed to parse input." is printed afterward.
+- **C++ protoc**: stderr: `input:1:23: Non-repeated field "id" is specified multiple times.\nFailed to parse input.`
+- **Go protoc-go**: stderr: `Failed to parse input.`
+- **Fix hint**: Add a new regex in `reformatProtoTextErrors` to match Go's duplicate field error pattern (something like `non-repeated field "X" is already set` or similar from prototext) and reformat it to match C++ format: `input:L:C: Non-repeated field "NAME" is specified multiple times.`
