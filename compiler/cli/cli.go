@@ -380,6 +380,7 @@ type pluginSpec struct {
 
 type config struct {
 	protoPaths                      []string
+	protoPathMappings               []importer.Mapping
 	plugins                         map[string]*pluginSpec
 	descriptorSetOut                string
 	descriptorSetIn                 string
@@ -448,12 +449,12 @@ func Run(args []string) error {
 	}
 
 	// Default proto path
-	if len(cfg.protoPaths) == 0 {
+	if len(cfg.protoPaths) == 0 && len(cfg.protoPathMappings) == 0 {
 		cfg.protoPaths = []string{"."}
 	}
 
 	// Build source tree
-	srcTree := &importer.SourceTree{Roots: cfg.protoPaths}
+	srcTree := &importer.SourceTree{Roots: cfg.protoPaths, Mappings: cfg.protoPathMappings}
 
 	// Validate proto paths
 	hadWarnings := false
@@ -1338,7 +1339,15 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--proto_path=") {
-			cfg.protoPaths = append(cfg.protoPaths, arg[len("--proto_path="):])
+			val := arg[len("--proto_path="):]
+			if eqIdx := strings.Index(val, "="); eqIdx >= 0 {
+				cfg.protoPathMappings = append(cfg.protoPathMappings, importer.Mapping{
+					VirtualPath: val[:eqIdx],
+					DiskPath:    val[eqIdx+1:],
+				})
+			} else {
+				cfg.protoPaths = append(cfg.protoPaths, val)
+			}
 			continue
 		}
 
@@ -1348,7 +1357,14 @@ func parseArgs(args []string) (*config, error) {
 				i++
 				path = args[i]
 			}
-			cfg.protoPaths = append(cfg.protoPaths, path)
+			if eqIdx := strings.Index(path, "="); eqIdx >= 0 {
+				cfg.protoPathMappings = append(cfg.protoPathMappings, importer.Mapping{
+					VirtualPath: path[:eqIdx],
+					DiskPath:    path[eqIdx+1:],
+				})
+			} else {
+				cfg.protoPaths = append(cfg.protoPaths, path)
+			}
 			continue
 		}
 

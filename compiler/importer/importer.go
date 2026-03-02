@@ -8,16 +8,52 @@ import (
 	"path/filepath"
 )
 
+// Mapping represents a virtual-path to disk-path mapping.
+// VirtualPath "" means root mapping (no prefix stripping).
+type Mapping struct {
+	VirtualPath string
+	DiskPath    string
+}
+
 // SourceTree represents a set of directories to search for .proto files.
 type SourceTree struct {
-	Roots []string
+	Roots    []string // Simple root directories (VirtualPath="")
+	Mappings []Mapping
+}
+
+// allMappings returns all mappings including those from Roots.
+func (st *SourceTree) allMappings() []Mapping {
+	var all []Mapping
+	for _, root := range st.Roots {
+		all = append(all, Mapping{VirtualPath: "", DiskPath: root})
+	}
+	all = append(all, st.Mappings...)
+	return all
+}
+
+// findFile tries to find filename on disk using the configured mappings.
+func (st *SourceTree) findFile(filename string) (string, bool) {
+	for _, m := range st.allMappings() {
+		prefix := m.VirtualPath
+		if prefix != "" {
+			prefix += "/"
+		}
+		if !startsWith(filename, prefix) {
+			continue
+		}
+		remainder := filename[len(prefix):]
+		diskFile := filepath.Join(m.DiskPath, remainder)
+		if _, err := os.Stat(diskFile); err == nil {
+			return diskFile, true
+		}
+	}
+	return "", false
 }
 
 // Open finds and reads a .proto file from the source tree.
 func (st *SourceTree) Open(filename string) (string, error) {
-	for _, root := range st.Roots {
-		path := filepath.Join(root, filename)
-		data, err := os.ReadFile(path)
+	if diskPath, ok := st.findFile(filename); ok {
+		data, err := os.ReadFile(diskPath)
 		if err == nil {
 			return string(data), nil
 		}
@@ -27,32 +63,26 @@ func (st *SourceTree) Open(filename string) (string, error) {
 
 // Exists checks if a .proto file exists in the source tree.
 func (st *SourceTree) Exists(filename string) bool {
-	for _, root := range st.Roots {
-		path := filepath.Join(root, filename)
-		if _, err := os.Stat(path); err == nil {
-			return true
-		}
-	}
-	return false
+	_, ok := st.findFile(filename)
+	return ok
 }
 
 // VirtualFileToDiskFile maps a virtual filename to the disk path.
 func (st *SourceTree) VirtualFileToDiskFile(filename string) (string, bool) {
-	for _, root := range st.Roots {
-		path := filepath.Join(root, filename)
-		if _, err := os.Stat(path); err == nil {
-			return path, true
-		}
-	}
-	return "", false
+	return st.findFile(filename)
 }
 
 // ValidateRoots checks that all root directories exist and returns warnings.
 func (st *SourceTree) ValidateRoots() []string {
 	var warnings []string
-	for _, root := range st.Roots {
-		if _, err := os.Stat(root); os.IsNotExist(err) {
-			warnings = append(warnings, fmt.Sprintf("%s: warning: directory does not exist.", root))
+	for _, m := range st.allMappings() {
+		if _, err := os.Stat(m.DiskPath); os.IsNotExist(err) {
+			// C++ uses the original flag value for the warning
+			label := m.DiskPath
+			if m.VirtualPath != "" {
+				label = m.VirtualPath + "=" + m.DiskPath
+			}
+			warnings = append(warnings, fmt.Sprintf("%s: warning: directory does not exist.", label))
 		}
 	}
 	return warnings
@@ -67,19 +97,23 @@ func (st *SourceTree) MakeRelative(filename string) (string, error) {
 		}
 	}
 
-	// Try to make relative to each root
+	// Try to make relative to each mapping
 	abs, err := filepath.Abs(filename)
 	if err != nil {
 		return "", fmt.Errorf("Could not make proto path relative: %s: %s", filename, err)
 	}
 
-	for _, root := range st.Roots {
-		rootAbs, err := filepath.Abs(root)
+	for _, m := range st.allMappings() {
+		rootAbs, err := filepath.Abs(m.DiskPath)
 		if err != nil {
 			continue
 		}
 		rel, err := filepath.Rel(rootAbs, abs)
 		if err == nil && !filepath.IsAbs(rel) && rel != ".." && !startsWith(rel, ".."+string(filepath.Separator)) {
+			// Prepend virtual path prefix if any
+			if m.VirtualPath != "" {
+				rel = m.VirtualPath + "/" + rel
+			}
 			return rel, nil
 		}
 	}

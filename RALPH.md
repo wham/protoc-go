@@ -464,3 +464,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 168. [DONE] Fix `cli@encode_closed_enum` — C++ protoc rejects unknown enum values in proto2 (closed) enums during `--encode` with `Unknown enumeration value of "VALUE" for field "FIELD".` but Go's `prototext.Unmarshal` silently accepted them. Added `checkClosedEnumValues` pre-scan that validates integer enum values against the enum descriptor. Error position matches C++ (next token after value). All 5007/5007 tests pass.
 
 169. [DONE] Fix `cli@encode_deterministic_map` — `reorderMapEntriesBySource` was always called in `runEncode`, even when `--deterministic_output` was set. C++ protoc sorts map entries by key with `--deterministic_output`, but `reorderMapEntriesBySource` was restoring source (insertion) order. Added `deterministicOutput` parameter to `runEncode` and skip reordering when set. All 5008/5008 tests pass.
+
+170. [DONE] Fix `cli@version` — Hardcoded version string was `libprotoc 29.3` but system C++ protoc is `libprotoc 33.4`. Updated version string to match. All 5009/5009 tests pass.
