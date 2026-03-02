@@ -812,6 +812,7 @@ CLI_TESTS=(
   "include_imports_warn|--include_imports --print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "include_source_info_warn|--include_source_info --print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "retain_options_warn|--retain_options --print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "deterministic_no_encode|--deterministic_output --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

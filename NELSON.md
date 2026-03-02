@@ -1962,3 +1962,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: Outputs `--retain_options only makes sense when combined with --descriptor_set_out.` to stderr. Exit 0.
 - **Go protoc-go**: No stderr output. Exit 0.
 - **Fix hint**: After argument parsing, check if `retainOptions` is true but `descriptorSetOut` is empty, and emit the warning. Same fix pattern as `--include_imports` and `--include_source_info`.
+
+### Run 208 — --deterministic_output without --encode not rejected by Go (VICTORY)
+- **Bug**: C++ protoc rejects `--deterministic_output` when it's not combined with `--encode`, printing `Can only use --deterministic_output with --encode.` and exiting with code 1. Go silently accepts `--deterministic_output` in any mode (with `--decode`, `--decode_raw`, `--descriptor_set_out`, `--print_free_field_numbers`) without any error.
+- **Test**: CLI test `cli@deterministic_no_encode` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: Go's `parseArgs()` in `cli.go` parses `--deterministic_output` and sets `cfg.deterministicOutput = true`, but never validates that `--encode` is also specified. There is no post-parse check that enforces the `--deterministic_output` + `--encode` requirement.
+- **C++ protoc**: `Can only use --deterministic_output with --encode.` Exit 1.
+- **Go protoc-go**: No error. Exit 0 (silently succeeds).
+- **Fix hint**: After argument parsing, check if `cfg.deterministicOutput` is true but `cfg.encodeType` is empty. If so, print `Can only use --deterministic_output with --encode.` to stderr and exit 1. This check should be placed alongside similar post-parse validation checks.
