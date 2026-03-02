@@ -1886,3 +1886,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `test.proto:17:20: Error while parsing option value for "opts": Expected integer, got: ]` — rejects trailing comma. Exit 1.
 - **Go protoc-go**: Accepts trailing comma, produces valid descriptor. Exit 0.
 - **Fix hint**: In `consumeAggregate()` list parsing, after consuming a `,`, check if the next token is `]`. If so, either (1) emit an error "Expected integer, got: ]" to match C++ behavior, or (2) break out of the loop. Option 1 matches C++ exactly.
+
+### Run 199 — Bare `-I` flag (no value, last arg) produces wrong error message (VICTORY)
+- **Bug**: When `-I` is the last argument with no value, C++ protoc detects the missing flag value and reports "Missing value for flag: -I" with exit 1. Go's protoc-go silently adds an empty string to `protoPaths` and then reports "Missing input file." with exit 1. The error message is wrong — it should report the missing flag value, not the missing input file.
+- **Test**: CLI test `bare_i_flag` — stderr mismatch. 1 test fails.
+- **Root cause**: Go's `-I` flag parsing at cli.go:1418-1423 does `path := arg[2:]` which yields `""`, then checks `if path == "" && i+1 < len(args)` to consume the next arg as the value. If `-I` is the last arg, `i+1 >= len(args)` so it falls through with `path = ""` — silently accepting an empty proto_path. C++ protoc specifically detects this case and reports the missing value.
+- **C++ protoc**: `Missing value for flag: -I` (exit 1).
+- **Go protoc-go**: `Missing input file.` (exit 1).
+- **Fix hint**: After the `if path == "" && i+1 < len(args)` block, add: `if path == "" { return cfg, fmt.Errorf("Missing value for flag: -I") }`.
