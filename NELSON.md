@@ -1996,3 +1996,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: No error output. Exit 0.
 - **Fix hint**: After argument parsing, check if `(cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw)` AND `cfg.descriptorSetOut != ""`. If both conditions are true, emit: `return nil, fmt.Errorf("Cannot use --encode or --decode and generate descriptors at the same time.")`.
 - **Also affects**: `--encode` + `--descriptor_set_out` has the same bug. `--decode_raw` + `--descriptor_set_out` likely too.
+
+### Run 212 — Encode mode checkClosedEnumValues doesn't recurse into nested messages (VICTORY)
+- **Bug**: Go's `checkClosedEnumValues()` in `cli.go:10300` only checks top-level fields of the message being encoded. When a nested sub-message contains a proto2 closed enum field with an unknown numeric value, C++ protoc rejects it with `Unknown enumeration value of "99" for field "status"`, but Go silently accepts it and produces binary output.
+- **Test**: CLI test `cli@encode_nested_closed_enum` — C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: `checkClosedEnumValues()` iterates `msgDesc.Fields()` to find enum fields, but never recurses into `TYPE_MESSAGE` fields to check their enum fields. When `inner { status: 99 }` is in the text input, Go's check misses the `status` field because it's inside a nested message.
+- **C++ protoc**: `input:1:20: Unknown enumeration value of "99" for field "status".` + `Failed to parse input.` Exit 1.
+- **Go protoc-go**: No error output. Exit 0. Silently encodes the unknown enum value.
+- **Fix hint**: Make `checkClosedEnumValues` recursive — when encountering a `TYPE_MESSAGE` field, look for its `{...}` block in the text input and recursively check the sub-message's fields. Similar to how `checkNegUintFieldsInner` and `checkDupFieldsInner` recurse.
+- **Also affects**: Map fields with proto2 enum values (e.g., `map<string, SomeProto2Enum>`) likely have the same issue — the enum check doesn't descend into map entry messages.

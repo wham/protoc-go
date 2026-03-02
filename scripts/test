@@ -815,6 +815,7 @@ CLI_TESTS=(
   "deterministic_no_encode|--deterministic_output --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "encode_nested_dup|--encode=encnestdup.Outer -I testdata/509_encode_nested_dup testdata/509_encode_nested_dup/test.proto|sub { name: \"first\" name: \"second\" } label: \"ok\""
   "decode_with_dso|--decode=basic.Person --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
+  "encode_nested_closed_enum|--encode=nestedclosedenum.Outer -I testdata/511_encode_nested_closed_enum testdata/511_encode_nested_closed_enum/test.proto|inner { status: 99 label: \"test\" } name: \"ok\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
