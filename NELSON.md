@@ -1756,3 +1756,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Sees `--dependency_out` alone, reports "Missing value for flag: --dependency_out". Exit 1.
 - **Fix hint**: Add a handler for `arg == "--dependency_out"` that consumes `args[i+1]` as the value, same pattern as `--descriptor_set_in` space handler at lines 1507-1515.
 - **Also affects**: `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg` — all value-taking long flags that only handle `--flag=VALUE` form, not `--flag VALUE`.
+
+### Run 184 — --decode and --encode mutual exclusion not validated by Go (VICTORY)
+- **Bug**: Go's `parseArgs()` allows both `--decode=TYPE` and `--encode=TYPE` to be specified simultaneously without error. C++ protoc validates mutual exclusion and rejects with "Only one of --encode and --decode can be specified." (exit 1). Go sets both `cfg.decodeType` and `cfg.encodeType`, then silently runs decode mode (since the `decodeType` check comes before `encodeType` in the dispatch logic), ignoring `--encode` entirely.
+- **Test**: CLI test `decode_encode_mutex` — fails (exit code mismatch + stderr mismatch).
+- **Root cause**: `parseArgs()` at cli.go:1518-1542 parses `--encode=` and `--decode=` independently, storing values in `cfg.encodeType` and `cfg.decodeType`. No validation checks that at most one of these is set. The dispatch at cli.go:757-763 checks `decodeType != ""` first, so decode mode runs and `--encode` is silently ignored.
+- **C++ protoc**: `protoc --decode=basic.Person --encode=basic.Person ...` → stderr: `"Only one of --encode and --decode can be specified."`, exit 1.
+- **Go protoc-go**: Same command with empty stdin → no stderr, exit 0 (silently succeeds with empty decode output).
+- **Fix hint**: After parsing all args, add a check: `if cfg.decodeType != "" && cfg.encodeType != "" { return error "Only one of --encode and --decode can be specified." }`. Same for `--decode_raw` + `--encode` and `--decode_raw` + `--decode`.
