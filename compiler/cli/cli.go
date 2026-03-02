@@ -10125,7 +10125,15 @@ func collectMissingRequired(m protoreflect.Message, prefix string, missing *[]st
 		if fd.Cardinality() == protoreflect.Required && !m.Has(fd) {
 			*missing = append(*missing, fieldName)
 		}
-		if fd.Kind() == protoreflect.MessageKind && !fd.IsList() && !fd.IsMap() && m.Has(fd) {
+		isMsg := fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind
+		if isMsg && fd.IsList() && m.Has(fd) {
+			list := m.Get(fd).List()
+			for j := 0; j < list.Len(); j++ {
+				sub := list.Get(j).Message()
+				elemPrefix := fmt.Sprintf("%s%s[%d].", prefix, fd.Name(), j)
+				collectMissingRequired(sub, elemPrefix, missing)
+			}
+		} else if isMsg && !fd.IsList() && !fd.IsMap() && m.Has(fd) {
 			sub := m.Get(fd).Message()
 			collectMissingRequired(sub, fieldName+".", missing)
 		}
