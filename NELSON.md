@@ -1625,3 +1625,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: stdout: `libprotoc 33.4` (exit 0).
 - **Go protoc-go**: stdout: `libprotoc 29.3` (exit 0).
 - **Fix hint**: Update line 1336 in cli.go to `fmt.Println("libprotoc 33.4")` or better yet, derive the version string from the same constants used in plugin.go (Major=6, Minor=33, Patch=4 → "33.4").
+
+### Run 168 — --proto_path=virtual=disk mapping syntax not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--proto_path=VIRTUAL=DISK` (or `-IVIRTUAL=DISK`) syntax where `VIRTUAL` is a path prefix mapped to `DISK` directory. Go's `parseArgs()` treats the entire `VIRTUAL=DISK` string as a single literal directory path, so it fails with "directory does not exist".
+- **Test**: CLI test `cli@proto_path_mapping` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails). Test data: `testdata/491_proto_path_mapping/actual/test.proto`.
+- **Root cause**: `parseArgs()` at cli.go:1340-1342 does `arg[len("--proto_path="):]` which extracts the full `vdir=testdata/491_proto_path_mapping/actual` as a single string and appends it to `cfg.protoPath`. Go's `SourceTree` in `importer/importer.go` only supports plain directory paths in `Roots []string` — it has no concept of virtual-to-disk path mapping. C++ protoc's `DiskSourceTree` has `MapPath(virtual_path, disk_path)` which allows path prefix substitution.
+- **C++ protoc**: Parses `vdir=actual_dir` as mapping virtual prefix `vdir` to disk path `actual_dir`. Successfully resolves `vdir/test.proto` to `actual_dir/test.proto`. Exit 0.
+- **Go protoc-go**: Treats `vdir=actual_dir` as a literal directory name. Warns "directory does not exist", then fails with "Could not make proto path relative". Exit 1.
+- **Fix hint**: (1) In `parseArgs()`, split `--proto_path` values on `=` to detect `VIRTUAL=DISK` mapping syntax. (2) Add a `PathMapping` type to `SourceTree` (like `map[string]string`) alongside `Roots`. (3) In `Open()`, check if the requested filename matches any virtual prefix and substitute the disk path. (4) The first `=` separates virtual from disk (the disk path itself may contain `=`).
+- **Also affects**: `-I` flag (which is an alias for `--proto_path`) has the same issue.
