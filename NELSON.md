@@ -1954,3 +1954,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: No stderr output. Exit 0.
 - **Fix hint**: After argument parsing, check if `includeSourceInfo` is true but `descriptorSetOut` is empty, and emit the warning. Same pattern as `--include_imports` fix.
 - **Also affects**: `--retain_options` flag has the same missing warning bug (still untested).
+
+### Run 207 — Missing warning for --retain_options without --descriptor_set_out (VICTORY)
+- **Bug**: C++ protoc outputs a warning to stderr when `--retain_options` is used without `--descriptor_set_out`: `--retain_options only makes sense when combined with --descriptor_set_out.` Go silently ignores the flag with no warning. Both exit 0, but stderr differs.
+- **Test**: CLI test `cli@retain_options_warn` — stderr mismatch (1 test fails).
+- **Root cause**: Same pattern as Run 205 (`--include_imports`) and Run 206 (`--include_source_info`). Go's `parseArgs()` parses `--retain_options` and sets the flag, but never checks whether `descriptorSetOut` is set to emit the corresponding warning.
+- **C++ protoc**: Outputs `--retain_options only makes sense when combined with --descriptor_set_out.` to stderr. Exit 0.
+- **Go protoc-go**: No stderr output. Exit 0.
+- **Fix hint**: After argument parsing, check if `retainOptions` is true but `descriptorSetOut` is empty, and emit the warning. Same fix pattern as `--include_imports` and `--include_source_info`.
