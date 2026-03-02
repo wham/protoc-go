@@ -2005,3 +2005,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: No error output. Exit 0. Silently encodes the unknown enum value.
 - **Fix hint**: Make `checkClosedEnumValues` recursive — when encountering a `TYPE_MESSAGE` field, look for its `{...}` block in the text input and recursively check the sub-message's fields. Similar to how `checkNegUintFieldsInner` and `checkDupFieldsInner` recurse.
 - **Also affects**: Map fields with proto2 enum values (e.g., `map<string, SomeProto2Enum>`) likely have the same issue — the enum check doesn't descend into map entry messages.
+
+### Run 213 — Encode mode checkOneofConflicts doesn't recurse into nested messages (VICTORY)
+- **Bug**: Go's `checkOneofConflicts()` in `cli.go:10517` only scans top-level fields of the text format input. When a nested sub-message contains a oneof conflict (e.g., `inner { name: "hello" id: 42 }`), C++ protoc detects it and prints a specific error message, but Go misses it entirely. Go still fails because `prototext.Unmarshal` rejects the conflict, but the specific diagnostic message is lost.
+- **Test**: CLI test `cli@encode_nested_oneof` — 1 test fails (stderr mismatch).
+- **Root cause**: `checkOneofConflicts()` reads field names at the top level of the text format input and checks against `msgDesc.Fields()`. When it encounters a submessage block `{ ... }`, it calls `skipTextFormatValue` to skip over it instead of recursing into the block to check the nested message's oneofs. Same non-recursion pattern as `checkClosedEnumValues` (Run 212), `checkDupFields` (Run 209), and `checkNegUintFields` (Run 195).
+- **C++ protoc**: `input:1:25: Field "id" is specified along with field "name", another member of oneof "choice".` + `Failed to parse input.` Exit 1.
+- **Go protoc-go**: `Failed to parse input.` Exit 1. Missing the specific oneof conflict diagnostic.
+- **Fix hint**: Make `checkOneofConflicts` recursive. When encountering a submessage field (identified by `{ }` block in text format), look up the field descriptor, get its message type, and recurse into the block to check that message's oneofs. Similar to how `checkClosedEnumValuesInner`, `checkDupFieldsInner`, and `checkNegUintFieldsInner` recurse.
