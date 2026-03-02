@@ -9380,18 +9380,18 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 	// Create protoreflect file descriptors
 	files, err := protodesc.NewFiles(fds)
 	if err != nil {
-		return fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)
+		return fmt.Errorf("Type not defined: %s", msgTypeName)
 	}
 
 	// Find the message descriptor
 	fullName := protoreflect.FullName(msgTypeName)
 	md, findErr := files.FindDescriptorByName(fullName)
 	if findErr != nil {
-		return fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)
+		return fmt.Errorf("Type not defined: %s", msgTypeName)
 	}
 	msgDesc, ok := md.(protoreflect.MessageDescriptor)
 	if !ok {
-		return fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)
+		return fmt.Errorf("Type not defined: %s", msgTypeName)
 	}
 
 	// Read text format from stdin
@@ -9964,7 +9964,7 @@ func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 	// Find the message descriptor
 	msgDesc, allMsgs, allEnums, allExts, closedEnums, utf8Msgs, noPresenceMsgs := findMessageType(msgTypeName, parsed)
 	if msgDesc == nil {
-		return fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)
+		return fmt.Errorf("Type not defined: %s", msgTypeName)
 	}
 
 	// Read binary data from stdin
