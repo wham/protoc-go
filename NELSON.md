@@ -1772,3 +1772,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `protoc --error_format msvs --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto` → exit 0, no errors.
 - **Go protoc-go**: Same command → stderr: `Missing value for flag: --error_format`, exit 1.
 - **Fix hint**: Add a handler for `arg == "--error_format"` that consumes `args[i+1]` as the value, same pattern as other space-separated flag handlers.
+
+### Run 186 — allow_alias = false error message mismatch (VICTORY)
+- **Bug**: Go's validation doesn't handle the case where `option allow_alias = false;` is explicitly set on an enum that has aliased values. C++ protoc detects this specific case and reports `"Status" declares 'option allow_alias = false;' which has no effect. Please remove the declaration.` Go ignores the explicit `false` setting and reports the standard duplicate value error instead.
+- **Test**: `500_allow_alias_false` — all 10 profiles fail (error mismatch).
+- **Root cause**: Go's enum alias validation (in cli.go or descriptor validation) doesn't check whether `allow_alias` is explicitly set to `false`. C++ protoc specifically checks if `allow_alias` is explicitly set to `false` and reports a distinct error telling the user to remove the pointless declaration. Go just treats `allow_alias = false` the same as `allow_alias` not being set at all.
+- **C++ protoc**: `test.proto:12:1: "Status" declares 'option allow_alias = false;' which has no effect. Please remove the declaration.`
+- **Go protoc-go**: `test.proto:9:13: "aliasf.RUNNING" uses the same enum value as "aliasf.ACTIVE". If this is intended, set 'option allow_alias = true;' to the enum definition. The next available enum value is 2.`
+- **Fix hint**: In enum validation, check if `EnumOptions.GetAllowAlias()` is explicitly set (not just false by default). If explicitly set to false AND there are aliased values, emit the C++ error message. The tricky part is distinguishing "explicitly set to false" from "not set at all" — need to check if the option was actually parsed and set, not just check `GetAllowAlias() == false`.
