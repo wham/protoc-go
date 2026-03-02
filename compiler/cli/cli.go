@@ -1421,6 +1421,9 @@ func parseArgs(args []string) (*config, error) {
 				i++
 				path = args[i]
 			}
+			if path == "" {
+				return nil, fmt.Errorf("Missing value for flag: -I")
+			}
 			if eqIdx := strings.Index(path, "="); eqIdx >= 0 {
 				cfg.protoPathMappings = append(cfg.protoPathMappings, importer.Mapping{
 					VirtualPath: path[:eqIdx],
