@@ -1693,3 +1693,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Tries to open `dep1.pb:dep2.pb` as a single file. Fails with "no such file or directory". Exit 1.
 - **Fix hint**: In the `if cfg.descriptorSetIn != ""` block at cli.go:485, split `cfg.descriptorSetIn` on `:` (or `filepath.ListSeparator` for portability), then iterate each file path, read it, unmarshal as FileDescriptorSet, and merge all descriptors into the `parsed` map. Something like: `for _, path := range strings.Split(cfg.descriptorSetIn, string(os.PathListSeparator)) { data, err := os.ReadFile(path); ... }`
 - **Also affects**: Any use case with multiple pre-compiled descriptor sets (common in large build systems like Bazel where dependencies are compiled separately).
+
+### Run 176 — @filename response file syntax not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `@filename` syntax to read arguments from a file (one argument per line). Go's `parseArgs()` has no handling for `@`-prefixed arguments — it treats `@testdata/498_response_file/args.txt` as a literal proto file or unknown argument, resulting in "Missing output directives." and exit 1.
+- **Test**: CLI test `cli@response_file` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` iterates `args` but never checks for the `@` prefix. C++ protoc's `CommandLineInterface::Run()` calls `ExpandArgumentFiles(&arguments)` which scans for `@`-prefixed args, reads the referenced file, splits on newlines, and inserts the resulting arguments in place of the `@filename` arg. Go has no equivalent expansion step.
+- **C++ protoc**: Reads `testdata/498_response_file/args.txt`, expands to `--descriptor_set_out=/dev/null -Itestdata/01_basic_message testdata/01_basic_message/basic.proto`, succeeds. Exit 0.
+- **Go protoc-go**: Treats `@testdata/498_response_file/args.txt` as a literal arg, sees no output directives. Exit 1.
+- **Fix hint**: Before `parseArgs()`, add an `expandArgumentFiles` step: iterate args, for any arg starting with `@`, read the file at `arg[1:]`, split contents by newline, filter empty lines, and replace the `@filename` arg with the resulting lines. Each line is one argument. No shell expansion (no quotes, wildcards, etc.). Relative paths are resolved against the working directory (NOT against `--proto_path`).
+- **Also affects**: Large projects and build systems that use response files to avoid command-line length limits. Bazel, CMake, and other tools commonly use `@filename` syntax.

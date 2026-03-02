@@ -786,6 +786,7 @@ CLI_TESTS=(
   "encode_group_missing_req|--encode=grouptest.SearchResponse -I testdata/28_proto2_group testdata/28_proto2_group/group.proto|Result { title: \"Test\" }"
   "short_o_flag|-o/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "descriptor_set_in_multi|--descriptor_set_in=testdata/497_descriptor_set_in_multi/dep1.pb:testdata/497_descriptor_set_in_multi/dep2.pb --descriptor_set_out=/tmp/test_descsetin_multi.pb -I testdata/497_descriptor_set_in_multi/main testdata/497_descriptor_set_in_multi/main/test.proto"
+  "response_file|@testdata/498_response_file/args.txt"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
