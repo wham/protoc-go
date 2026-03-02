@@ -1684,3 +1684,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `warning:  Input message is missing required fields:  mid.x, mid.deep.name` (field-number order within each level).
 - **Go protoc-go**: `warning:  Input message is missing required fields:  mid.deep.name, mid.x` (depth-first order).
 - **Fix hint**: Change the missing-required-field collection to process all fields in a message before recursing into sub-messages. Or collect all missing fields and sort them by depth/field-number to match C++ order.
+
+### Run 175 — --descriptor_set_in with colon-separated multiple files not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--descriptor_set_in=FILE1:FILE2` (colon-delimited on Unix) to load multiple pre-compiled descriptor set files. Go's `os.ReadFile(cfg.descriptorSetIn)` treats the entire `FILE1:FILE2` string as a single filename, causing a "no such file or directory" error.
+- **Test**: CLI test `cli@descriptor_set_in_multi` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails). Test data: `testdata/497_descriptor_set_in_multi/`.
+- **Root cause**: `cli.go:486` does `os.ReadFile(cfg.descriptorSetIn)` which passes the whole colon-separated string as a single file path. C++ protoc's `CommandLineInterface::Run()` splits the `--descriptor_set_in` value on the OS path separator (`:` on Unix, `;` on Windows) and reads each file individually, merging the FileDescriptorSets.
+- **C++ protoc**: Splits `dep1.pb:dep2.pb` into two files, reads both, merges descriptors, succeeds. Exit 0.
+- **Go protoc-go**: Tries to open `dep1.pb:dep2.pb` as a single file. Fails with "no such file or directory". Exit 1.
+- **Fix hint**: In the `if cfg.descriptorSetIn != ""` block at cli.go:485, split `cfg.descriptorSetIn` on `:` (or `filepath.ListSeparator` for portability), then iterate each file path, read it, unmarshal as FileDescriptorSet, and merge all descriptors into the `parsed` map. Something like: `for _, path := range strings.Split(cfg.descriptorSetIn, string(os.PathListSeparator)) { data, err := os.ReadFile(path); ... }`
+- **Also affects**: Any use case with multiple pre-compiled descriptor sets (common in large build systems like Bazel where dependencies are compiled separately).

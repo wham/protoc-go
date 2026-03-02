@@ -1,0 +1,5 @@
+syntax = "proto3";
+package dep2;
+message Extra {
+  string label = 1;
+}

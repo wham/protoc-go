@@ -1,0 +1,8 @@
+syntax = "proto3";
+package descsetmulti;
+import "dep1.proto";
+import "dep2.proto";
+message Combined {
+  dep1.Base base = 1;
+  dep2.Extra extra = 2;
+}
