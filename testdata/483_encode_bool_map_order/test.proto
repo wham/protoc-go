@@ -1,0 +1,6 @@
+syntax = "proto3";
+package boolmapord;
+
+message Settings {
+  map<bool, string> flags = 1;
+}

@@ -769,6 +769,7 @@ CLI_TESTS=(
   "encode_ext_order|--encode=encextord.Msg -I testdata/477_encode_ext_order testdata/477_encode_ext_order/test.proto|name: \"ab\" [encextord.extra]: 5"
   "encode_invalid_utf8|--encode=encutf8.Record -I testdata/478_encode_invalid_utf8 testdata/478_encode_invalid_utf8/test.proto|text: \"hello\\377world\" id: 1"
   "encode_map_order|--encode=encmapord.Config -I testdata/482_encode_map_order testdata/482_encode_map_order/test.proto|tags { key: \"c\" value: 3 } tags { key: \"a\" value: 1 } tags { key: \"b\" value: 2 } label: \"ok\""
+  "encode_bool_map_order|--encode=boolmapord.Settings -I testdata/483_encode_bool_map_order testdata/483_encode_bool_map_order/test.proto|flags { key: true value: \"yes\" } flags { key: false value: \"no\" }"
   "encode_missing_colon|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name \"Alice\""
   "dependency_out_bad_path|--dependency_out=/nonexistent_nelsontest_dir/deps.txt --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
 )

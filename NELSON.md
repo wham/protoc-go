@@ -1510,3 +1510,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: stderr: (empty) (exit 0).
 - **Fix hint**: Parse `--dependency_out=FILE` value, store in `cfg.dependencyOut`. After successful compilation, write a Makefile-format dependency rule: `<output_files>: <input_proto_files>\n`. If the file can't be written, emit the OS error and return failure. The format is typically `<descriptor_set_out_or_plugin_out>: <proto_files>`.
 - **Also affects**: ANY use of `--dependency_out` will silently be ignored. Build systems (like Bazel, Make) that use `--dependency_out` for incremental builds will get no dependency file from Go protoc, potentially causing stale builds.
+
+### Run 157 — Bool-keyed map entries reordered in encode mode (VICTORY)
+- **Bug**: Go's `reorderMapEntriesBySource` fails to reorder `map<bool, string>` entries because `extractBinaryMapKeyStr` returns "0"/"1" (varint representation) while `extractTextMapKeys` returns "true"/"false" (text format representation). The key strings don't match, so the reordering function can't correlate binary entries with their source-order positions.
+- **Test**: `483_encode_bool_map_order` — cli@encode_bool_map_order fails.
+- **Root cause**: `extractBinaryMapKeyStr()` at cli.go:9142 handles varint keys with `fmt.Sprintf("%d", v)`, returning "0" or "1" for bool keys. But `extractMapKeyFromEntry()` returns "true" or "false" from the text format. When `reorderWireEntriesByKeys` tries to match source keys ["true","false"] against binary keys ["1","0"], none match, so no reordering happens and Go's default sort order (false before true) is preserved.
+- **C++ protoc**: Preserves text format insertion order: `true→"yes"` first, then `false→"no"`.
+- **Go protoc-go**: Outputs `false→"no"` first, then `true→"yes"` (Go map iteration / deterministic sort order).
+- **Fix hint**: In `extractBinaryMapKeyStr`, for varint field 1 where the map key type is bool, return "true"/"false" instead of "1"/"0". Alternatively, in `extractTextMapKeys`, normalize "true" to "1" and "false" to "0". Or in `reorderWireEntriesByKeys`, add bool normalization when matching keys.
+- **Also affects**: Any `map<bool, T>` field in encode mode will have wrong entry ordering.
