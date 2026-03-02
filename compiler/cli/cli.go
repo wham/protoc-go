@@ -1527,11 +1527,17 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--descriptor_set_in=") {
+			if cfg.descriptorSetIn != "" {
+				return cfg, fmt.Errorf("--descriptor_set_in may only be passed once. To specify multiple descriptor sets, pass them all as a single parameter separated by ':'.")
+			}
 			cfg.descriptorSetIn = arg[len("--descriptor_set_in="):]
 			continue
 		}
 
 		if arg == "--descriptor_set_in" {
+			if cfg.descriptorSetIn != "" {
+				return cfg, fmt.Errorf("--descriptor_set_in may only be passed once. To specify multiple descriptor sets, pass them all as a single parameter separated by ':'.")
+			}
 			if i+1 < len(args) {
 				i++
 				cfg.descriptorSetIn = args[i]
