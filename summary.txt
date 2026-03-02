@@ -1,18 +1,10 @@
-files_to_generate: [main.proto]
+files_to_generate: [test.proto]
 parameter: ""
 compiler_version: major:6 minor:33 patch:4 suffix:""
-proto_file_count: 2
+proto_file_count: 1
 source_file_descriptor_count: 1
 
-proto_file[0]: dep.proto (package="partial", syntax="proto3")
-  message: Dependency
-    field: value (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
-    field: id (number=2, type=TYPE_INT32, label=LABEL_OPTIONAL)
-  message: Helper
-    field: data (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
-  source_code_info_locations: 19
-proto_file[1]: main.proto (package="partial", syntax="proto3")
-  message: Main
+proto_file[0]: test.proto (package="multiout", syntax="proto3")
+  message: Msg
     field: name (number=1, type=TYPE_STRING, label=LABEL_OPTIONAL)
-    field: dep (number=2, type=TYPE_MESSAGE, label=LABEL_OPTIONAL)
-  source_code_info_locations: 14
+  source_code_info_locations: 9

@@ -10374,18 +10374,24 @@ func validateProtoWithSchema(data []byte, msgFQN string, msgDesc *descriptorpb.D
 				}
 			}
 		case protowire.StartGroupType:
-			// Skip to EndGroup
-			for pos < len(data) {
+			// Skip to EndGroup, handling nested groups with depth counter
+			depth := 1
+			for pos < len(data) && depth > 0 {
 				gNum, gType, gn := protowire.ConsumeTag(data[pos:])
 				if gn < 0 {
 					return fmt.Errorf("invalid tag in group")
 				}
 				pos += gn
-				if gType == protowire.EndGroupType && gNum == num {
-					break
+				if gType == protowire.EndGroupType {
+					depth--
+					if depth == 0 && gNum == num {
+						break
+					}
+					continue
 				}
-				// Consume the field value
 				switch gType {
+				case protowire.StartGroupType:
+					depth++
 				case protowire.VarintType:
 					_, vn := protowire.ConsumeVarint(data[pos:])
 					if vn < 0 {

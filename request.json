@@ -1,300 +1,14 @@
 {
   "fileToGenerate": [
-    "main.proto"
+    "test.proto"
   ],
   "protoFile": [
     {
-      "name": "dep.proto",
-      "package": "partial",
+      "name": "test.proto",
+      "package": "multiout",
       "messageType": [
         {
-          "name": "Dependency",
-          "field": [
-            {
-              "name": "value",
-              "number": 1,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_STRING",
-              "jsonName": "value"
-            },
-            {
-              "name": "id",
-              "number": 2,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_INT32",
-              "jsonName": "id"
-            }
-          ]
-        },
-        {
-          "name": "Helper",
-          "field": [
-            {
-              "name": "data",
-              "number": 1,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_STRING",
-              "jsonName": "data"
-            }
-          ]
-        }
-      ],
-      "sourceCodeInfo": {
-        "location": [
-          {
-            "span": [
-              0,
-              0,
-              11,
-              1
-            ]
-          },
-          {
-            "path": [
-              12
-            ],
-            "span": [
-              0,
-              0,
-              18
-            ]
-          },
-          {
-            "path": [
-              2
-            ],
-            "span": [
-              2,
-              0,
-              16
-            ]
-          },
-          {
-            "path": [
-              4,
-              0
-            ],
-            "span": [
-              4,
-              0,
-              7,
-              1
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              1
-            ],
-            "span": [
-              4,
-              8,
-              18
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0
-            ],
-            "span": [
-              5,
-              2,
-              19
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              5
-            ],
-            "span": [
-              5,
-              2,
-              8
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              1
-            ],
-            "span": [
-              5,
-              9,
-              14
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              3
-            ],
-            "span": [
-              5,
-              17,
-              18
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1
-            ],
-            "span": [
-              6,
-              2,
-              15
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              5
-            ],
-            "span": [
-              6,
-              2,
-              7
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              1
-            ],
-            "span": [
-              6,
-              8,
-              10
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              3
-            ],
-            "span": [
-              6,
-              13,
-              14
-            ]
-          },
-          {
-            "path": [
-              4,
-              1
-            ],
-            "span": [
-              9,
-              0,
-              11,
-              1
-            ]
-          },
-          {
-            "path": [
-              4,
-              1,
-              1
-            ],
-            "span": [
-              9,
-              8,
-              14
-            ]
-          },
-          {
-            "path": [
-              4,
-              1,
-              2,
-              0
-            ],
-            "span": [
-              10,
-              2,
-              18
-            ]
-          },
-          {
-            "path": [
-              4,
-              1,
-              2,
-              0,
-              5
-            ],
-            "span": [
-              10,
-              2,
-              8
-            ]
-          },
-          {
-            "path": [
-              4,
-              1,
-              2,
-              0,
-              1
-            ],
-            "span": [
-              10,
-              9,
-              13
-            ]
-          },
-          {
-            "path": [
-              4,
-              1,
-              2,
-              0,
-              3
-            ],
-            "span": [
-              10,
-              16,
-              17
-            ]
-          }
-        ]
-      },
-      "syntax": "proto3"
-    },
-    {
-      "name": "main.proto",
-      "package": "partial",
-      "dependency": [
-        "dep.proto"
-      ],
-      "messageType": [
-        {
-          "name": "Main",
+          "name": "Msg",
           "field": [
             {
               "name": "name",
@@ -302,14 +16,6 @@
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
               "jsonName": "name"
-            },
-            {
-              "name": "dep",
-              "number": 2,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_MESSAGE",
-              "typeName": ".partial.Dependency",
-              "jsonName": "dep"
             }
           ]
         }
@@ -320,8 +26,8 @@
             "span": [
               0,
               0,
-              9,
-              1
+              2,
+              32
             ]
           },
           {
@@ -339,32 +45,20 @@
               2
             ],
             "span": [
+              1,
+              0,
+              17
+            ]
+          },
+          {
+            "path": [
+              4,
+              0
+            ],
+            "span": [
               2,
               0,
-              16
-            ]
-          },
-          {
-            "path": [
-              3,
-              0
-            ],
-            "span": [
-              4,
-              0,
-              19
-            ]
-          },
-          {
-            "path": [
-              4,
-              0
-            ],
-            "span": [
-              6,
-              0,
-              9,
-              1
+              32
             ]
           },
           {
@@ -374,9 +68,9 @@
               1
             ],
             "span": [
-              6,
+              2,
               8,
-              12
+              11
             ]
           },
           {
@@ -387,9 +81,9 @@
               0
             ],
             "span": [
-              7,
               2,
-              18
+              14,
+              30
             ]
           },
           {
@@ -401,92 +95,37 @@
               5
             ],
             "span": [
-              7,
               2,
-              8
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              1
-            ],
-            "span": [
-              7,
-              9,
-              13
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              3
-            ],
-            "span": [
-              7,
-              16,
-              17
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1
-            ],
-            "span": [
-              8,
-              2,
-              21
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              6
-            ],
-            "span": [
-              8,
-              2,
-              12
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              1
-            ],
-            "span": [
-              8,
-              13,
-              16
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              3
-            ],
-            "span": [
-              8,
-              19,
+              14,
               20
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              2,
+              21,
+              25
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              2,
+              28,
+              29
             ]
           }
         ]
@@ -496,14 +135,11 @@
   ],
   "sourceFileDescriptors": [
     {
-      "name": "main.proto",
-      "package": "partial",
-      "dependency": [
-        "dep.proto"
-      ],
+      "name": "test.proto",
+      "package": "multiout",
       "messageType": [
         {
-          "name": "Main",
+          "name": "Msg",
           "field": [
             {
               "name": "name",
@@ -511,14 +147,6 @@
               "label": "LABEL_OPTIONAL",
               "type": "TYPE_STRING",
               "jsonName": "name"
-            },
-            {
-              "name": "dep",
-              "number": 2,
-              "label": "LABEL_OPTIONAL",
-              "type": "TYPE_MESSAGE",
-              "typeName": ".partial.Dependency",
-              "jsonName": "dep"
             }
           ]
         }
@@ -529,8 +157,8 @@
             "span": [
               0,
               0,
-              9,
-              1
+              2,
+              32
             ]
           },
           {
@@ -548,32 +176,20 @@
               2
             ],
             "span": [
+              1,
+              0,
+              17
+            ]
+          },
+          {
+            "path": [
+              4,
+              0
+            ],
+            "span": [
               2,
               0,
-              16
-            ]
-          },
-          {
-            "path": [
-              3,
-              0
-            ],
-            "span": [
-              4,
-              0,
-              19
-            ]
-          },
-          {
-            "path": [
-              4,
-              0
-            ],
-            "span": [
-              6,
-              0,
-              9,
-              1
+              32
             ]
           },
           {
@@ -583,9 +199,9 @@
               1
             ],
             "span": [
-              6,
+              2,
               8,
-              12
+              11
             ]
           },
           {
@@ -596,9 +212,9 @@
               0
             ],
             "span": [
-              7,
               2,
-              18
+              14,
+              30
             ]
           },
           {
@@ -610,92 +226,37 @@
               5
             ],
             "span": [
-              7,
               2,
-              8
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              1
-            ],
-            "span": [
-              7,
-              9,
-              13
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              0,
-              3
-            ],
-            "span": [
-              7,
-              16,
-              17
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1
-            ],
-            "span": [
-              8,
-              2,
-              21
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              6
-            ],
-            "span": [
-              8,
-              2,
-              12
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              1
-            ],
-            "span": [
-              8,
-              13,
-              16
-            ]
-          },
-          {
-            "path": [
-              4,
-              0,
-              2,
-              1,
-              3
-            ],
-            "span": [
-              8,
-              19,
+              14,
               20
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              1
+            ],
+            "span": [
+              2,
+              21,
+              25
+            ]
+          },
+          {
+            "path": [
+              4,
+              0,
+              2,
+              0,
+              3
+            ],
+            "span": [
+              2,
+              28,
+              29
             ]
           }
         ]

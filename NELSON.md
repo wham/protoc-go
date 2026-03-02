@@ -1668,3 +1668,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: Accepts `-o/dev/null`, writes descriptor set output, no stderr, exit 0.
 - **Go protoc-go**: Rejects `-o/dev/null` with `Missing value for flag: -o/dev/null` on stderr, exit 1.
 - **Fix hint**: In `parseArgs()`, add handling for `-o` prefix similar to how `-I` is handled: `if strings.HasPrefix(arg, "-o") { cfg.descriptorSetOut = arg[2:]; continue }`. This would extract the filename from immediately after `-o` (no space separator).
+
+### Run 173 — Decode mode fails on nested groups (group inside a group) (VICTORY)
+- **Bug**: Go's `--decode` mode fails to parse messages containing nested groups (a group field inside another group field). C++ protoc decodes them correctly. The Go decoder produces "Failed to parse input." and exits 1 when encountering a group-typed field within a group.
+- **Test**: Decode test `decode@nested_group` — `testdata/495_decode_nested_group` with hex `0a0568656c6c6f130a04746573741b082a1c14` (message with `name="hello"`, `Inner { label="test" Deep { value=42 } }`).
+- **Root cause**: Go's decode mode likely doesn't properly register or resolve group field descriptors for sub-groups nested inside an outer group. Single-level groups work fine (tested in `462_decode_group_merge`), but adding a second level of group nesting triggers the failure. The wire format uses START_GROUP/END_GROUP tags at both levels, but Go's decoder apparently can't handle the inner group's tags.
+- **C++ protoc**: Decodes correctly: `name: "hello"\nInner {\n  label: "test"\n  Deep {\n    value: 42\n  }\n}` exit 0.
+- **Go protoc-go**: `Failed to parse input.` exit 1.
+- **Fix hint**: In the decode mode's group handling, ensure that when a group field is encountered inside another group, the inner group's field descriptor is properly resolved from the parent group's message type (not the top-level message type). The inner group's message type needs to be looked up in the enclosing group's descriptor, not the root message.
