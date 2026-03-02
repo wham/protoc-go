@@ -6600,11 +6600,15 @@ func (p *parser) attachComments(locIdx int, firstTokenIdx int) {
 		loc.LeadingDetachedComments = append(loc.LeadingDetachedComments, d)
 	}
 
-	// Trailing comment: PrevTrailing of the NEXT token (after the terminator)
+	// Trailing comment: PrevTrailing of the NEXT token (after the terminator).
+	// C++ protoc's TryConsumeEndOfDeclaration("}", nullptr) drops trailing
+	// comments of closing braces, so we skip them here too.
 	nextIdx := p.tok.CurrentIndex()
-	nextCd := p.tok.CommentsAt(nextIdx)
-	if nextCd.PrevTrailing != "" {
-		loc.TrailingComments = proto.String(nextCd.PrevTrailing)
+	if nextIdx > 0 && p.tok.PeekAt(-1).Value != "}" {
+		nextCd := p.tok.CommentsAt(nextIdx)
+		if nextCd.PrevTrailing != "" {
+			loc.TrailingComments = proto.String(nextCd.PrevTrailing)
+		}
 	}
 }
 
