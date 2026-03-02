@@ -9407,6 +9407,11 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
 		os.Exit(1)
 	}
+	if enumErr := checkClosedEnumValues(data, msgDesc); enumErr != "" {
+		fmt.Fprintln(os.Stderr, enumErr)
+		fmt.Fprintln(os.Stderr, "Failed to parse input.")
+		os.Exit(1)
+	}
 	if conflictErr := checkOneofConflicts(data, msgDesc); conflictErr != "" {
 		fmt.Fprintln(os.Stderr, conflictErr)
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
@@ -9750,6 +9755,119 @@ func checkDupFields(data []byte, msgDesc protoreflect.MessageDescriptor) string 
 				}
 				i++
 				col++
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
+		}
+		i++
+		col++
+	}
+	return ""
+}
+
+// checkClosedEnumValues scans text format input for enum fields with values
+// not in the enum descriptor (closed enums = proto2). C++ protoc rejects these
+// with "Unknown enumeration value of "VALUE" for field "FIELD"." at the position
+// of the next token after the value.
+func checkClosedEnumValues(data []byte, msgDesc protoreflect.MessageDescriptor) string {
+	closedEnums := map[string]protoreflect.EnumDescriptor{}
+	fields := msgDesc.Fields()
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		if fd.Kind() == protoreflect.EnumKind {
+			ed := fd.Enum()
+			if ed.ParentFile().Syntax() == protoreflect.Proto2 {
+				closedEnums[string(fd.Name())] = ed
+			}
+		}
+	}
+	if len(closedEnums) == 0 {
+		return ""
+	}
+
+	line := 1
+	col := 1
+	i := 0
+	for i < len(data) {
+		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
+			col++
+			i++
+			continue
+		}
+		if data[i] == '\n' {
+			line++
+			col = 1
+			i++
+			continue
+		}
+		if isLetter(data[i]) || data[i] == '_' {
+			start := i
+			for i < len(data) && (isAlphanumeric(data[i]) || data[i] == '_') {
+				i++
+				col++
+			}
+			fieldName := string(data[start:i])
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				i++
+				col++
+			}
+			if i < len(data) && data[i] == ':' {
+				i++
+				col++
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					i++
+					col++
+				}
+				if ed, ok := closedEnums[fieldName]; ok && i < len(data) {
+					negative := false
+					valStart := i
+					if data[i] == '-' {
+						negative = true
+						i++
+						col++
+					}
+					if i < len(data) && data[i] >= '0' && data[i] <= '9' {
+						numStart := i
+						for i < len(data) && data[i] >= '0' && data[i] <= '9' {
+							i++
+							col++
+						}
+						numStr := string(data[numStart:i])
+						num, err := strconv.ParseInt(numStr, 10, 32)
+						if err == nil {
+							if negative {
+								num = -num
+							}
+							ev := ed.Values().ByNumber(protoreflect.EnumNumber(num))
+							if ev == nil {
+								// Skip whitespace to next token position (matching C++ tokenizer.Next())
+								for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
+									col++
+									i++
+								}
+								if i < len(data) && data[i] == '\n' {
+									line++
+									col = 1
+									i++
+									for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
+										col++
+										i++
+									}
+								}
+								valStr := string(data[valStart : numStart+len(numStr)])
+								return fmt.Sprintf("input:%d:%d: Unknown enumeration value of \"%s\" for field \"%s\".",
+									line, col, valStr, fieldName)
+							}
+						}
+						continue
+					}
+					if negative {
+						// Was just a `-`, not a number; reset
+						i = valStart
+					}
+				}
 				i, line, col = skipTextFormatValue(data, i, line, col)
 			} else {
 				i, line, col = skipTextFormatValue(data, i, line, col)
