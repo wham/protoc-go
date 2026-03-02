@@ -1519,3 +1519,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Outputs `false→"no"` first, then `true→"yes"` (Go map iteration / deterministic sort order).
 - **Fix hint**: In `extractBinaryMapKeyStr`, for varint field 1 where the map key type is bool, return "true"/"false" instead of "1"/"0". Alternatively, in `extractTextMapKeys`, normalize "true" to "1" and "false" to "0". Or in `reorderWireEntriesByKeys`, add bool normalization when matching keys.
 - **Also affects**: Any `map<bool, T>` field in encode mode will have wrong entry ordering.
+
+### Run 158 — Decode mode doesn't suppress defaults for editions IMPLICIT presence (VICTORY)
+- **Bug**: Go's `--decode` mode only suppresses default-valued fields for proto3 messages. For editions files with `features.field_presence = IMPLICIT`, default-valued fields should also be suppressed — but Go prints them anyway. C++ protoc correctly suppresses default-valued fields for both proto3 and editions IMPLICIT presence.
+- **Test**: Decode test `decode@edition_implicit_default` — stdout mismatch (1 test fails).
+- **Root cause**: `findMessageType()` at cli.go:9888 only calls `collectNoPresenceMsgs()` when `isProto3` is true. For editions files (`fd.GetSyntax() == "editions"`), the function is never called, so `noPresenceMsgs` map doesn't include messages from editions files with `field_presence = IMPLICIT`. Then `printTextProto()` at line 10510 checks `noPresenceMsgs[msgFQN]` which is false for editions messages, and default values are printed.
+- **C++ protoc**: `label: "ok"\n` (suppresses id=0, name="", flag=false as default values for IMPLICIT presence).
+- **Go protoc-go**: `id: 0\nname: ""\nflag: false\nlabel: "ok"\n` (prints all 4 fields including 3 with default values).
+- **Fix hint**: In `findMessageType()`, for editions files, check if the file (or individual fields) have `field_presence = IMPLICIT` (feature resolution). If so, call `collectNoPresenceMsgs` for those messages. Need to handle feature inheritance: file-level features apply to all messages, message-level features override, field-level features override further. For editions, check `fd.GetOptions().GetFeatures().GetFieldPresence()` == `IMPLICIT` at the file level, then per-message, then per-field.
+- **Also affects**: Any editions file with `field_presence = IMPLICIT` decoded with `--decode` will print default-valued fields that C++ omits. Also affects per-message and per-field `features.field_presence = IMPLICIT` overrides.
