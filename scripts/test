@@ -808,6 +808,7 @@ CLI_TESTS=(
   "direct_deps_space|--direct_dependencies basic.proto --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "plugin_space|--plugin protoc-gen-dump=tools/protoc-gen-dump/protoc-gen-dump --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "encode_field_num|--encode=encfieldnum.Record -I testdata/508_encode_field_num testdata/508_encode_field_num/test.proto|1: \"alice\""
+  "option_deps_space|--option_dependencies basic.proto --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

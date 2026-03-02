@@ -1928,3 +1928,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `input:1:1: Expected identifier, got: 1\nFailed to parse input.`
 - **Go protoc-go**: `Failed to parse input.`
 - **Fix hint**: In the encode mode handler, after `prototext.Unmarshal` fails, print the error returned by the library (which should contain location and detail info like `Expected identifier, got: 1`) before printing `Failed to parse input.`. Format it as `input:LINE:COL: MESSAGE` to match C++ output.
+
+### Run 204 — Space-separated --option_dependencies flag not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--option_dependencies basic.proto` (space-separated) syntax, but Go's `parseArgs()` only handles `--option_dependencies=VALUE` (equals-sign form). When `--option_dependencies value` is used with a space, Go treats `--option_dependencies` as a flag with no value and reports "Missing value for flag: --option_dependencies" with exit 1. C++ correctly consumes the next argument as the flag's value.
+- **Test**: CLI test `cli@option_deps_space` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go:1683` only checks `strings.HasPrefix(arg, "--option_dependencies=")`. When `arg == "--option_dependencies"` (no `=`), Go falls through to the "Missing value for flag" error handler. Same class of bug as Runs 178-185, 200, 202 (space-separated flags), but affecting `--option_dependencies`.
+- **C++ protoc**: Parses `--option_dependencies` + `basic.proto` as `--option_dependencies=basic.proto`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--option_dependencies` alone, reports "Missing value for flag: --option_dependencies". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--option_dependencies"` that consumes `args[i+1]` as the value, same pattern as other space-separated flag handlers.
