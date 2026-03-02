@@ -1,0 +1,6 @@
+syntax = "proto2";
+package jsonwarn;
+message Foo {
+  optional string my_name = 1;
+  optional int32 myName = 2;
+}

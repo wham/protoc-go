@@ -799,6 +799,7 @@ CLI_TESTS=(
   "dup_encode|--encode=basic.Person --encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
   "dup_direct_deps|--direct_dependencies=a --direct_dependencies=b --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "pfn_decode_mutex|--print_free_field_numbers --decode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
+  "json_name_conflict|--descriptor_set_out=/dev/null -I testdata/502_json_name_conflict testdata/502_json_name_conflict/test.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

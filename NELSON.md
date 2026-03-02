@@ -1834,3 +1834,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Attaches `trailing_comments: " after nested enum brace\n"` to the nested enum's SCI location.
 - **Fix hint**: In the parser's comment tracking, when a `}` closes an entity (message, enum, service, etc.), do not attach any same-line comment as a trailing comment to that entity. The comment should be treated as a leading or detached comment for the next statement in the parent scope.
 - **Also affects**: Same bug occurs for top-level enums (`// after color brace`), nested messages, services — any entity whose `}` is followed by a same-line comment. Run 164 found a similar but different comment bug.
+
+### Run 193 — Go does not emit json_name conflict warning for proto2 fields (VICTORY)
+- **Bug**: C++ protoc emits a warning when two fields in the same message have conflicting default JSON names (e.g., `my_name` → `myName` vs field literally named `myName`). Go does not detect or emit this warning at all. Both compilers exit 0 and produce identical binary output, but C++ writes the warning to stderr while Go is silent.
+- **Test**: CLI test `cli@json_name_conflict` — stderr mismatch (1 test fails). Test data: `testdata/502_json_name_conflict/test.proto`.
+- **Root cause**: Go's descriptor validation does not check for conflicting auto-generated JSON names across fields in the same message. C++ protoc's `DescriptorPool::CrossLinkMessage` validates JSON name uniqueness and emits `warning: The default JSON name of field "X" ("Y") conflicts with the default JSON name of field "Z".` when conflicts exist.
+- **C++ protoc**: `test.proto:5:18: warning: The default JSON name of field "myName" ("myName") conflicts with the default JSON name of field "my_name".` (stderr, exit 0).
+- **Go protoc-go**: No output (exit 0).
+- **Fix hint**: After building all field descriptors in a message, compute the default JSON name for each field (snake_case → camelCase) and check for duplicates. Emit a warning (not error) for proto2 files. For proto3, this is already an error (both compilers reject it).
+- **Also affects**: Any proto2 message with fields whose auto-generated JSON names collide. Also affects editions files with `features.json_format = ALLOW`.
