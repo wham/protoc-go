@@ -801,6 +801,7 @@ CLI_TESTS=(
   "pfn_decode_mutex|--print_free_field_numbers --decode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
   "json_name_conflict|--descriptor_set_out=/dev/null -I testdata/502_json_name_conflict testdata/502_json_name_conflict/test.proto"
   "encode_neg_uint|--encode=encneguint.Record -I testdata/503_encode_neg_uint testdata/503_encode_neg_uint/test.proto|value: -1 label: \"ok\""
+  "encode_nested_neg_uint|--encode=encnestedneguint.Outer -I testdata/504_encode_nested_neg_uint testdata/504_encode_nested_neg_uint/test.proto|inner { count: -5 } label: \"ok\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

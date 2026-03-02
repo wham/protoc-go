@@ -1852,3 +1852,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `Failed to parse input.` (stderr, exit 1). Missing the specific error line.
 - **Fix hint**: Add a new regex pattern in `reformatProtoTextErrors` to match Go's prototext error for invalid negative unsigned values and reformat it to match C++ format: `input:LINE:COL: Expected integer, got: -`.
 - **Also affects**: Any encode mode input where a negative literal is used for `uint32`, `uint64`, `fixed32`, or `fixed64` fields.
+
+### Run 195 — Encode mode checkNegUintFields does not recurse into nested messages (VICTORY)
+- **Bug**: Go's `checkNegUintFields()` only scans top-level fields of the encoded message for negative unsigned values. When a negative value appears in a nested sub-message field (e.g., `inner { count: -5 }`), Go doesn't produce the detailed `input:1:16: Expected integer, got: -` error. C++ protoc's text format parser detects the issue at any nesting depth.
+- **Test**: CLI test `encode_nested_neg_uint` — uses `testdata/504_encode_nested_neg_uint/test.proto` with input `inner { count: -5 } label: "ok"` for `encnestedneguint.Outer`. Stderr mismatch: C++ has two lines, Go has one.
+- **Root cause**: `checkNegUintFields()` at cli.go:10088 builds `uintFields` only from `msgDesc.Fields()` at the top level. It scans the text format input linearly for `fieldName: -value` patterns but has no concept of `{` `}` scoping — it never recurses into nested message bodies to check their unsigned fields.
+- **C++ protoc**: `input:1:16: Expected integer, got: -\nFailed to parse input.` (stderr, exit 1).
+- **Go protoc-go**: `Failed to parse input.` (stderr, exit 1). Missing the specific error line.
+- **Fix hint**: Either (1) make `checkNegUintFields` track `{` `}` nesting and maintain a stack of message descriptors to check unsigned fields at each level, or (2) move negative-uint checking into `reformatProtoTextErrors` pattern matching.
+- **Also affects**: Any depth of nesting — double-nested, triple-nested, etc. Also affects `uint64`, `fixed32`, `fixed64` fields in nested messages.
