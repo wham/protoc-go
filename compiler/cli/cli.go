@@ -10296,26 +10296,29 @@ func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.M
 // checkClosedEnumValues scans text format input for enum fields with values
 // not in the enum descriptor (closed enums = proto2). C++ protoc rejects these
 // with "Unknown enumeration value of "VALUE" for field "FIELD"." at the position
-// of the next token after the value.
+// of the next token after the value. Recurses into nested messages.
 func checkClosedEnumValues(data []byte, msgDesc protoreflect.MessageDescriptor) string {
+	_, _, _, err := checkClosedEnumValuesInner(data, 0, 1, 1, msgDesc)
+	return err
+}
+
+func checkClosedEnumValuesInner(data []byte, i, line, col int, msgDesc protoreflect.MessageDescriptor) (int, int, int, string) {
 	closedEnums := map[string]protoreflect.EnumDescriptor{}
+	msgFields := map[string]protoreflect.MessageDescriptor{}
 	fields := msgDesc.Fields()
-	for i := 0; i < fields.Len(); i++ {
-		fd := fields.Get(i)
-		if fd.Kind() == protoreflect.EnumKind {
+	for fi := 0; fi < fields.Len(); fi++ {
+		fd := fields.Get(fi)
+		switch fd.Kind() {
+		case protoreflect.EnumKind:
 			ed := fd.Enum()
 			if ed.ParentFile().Syntax() == protoreflect.Proto2 {
 				closedEnums[string(fd.Name())] = ed
 			}
+		case protoreflect.MessageKind, protoreflect.GroupKind:
+			msgFields[string(fd.Name())] = fd.Message()
 		}
 	}
-	if len(closedEnums) == 0 {
-		return ""
-	}
 
-	line := 1
-	col := 1
-	i := 0
 	for i < len(data) {
 		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
 			col++
@@ -10327,6 +10330,11 @@ func checkClosedEnumValues(data []byte, msgDesc protoreflect.MessageDescriptor) 
 			col = 1
 			i++
 			continue
+		}
+		if data[i] == '}' || data[i] == '>' {
+			i++
+			col++
+			return i, line, col, ""
 		}
 		if isLetter(data[i]) || data[i] == '_' {
 			start := i
@@ -10368,7 +10376,6 @@ func checkClosedEnumValues(data []byte, msgDesc protoreflect.MessageDescriptor) 
 							}
 							ev := ed.Values().ByNumber(protoreflect.EnumNumber(num))
 							if ev == nil {
-								// Skip whitespace to next token position (matching C++ tokenizer.Next())
 								for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
 									col++
 									i++
@@ -10383,18 +10390,29 @@ func checkClosedEnumValues(data []byte, msgDesc protoreflect.MessageDescriptor) 
 									}
 								}
 								valStr := string(data[valStart : numStart+len(numStr)])
-								return fmt.Sprintf("input:%d:%d: Unknown enumeration value of \"%s\" for field \"%s\".",
+								return i, line, col, fmt.Sprintf("input:%d:%d: Unknown enumeration value of \"%s\" for field \"%s\".",
 									line, col, valStr, fieldName)
 							}
 						}
 						continue
 					}
 					if negative {
-						// Was just a `-`, not a number; reset
 						i = valStart
 					}
 				}
 				i, line, col = skipTextFormatValue(data, i, line, col)
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				i++
+				col++
+				if subMsg, ok := msgFields[fieldName]; ok {
+					var errStr string
+					i, line, col, errStr = checkClosedEnumValuesInner(data, i, line, col, subMsg)
+					if errStr != "" {
+						return i, line, col, errStr
+					}
+				} else {
+					i, line, col = skipBracedBlock(data, i, line, col)
+				}
 			} else {
 				i, line, col = skipTextFormatValue(data, i, line, col)
 			}
@@ -10403,7 +10421,7 @@ func checkClosedEnumValues(data []byte, msgDesc protoreflect.MessageDescriptor) 
 		i++
 		col++
 	}
-	return ""
+	return i, line, col, ""
 }
 
 // checkNegUintFields scans text format input for negative values on unsigned
