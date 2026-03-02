@@ -561,6 +561,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 217. [DONE] Fix `cli@pfn_plugin_mutex` — C++ protoc rejects `--print_free_field_numbers` (or `--encode`/`--decode`/`--decode_raw`) combined with plugin output (e.g., `--dump_out`) with `Cannot use --encode, --decode or print .proto info and generate code at the same time.` (exit 1) but Go silently accepted the combination. Added `len(cfg.plugins) > 0` mutual exclusion check after the existing `descriptorSetOut` check. All 5281/5281 tests pass.
 
+218. [DONE] Fix `cli@decode_raw_plugin_mutex` — `--decode_raw` combined with plugin output (e.g., `--dump_out`) was not rejected because the `--decode_raw` handler returned early (reading stdin and exiting) before reaching the codec+plugin mutual exclusion check. Moved codec+dso and codec+plugin mutual exclusion checks before the `--decode_raw` early exit block. Removed the now-duplicate checks from later in the function. All 5282/5282 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
