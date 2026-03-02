@@ -1,0 +1,13 @@
+syntax = "proto2";
+
+package decodenestedgrp;
+
+message Outer {
+  required string name = 1;
+  optional group Inner = 2 {
+    optional string label = 1;
+    optional group Deep = 3 {
+      optional int32 value = 1;
+    }
+  }
+}
