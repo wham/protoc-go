@@ -9431,7 +9431,7 @@ func collectMissingRequired(m protoreflect.Message, prefix string, missing *[]st
 // prints text format using the schema from parsed proto files.
 func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles []string) error {
 	// Find the message descriptor
-	msgDesc, allMsgs, allEnums, allExts, closedEnums, utf8Msgs := findMessageType(msgTypeName, parsed)
+	msgDesc, allMsgs, allEnums, allExts, closedEnums, utf8Msgs, noPresenceMsgs := findMessageType(msgTypeName, parsed)
 	if msgDesc == nil {
 		return fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)
 	}
@@ -9458,19 +9458,20 @@ func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 	}
 
 	// Print in text format
-	printTextProto(os.Stdout, data, msgTypeName, msgDesc, allMsgs, allEnums, allExts, closedEnums, 0)
+	printTextProto(os.Stdout, data, msgTypeName, msgDesc, allMsgs, allEnums, allExts, closedEnums, noPresenceMsgs, 0)
 	return nil
 }
 
 // findMessageType searches all parsed FileDescriptorProtos for a message
 // with the given fully-qualified name. Returns the descriptor, maps of all
 // messages, enums, and extensions.
-func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescriptorProto) (*descriptorpb.DescriptorProto, map[string]*descriptorpb.DescriptorProto, map[string]map[int32]string, map[string]map[int32]*decodeExt, map[string]bool, map[string]bool) {
+func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescriptorProto) (*descriptorpb.DescriptorProto, map[string]*descriptorpb.DescriptorProto, map[string]map[int32]string, map[string]map[int32]*decodeExt, map[string]bool, map[string]bool, map[string]bool) {
 	allMsgs := make(map[string]*descriptorpb.DescriptorProto)
 	allEnums := make(map[string]map[int32]string)
 	allExts := make(map[string]map[int32]*decodeExt)
 	closedEnums := make(map[string]bool)
 	utf8Msgs := make(map[string]bool)
+	noPresenceMsgs := make(map[string]bool)
 	for _, fd := range parsed {
 		pkg := fd.GetPackage()
 		isEditions := fd.GetSyntax() == "editions"
@@ -9480,6 +9481,7 @@ func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescri
 			collectMsgsForDecode(pkg, "", msg, allMsgs, allEnums, allExts, closedEnums, isClosed, isEditions, fd)
 			if isProto3 {
 				collectUtf8Msgs(pkg, "", msg, utf8Msgs)
+				collectNoPresenceMsgs(pkg, "", msg, noPresenceMsgs)
 			}
 		}
 		for _, ed := range fd.GetEnumType() {
@@ -9502,7 +9504,7 @@ func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescri
 			addDecodeExt(allExts, pkg, "", ext)
 		}
 	}
-	return allMsgs[fullName], allMsgs, allEnums, allExts, closedEnums, utf8Msgs
+	return allMsgs[fullName], allMsgs, allEnums, allExts, closedEnums, utf8Msgs, noPresenceMsgs
 }
 
 func addDecodeExt(allExts map[string]map[int32]*decodeExt, pkg, prefix string, ext *descriptorpb.FieldDescriptorProto) {
@@ -9556,6 +9558,21 @@ func collectUtf8Msgs(pkg, prefix string, msg *descriptorpb.DescriptorProto, utf8
 	utf8Msgs[fqn] = true
 	for _, nested := range msg.GetNestedType() {
 		collectUtf8Msgs(pkg, prefix+msg.GetName()+".", nested, utf8Msgs)
+	}
+}
+
+// collectNoPresenceMsgs marks proto3 messages where singular scalar fields
+// have implicit presence (default values are suppressed in text output).
+func collectNoPresenceMsgs(pkg, prefix string, msg *descriptorpb.DescriptorProto, noPresenceMsgs map[string]bool) {
+	var fqn string
+	if pkg != "" {
+		fqn = pkg + "." + prefix + msg.GetName()
+	} else {
+		fqn = prefix + msg.GetName()
+	}
+	noPresenceMsgs[fqn] = true
+	for _, nested := range msg.GetNestedType() {
+		collectNoPresenceMsgs(pkg, prefix+msg.GetName()+".", nested, noPresenceMsgs)
 	}
 }
 
@@ -9817,7 +9834,7 @@ func wireTypeMatchesProtoType(wt protowire.Type, pt descriptorpb.FieldDescriptor
 // printTextProto prints binary protobuf data in text format using the message
 // schema. Known fields are printed by name, unknown fields by number.
 // This matches C++ protoc's TextFormat::Print behavior for --decode.
-func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, allExts map[string]map[int32]*decodeExt, closedEnums map[string]bool, indent int) {
+func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, allExts map[string]map[int32]*decodeExt, closedEnums map[string]bool, noPresenceMsgs map[string]bool, indent int) {
 	fieldMap := buildFieldMap(msgDesc)
 	extMap := allExts[msgFQN] // extensions for this message type
 
@@ -10081,6 +10098,38 @@ func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorp
 		}
 	}
 
+	// For proto3 messages, suppress singular scalar fields with default values.
+	// C++ protoc's ParseFromString + TextFormat::Print skips these because
+	// proto3 singular scalars have implicit presence (HasField returns false for defaults).
+	if noPresenceMsgs[msgFQN] && msgDesc != nil {
+		filtered := knownEntries[:0]
+		for _, e := range knownEntries {
+			fd := e.known
+			if fd != nil && fd.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED &&
+				fd.OneofIndex == nil &&
+				fd.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE &&
+				fd.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+				// Implicit presence field: skip if default value
+				isDefault := false
+				switch e.wtype {
+				case protowire.VarintType:
+					isDefault = e.varint == 0
+				case protowire.Fixed32Type:
+					isDefault = e.fixed32 == 0
+				case protowire.Fixed64Type:
+					isDefault = e.fixed64 == 0
+				case protowire.BytesType:
+					isDefault = len(e.bytes) == 0
+				}
+				if isDefault {
+					continue
+				}
+			}
+			filtered = append(filtered, e)
+		}
+		knownEntries = filtered
+	}
+
 	// For map entries, C++ protoc always prints both key (field 1) and value (field 2),
 	// even if they're missing from the wire data. Add default entries for missing fields.
 	if msgDesc != nil && msgDesc.GetOptions().GetMapEntry() {
@@ -10135,7 +10184,7 @@ func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorp
 		return false
 	})
 	for _, e := range knownEntries {
-		printKnownField(w, e, prefix, allMsgs, allEnums, allExts, closedEnums, indent)
+		printKnownField(w, e, prefix, allMsgs, allEnums, allExts, closedEnums, noPresenceMsgs, indent)
 	}
 
 	// Print unknown fields (in wire order)
@@ -10157,7 +10206,7 @@ func printKnownField(w *os.File, e struct {
 	fixed64 uint64
 	bytes   []byte
 	group   []byte
-}, prefix string, allMsgs map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, allExts map[string]map[int32]*decodeExt, closedEnums map[string]bool, indent int) {
+}, prefix string, allMsgs map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, allExts map[string]map[int32]*decodeExt, closedEnums map[string]bool, noPresenceMsgs map[string]bool, indent int) {
 	fd := e.known
 	name := fd.GetName()
 	if e.extFQN != "" {
@@ -10222,7 +10271,7 @@ func printKnownField(w *os.File, e struct {
 		subFQN := strings.TrimPrefix(fd.GetTypeName(), ".")
 		if subMsg != nil {
 			fmt.Fprintf(w, "%s%s {\n", prefix, name)
-			printTextProto(w, e.bytes, subFQN, subMsg, allMsgs, allEnums, allExts, closedEnums, indent+1)
+			printTextProto(w, e.bytes, subFQN, subMsg, allMsgs, allEnums, allExts, closedEnums, noPresenceMsgs, indent+1)
 			fmt.Fprintf(w, "%s}\n", prefix)
 		} else {
 			fmt.Fprintf(w, "%s%s {\n", prefix, name)
@@ -10244,7 +10293,7 @@ func printKnownField(w *os.File, e struct {
 		}
 		if subMsg != nil {
 			fmt.Fprintf(w, "%s%s {\n", prefix, groupName)
-			printTextProto(w, e.group, subFQN, subMsg, allMsgs, allEnums, allExts, closedEnums, indent+1)
+			printTextProto(w, e.group, subFQN, subMsg, allMsgs, allEnums, allExts, closedEnums, noPresenceMsgs, indent+1)
 			fmt.Fprintf(w, "%s}\n", prefix)
 		} else {
 			fmt.Fprintf(w, "%s%s {\n", prefix, groupName)
