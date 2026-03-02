@@ -404,8 +404,34 @@ type config struct {
 
 // Run executes the protocol buffer compiler with the given command-line arguments.
 // This mirrors C++ CommandLineInterface::Run().
+func expandResponseFiles(args []string) ([]string, error) {
+	var expanded []string
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "@") {
+			filename := arg[1:]
+			data, err := os.ReadFile(filename)
+			if err != nil {
+				return nil, fmt.Errorf("Failed to open argument file: %s", filename)
+			}
+			lines := strings.Split(string(data), "\n")
+			for _, line := range lines {
+				if line != "" {
+					expanded = append(expanded, line)
+				}
+			}
+			continue
+		}
+		expanded = append(expanded, arg)
+	}
+	return expanded, nil
+}
+
 func Run(args []string) error {
-	cfg, err := parseArgs(args[1:]) // skip program name
+	expandedArgs, err := expandResponseFiles(args[1:])
+	if err != nil {
+		return err
+	}
+	cfg, err := parseArgs(expandedArgs) // skip program name
 	if err != nil {
 		return err
 	}
