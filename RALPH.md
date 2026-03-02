@@ -466,3 +466,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 169. [DONE] Fix `cli@encode_deterministic_map` — `reorderMapEntriesBySource` was always called in `runEncode`, even when `--deterministic_output` was set. C++ protoc sorts map entries by key with `--deterministic_output`, but `reorderMapEntriesBySource` was restoring source (insertion) order. Added `deterministicOutput` parameter to `runEncode` and skip reordering when set. All 5008/5008 tests pass.
 
 170. [DONE] Fix `cli@version` — Hardcoded version string was `libprotoc 29.3` but system C++ protoc is `libprotoc 33.4`. Updated version string to match. All 5009/5009 tests pass.
+
+171. [DONE] Fix `cli@proto_path_mapping` — C++ protoc supports `--proto_path=vdir=disk_path` syntax where `vdir` is a virtual path prefix mapping to `disk_path`. Added `Mapping` type to `SourceTree` with `VirtualPath` and `DiskPath` fields. Updated `Open`, `Exists`, `VirtualFileToDiskFile`, `MakeRelative`, and `ValidateRoots` to use mappings. Parsed `=` separator in `--proto_path` and `-I` flag values. All 5020/5020 tests pass.
