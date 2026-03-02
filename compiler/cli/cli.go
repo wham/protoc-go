@@ -1633,12 +1633,20 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		if strings.HasPrefix(arg, "--direct_dependencies=") {
+		if strings.HasPrefix(arg, "--direct_dependencies=") || arg == "--direct_dependencies" {
 			if cfg.directDependenciesSet {
 				return nil, fmt.Errorf("--direct_dependencies may only be passed once. To specify multiple direct dependencies, pass them all as a single parameter separated by ':'.")
 			}
 			cfg.directDependenciesSet = true
-			val := arg[len("--direct_dependencies="):]
+			var val string
+			if arg == "--direct_dependencies" {
+				if i+1 < len(args) {
+					i++
+					val = args[i]
+				}
+			} else {
+				val = arg[len("--direct_dependencies="):]
+			}
 			cfg.directDependencies = make(map[string]bool)
 			if val != "" {
 				for _, dep := range strings.Split(val, ":") {
@@ -1650,8 +1658,15 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		if strings.HasPrefix(arg, "--direct_dependencies_violation_msg=") {
-			cfg.directDependenciesViolationMsg = arg[len("--direct_dependencies_violation_msg="):]
+		if strings.HasPrefix(arg, "--direct_dependencies_violation_msg=") || arg == "--direct_dependencies_violation_msg" {
+			if arg == "--direct_dependencies_violation_msg" {
+				if i+1 < len(args) {
+					i++
+					cfg.directDependenciesViolationMsg = args[i]
+				}
+			} else {
+				cfg.directDependenciesViolationMsg = arg[len("--direct_dependencies_violation_msg="):]
+			}
 			continue
 		}
 
