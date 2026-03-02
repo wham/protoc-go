@@ -515,6 +515,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 194. [DONE] Fix `501_brace_trailing_comment` — C++ protoc's `TryConsumeEndOfDeclaration("}", nullptr)` always drops trailing comments of closing braces (the location parameter is nullptr, so `AttachComments` is never called). Go's `attachComments` was picking up `PrevTrailing` from the token after `}` and attaching it as trailing comment of the enclosing scope (e.g., enum). Added check in `attachComments`: if the previous token (at `nextIdx-1`) is `}`, skip the `PrevTrailing`. All 5141/5141 tests pass.
 
+195. [DONE] Fix `cli@json_name_conflict` — C++ protoc emits warnings (not errors) for JSON name conflicts in proto2 files. `validateJsonNameConflicts` was skipping proto2 entirely. Extended to process proto2 files and return warnings separately from proto3/editions errors. Warnings are prefixed with `warning:` and printed to stderr without causing compilation failure. All 5152/5152 tests pass.
+
 ## Notes (continued)
 
 - `compiler/parser/parser.go`: `attachComments` now skips `PrevTrailing` when the previous token is `}`. In C++ protoc, ALL closing `}` tokens are consumed via `TryConsumeEndOfDeclaration("}", nullptr)` where the `nullptr` location means `AttachComments` is never called, so trailing comments of `}` are always dropped. For `{` and `;` tokens, C++ uses `ConsumeEndOfDeclaration` with a non-null location, so their trailing comments ARE attached. This matches: trailing of `;` → attached to declaration, trailing of `{` → attached to block, trailing of `}` → dropped.
