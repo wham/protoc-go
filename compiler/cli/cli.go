@@ -457,6 +457,16 @@ func Run(args []string) error {
 		return fmt.Errorf("Only one of --encode and --decode can be specified.")
 	}
 
+	// Codec + descriptor_set_out mutual exclusion (must be before --decode_raw early exit)
+	if (cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers) && cfg.descriptorSetOut != "" {
+		return fmt.Errorf("Cannot use --encode or --decode and generate descriptors at the same time.")
+	}
+
+	// Codec + plugin mutual exclusion (must be before --decode_raw early exit)
+	if (cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers) && len(cfg.plugins) > 0 {
+		return fmt.Errorf("Cannot use --encode, --decode or print .proto info and generate code at the same time.")
+	}
+
 	// --decode_raw reads binary proto from stdin and decodes as raw wire format
 	if cfg.decodeRaw {
 		data, err := io.ReadAll(os.Stdin)
@@ -487,14 +497,6 @@ func Run(args []string) error {
 	// Validate we have output directives
 	if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers && cfg.decodeType == "" && cfg.encodeType == "" {
 		return fmt.Errorf("Missing output directives.")
-	}
-
-	if (cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers) && cfg.descriptorSetOut != "" {
-		return fmt.Errorf("Cannot use --encode or --decode and generate descriptors at the same time.")
-	}
-
-	if (cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers) && len(cfg.plugins) > 0 {
-		return fmt.Errorf("Cannot use --encode, --decode or print .proto info and generate code at the same time.")
 	}
 
 	if cfg.deterministicOutput && cfg.encodeType == "" {
