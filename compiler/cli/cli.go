@@ -864,7 +864,7 @@ func Run(args []string) error {
 
 	// Handle dependency output
 	if cfg.dependencyOut != "" && cfg.descriptorSetOut != "" {
-		if err := writeDependencyOut(cfg.dependencyOut, cfg.descriptorSetOut, orderedFiles); err != nil {
+		if err := writeDependencyOut(cfg.dependencyOut, cfg.descriptorSetOut, orderedFiles, srcTree); err != nil {
 			return err
 		}
 	}
@@ -912,7 +912,7 @@ func Run(args []string) error {
 
 // writeDescriptorSet writes the descriptor set file, matching C++ protoc error format.
 func writeDescriptorSet(path string, data []byte) error {
-	f, err := os.Create(path)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
 		if pe, ok := err.(*os.PathError); ok {
 			errMsg := pe.Err.Error()
@@ -928,21 +928,23 @@ func writeDescriptorSet(path string, data []byte) error {
 	return err
 }
 
-func writeDependencyOut(depPath, target string, orderedFiles []string) error {
+func writeDependencyOut(depPath, target string, orderedFiles []string, srcTree *importer.SourceTree) error {
 	var buf strings.Builder
 	buf.WriteString(target)
 	buf.WriteString(":")
 	for i, name := range orderedFiles {
-		if i > 0 {
-			buf.WriteString(" \\\n ")
-		} else {
-			buf.WriteString(" ")
+		diskFile := name
+		if df, ok := srcTree.VirtualFileToDiskFile(name); ok {
+			diskFile = df
 		}
-		buf.WriteString(name)
+		buf.WriteString(" ")
+		buf.WriteString(diskFile)
+		if i < len(orderedFiles)-1 {
+			buf.WriteString("\\\n")
+		}
 	}
-	buf.WriteString("\n")
 
-	f, err := os.Create(depPath)
+	f, err := os.OpenFile(depPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
 		if pe, ok := err.(*os.PathError); ok {
 			errMsg := pe.Err.Error()
