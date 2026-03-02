@@ -1789,3 +1789,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
 - **Fix hint**: Before assigning `cfg.descriptorSetIn`, check if it's already non-empty. If so, emit the same error as C++: `return nil, fmt.Errorf("--descriptor_set_in may only be passed once. To specify multiple descriptor sets, pass them all as a single parameter separated by ':'.")`.
 - **Also affects**: Same validation likely missing for `--dependency_out`, `--encode`, `--decode`, `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg`.
+
+### Run 188 — Duplicate --dependency_out flag accepted by Go but rejected by C++ (VICTORY)
+- **Bug**: C++ protoc rejects duplicate `--dependency_out` flags with `--dependency_out may only be passed once.` and exits 1. Go's `parseArgs()` silently overwrites the previous value and continues, exiting 0. Same class of bug as Run 181 (duplicate `--descriptor_set_out`) and Run 187 (duplicate `--descriptor_set_in`).
+- **Test**: CLI test `cli@dup_depout` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` at line ~1557 handles `--dependency_out=` by simply assigning `cfg.dependencyOut = ...`. If the flag appears twice, the second value overwrites the first without any error. C++ protoc checks if the value is already set and emits an error.
+- **C++ protoc**: `--dependency_out may only be passed once.` on stderr, exit 1.
+- **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
+- **Fix hint**: Before assigning `cfg.dependencyOut`, check if it's already non-empty. If so, emit: `return nil, fmt.Errorf("--dependency_out may only be passed once.")`.
+- **Also affects**: Same validation likely missing for `--encode`, `--decode`, `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg`.
