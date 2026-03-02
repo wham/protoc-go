@@ -472,3 +472,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 172. [DONE] Fix `cli@self_import` — C++ protoc uses the disk path (e.g., `testdata/492_self_import/test.proto`) in recursive import cycle error messages, but Go used the virtual filename (e.g., `test.proto`). Added `srcTree.VirtualFileToDiskFile` mapping for `cycleStart` in `parseRecursive`'s import cycle detection. All 5031/5031 tests pass.
 
 173. [DONE] Fix `cli@encode_space_flag` — C++ protoc accepts both `--encode=TYPE` and `--encode TYPE` (space-separated), same for `--decode`. Go only handled the `=` form, rejecting space-separated with "Missing value for flag". Added bare `--encode` and `--decode` handling in `parseArgs` that consumes the next arg as value (if present and not starting with `-`). All 5042/5042 tests pass.
+
+174. [DONE] Fix `cli@encode_group_missing_req` — `collectMissingRequired` only recursed into `MessageKind` singular fields, missing `GroupKind` and repeated message/group fields. Added `GroupKind` check and list iteration with `result[i]` prefix notation for repeated fields. All 5053/5053 tests pass.
