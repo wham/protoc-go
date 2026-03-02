@@ -498,3 +498,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 185. [DONE] Fix `cli@dependency_out_space` — C++ protoc accepts both `--dependency_out=FILE` and `--dependency_out FILE` (space-separated), but Go only handled the `=` form. Added `arg == "--dependency_out"` check that consumes the next argument as value, matching the `--descriptor_set_out` pattern. All 5114/5114 tests pass.
 
 186. [DONE] Fix `cli@decode_encode_mutex` — C++ protoc rejects simultaneous `--encode` and `--decode` (or `--decode_raw`) with `Only one of --encode and --decode can be specified.` (exit 1). Added `codecCount` check after `parseArgs` that counts how many of `decodeRaw`, `decodeType`, and `encodeType` are set, rejecting if more than one. All 5115/5115 tests pass.
+
+187. [DONE] Fix `cli@error_format_space` — C++ protoc accepts both `--error_format=FORMAT` and `--error_format FORMAT` (space-separated), but Go only handled the `=` form. Added `arg == "--error_format"` check that consumes the next argument as value, matching the `--descriptor_set_out` pattern. All 5116/5116 tests pass.

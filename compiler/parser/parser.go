@@ -3091,6 +3091,13 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 	endTok := p.tok.Next() // consume "}"
 	p.trackEnd(endTok)
 
+	// Validate allow_alias: if explicitly set to false, it has no effect
+	if opts := e.GetOptions(); opts != nil && opts.AllowAlias != nil && !opts.GetAllowAlias() {
+		nextTok := p.tok.Peek()
+		return nil, fmt.Errorf("%d:%d: \"%s\" declares 'option allow_alias = false;' which has no effect. Please remove the declaration.",
+			nextTok.Line+1, nextTok.Column+1, e.GetName())
+	}
+
 	// Validate allow_alias: if set to true, there must be at least one duplicate value
 	if e.GetOptions().GetAllowAlias() {
 		usedValues := make(map[int32]bool)
