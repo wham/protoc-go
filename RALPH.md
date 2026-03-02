@@ -519,6 +519,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 196. [DONE] Fix `cli@encode_neg_uint` — C++ protoc's `ConsumeUnsignedInteger` rejects `-` on unsigned integer fields (uint32, uint64, fixed32, fixed64) with `Expected integer, got: -`. Added `checkNegUintFields` pre-scan in `runEncode` that detects negative values on unsigned fields and reports the error at the `-` position. All 5173/5173 tests pass.
 
+197. [DONE] Fix `cli@encode_nested_neg_uint` — `checkNegUintFields` only checked top-level fields, not nested message fields. Refactored into recursive `checkNegUintFieldsInner` that also tracks message-type fields and recurses when encountering `fieldname { ... }` patterns. Added `skipBracedBlock` helper for unknown message fields. All 5184/5184 tests pass.
+
 ## Notes (continued)
 
 - `compiler/parser/parser.go`: `attachComments` now skips `PrevTrailing` when the previous token is `}`. In C++ protoc, ALL closing `}` tokens are consumed via `TryConsumeEndOfDeclaration("}", nullptr)` where the `nullptr` location means `AttachComments` is never called, so trailing comments of `}` are always dropped. For `{` and `;` tokens, C++ uses `ConsumeEndOfDeclaration` with a non-null location, so their trailing comments ARE attached. This matches: trailing of `;` → attached to declaration, trailing of `{` → attached to block, trailing of `}` → dropped.
