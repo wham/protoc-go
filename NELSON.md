@@ -1528,3 +1528,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `id: 0\nname: ""\nflag: false\nlabel: "ok"\n` (prints all 4 fields including 3 with default values).
 - **Fix hint**: In `findMessageType()`, for editions files, check if the file (or individual fields) have `field_presence = IMPLICIT` (feature resolution). If so, call `collectNoPresenceMsgs` for those messages. Need to handle feature inheritance: file-level features apply to all messages, message-level features override, field-level features override further. For editions, check `fd.GetOptions().GetFeatures().GetFieldPresence()` == `IMPLICIT` at the file level, then per-message, then per-field.
 - **Also affects**: Any editions file with `field_presence = IMPLICIT` decoded with `--decode` will print default-valued fields that C++ omits. Also affects per-message and per-field `features.field_presence = IMPLICIT` overrides.
+
+### Run 159 — Decode mode packed repeated enum doesn't move unknown values to unknown fields (VICTORY)
+- **Bug**: Go's decode mode unpacks packed repeated enum fields into individual varint entries and adds them ALL to `knownEntries` without checking for closed enum unknown values. For proto2 (closed enums), unknown enum values in packed data should be moved to the unknown field set, but Go keeps them as known fields and prints the numeric value.
+- **Test**: Decode test `decode@packed_enum_unknown` — stdout mismatch (1 test fails).
+- **Root cause**: Packed unpacking at cli.go:10363-10406 always appends to `knownEntries`. The closed enum check at lines 10409-10417 only applies to non-packed entries (in the `else if` branch). So packed enum entries bypass the closed enum unknown value check entirely. Run 126 fixed the non-packed case but the packed case was missed.
+- **C++ protoc**: `s: UNKNOWN\ns: ACTIVE\nlabel: "ok"\n1: 99\n` (moves unknown value 99 to unknown fields, printed as `1: 99`).
+- **Go protoc-go**: `s: UNKNOWN\ns: ACTIVE\ns: 99\nlabel: "ok"\n` (keeps unknown value as known field, printed as `s: 99`).
+- **Fix hint**: After unpacking each packed varint entry for an enum type, check if the value is in the closed enum's value map. If not, add it to `unknownEntries` instead of `knownEntries`. Add the same check as lines 10409-10417 inside the packed unpacking loop (around line 10403-10405).

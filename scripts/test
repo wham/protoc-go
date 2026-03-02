@@ -1042,6 +1042,7 @@ DECODE_TESTS=(
   "map_missing_key|testdata/480_decode_map_missing_key|decodemapkey.Record|0A02102A12026F6B"
   "proto3_default|testdata/481_decode_proto3_default|decodep3def.Record|080012001a0020002a026f6b"
   "edition_implicit_default|testdata/485_decode_edition_implicit|decodeedimplicit.Record|08001200180022026f6b"
+  "packed_enum_unknown|testdata/486_decode_packed_enum_unknown|decodepackedenum.Record|0a0300016312026f6b"
 )
 
 for decode_spec in "${DECODE_TESTS[@]}"; do
