@@ -1643,3 +1643,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `test.proto:3:1: File recursively imports itself: test.proto -> test.proto` (virtual filename prefix).
 - **Fix hint**: Either (1) apply `mapErrorFilename` to each error in `collectErrors` before joining at line 512, or (2) use the disk path when constructing the error at line 944 by calling `srcTree.VirtualFileToDiskFile(filename)`. Option 1 is more general — it would fix filename mapping for ALL collected errors, not just import cycle errors.
 - **Also affects**: Any error in `collectErrors` that uses virtual filenames will have the same prefix mismatch. This includes "File not found" errors (line 958) and other parse/import errors.
+
+### Run 170 — Space-separated flag value for --encode/--decode not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports both `--flag=VALUE` and `--flag VALUE` (space-separated) syntax for flags like `--encode`, `--decode`, `--proto_path`, etc. Go's `parseArgs()` only supports the `--flag=VALUE` form. When `--encode basic.Person` (space-separated) is used, Go fails with "Missing value for flag: --encode" while C++ correctly consumes `basic.Person` as the flag's value.
+- **Test**: CLI test `cli@encode_space_flag` — exit code mismatch: C++ exit 0, Go exit 1.
+- **Root cause**: `parseArgs()` in cli.go handles flags only via `strings.HasPrefix(arg, "--flag=")` pattern. When a flag like `--encode` appears without `=`, Go falls through to the end of the flag parsing loop where it hits the "Missing value for flag" error at line 1536-1541. C++ protoc's argument parser consumes the next argument as the value for flags that take a value argument.
+- **C++ protoc**: Parses `--encode` + `basic.Person` as `--encode=basic.Person`. Successfully encodes with empty stdin. Exit 0.
+- **Go protoc-go**: Sees `--encode` alone, reports "Missing value for flag: --encode". Exit 1.
+- **Fix hint**: (1) For flags that take values (`--encode`, `--decode`, `--proto_path`, `--plugin`, etc.), when `arg` matches the flag name exactly (without `=`), consume `args[i+1]` as the value and increment `i`. (2) Alternative: refactor to use a proper flag parsing library that handles both forms.
+- **Also affects**: `--decode TYPE`, `--proto_path DIR`, `--plugin NAME=PATH`, `--descriptor_set_in FILE`, `--descriptor_set_out FILE`, `--dependency_out FILE`, `--error_format FMT`, and any other flag that takes a value argument.

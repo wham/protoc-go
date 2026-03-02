@@ -781,6 +781,7 @@ CLI_TESTS=(
   "version|--version"
   "proto_path_mapping|--proto_path=vdir=testdata/491_proto_path_mapping/actual --descriptor_set_out=/dev/null vdir/test.proto"
   "self_import|--descriptor_set_out=/dev/null -I testdata/492_self_import testdata/492_self_import/test.proto"
+  "encode_space_flag|--encode basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
