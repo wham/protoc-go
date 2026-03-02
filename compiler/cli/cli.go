@@ -9118,6 +9118,192 @@ func sortUnknownFields(raw []byte) []byte {
 	return result
 }
 
+// reorderAndRestoreMapEntries handles both reordering map entries to match
+// source order AND restoring duplicate map entries that Go's proto.Marshal
+// deduplicates. C++ protoc treats map fields as repeated sub-messages,
+// preserving all entries including duplicates with the same key.
+func reorderAndRestoreMapEntries(out []byte, msgDesc protoreflect.MessageDescriptor, textInput string, types *dynamicpb.Types) []byte {
+	for i := 0; i < msgDesc.Fields().Len(); i++ {
+		fd := msgDesc.Fields().Get(i)
+		if !fd.IsMap() {
+			continue
+		}
+		fieldName := string(fd.Name())
+		allEntryTexts := extractAllTextMapEntryTexts(textInput, fieldName)
+		if len(allEntryTexts) == 0 {
+			continue
+		}
+
+		type entryWithKey struct {
+			key  string
+			text string
+		}
+		var entries []entryWithKey
+		keyCount := map[string]int{}
+		hasDup := false
+		for _, et := range allEntryTexts {
+			key := ""
+			if k, ok := extractMapKeyFromEntry(et); ok {
+				key = k
+			}
+			if fd.MapKey().Kind() == protoreflect.BoolKind {
+				switch key {
+				case "true":
+					key = "1"
+				case "false":
+					key = "0"
+				}
+			}
+			entries = append(entries, entryWithKey{key: key, text: et})
+			keyCount[key]++
+			if keyCount[key] > 1 {
+				hasDup = true
+			}
+		}
+
+		if hasDup {
+			// Rebuild ALL entries from text (including duplicates)
+			opts := prototext.UnmarshalOptions{
+				AllowPartial: true,
+				Resolver:     types,
+			}
+			var binEntries [][]byte
+			for _, e := range entries {
+				entryMsg := dynamicpb.NewMessage(fd.Message())
+				if err := opts.Unmarshal([]byte(e.text), entryMsg); err != nil {
+					continue
+				}
+				entryBytes, err := proto.MarshalOptions{Deterministic: true, AllowPartial: true}.Marshal(entryMsg)
+				if err != nil {
+					continue
+				}
+				var wrapped []byte
+				wrapped = protowire.AppendTag(wrapped, fd.Number(), protowire.BytesType)
+				wrapped = protowire.AppendBytes(wrapped, entryBytes)
+				binEntries = append(binEntries, wrapped)
+			}
+			out = replaceFieldEntries(out, fd.Number(), binEntries)
+		} else {
+			// Just reorder (no duplicates)
+			sourceKeys := make([]string, len(entries))
+			for j, e := range entries {
+				sourceKeys[j] = e.key
+			}
+			out = reorderWireEntriesByKeys(out, fd.Number(), sourceKeys)
+		}
+	}
+	return out
+}
+
+// extractAllTextMapEntryTexts extracts all map entry texts (content between
+// braces) for a given field name, preserving duplicates and source order.
+func extractAllTextMapEntryTexts(text, fieldName string) []string {
+	var entries []string
+	fnLen := len(fieldName)
+	i := 0
+	for i < len(text) {
+		pos := strings.Index(text[i:], fieldName)
+		if pos < 0 {
+			break
+		}
+		pos += i
+		if pos > 0 {
+			c := text[pos-1]
+			if isIdentChar(c) {
+				i = pos + fnLen
+				continue
+			}
+		}
+		endPos := pos + fnLen
+		if endPos < len(text) && isIdentChar(text[endPos]) {
+			i = endPos
+			continue
+		}
+		j := endPos
+		for j < len(text) && (text[j] == ' ' || text[j] == '\t' || text[j] == '\n' || text[j] == '\r') {
+			j++
+		}
+		if j >= len(text) || (text[j] != '{' && text[j] != '<') {
+			i = j
+			continue
+		}
+		openBrace := text[j]
+		closeBrace := byte('}')
+		if openBrace == '<' {
+			closeBrace = '>'
+		}
+		j++
+		depth := 1
+		entryStart := j
+		for j < len(text) && depth > 0 {
+			switch text[j] {
+			case openBrace:
+				depth++
+			case closeBrace:
+				depth--
+			case '"':
+				j++
+				for j < len(text) && text[j] != '"' {
+					if text[j] == '\\' {
+						j++
+					}
+					j++
+				}
+			case '\'':
+				j++
+				for j < len(text) && text[j] != '\'' {
+					if text[j] == '\\' {
+						j++
+					}
+					j++
+				}
+			}
+			j++
+		}
+		entryText := text[entryStart : j-1]
+		entries = append(entries, entryText)
+		i = j
+	}
+	return entries
+}
+
+// replaceFieldEntries replaces all wire entries for a given field number
+// with the provided new entries, preserving the position in the output.
+func replaceFieldEntries(data []byte, fieldNum protowire.Number, newEntries [][]byte) []byte {
+	var result []byte
+	inserted := false
+
+	buf := data
+	for len(buf) > 0 {
+		num, _, n := protowire.ConsumeTag(buf)
+		if n < 0 {
+			return data
+		}
+		_, _, total := protowire.ConsumeField(buf)
+		if total < 0 {
+			return data
+		}
+		if num == fieldNum {
+			if !inserted {
+				for _, e := range newEntries {
+					result = append(result, e...)
+				}
+				inserted = true
+			}
+			// Skip existing entry
+		} else {
+			result = append(result, buf[:total]...)
+		}
+		buf = buf[total:]
+	}
+	if !inserted && len(newEntries) > 0 {
+		for _, e := range newEntries {
+			result = append(result, e...)
+		}
+	}
+	return result
+}
+
 // reorderMapEntriesBySource reorders map entries in marshaled binary protobuf
 // to match the source order from text format input. C++ protoc preserves map
 // insertion order while Go's Deterministic marshal sorts keys alphabetically.
@@ -9621,9 +9807,10 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 
 	// Create a dynamic message and parse text format into it
 	msg := dynamicpb.NewMessage(msgDesc)
+	types := dynamicpb.NewTypes(files)
 	unmarshalOpts := prototext.UnmarshalOptions{
 		AllowPartial: true,
-		Resolver:     dynamicpb.NewTypes(files),
+		Resolver:     types,
 	}
 	utf8Retry := false
 	if err := unmarshalOpts.Unmarshal(data, msg); err != nil {
@@ -9688,11 +9875,12 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 	out = sortUnknownFields(out)
 
 	// C++ protoc preserves map entry insertion order (from text format source),
-	// but Go's Deterministic marshal sorts map keys alphabetically.
-	// Reorder map entries to match source order, unless --deterministic_output
-	// is set (which means C++ also sorts by key).
+	// including duplicate entries with the same key (since map fields are repeated
+	// sub-messages). Go's proto.Marshal deduplicates map keys and sorts alphabetically.
+	// Restore duplicates and reorder entries to match source order, unless
+	// --deterministic_output is set (which means C++ also sorts by key).
 	if !deterministicOutput {
-		out = reorderMapEntriesBySource(out, msgDesc, string(data))
+		out = reorderAndRestoreMapEntries(out, msgDesc, string(data), types)
 	}
 
 	os.Stdout.Write(out)
