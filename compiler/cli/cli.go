@@ -8442,6 +8442,9 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 			}
 			seenFields[af.Name] = true
 		}
+		if af.TrailingCommaToken != "" {
+			return nil, &aggregateTrailingTokenError{fieldType: subField.GetType(), token: af.TrailingCommaToken}
+		}
 		if len(af.SubFields) > 0 {
 			// Nested message literal — recurse
 			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
@@ -8550,6 +8553,9 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 			}
 			seenFields[af.Name] = true
 		}
+		if af.TrailingCommaToken != "" {
+			return nil, &aggregateTrailingTokenError{fieldType: subField.GetType(), token: af.TrailingCommaToken}
+		}
 		if len(af.SubFields) > 0 {
 			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			if err != nil {
@@ -8648,6 +8654,27 @@ type aggregateStringExpectedError struct {
 
 func (e *aggregateStringExpectedError) Error() string {
 	return fmt.Sprintf("Expected string, got: %s", e.gotValue)
+}
+
+type aggregateTrailingTokenError struct {
+	fieldType descriptorpb.FieldDescriptorProto_Type
+	token     string
+}
+
+func (e *aggregateTrailingTokenError) Error() string {
+	switch e.fieldType {
+	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT,
+		descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		return fmt.Sprintf("Expected double, got: %s", e.token)
+	case descriptorpb.FieldDescriptorProto_TYPE_BOOL,
+		descriptorpb.FieldDescriptorProto_TYPE_ENUM:
+		return fmt.Sprintf("Expected identifier, got: %s", e.token)
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING,
+		descriptorpb.FieldDescriptorProto_TYPE_BYTES:
+		return fmt.Sprintf("Expected string, got: %s", e.token)
+	default:
+		return fmt.Sprintf("Expected integer, got: %s", e.token)
+	}
 }
 
 type aggregateFloatExpectedError struct {
@@ -8779,6 +8806,11 @@ func formatAggregateError(err error, filename string, braceTok tokenizer.Token, 
 	if errors.As(err, &enumErr) {
 		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
 			filename, braceTok.Line+1, braceTok.Column+1, optName, enumErr.Error())
+	}
+	var trailErr *aggregateTrailingTokenError
+	if errors.As(err, &trailErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, trailErr.Error())
 	}
 	return fmt.Sprintf("%s: error encoding custom option: %v", filename, err)
 }

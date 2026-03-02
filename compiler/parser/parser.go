@@ -107,8 +107,9 @@ type AggregateField struct {
 	ValueType   tokenizer.TokenType
 	Negative    bool               // true if value was preceded by '-'
 	Positive    bool               // true if value was preceded by '+'
-	SubFields   []AggregateField   // nested message literal fields
-	IsExtension bool               // true if name was bracketed [ext.name]
+	SubFields          []AggregateField   // nested message literal fields
+	IsExtension        bool               // true if name was bracketed [ext.name]
+	TrailingCommaToken string             // non-empty if trailing comma in list (e.g., "]")
 }
 
 // CustomFieldOption represents a parenthesized custom option on a field
@@ -5338,6 +5339,14 @@ func (p *parser) consumeAggregate() ([]AggregateField, error) {
 				if p.tok.Peek().Value == "," {
 					sepTok := p.tok.Next()
 					p.trackEnd(sepTok)
+					if p.tok.Peek().Value == "]" {
+						fields = append(fields, AggregateField{
+							Name:               fieldName,
+							TrailingCommaToken: "]",
+							IsExtension:        isExtension,
+						})
+						break
+					}
 				}
 			}
 			closeBr := p.tok.Next() // consume ']'
@@ -5525,6 +5534,14 @@ func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
 				if p.tok.Peek().Value == "," {
 					sepTok := p.tok.Next()
 					p.trackEnd(sepTok)
+					if p.tok.Peek().Value == "]" {
+						fields = append(fields, AggregateField{
+							Name:               fieldName,
+							TrailingCommaToken: "]",
+							IsExtension:        isExtension,
+						})
+						break
+					}
 				}
 			}
 			closeBr := p.tok.Next() // consume ']'
