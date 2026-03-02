@@ -490,3 +490,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 181. [DONE] Fix `cli@proto_path_space` — C++ protoc accepts both `--proto_path=PATH` and `--proto_path PATH` (space-separated), but Go only handled the `=` form. Added `arg == "--proto_path"` check that consumes the next argument as value, matching the `-I` flag pattern. All 5110/5110 tests pass.
 
 182. [DONE] Fix `cli@dso_space` — C++ protoc accepts both `--descriptor_set_out=FILE` and `--descriptor_set_out FILE` (space-separated), but Go only handled the `=` form. Added `arg == "--descriptor_set_out"` check that consumes the next argument as value, matching the `--proto_path` pattern. All 5111/5111 tests pass.
+
+183. [DONE] Fix `cli@dsi_space` — C++ protoc accepts both `--descriptor_set_in=FILES` and `--descriptor_set_in FILES` (space-separated), but Go only handled the `=` form. Added `arg == "--descriptor_set_in"` check that consumes the next argument as value, matching the `--descriptor_set_out` pattern. All 5112/5112 tests pass.
