@@ -9368,7 +9368,7 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		if strings.Contains(err.Error(), "invalid UTF-8") {
 			utf8Retry = true
 		} else {
-			reformatProtoTextErrors(err, msgTypeName)
+			reformatProtoTextErrors(err, msgTypeName, data)
 			fmt.Fprintln(os.Stderr, "Failed to parse input.")
 			os.Exit(1)
 		}
@@ -9392,7 +9392,7 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 			Resolver:     dynamicpb.NewTypes(byteFiles),
 		}
 		if err := unmarshalOpts2.Unmarshal(data, msg); err != nil {
-			reformatProtoTextErrors(err, msgTypeName)
+			reformatProtoTextErrors(err, msgTypeName, data)
 			fmt.Fprintln(os.Stderr, "Failed to parse input.")
 			os.Exit(1)
 		}
@@ -9475,7 +9475,7 @@ func emitUtf8SerializeWarnings(msg *dynamicpb.Message, msgFQN string, origMsgDes
 }
 
 // reformatProtoTextErrors reformats Go prototext errors to match C++ protoc format.
-func reformatProtoTextErrors(err error, msgTypeName string) {
+func reformatProtoTextErrors(err error, msgTypeName string, data []byte) {
 	errStr := err.Error()
 	// Go prototext errors: "proto:\u00a0(line L:C): unknown field: NAME"
 	// C++ format: "input:L:COL: Message type "TYPE" has no field named "NAME"."
@@ -9486,7 +9486,89 @@ func reformatProtoTextErrors(err error, msgTypeName string) {
 		fieldName := m[3]
 		cppCol := col + len(fieldName)
 		fmt.Fprintf(os.Stderr, "input:%s:%d: Message type \"%s\" has no field named \"%s\".\n", line, cppCol, msgTypeName, fieldName)
+		return
 	}
+
+	// Go: "proto: syntax error (line L:C): missing field separator :"
+	// C++: "input:L:C: Expected ":", found "TOKEN"."
+	reSep := regexp.MustCompile(`\(line (\d+):(\d+)\): missing field separator :`)
+	if m := reSep.FindStringSubmatch(errStr); m != nil {
+		goLine, _ := strconv.Atoi(m[1])
+		goCol, _ := strconv.Atoi(m[2])
+		// Go's line:col points at the field name start. Find the next token after it.
+		foundLine, foundCol, foundTok := findTokenAfterIdent(data, goLine, goCol)
+		fmt.Fprintf(os.Stderr, "input:%d:%d: Expected \":\", found \"%s\".\n", foundLine, foundCol, foundTok)
+	}
+}
+
+// findTokenAfterIdent finds the next token after an identifier at the given line:col (1-indexed).
+func findTokenAfterIdent(data []byte, line, col int) (int, int, string) {
+	// Find the byte offset for line:col
+	curLine := 1
+	curCol := 1
+	i := 0
+	for i < len(data) && (curLine < line || (curLine == line && curCol < col)) {
+		if data[i] == '\n' {
+			curLine++
+			curCol = 1
+		} else {
+			curCol++
+		}
+		i++
+	}
+	// i is now at the field name start. Skip the identifier.
+	for i < len(data) && (data[i] == '_' || (data[i] >= 'a' && data[i] <= 'z') || (data[i] >= 'A' && data[i] <= 'Z') || (data[i] >= '0' && data[i] <= '9')) {
+		curCol++
+		i++
+	}
+	// Skip whitespace, tracking line/col
+	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r' || data[i] == '\n') {
+		if data[i] == '\n' {
+			curLine++
+			curCol = 1
+		} else {
+			curCol++
+		}
+		i++
+	}
+	if i >= len(data) {
+		return curLine, curCol, ""
+	}
+	// Read the token at this position
+	tokStart := i
+	tokLine := curLine
+	tokCol := curCol
+	if data[i] == '"' || data[i] == '\'' {
+		// String literal — read until matching unescaped quote
+		quote := data[i]
+		i++
+		for i < len(data) && data[i] != quote {
+			if data[i] == '\\' {
+				i++ // skip escaped char
+			}
+			i++
+		}
+		if i < len(data) {
+			i++ // skip closing quote
+		}
+		return tokLine, tokCol, string(data[tokStart:i])
+	}
+	if (data[i] >= '0' && data[i] <= '9') || data[i] == '-' || data[i] == '+' {
+		// Number
+		for i < len(data) && data[i] != ' ' && data[i] != '\t' && data[i] != '\r' && data[i] != '\n' && data[i] != ':' && data[i] != '{' && data[i] != '}' && data[i] != ',' && data[i] != ';' {
+			i++
+		}
+		return tokLine, tokCol, string(data[tokStart:i])
+	}
+	if data[i] == '_' || (data[i] >= 'a' && data[i] <= 'z') || (data[i] >= 'A' && data[i] <= 'Z') {
+		// Identifier
+		for i < len(data) && (data[i] == '_' || (data[i] >= 'a' && data[i] <= 'z') || (data[i] >= 'A' && data[i] <= 'Z') || (data[i] >= '0' && data[i] <= '9')) {
+			i++
+		}
+		return tokLine, tokCol, string(data[tokStart:i])
+	}
+	// Single symbol
+	return tokLine, tokCol, string(data[tokStart : tokStart+1])
 }
 
 // checkOneofConflicts scans text format input for oneof field conflicts.
