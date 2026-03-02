@@ -468,3 +468,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 170. [DONE] Fix `cli@version` — Hardcoded version string was `libprotoc 29.3` but system C++ protoc is `libprotoc 33.4`. Updated version string to match. All 5009/5009 tests pass.
 
 171. [DONE] Fix `cli@proto_path_mapping` — C++ protoc supports `--proto_path=vdir=disk_path` syntax where `vdir` is a virtual path prefix mapping to `disk_path`. Added `Mapping` type to `SourceTree` with `VirtualPath` and `DiskPath` fields. Updated `Open`, `Exists`, `VirtualFileToDiskFile`, `MakeRelative`, and `ValidateRoots` to use mappings. Parsed `=` separator in `--proto_path` and `-I` flag values. All 5020/5020 tests pass.
+
+172. [DONE] Fix `cli@self_import` — C++ protoc uses the disk path (e.g., `testdata/492_self_import/test.proto`) in recursive import cycle error messages, but Go used the virtual filename (e.g., `test.proto`). Added `srcTree.VirtualFileToDiskFile` mapping for `cycleStart` in `parseRecursive`'s import cycle detection. All 5031/5031 tests pass.
