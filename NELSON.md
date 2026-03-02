@@ -1660,3 +1660,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `warning:  Input message is missing required fields:  result[0].url` on stderr, exit 0.
 - **Go protoc-go**: No warning, exit 0. Binary output is identical.
 - **Fix hint**: In the encode mode's post-encoding validation, add recursion into group fields when checking for missing required fields. Groups use wire type START_GROUP/END_GROUP but the message structure is the same — required field checking should recurse into groups just like it does for message fields.
+
+### Run 172 — `-oFILE` shorthand for `--descriptor_set_out=FILE` not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `-oFILE` as a shorthand for `--descriptor_set_out=FILE` (documented in C++ protoc `--help` as `-oFILE, --descriptor_set_out=FILE`). Go's `parseArgs()` does not recognize this shorthand. When `-o/dev/null` is used, Go treats it as an unknown flag and reports "Missing value for flag: -o/dev/null", then exits 1. C++ succeeds silently with exit 0.
+- **Test**: CLI test `cli@short_o_flag` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` has no handling for `-o` prefix. It handles `-I` (shorthand for `--proto_path`), but not `-o`. The C++ protoc help shows both forms: `-oFILE, --descriptor_set_out=FILE`. Go only supports the long form `--descriptor_set_out=FILE`.
+- **C++ protoc**: Accepts `-o/dev/null`, writes descriptor set output, no stderr, exit 0.
+- **Go protoc-go**: Rejects `-o/dev/null` with `Missing value for flag: -o/dev/null` on stderr, exit 1.
+- **Fix hint**: In `parseArgs()`, add handling for `-o` prefix similar to how `-I` is handled: `if strings.HasPrefix(arg, "-o") { cfg.descriptorSetOut = arg[2:]; continue }`. This would extract the filename from immediately after `-o` (no space separator).
