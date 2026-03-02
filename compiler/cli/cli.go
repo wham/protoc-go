@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -8882,6 +8883,274 @@ func sortUnknownFields(raw []byte) []byte {
 	return result
 }
 
+// reorderMapEntriesBySource reorders map entries in marshaled binary protobuf
+// to match the source order from text format input. C++ protoc preserves map
+// insertion order while Go's Deterministic marshal sorts keys alphabetically.
+func reorderMapEntriesBySource(out []byte, msgDesc protoreflect.MessageDescriptor, textInput string) []byte {
+	for i := 0; i < msgDesc.Fields().Len(); i++ {
+		fd := msgDesc.Fields().Get(i)
+		if !fd.IsMap() {
+			continue
+		}
+		sourceKeys := extractTextMapKeys(textInput, string(fd.Name()))
+		if len(sourceKeys) == 0 {
+			continue
+		}
+		out = reorderWireEntriesByKeys(out, fd.Number(), sourceKeys)
+	}
+	return out
+}
+
+// extractTextMapKeys extracts map key values from text format in source order.
+// Returns unique keys in first-occurrence order.
+func extractTextMapKeys(text, fieldName string) []string {
+	var keys []string
+	seen := map[string]bool{}
+	fnLen := len(fieldName)
+	i := 0
+	for i < len(text) {
+		pos := strings.Index(text[i:], fieldName)
+		if pos < 0 {
+			break
+		}
+		pos += i
+		// Word boundary check
+		if pos > 0 {
+			c := text[pos-1]
+			if isIdentChar(c) {
+				i = pos + fnLen
+				continue
+			}
+		}
+		endPos := pos + fnLen
+		if endPos < len(text) && isIdentChar(text[endPos]) {
+			i = endPos
+			continue
+		}
+		// Skip whitespace
+		j := endPos
+		for j < len(text) && (text[j] == ' ' || text[j] == '\t' || text[j] == '\n' || text[j] == '\r') {
+			j++
+		}
+		if j >= len(text) || (text[j] != '{' && text[j] != '<') {
+			i = j
+			continue
+		}
+		openBrace := text[j]
+		closeBrace := byte('}')
+		if openBrace == '<' {
+			closeBrace = '>'
+		}
+		j++ // skip open brace
+		// Find matching close brace
+		depth := 1
+		entryStart := j
+		for j < len(text) && depth > 0 {
+			switch text[j] {
+			case openBrace:
+				depth++
+			case closeBrace:
+				depth--
+			case '"':
+				j++
+				for j < len(text) && text[j] != '"' {
+					if text[j] == '\\' {
+						j++
+					}
+					j++
+				}
+			case '\'':
+				j++
+				for j < len(text) && text[j] != '\'' {
+					if text[j] == '\\' {
+						j++
+					}
+					j++
+				}
+			}
+			j++
+		}
+		entryText := text[entryStart : j-1]
+		if key, ok := extractMapKeyFromEntry(entryText); ok {
+			if !seen[key] {
+				keys = append(keys, key)
+				seen[key] = true
+			}
+		}
+		i = j
+	}
+	return keys
+}
+
+func isIdentChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// extractMapKeyFromEntry extracts the key value from a map entry text like
+// "key: \"c\" value: 3".
+func extractMapKeyFromEntry(entry string) (string, bool) {
+	idx := strings.Index(entry, "key")
+	if idx < 0 {
+		return "", false
+	}
+	j := idx + 3
+	for j < len(entry) && (entry[j] == ' ' || entry[j] == '\t') {
+		j++
+	}
+	if j >= len(entry) || entry[j] != ':' {
+		return "", false
+	}
+	j++ // skip ':'
+	for j < len(entry) && (entry[j] == ' ' || entry[j] == '\t' || entry[j] == '\n' || entry[j] == '\r') {
+		j++
+	}
+	if j >= len(entry) {
+		return "", false
+	}
+	if entry[j] == '"' || entry[j] == '\'' {
+		quote := entry[j]
+		j++
+		var key []byte
+		for j < len(entry) && entry[j] != quote {
+			if entry[j] == '\\' && j+1 < len(entry) {
+				j++
+			}
+			key = append(key, entry[j])
+			j++
+		}
+		return string(key), true
+	}
+	// Non-string key (int, bool)
+	end := j
+	for end < len(entry) && entry[end] != ' ' && entry[end] != '\t' && entry[end] != '\n' && entry[end] != '\r' && entry[end] != '}' && entry[end] != '>' {
+		end++
+	}
+	return entry[j:end], true
+}
+
+// reorderWireEntriesByKeys reorders wire entries for a given field number
+// to match the provided source key ordering.
+func reorderWireEntriesByKeys(data []byte, fieldNum protowire.Number, sourceKeys []string) []byte {
+	type wireEntry struct {
+		raw []byte
+		key string
+	}
+	var before [][]byte
+	var mapEntries []wireEntry
+	var after [][]byte
+	seenMap := false
+
+	buf := data
+	for len(buf) > 0 {
+		num, wtype, n := protowire.ConsumeTag(buf)
+		if n < 0 {
+			return data
+		}
+		_, _, total := protowire.ConsumeField(buf)
+		if total < 0 {
+			return data
+		}
+		entryBytes := append([]byte(nil), buf[:total]...)
+		if num == fieldNum {
+			seenMap = true
+			var key string
+			if wtype == protowire.BytesType {
+				payload, _ := protowire.ConsumeBytes(buf[n:])
+				key = extractBinaryMapKeyStr(payload)
+			}
+			mapEntries = append(mapEntries, wireEntry{raw: entryBytes, key: key})
+		} else if !seenMap {
+			before = append(before, entryBytes)
+		} else {
+			after = append(after, entryBytes)
+		}
+		buf = buf[total:]
+	}
+	if len(mapEntries) == 0 {
+		return data
+	}
+	// Build key → entry mapping
+	keyToEntry := map[string][]byte{}
+	for _, me := range mapEntries {
+		keyToEntry[me.key] = me.raw
+	}
+	var result []byte
+	for _, b := range before {
+		result = append(result, b...)
+	}
+	used := map[string]bool{}
+	for _, sk := range sourceKeys {
+		if raw, ok := keyToEntry[sk]; ok && !used[sk] {
+			result = append(result, raw...)
+			used[sk] = true
+		}
+	}
+	// Any entries not in source keys
+	for _, me := range mapEntries {
+		if !used[me.key] {
+			result = append(result, me.raw...)
+			used[me.key] = true
+		}
+	}
+	for _, a := range after {
+		result = append(result, a...)
+	}
+	return result
+}
+
+// extractBinaryMapKeyStr extracts the key (field 1) from a map entry submessage
+// and returns it as a string representation.
+func extractBinaryMapKeyStr(entryBytes []byte) string {
+	buf := entryBytes
+	for len(buf) > 0 {
+		num, wtype, n := protowire.ConsumeTag(buf)
+		if n < 0 {
+			return ""
+		}
+		switch wtype {
+		case protowire.VarintType:
+			v, m := protowire.ConsumeVarint(buf[n:])
+			if m < 0 {
+				return ""
+			}
+			if num == 1 {
+				return fmt.Sprintf("%d", v)
+			}
+			buf = buf[n+m:]
+		case protowire.Fixed32Type:
+			if len(buf[n:]) < 4 {
+				return ""
+			}
+			if num == 1 {
+				v := binary.LittleEndian.Uint32(buf[n : n+4])
+				return fmt.Sprintf("%d", v)
+			}
+			buf = buf[n+4:]
+		case protowire.Fixed64Type:
+			if len(buf[n:]) < 8 {
+				return ""
+			}
+			if num == 1 {
+				v := binary.LittleEndian.Uint64(buf[n : n+8])
+				return fmt.Sprintf("%d", v)
+			}
+			buf = buf[n+8:]
+		case protowire.BytesType:
+			v, m := protowire.ConsumeBytes(buf[n:])
+			if m < 0 {
+				return ""
+			}
+			if num == 1 {
+				return string(v)
+			}
+			buf = buf[n+m:]
+		default:
+			return ""
+		}
+	}
+	return ""
+}
+
 // sortOptionsUnknownFields sorts unknown fields on all Options messages in all
 // parsed files, so that custom extension options appear in field-number order
 // (matching C++ protoc behavior).
@@ -9152,6 +9421,11 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 	// Go's dynamicpb marshal may not interleave extensions with regular fields
 	// in field number order. Sort the top-level fields to match C++ protoc.
 	out = sortUnknownFields(out)
+
+	// C++ protoc preserves map entry insertion order (from text format source),
+	// but Go's Deterministic marshal sorts map keys alphabetically.
+	// Reorder map entries to match source order.
+	out = reorderMapEntriesBySource(out, msgDesc, string(data))
 
 	os.Stdout.Write(out)
 	return nil
