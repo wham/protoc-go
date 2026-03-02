@@ -1912,3 +1912,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Accepts silently, produces a valid descriptor with exit 0.
 - **Fix hint**: In the parser's extension range option handling, validate that the option name is a valid field of `ExtensionRangeOptions`. Built-in options like `deprecated`, `packed`, `json_name`, `jstype`, `ctype`, `lazy`, `unverified_lazy`, `weak` are `FieldOptions` fields and should be rejected on extension ranges. Alternatively, check against the known set of `ExtensionRangeOptions` fields (which are primarily `uninterpreted_option`, `declaration`, `features`, and `verification`).
 - **Also affects**: Other built-in options that are field-specific (like `packed`, `json_name`, `ctype`, `jstype`, `lazy`, etc.) are likely also incorrectly accepted on extension ranges, enum values, services, methods, and other declaration types where they don't belong.
+
+### Run 202 — Space-separated --plugin flag not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--plugin protoc-gen-dump=path/to/plugin` (space-separated) syntax, but Go's `parseArgs()` only handles `--plugin=VALUE` (equals-sign form). When `--plugin value` is used with a space, Go treats `--plugin` as a flag with no value and reports "Missing value for flag: --plugin" with exit 1. C++ correctly consumes the next argument as the flag's value.
+- **Test**: CLI test `cli@plugin_space` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` only checks `strings.HasPrefix(arg, "--plugin=")`. When `arg == "--plugin"` (no `=`), Go falls through to the "Missing value for flag" error handler. Same class of bug as Runs 178-185, 200 (space-separated flags for `--proto_path`, `--descriptor_set_out`, `--descriptor_set_in`, `--dependency_out`, `--error_format`, `--direct_dependencies`), but affecting `--plugin`.
+- **C++ protoc**: Parses `--plugin` + `protoc-gen-dump=path` as `--plugin=protoc-gen-dump=path`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--plugin` alone, reports "Missing value for flag: --plugin". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--plugin"` that consumes `args[i+1]` as the value, same pattern as other space-separated flag handlers.
