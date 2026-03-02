@@ -1621,6 +1621,9 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--direct_dependencies=") {
+			if cfg.directDependenciesSet {
+				return nil, fmt.Errorf("--direct_dependencies may only be passed once. To specify multiple direct dependencies, pass them all as a single parameter separated by ':'.")
+			}
 			cfg.directDependenciesSet = true
 			val := arg[len("--direct_dependencies="):]
 			cfg.directDependencies = make(map[string]bool)
