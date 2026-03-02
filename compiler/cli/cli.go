@@ -1498,6 +1498,16 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
+		if arg == "--descriptor_set_in" {
+			if i+1 < len(args) {
+				i++
+				cfg.descriptorSetIn = args[i]
+			} else {
+				return nil, fmt.Errorf("Missing value for flag: %s", arg)
+			}
+			continue
+		}
+
 		if strings.HasPrefix(arg, "--encode=") {
 			cfg.encodeType = arg[len("--encode="):]
 			continue

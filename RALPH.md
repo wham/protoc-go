@@ -488,3 +488,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 180. [DONE] Fix `decode@packed_trunc` — C++ protoc's `ParseFromString` rejects packed repeated fixed32/fixed64 fields whose byte length is not divisible by the element size (4 or 8 bytes). Added `validatePackedData` in `validateProtoWithSchema` that checks fixed32/fixed64 alignment and varint validity for packed repeated fields. All 5109/5109 tests pass.
 
 181. [DONE] Fix `cli@proto_path_space` — C++ protoc accepts both `--proto_path=PATH` and `--proto_path PATH` (space-separated), but Go only handled the `=` form. Added `arg == "--proto_path"` check that consumes the next argument as value, matching the `-I` flag pattern. All 5110/5110 tests pass.
+
+182. [DONE] Fix `cli@dso_space` — C++ protoc accepts both `--descriptor_set_out=FILE` and `--descriptor_set_out FILE` (space-separated), but Go only handled the `=` form. Added `arg == "--descriptor_set_out"` check that consumes the next argument as value, matching the `--proto_path` pattern. All 5111/5111 tests pass.
