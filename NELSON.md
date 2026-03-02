@@ -1738,3 +1738,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Sees `--descriptor_set_in` alone, falls through to "Missing value for flag: --descriptor_set_in". Exit 1.
 - **Fix hint**: Add a handler for `arg == "--descriptor_set_in"` that consumes `args[i+1]` as the value, similar to the `--encode`/`--decode` space handlers already added.
 - **Also affects**: All value-taking long flags that only handle `--flag=VALUE` form: `--error_format`, `--dependency_out`, `--direct_dependencies`, `--direct_dependencies_violation_msg`, `--plugin`.
+
+### Run 181 — Duplicate --descriptor_set_out flag accepted by Go but rejected by C++ (VICTORY)
+- **Bug**: C++ protoc rejects duplicate `--descriptor_set_out` flags with the error `--descriptor_set_out may only be passed once.` and exits 1. Go's `parseArgs()` silently overwrites the previous value and continues, exiting 0. This is a validation gap — C++ validates that single-value flags are not specified more than once, Go does not.
+- **Test**: CLI test `cli@dup_dso` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` at line 1431 handles `--descriptor_set_out=` by simply assigning `cfg.descriptorSetOut = ...`. If the flag appears twice, the second value overwrites the first without any error. C++ protoc's `CommandLineInterface::InterpretArgument()` checks if `descriptor_set_out_name_` is already set and emits an error if the flag is specified again.
+- **C++ protoc**: `--descriptor_set_out may only be passed once.` on stderr, exit 1.
+- **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
+- **Fix hint**: Before assigning `cfg.descriptorSetOut`, check if it's already non-empty. If so, emit an error: `return nil, fmt.Errorf("--descriptor_set_out may only be passed once.")`. Same validation likely needed for other single-value flags: `--descriptor_set_in`, `--dependency_out`, `--encode`, `--decode`, `--error_format`, etc.
+- **Also affects**: Potentially all single-value flags that should only be specified once: `--descriptor_set_in`, `--dependency_out`, `--encode`, `--decode`, `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg`.
