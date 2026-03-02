@@ -1428,8 +1428,17 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		if strings.HasPrefix(arg, "--descriptor_set_out=") {
-			cfg.descriptorSetOut = arg[len("--descriptor_set_out="):]
+		if strings.HasPrefix(arg, "--descriptor_set_out=") || arg == "--descriptor_set_out" {
+			if arg == "--descriptor_set_out" {
+				if i+1 < len(args) {
+					i++
+					cfg.descriptorSetOut = args[i]
+				} else {
+					return cfg, fmt.Errorf("Missing value for flag: --descriptor_set_out")
+				}
+			} else {
+				cfg.descriptorSetOut = arg[len("--descriptor_set_out="):]
+			}
 			continue
 		}
 

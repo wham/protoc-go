@@ -486,3 +486,5 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 179. [DONE] Fix `cli@response_file` — C++ protoc supports `@filename` arguments that read options/filenames from a file (one per line). Added `expandResponseFiles` function in `Run` that expands `@filename` args before `parseArgs`. Reads file contents, splits by newline, skips empty lines. Matches C++ `ExpandArgumentFile` behavior. All 5098/5098 tests pass.
 
 180. [DONE] Fix `decode@packed_trunc` — C++ protoc's `ParseFromString` rejects packed repeated fixed32/fixed64 fields whose byte length is not divisible by the element size (4 or 8 bytes). Added `validatePackedData` in `validateProtoWithSchema` that checks fixed32/fixed64 alignment and varint validity for packed repeated fields. All 5109/5109 tests pass.
+
+181. [DONE] Fix `cli@proto_path_space` — C++ protoc accepts both `--proto_path=PATH` and `--proto_path PATH` (space-separated), but Go only handled the `=` form. Added `arg == "--proto_path"` check that consumes the next argument as value, matching the `-I` flag pattern. All 5110/5110 tests pass.
