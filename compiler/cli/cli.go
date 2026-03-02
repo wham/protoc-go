@@ -1435,8 +1435,18 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		if strings.HasPrefix(arg, "--plugin=") {
-			val := arg[len("--plugin="):]
+		if strings.HasPrefix(arg, "--plugin=") || arg == "--plugin" {
+			var val string
+			if arg == "--plugin" {
+				if i+1 < len(args) {
+					i++
+					val = args[i]
+				} else {
+					return cfg, fmt.Errorf("Missing value for flag: --plugin")
+				}
+			} else {
+				val = arg[len("--plugin="):]
+			}
 			parts := strings.SplitN(val, "=", 2)
 			if len(parts) == 2 {
 				name := parts[0]
