@@ -7050,8 +7050,9 @@ func shadowErrorMsg(origName, shadowCandidate string) string {
 
 // CheckUnresolvedTypes checks for unresolved type references in fd,
 // using only the given availableFiles for imported types.
+// allParsed contains all parsed files (including non-imported) for "seems to be defined" hints.
 // Returns error strings like: filename:line:col: "TypeName" is not defined.
-func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles map[string]*descriptorpb.FileDescriptorProto) []string {
+func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles map[string]*descriptorpb.FileDescriptorProto, allParsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	pkg := fd.GetPackage()
 	prefix := ""
 	if pkg != "" {
@@ -7075,11 +7076,34 @@ func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles m
 		}
 	}
 
+	// Build global type maps from all parsed files for "seems to be defined" hints
+	var allTypes map[string]descriptorpb.FieldDescriptorProto_Type
+	var typeToFile map[string]string
+	if allParsed != nil {
+		allTypes = map[string]descriptorpb.FieldDescriptorProto_Type{}
+		typeToFile = map[string]string{}
+		for fname, pfd := range allParsed {
+			ppkg := pfd.GetPackage()
+			ppfx := ""
+			if ppkg != "" {
+				ppfx = "." + ppkg
+			}
+			for _, msg := range pfd.GetMessageType() {
+				collectTypesWithFile(msg, ppfx, allTypes, typeToFile, fname)
+			}
+			for _, e := range pfd.GetEnumType() {
+				fqn := ppfx + "." + e.GetName()
+				allTypes[fqn] = descriptorpb.FieldDescriptorProto_TYPE_ENUM
+				typeToFile[fqn] = fname
+			}
+		}
+	}
+
 	var errors []string
 	filename := fd.GetName()
 
 	for msgIdx, msg := range fd.GetMessageType() {
-		checkMsgUnresolved(msg, prefix, types, filename, fd, []int32{4, int32(msgIdx)}, &errors)
+		checkMsgUnresolved(msg, prefix, types, allTypes, typeToFile, filename, fd, []int32{4, int32(msgIdx)}, &errors)
 	}
 
 	for svcIdx, svc := range fd.GetService() {
@@ -7094,7 +7118,7 @@ func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles m
 						if shadow != "" {
 							errors = append(errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
 						} else {
-							errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+							errors = append(errors, undefinedTypeError(origName, methodPrefix, allTypes, typeToFile, filename, line, col))
 						}
 					}
 				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
@@ -7113,7 +7137,7 @@ func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles m
 						if shadow != "" {
 							errors = append(errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
 						} else {
-							errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+							errors = append(errors, undefinedTypeError(origName, methodPrefix, allTypes, typeToFile, filename, line, col))
 						}
 					}
 				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
@@ -7129,7 +7153,41 @@ func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles m
 	return errors
 }
 
-func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, filename string, fd *descriptorpb.FileDescriptorProto, msgPath []int32, errors *[]string) {
+// collectTypesWithFile collects types from a message and records the filename.
+func collectTypesWithFile(msg *descriptorpb.DescriptorProto, prefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, typeToFile map[string]string, filename string) {
+	fullName := prefix + "." + msg.GetName()
+	types[fullName] = descriptorpb.FieldDescriptorProto_TYPE_MESSAGE
+	typeToFile[fullName] = filename
+	for _, e := range msg.GetEnumType() {
+		fqn := fullName + "." + e.GetName()
+		types[fqn] = descriptorpb.FieldDescriptorProto_TYPE_ENUM
+		typeToFile[fqn] = filename
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectTypesWithFile(nested, fullName, types, typeToFile, filename)
+	}
+}
+
+// undefinedTypeError produces either "seems to be defined in" or "is not defined" error.
+func undefinedTypeError(origName, scope string, allTypes map[string]descriptorpb.FieldDescriptorProto_Type, typeToFile map[string]string, filename string, line, col int) string {
+	if allTypes != nil {
+		resolved, _ := resolveTypeName(origName, scope, allTypes)
+		if _, ok := allTypes[resolved]; ok {
+			if defFile, ok := typeToFile[resolved]; ok && defFile != filename {
+				displayName := resolved
+				if strings.HasPrefix(displayName, ".") {
+					displayName = displayName[1:]
+				}
+				return fmt.Sprintf("%s:%d:%d: \"%s\" seems to be defined in \"%s\", which is not "+
+					"imported by \"%s\".  To use it here, please "+
+					"add the necessary import.", filename, line, col, displayName, defFile, filename)
+			}
+		}
+	}
+	return fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName)
+}
+
+func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, allTypes map[string]descriptorpb.FieldDescriptorProto_Type, typeToFile map[string]string, filename string, fd *descriptorpb.FileDescriptorProto, msgPath []int32, errors *[]string) {
 	msgPrefix := parentPrefix + "." + msg.GetName()
 
 	if msg.GetOptions().GetMapEntry() {
@@ -7146,7 +7204,7 @@ func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, 
 					if shadow != "" {
 						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
 					} else {
-						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						*errors = append(*errors, undefinedTypeError(origName, msgPrefix, allTypes, typeToFile, filename, line, col))
 					}
 				}
 			}
@@ -7155,7 +7213,7 @@ func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, 
 
 	for i, nested := range msg.GetNestedType() {
 		nestedPath := append(copyPath(msgPath), 3, int32(i))
-		checkMsgUnresolved(nested, msgPrefix, types, filename, fd, nestedPath, errors)
+		checkMsgUnresolved(nested, msgPrefix, types, allTypes, typeToFile, filename, fd, nestedPath, errors)
 	}
 }
 

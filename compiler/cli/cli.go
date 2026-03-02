@@ -1091,7 +1091,15 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 		}
 
 		// Check for unresolved type errors
-		typeErrors := parser.CheckUnresolvedTypes(fd, availableFiles)
+		// Only search successfully-parsed files for "seems to be defined" hints.
+		// Files with errors (like circular imports) should not be included.
+		validParsed := map[string]*descriptorpb.FileDescriptorProto{}
+		for _, vf := range *orderedFiles {
+			if vfd, ok := parsed[vf]; ok {
+				validParsed[vf] = vfd
+			}
+		}
+		typeErrors := parser.CheckUnresolvedTypes(fd, availableFiles, validParsed)
 		*collectErrors = append(*collectErrors, typeErrors...)
 
 		return false, nil

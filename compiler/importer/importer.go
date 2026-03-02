@@ -32,6 +32,8 @@ func (st *SourceTree) allMappings() []Mapping {
 }
 
 // findFile tries to find filename on disk using the configured mappings.
+// Includes a round-trip check matching C++ DiskSourceTree::Open: after finding
+// a disk file, verifies that the disk path maps back to the same virtual filename.
 func (st *SourceTree) findFile(filename string) (string, bool) {
 	for _, m := range st.allMappings() {
 		prefix := m.VirtualPath
@@ -44,6 +46,23 @@ func (st *SourceTree) findFile(filename string) (string, bool) {
 		remainder := filename[len(prefix):]
 		diskFile := filepath.Join(m.DiskPath, remainder)
 		if _, err := os.Stat(diskFile); err == nil {
+			// Round-trip check: verify disk file maps back to same virtual filename.
+			// filepath.Join normalizes paths (strips leading "/" from remainder),
+			// so "/dep.proto" resolves to the same disk file as "dep.proto" but
+			// the reverse mapping gives "dep.proto", not "/dep.proto".
+			rel, err := filepath.Rel(m.DiskPath, diskFile)
+			if err != nil {
+				continue
+			}
+			var roundTrip string
+			if m.VirtualPath != "" {
+				roundTrip = m.VirtualPath + "/" + rel
+			} else {
+				roundTrip = rel
+			}
+			if roundTrip != filename {
+				continue
+			}
 			return diskFile, true
 		}
 	}
