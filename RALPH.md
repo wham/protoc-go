@@ -545,6 +545,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 206. [DONE] Fix `cli@option_deps_space` — C++ protoc accepts both `--option_dependencies=DEPS` and `--option_dependencies DEPS` (space-separated), but Go only handled the `=` form, rejecting space-separated with "Missing value for flag". Added `arg == "--option_dependencies"` check that consumes the next argument as value. All 5231/5231 tests pass.
 
+210. [DONE] Fix `cli@deterministic_no_encode` — C++ protoc rejects `--deterministic_output` without `--encode` with `Can only use --deterministic_output with --encode.` (exit 1) but Go silently accepted it. Added validation after "Missing output directives" check. All 5235/5235 tests pass.
+
 ## Notes (continued)
 
 - `compiler/parser/parser.go`: `attachComments` now skips `PrevTrailing` when the previous token is `}`. In C++ protoc, ALL closing `}` tokens are consumed via `TryConsumeEndOfDeclaration("}", nullptr)` where the `nullptr` location means `AttachComments` is never called, so trailing comments of `}` are always dropped. For `{` and `;` tokens, C++ uses `ConsumeEndOfDeclaration` with a non-null location, so their trailing comments ARE attached. This matches: trailing of `;` → attached to declaration, trailing of `{` → attached to block, trailing of `}` → dropped.
