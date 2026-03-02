@@ -1979,3 +1979,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `Failed to parse input.` Exit 1 (missing the specific "Non-repeated field" error line).
 - **Fix hint**: Add recursion to `checkDupFields`. When a field name is followed by `{` or `<`, look up whether it corresponds to a message-type field and, if so, recurse into the submessage block with a fresh `seenFields` map and the submessage's descriptor. Similar to how `checkNegUintFieldsInner` already recurses into submessages.
 - **Also affects**: Deeply nested structures (nested 3+ levels) would also miss duplicate detection.
+
+### Run 210 — Absolute import path (leading `/`) resolved differently by Go (VICTORY)
+- **Bug**: Go's importer resolves import paths starting with `/` (e.g., `import "/dep.proto"`) by stripping the leading slash and searching relative to proto_path roots. C++ protoc treats the leading `/` as indicating an absolute filesystem path and fails to find the file since `/dep.proto` doesn't exist at the filesystem root.
+- **Test**: `510_absolute_import` — all 10 profiles fail (C++ errors with exit 1, Go succeeds with exit 0).
+- **Root cause**: Go's `SourceTree` in `importer/importer.go` likely joins each root with the import path using `filepath.Join(root, importPath)`. When `importPath` is `/dep.proto`, `filepath.Join(".", "/dep.proto")` returns `dep.proto` (Go's `filepath.Join` cleans the path). C++ protoc's `DiskSourceTree` treats absolute paths differently — it doesn't prepend the proto_path root to an absolute import path, so it looks for `/dep.proto` literally on the filesystem.
+- **C++ protoc**: `/dep.proto: File not found.` + `test.proto:3:1: Import "/dep.proto" was not found or had errors.` + `test.proto:5:3: "Base" is not defined.` Exit 1.
+- **Go protoc-go**: Resolves `/dep.proto` as `dep.proto` relative to proto_path, finds the file, succeeds. Exit 0.
+- **Fix hint**: In the importer's file resolution, check if the import path starts with `/`. If so, either (1) treat it as an absolute path (don't prepend proto_path roots), matching C++ behavior, or (2) reject it with an explicit error. The C++ behavior is to search literally for the absolute path, not to strip the leading slash.
