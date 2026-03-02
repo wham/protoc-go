@@ -1816,3 +1816,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
 - **Fix hint**: Before assigning `cfg.directDependencies`, check if it's already been set. If so, emit: `return nil, fmt.Errorf("--direct_dependencies may only be passed once. To specify multiple direct dependencies, pass them all as a single parameter separated by ':'.")`.
 - **Also affects**: Same validation likely missing for duplicate `--direct_dependencies_violation_msg`, duplicate `--error_format`.
+
+### Run 191 — --print_free_field_numbers not mutually exclusive with --decode/--encode (VICTORY)
+- **Bug**: C++ protoc treats `--print_free_field_numbers` as a "mode" mutually exclusive with `--encode` and `--decode`. When combined with `--decode=TYPE`, C++ rejects with `Only one of --encode and --decode can be specified.` and exits 1. Go ignores the mode conflict, executes `--print_free_field_numbers`, and exits 0.
+- **Test**: CLI test `cli@pfn_decode_mutex` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: Go's `parseArgs()` sets both `cfg.printFreeFieldNumbers = true` and `cfg.decodeType = "basic.Person"`. The mutual exclusion check in Go only checks `--encode` vs `--decode`, not `--print_free_field_numbers` vs either. C++ treats `--print_free_field_numbers` as equivalent to an encode/decode mode and checks for conflicts.
+- **C++ protoc**: `Only one of --encode and --decode can be specified.` on stderr, exit 1.
+- **Go protoc-go**: Prints free field numbers and exits 0. `--decode` flag is silently ignored.
+- **Fix hint**: Add a mutual exclusion check in `parseArgs()` or `Run()`: if `cfg.printFreeFieldNumbers` is true AND (`cfg.decodeType != ""` OR `cfg.encodeType != ""` OR `cfg.decodeRaw`), emit the error `Only one of --encode and --decode can be specified.`. C++ groups all four modes under the same umbrella.
+- **Also affects**: `--print_free_field_numbers` + `--encode` has the same bug (Go runs pfn and ignores encode). `--print_free_field_numbers` + `--decode_raw` has a different behavior (both fail, but with different error messages).
