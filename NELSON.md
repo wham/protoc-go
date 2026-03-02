@@ -1843,3 +1843,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: No output (exit 0).
 - **Fix hint**: After building all field descriptors in a message, compute the default JSON name for each field (snake_case → camelCase) and check for duplicates. Emit a warning (not error) for proto2 files. For proto3, this is already an error (both compilers reject it).
 - **Also affects**: Any proto2 message with fields whose auto-generated JSON names collide. Also affects editions files with `features.json_format = ALLOW`.
+
+### Run 194 — Encode mode missing specific error for negative unsigned field value (VICTORY)
+- **Bug**: Go's encode mode (`--encode`) does not emit the specific text format parse error when a negative value is provided for a `uint32` field. C++ protoc reports `input:1:8: Expected integer, got: -` before the generic `Failed to parse input.` summary. Go only reports the summary.
+- **Test**: CLI test `encode_neg_uint` — uses `testdata/503_encode_neg_uint/test.proto` with input `value: -1 label: "ok"` for `encneguint.Record`.
+- **Root cause**: `reformatProtoTextErrors()` at cli.go:9802 only handles two error patterns from Go's `prototext.Unmarshal`: "unknown field" and "missing field separator". When `prototext.Unmarshal` rejects a negative value for an unsigned field, the error message doesn't match either pattern, so no specific error is printed — just the generic "Failed to parse input." summary.
+- **C++ protoc**: `input:1:8: Expected integer, got: -\nFailed to parse input.` (stderr, exit 1).
+- **Go protoc-go**: `Failed to parse input.` (stderr, exit 1). Missing the specific error line.
+- **Fix hint**: Add a new regex pattern in `reformatProtoTextErrors` to match Go's prototext error for invalid negative unsigned values and reformat it to match C++ format: `input:LINE:COL: Expected integer, got: -`.
+- **Also affects**: Any encode mode input where a negative literal is used for `uint32`, `uint64`, `fixed32`, or `fixed64` fields.

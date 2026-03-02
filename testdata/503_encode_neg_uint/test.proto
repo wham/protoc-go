@@ -1,0 +1,7 @@
+syntax = "proto2";
+package encneguint;
+
+message Record {
+  optional uint32 value = 1;
+  optional string label = 2;
+}
