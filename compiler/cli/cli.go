@@ -490,8 +490,12 @@ func Run(args []string) error {
 	}
 
 	// Validate we have input files
+	// When --decode or --encode is used with --descriptor_set_in, proto files
+	// are not required (types come from the descriptor set).
 	if len(cfg.protoFiles) == 0 {
-		return fmt.Errorf("Missing input file.")
+		if cfg.descriptorSetIn == "" || (cfg.decodeType == "" && cfg.encodeType == "") {
+			return fmt.Errorf("Missing input file.")
+		}
 	}
 
 	// Validate we have output directives
