@@ -846,6 +846,7 @@ CLI_TESTS=(
   "encode_dup_ext_field|--encode=encextord.Msg -I testdata/477_encode_ext_order testdata/477_encode_ext_order/test.proto|[encextord.extra]: 5 [encextord.extra]: 10 name: \"ab\""
   "encode_invalid_field_name|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|{"
   "encode_unknown_ext|--encode=encextord.Msg -I testdata/477_encode_ext_order testdata/477_encode_ext_order/test.proto|[unknown.ext]: 5 name: \"test\""
+  "encode_ext_neg_uint|--encode=encextneg.Outer -I testdata/532_encode_ext_neg_uint testdata/532_encode_ext_neg_uint/test.proto|[encextneg.my_ext]: { count: -5 } label: \"ok\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
