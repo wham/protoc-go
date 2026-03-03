@@ -569,6 +569,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 220. [DONE] Fix `515_dotdot_import` — C++ protoc rejects import paths containing backslashes, consecutive slashes, `.`, or `..` with `Backslashes, consecutive slashes, ".", or ".." are not allowed in the virtual path`. Added `IsVirtualPathInvalid` function and `VirtualPathError` type to the importer. `parseRecursive` now checks for `VirtualPathError` and emits the specific error message instead of generic `File not found.`. All 5314/5314 tests pass.
 
+221. [DONE] Fix `cli@decode_dsi_no_proto` — C++ protoc allows `--decode` (or `--encode`) with `--descriptor_set_in` without specifying any .proto files, since types come from the descriptor set. Go rejected with "Missing input file." because the check didn't account for this case. Changed condition to only require input files when `descriptorSetIn` is empty OR neither decode nor encode mode is active. All 5315/5315 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
