@@ -2040,3 +2040,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `4: 10` (raw decode output). Exit 0. Silently processes both.
 - **Fix hint**: After argument parsing, check if `cfg.decodeRaw` is true AND (`len(cfg.plugins) > 0` OR `cfg.descriptorSetOut != ""`). If so, emit the mutual exclusion error.
 - **Also affects**: `--decode_raw` + `--descriptor_set_out` likely has the same missing validation bug.
+
+### Run 217 — Encode mode missing detailed error message for invalid bool value (VICTORY)
+- **Bug**: Go's `--encode` mode only outputs `Failed to parse input.` when encountering an invalid boolean value like `TRUE` (all caps). C++ protoc additionally outputs a detailed error with location info: `input:1:12: Invalid value for boolean field "flag". Value: "TRUE".` before the generic failure message.
+- **Test**: `cli@encode_bool_TRUE` — CLI test fails (stderr mismatch).
+- **Root cause**: Go's text format parser in encode mode does not emit detailed error messages for invalid boolean values. When parsing `TRUE` as a bool field value, Go's parser rejects it but only propagates a generic "Failed to parse input." error to stderr. C++ protoc's text format parser emits a specific error message including the field name, the invalid value, and the line:column location.
+- **C++ protoc**: `input:1:12: Invalid value for boolean field "flag". Value: "TRUE".\nFailed to parse input.`
+- **Go protoc-go**: `Failed to parse input.`
+- **Fix hint**: In the encode mode text format parser, when a bool field receives an unrecognized identifier (not `true`, `false`, `True`, `t`, `f`, `0`, `1`), emit a specific error: `input:LINE:COL: Invalid value for boolean field "FIELD". Value: "VALUE".` before the generic failure. Look at `parseTextFormatField` or similar encode-mode parsing functions in cli.go.
+- **Also affects**: Other invalid values for bool fields (like `yes`, `Yes`, `YES`, `no`, `No`, `NO`) likely have the same missing detailed error.

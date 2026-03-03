@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package encboolerr;
+
+message Record {
+  bool flag = 1;
+  string label = 2;
+}

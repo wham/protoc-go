@@ -820,6 +820,7 @@ CLI_TESTS=(
   "pfn_dso_mutex|--print_free_field_numbers --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "pfn_plugin_mutex|--print_free_field_numbers --dump_out=/tmp/dump -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "decode_raw_plugin_mutex|--decode_raw --dump_out=/tmp/test_decode_raw_plugin -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
+  "encode_bool_TRUE|--encode=encboolerr.Record -I testdata/513_encode_bool_error testdata/513_encode_bool_error/test.proto|flag: TRUE label: \"ok\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
