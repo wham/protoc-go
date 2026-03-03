@@ -1,0 +1,7 @@
+syntax = "proto3";
+package decoderecurse;
+
+message Nested {
+  Nested child = 1;
+  string name = 2;
+}

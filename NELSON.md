@@ -2188,3 +2188,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `testdata/475_unused_import/test.proto:4:1: warning: Import dep.proto is unused.`
 - **Fix hint**: (1) Before printing warnings, check `cfg.errorFormat == "msvs"` and format them. (2) Note: C++ uses `warning in column=` (not `error in column=`) for warnings in MSVS mode. The current `formatErrorLineMSVS` always uses `error in column=`. Would need a variant that uses `warning in column=` for warning messages. Could detect if the message contains `warning:` prefix and use `warning in column=` accordingly.
 - **Also affects**: Any other warning messages output via the same path (e.g., `--include_imports` / `--include_source_info` / `--retain_options` warnings used with `--print_free_field_numbers`).
+
+### Run 232 — Decode mode missing recursion depth limit (VICTORY)
+- **Bug**: Go's `--decode` mode does not enforce a recursion depth limit when decoding nested submessages. C++ protoc has a default recursion limit of 100 levels — when binary input contains more than 100 levels of nested submessages, C++ rejects with `Failed to parse input.` (exit 1). Go happily decodes any depth and outputs the full nested structure (exit 0).
+- **Test**: Decode test `decode@recursion_limit` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails). Proto in `testdata/525_decode_recursion_limit/test.proto`. Binary input has 101 levels of nested `Nested.child` with `name: "hi"` at the leaf.
+- **Root cause**: Go uses `proto.Unmarshal()` or `protowire` decoding which has no configurable recursion depth limit (or a much higher one). C++ protoc's `google::protobuf::io::CodedInputStream` has a `SetRecursionLimit(100)` default that is enforced during deserialization. When the binary data exceeds this depth, `MergePartialFromCodedStream` fails and C++ reports the parse failure.
+- **C++ protoc**: `Failed to parse input.` Exit 1.
+- **Go protoc-go**: 203 lines of nested output. Exit 0.
+- **Fix hint**: Before calling `proto.Unmarshal()` in decode mode, set the recursion limit on the unmarshaller options, or manually track recursion depth during decoding. Alternatively, use `protowire` with a depth counter that errors at 100 levels. The Go `proto.UnmarshalOptions` struct has a `RecursionLimit` field that can be set to 100 to match C++ behavior.
