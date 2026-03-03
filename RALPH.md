@@ -591,6 +591,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 231. [DONE] Fix `cli@encode_int_type_error` — Go's `prototext.Unmarshal` reports `invalid value for int32 type: "hello"` but C++ protoc reports `Expected integer, got: "hello"`. The existing `reIntOverflow` regex only matched numeric values (`-?\d+`). Added a second handler after it matching all non-numeric values (`.+`) on integer types, reformatting to `input:L:C: Expected integer, got: VALUE`. All 5393/5393 tests pass.
 
+232. [DONE] Fix `cli@msvs_unused_import_warn` — MSVS error format was not applied to unused import warnings. Applied `formatErrorsMSVS` to unused import warnings when `cfg.errorFormat == "msvs"`. Also changed `formatErrorLineMSVS` to detect warnings (messages containing `warning:`) and use `warning in column=` instead of `error in column=`, matching C++ protoc's MSVS format. All 5394/5394 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
