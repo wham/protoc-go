@@ -609,6 +609,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 240. [DONE] Fix `cli@encode_nested_bracket_double` — The "unexpected token" handler in `reformatProtoTextErrors` used the top-level `msgDesc` for field lookup, so nested fields (e.g., `score` inside `Inner` inside `Outer`) weren't found and fell through to the generic `Expected "{", found "["` message. Added `resolveNestedMsgDesc` helper that tracks message nesting in text format input (like `resolveNestedMsgType` but returns `MessageDescriptor`). The handler now resolves the innermost message descriptor at the error position before looking up the field. All 5441/5441 tests pass.
 
+241. [DONE] Fix `cli@encode_truncated_msg` — Go's `prototext.Unmarshal` returns `proto: unexpected EOF` for truncated messages (e.g., `inner: {\n` with no closing `}`), but C++ protoc reports `input:L:C: Expected identifier, got: ` at the EOF position. Added `unexpected EOF` handler in `reformatProtoTextErrors` that computes EOF line:col from input data and emits the C++ error format. All 5452/5452 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
