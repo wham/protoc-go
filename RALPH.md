@@ -589,6 +589,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 230. [DONE] Fix `cli@encode_msg_type_error` — Go's `prototext.Unmarshal` reports `unexpected token: 42` when a message field receives a non-message value, but C++ protoc reports `Expected "{", found "42".` Added regex handler in `reformatProtoTextErrors` matching `unexpected token: TOKEN` and reformatting to `input:L:C: Expected "{", found "TOKEN".` All 5392/5392 tests pass.
 
+231. [DONE] Fix `cli@encode_int_type_error` — Go's `prototext.Unmarshal` reports `invalid value for int32 type: "hello"` but C++ protoc reports `Expected integer, got: "hello"`. The existing `reIntOverflow` regex only matched numeric values (`-?\d+`). Added a second handler after it matching all non-numeric values (`.+`) on integer types, reformatting to `input:L:C: Expected integer, got: VALUE`. All 5393/5393 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
