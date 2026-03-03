@@ -10376,10 +10376,21 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc
 	}
 
 	// Go: "proto: syntax error (line L:C): unexpected token: TOKEN"
-	// C++: "input:L:C: Expected "{", found "TOKEN"."
+	// C++: "input:L:C: Expected "{", found "TOKEN"." (for message fields)
+	// C++: "input:L:C: Expected string, got: TOKEN" (for string/bytes fields)
 	reUnexpected := regexp.MustCompile(`\(line (\d+):(\d+)\): unexpected token: (.+)`)
 	if m := reUnexpected.FindStringSubmatch(errStr); m != nil {
 		token := strings.TrimSpace(m[3])
+		goLine, _ := strconv.Atoi(m[1])
+		goCol, _ := strconv.Atoi(m[2])
+		fieldName := findFieldNameBefore(data, goLine, goCol)
+		if fieldName != "" && msgDesc != nil {
+			fd := msgDesc.Fields().ByName(protoreflect.Name(fieldName))
+			if fd != nil && (fd.Kind() == protoreflect.StringKind || fd.Kind() == protoreflect.BytesKind) {
+				fmt.Fprintf(os.Stderr, "input:%s:%s: Expected string, got: %s\n", m[1], m[2], token)
+				return
+			}
+		}
 		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected \"{\", found \"%s\".\n", m[1], m[2], token)
 		return
 	}
