@@ -10392,6 +10392,19 @@ func resolveNestedMsgDesc(data []byte, targetLine, targetCol int, msgDesc protor
 // reformatProtoTextErrors reformats Go prototext errors to match C++ protoc format.
 func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc protoreflect.MessageDescriptor) {
 	errStr := err.Error()
+	// Go prototext errors: "proto:\u00a0(line L:C): unknown field: [ext.name]"
+	// C++ format: "input:L:COL: Extension "ext.name" is not defined or is not an extension of "TYPE"."
+	reExt := regexp.MustCompile(`\(line (\d+):(\d+)\): unknown field: \[([^\]]+)\]`)
+	if m := reExt.FindStringSubmatch(errStr); m != nil {
+		line, _ := strconv.Atoi(m[1])
+		col, _ := strconv.Atoi(m[2])
+		extName := m[3]
+		cppCol := col + len("["+extName+"]") // position after ']'
+		actualType := resolveNestedMsgType(data, line, col, msgDesc, msgTypeName)
+		fmt.Fprintf(os.Stderr, "input:%d:%d: Extension \"%s\" is not defined or is not an extension of \"%s\".\n", line, cppCol, extName, actualType)
+		return
+	}
+
 	// Go prototext errors: "proto:\u00a0(line L:C): unknown field: NAME"
 	// C++ format: "input:L:COL: Message type "TYPE" has no field named "NAME"."
 	re := regexp.MustCompile(`\(line (\d+):(\d+)\): unknown field: (\w+)`)
