@@ -10283,6 +10283,15 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc
 		return
 	}
 
+	// Go: "proto: (line L:C): invalid value for int32 type: "hello""
+	// C++: "input:L:C: Expected integer, got: "hello""
+	reIntType := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for (?:u?int32|u?int64|sint32|sint64|fixed32|fixed64|sfixed32|sfixed64) type: (.+)`)
+	if m := reIntType.FindStringSubmatch(errStr); m != nil {
+		val := strings.TrimSpace(m[3])
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected integer, got: %s\n", m[1], m[2], val)
+		return
+	}
+
 	// Go: "proto: (line L:C): invalid value for double type: "VALUE""
 	// C++: "input:L:C: Expected double, got: "VALUE""
 	reDouble := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for (?:double|float) type: (.+)`)
