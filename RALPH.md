@@ -567,6 +567,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 219. [DONE] Fix `cli@encode_bool_TRUE` — Go's `prototext.Unmarshal` rejects `TRUE` (uppercase) on bool fields with `invalid value for bool type: TRUE` but the error wasn't reformatted to C++ format. Added handler in `reformatProtoTextErrors` that matches `invalid value for bool type: VALUE` pattern and reformats to `Invalid value for boolean field "FIELD". Value: "VALUE".` with C++ column position (next token after value). Added `findFieldNameBefore` helper to extract the field name by scanning backwards from the value position. All 5293/5293 tests pass.
 
+220. [DONE] Fix `515_dotdot_import` — C++ protoc rejects import paths containing backslashes, consecutive slashes, `.`, or `..` with `Backslashes, consecutive slashes, ".", or ".." are not allowed in the virtual path`. Added `IsVirtualPathInvalid` function and `VirtualPathError` type to the importer. `parseRecursive` now checks for `VirtualPathError` and emits the specific error message instead of generic `File not found.`. All 5314/5314 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
