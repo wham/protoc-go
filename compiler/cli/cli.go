@@ -10262,6 +10262,15 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc
 		return
 	}
 
+	// Go: "proto: (line L:C): invalid value for double type: "VALUE""
+	// C++: "input:L:C: Expected double, got: "VALUE""
+	reDouble := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for (?:double|float) type: (.+)`)
+	if m := reDouble.FindStringSubmatch(errStr); m != nil {
+		val := strings.TrimSpace(m[3])
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected double, got: %s\n", m[1], m[2], val)
+		return
+	}
+
 	// Go: "proto: (line L:C): invalid value for bool type: VALUE"
 	// C++: "input:L:C: Invalid value for boolean field "FIELD". Value: "VALUE"."
 	reBool := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for bool type: (\S+)`)
