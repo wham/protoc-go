@@ -2111,3 +2111,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Rejects with `error encoding custom option: invalid double value: 1e309`, exit 1.
 - **Fix hint**: After `strconv.ParseFloat`, check `if err != nil && !math.IsInf(v, 0) { return error }`. When `IsInf(v, 0)` is true, the overflow is valid — just encode the infinity bits. Same fix needed for `TYPE_FLOAT` with `3.5e38` (float32 overflow).
 - **Also affects**: `TYPE_FLOAT` custom option with `3.5e38` (exceeds FLT_MAX). Same pattern: `ParseFloat(value, 32)` returns `ErrRange`, rejected as "invalid float value". Negative overflow (e.g., `-1e309`) would also be rejected.
+
+### Run 225 — Encode mode reformatProtoTextErrors missing handler for enum type mismatch (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle "invalid value for enum type" errors from `prototext.Unmarshal`. When encoding an enum field with a quoted string value (e.g., `status: "ACTIVE"` instead of `status: ACTIVE`), C++ protoc prints `input:1:9: Expected integer or identifier, got: "ACTIVE"` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_enum_type_error` — stderr mismatch (1 test fails). Proto in `testdata/519_encode_enum_type_error/test.proto`.
+- **Root cause**: `reformatProtoTextErrors()` handles 6 error patterns (unknown field, field by number, missing separator, int overflow, double/float type, string/bytes type, bool type) but has no handler for enum type mismatch. Go's prototext error for enum type mismatch (probably `(line L:C): invalid value for enum type: "VALUE"`) doesn't match any of the existing regex patterns, so the function returns without printing anything.
+- **C++ protoc**: stderr: `input:1:9: Expected integer or identifier, got: "ACTIVE"\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed enum type error.
+- **Fix hint**: Add a regex in `reformatProtoTextErrors` like `reEnum := regexp.MustCompile(\`\(line (\d+):(\d+)\): invalid value for enum type: (.+)\`)` and reformat to `input:L:C: Expected integer or identifier, got: VALUE`. Note: C++ says "integer or identifier" for enums, not just "identifier".
+- **Also affects**: Any enum field in `--encode` mode where the value is provided as a quoted string instead of a bare identifier will have the same missing error message.

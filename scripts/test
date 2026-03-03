@@ -826,6 +826,7 @@ CLI_TESTS=(
   "encode_int_overflow|--encode=encintoverflow.Record -I testdata/516_encode_int_overflow testdata/516_encode_int_overflow/test.proto|val: 4294967296 label: \"ok\""
   "encode_double_type_error|--encode=encdoubletypeerr.Record -I testdata/517_encode_double_type_error testdata/517_encode_double_type_error/test.proto|dval: \"not_a_number\" label: \"test\""
   "encode_string_type_error|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: 42"
+  "encode_enum_type_error|--encode=encenumtypeerr.Record -I testdata/519_encode_enum_type_error testdata/519_encode_enum_type_error/test.proto|status: \"ACTIVE\" label: \"ok\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
