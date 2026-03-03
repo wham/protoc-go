@@ -821,6 +821,7 @@ CLI_TESTS=(
   "pfn_plugin_mutex|--print_free_field_numbers --dump_out=/tmp/dump -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "decode_raw_plugin_mutex|--decode_raw --dump_out=/tmp/test_decode_raw_plugin -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
   "encode_bool_TRUE|--encode=encboolerr.Record -I testdata/513_encode_bool_error testdata/513_encode_bool_error/test.proto|flag: TRUE label: \"ok\""
+  "encode_nested_unknown|--encode=encnestedunknown.Outer -I testdata/514_encode_nested_unknown testdata/514_encode_nested_unknown/test.proto|inner { bad_field: \"hello\" } name: \"test\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

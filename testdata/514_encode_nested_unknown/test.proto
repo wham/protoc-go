@@ -1,0 +1,11 @@
+syntax = "proto3";
+package encnestedunknown;
+
+message Inner {
+  string label = 1;
+}
+
+message Outer {
+  Inner inner = 1;
+  string name = 2;
+}
