@@ -10254,6 +10254,14 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc
 		return
 	}
 
+	// Go: "proto: (line L:C): invalid value for uint32 type: VALUE"
+	// C++: "input:L:C: Integer out of range (VALUE)"
+	reIntOverflow := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for (?:u?int32|u?int64|sint32|sint64|fixed32|fixed64|sfixed32|sfixed64) type: (-?\d+)`)
+	if m := reIntOverflow.FindStringSubmatch(errStr); m != nil {
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Integer out of range (%s)\n", m[1], m[2], m[3])
+		return
+	}
+
 	// Go: "proto: (line L:C): invalid value for bool type: VALUE"
 	// C++: "input:L:C: Invalid value for boolean field "FIELD". Value: "VALUE"."
 	reBool := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for bool type: (\S+)`)
