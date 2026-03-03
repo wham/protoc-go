@@ -1,0 +1,6 @@
+syntax = "proto3";
+package encdoubletypeerr;
+message Record {
+  double dval = 1;
+  string label = 2;
+}

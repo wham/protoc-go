@@ -2084,3 +2084,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed integer range error.
 - **Fix hint**: Add a regex in `reformatProtoTextErrors` to match Go's prototext error for integer overflow (likely something like `(line L:C): invalid value for uint32 type` or `value out of range`) and reformat it to match C++ format: `input:L:C: Integer out of range (VALUE).`
 - **Also affects**: int32 overflow, sint32 overflow, sfixed32 overflow — any 32-bit integer field with an out-of-range value in `--encode` mode will have the same missing error message.
+
+### Run 222 — Encode mode reformatProtoTextErrors missing handler for double type mismatch (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle "expected double" errors from `prototext.Unmarshal`. When encoding a double field with a string value (e.g., `dval: "not_a_number"`), C++ protoc prints `input:1:7: Expected double, got: "not_a_number"` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_double_type_error` — stderr mismatch (1 test fails). Proto in `testdata/517_encode_double_type_error/test.proto`.
+- **Root cause**: `reformatProtoTextErrors()` only handles 5 error patterns: unknown field, field by number, missing separator, invalid bool value, integer overflow. It has no handler for type mismatch errors (like a string provided for a double/float field). The prototext error doesn't match any of the existing regex patterns, so the function returns without printing anything specific, and only the generic "Failed to parse input." message appears on stderr.
+- **C++ protoc**: stderr: `input:1:7: Expected double, got: "not_a_number"\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed type mismatch error.
+- **Fix hint**: Add a regex in `reformatProtoTextErrors` to match Go's prototext error for type mismatch (likely something like `(line L:C): invalid value for double type: "VALUE"`) and reformat it to match C++ format: `input:L:C: Expected double, got: "VALUE".`
+- **Also affects**: float fields with string values, int32 fields with string values, and other type mismatch scenarios in `--encode` mode will have the same missing error message.
