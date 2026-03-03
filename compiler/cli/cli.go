@@ -10475,8 +10475,11 @@ func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.M
 	fields := msgDesc.Fields()
 	for k := 0; k < fields.Len(); k++ {
 		fd := fields.Get(k)
-		if fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind {
+		if fd.Kind() == protoreflect.MessageKind {
 			msgFieldDescs[string(fd.Name())] = fd.Message()
+		} else if fd.Kind() == protoreflect.GroupKind {
+			msgFieldDescs[string(fd.Name())] = fd.Message()
+			msgFieldDescs[string(fd.Message().Name())] = fd.Message()
 		} else if fd.Cardinality() != protoreflect.Repeated {
 			nonRepeatedScalar[string(fd.Name())] = true
 		}
@@ -10587,8 +10590,11 @@ func checkClosedEnumValuesInner(data []byte, i, line, col int, msgDesc protorefl
 			if ed.ParentFile().Syntax() == protoreflect.Proto2 {
 				closedEnums[string(fd.Name())] = ed
 			}
-		case protoreflect.MessageKind, protoreflect.GroupKind:
+		case protoreflect.MessageKind:
 			msgFields[string(fd.Name())] = fd.Message()
+		case protoreflect.GroupKind:
+			msgFields[string(fd.Name())] = fd.Message()
+			msgFields[string(fd.Message().Name())] = fd.Message()
 		}
 	}
 
@@ -10715,8 +10721,11 @@ func checkNegUintFieldsInner(data []byte, i, line, col int, msgDesc protoreflect
 		case protoreflect.Uint32Kind, protoreflect.Uint64Kind,
 			protoreflect.Fixed32Kind, protoreflect.Fixed64Kind:
 			uintFields[string(fd.Name())] = true
-		case protoreflect.MessageKind, protoreflect.GroupKind:
+		case protoreflect.MessageKind:
 			msgFields[string(fd.Name())] = fd.Message()
+		case protoreflect.GroupKind:
+			msgFields[string(fd.Name())] = fd.Message()
+			msgFields[string(fd.Message().Name())] = fd.Message()
 		}
 	}
 
@@ -10810,8 +10819,11 @@ func checkOneofConflictsInner(data []byte, pos, line, col int, msgDesc protorefl
 				oneofName: string(od.Name()),
 			}
 		}
-		if fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind {
+		if fd.Kind() == protoreflect.MessageKind {
 			msgFieldDescs[string(fd.Name())] = fd.Message()
+		} else if fd.Kind() == protoreflect.GroupKind {
+			msgFieldDescs[string(fd.Name())] = fd.Message()
+			msgFieldDescs[string(fd.Message().Name())] = fd.Message()
 		}
 	}
 
