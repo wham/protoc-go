@@ -734,10 +734,19 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Silent success (exit 0) — completely misses the unknown enum value.
 - **Fix hint**: In the colon branch, after the closed enum check falls through, add a check for `{`/`<` and recurse — same as lines 11005-11016 in `checkNegUintFieldsInner`. Insert before the `skipTextFormatValue` call at line 10913.
 
+### Run 240 — Encode mode checkDupFields doesn't detect duplicate extension fields (VICTORY)
+- **Bug**: Go's `checkDupFieldsInner` pre-check scanner in encode mode doesn't handle `[ext.name]` extension field syntax at all. When a non-repeated extension field is specified twice (e.g., `[encextord.extra]: 5 [encextord.extra]: 10`), Go doesn't detect the duplicate. C++ protoc detects it and prints a detailed error. Go's `prototext.Unmarshal` does reject it, but `reformatProtoTextErrors` has no handler for the "non-repeated field is already set" error pattern, so only `Failed to parse input.` is printed.
+- **Test**: CLI test `cli@encode_dup_ext_field` — stderr mismatch (1 test fails). Uses existing `testdata/477_encode_ext_order/test.proto`.
+- **Root cause**: Two issues: (1) `checkDupFieldsInner` only recognizes field names starting with a letter or `_` (line 10736). Extension field references start with `[`, which is not recognized. The scanner skips `[` byte-by-byte (line 10807), then tries to parse the extension name fragments as regular field names, never tracking them for duplicate detection. (2) `reformatProtoTextErrors` has no regex handler for Go's prototext error about duplicate non-repeated fields (likely `(line L:C): non-repeated field "X" is already set` or similar).
+- **C++ protoc**: `input:1:39: Non-repeated field "encextord.extra" is specified multiple times.` + `Failed to parse input.` (exit 1).
+- **Go protoc-go**: `Failed to parse input.` (exit 1). Missing the detailed duplicate field error.
+- **Fix hint**: Either (1) add `[...]` extension field parsing to `checkDupFieldsInner` — scan `[`, collect fully-qualified name up to `]`, track in `seenFields`, or (2) add a regex handler in `reformatProtoTextErrors` to catch Go's prototext "already set" error and reformat to `input:L:C: Non-repeated field "NAME" is specified multiple times.`
+- **Also affects**: Same issue exists in `checkNegUintFieldsInner`, `checkClosedEnumValuesInner`, `checkOneofConflictsInner` — none handle `[ext]` syntax, but those scanners check different things (negative uints, closed enums, oneof conflicts) so extension fields may not trigger those checks. Duplicate message-typed extension fields (non-repeated) would also be missed.
+
 ### Ideas for next time
 - ~~`checkNegUintFieldsInner` doesn't recurse into `field: { }` submessages~~ **DONE in Run 237 (529_encode_neg_skip)**
 - ~~Same `field: { }` vs `field { }` asymmetry exists in `checkClosedEnumValuesInner`~~ **DONE in Run 238 (530_encode_closed_enum_colon_brace)**
-- Same `field: { }` vs `field { }` asymmetry exists in `checkOneofConflictsInner` — test with `sub: { a: 1 b: 2 }` where `a` and `b` are in same oneof
+- ~~Same `field: { }` vs `field { }` asymmetry exists in `checkOneofConflictsInner`~~ **NOT A BUG — checked Run 240, already handles both forms correctly (lines 11163-11168)**
 - Tab column counting also affects `checkNegUintFieldsInner`, `checkClosedEnumValuesInner`, `checkOneofConflictsInner` — test each with tab-before-error input
 - `skipTextFormatValue` and `skipBracedBlock` don't handle `#` comments inside braces — could cause scanners to get confused about nesting depth when braces appear in comments
 - `--print_free_field_numbers` with reserved ranges that overlap or touch — verify merge behavior matches C++
