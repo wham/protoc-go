@@ -599,6 +599,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 235. [DONE] Fix `decode@recursion_limit` — C++ protoc's `ParseFromString` has a default recursion limit of 100 for nested messages. Added `depth` parameter to `validateProtoWithSchema` that increments on each sub-message recursion and returns error when `depth >= 100`. This causes deeply nested messages (102 levels in test) to fail with `Failed to parse input.` (exit 1), matching C++ behavior. All 5426/5426 tests pass.
 
+236. [DONE] Fix `cli@encode_comment_dup` — Text format pre-scan functions (`checkDupFieldsInner`, `checkClosedEnumValuesInner`, `checkNegUintFieldsInner`, `checkOneofConflictsInner`) didn't skip `#` line comments, causing field names inside comments to be treated as real field occurrences. Added `skipLineComment` helper and `#` handling to all 4 functions. All 5427/5427 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
