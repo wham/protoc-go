@@ -1,0 +1,21 @@
+syntax = "proto2";
+
+package encextoneof;
+
+message Inner {
+  optional string name = 1;
+  optional int32 id = 2;
+}
+
+message Outer {
+  oneof choice {
+    string name = 1;
+    int32 id = 2;
+  }
+  optional string label = 3;
+  extensions 100 to 200;
+}
+
+extend Outer {
+  optional Inner my_ext = 100;
+}

@@ -848,6 +848,7 @@ CLI_TESTS=(
   "encode_unknown_ext|--encode=encextord.Msg -I testdata/477_encode_ext_order testdata/477_encode_ext_order/test.proto|[unknown.ext]: 5 name: \"test\""
   "encode_ext_neg_uint|--encode=encextneg.Outer -I testdata/532_encode_ext_neg_uint testdata/532_encode_ext_neg_uint/test.proto|[encextneg.my_ext]: { count: -5 } label: \"ok\""
   "encode_ext_closed_enum|--encode=encextcenum.Outer -I testdata/533_encode_ext_closed_enum testdata/533_encode_ext_closed_enum/test.proto|[encextcenum.my_ext] { priority: 999 } label: \"ok\""
+  "encode_ext_oneof_conflict|--encode=encextoneof.Outer -I testdata/534_encode_ext_oneof_conflict testdata/534_encode_ext_oneof_conflict/test.proto|[encextoneof.my_ext] { name: \"hello\" id: 42 } label: \"ok\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
