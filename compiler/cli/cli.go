@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
@@ -9952,7 +9953,7 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 
 	// Check for duplicate non-repeated fields and oneof conflicts before unmarshalling
 	// (prototext silently accepts both). C++ checks both in MergeField during parsing.
-	if dupErr := checkDupFields(data, msgDesc); dupErr != "" {
+	if dupErr := checkDupFields(data, msgDesc, files); dupErr != "" {
 		fmt.Fprintln(os.Stderr, dupErr)
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
 		os.Exit(1)
@@ -10672,8 +10673,8 @@ func findTokenAfterIdent(data []byte, line, col int) (int, int, string) {
 // checkDupFields scans text format input for duplicate non-repeated scalar fields.
 // C++ protoc's TextFormat::Parser checks HasField before setting a value and reports:
 // Non-repeated field "X" is specified multiple times.
-func checkDupFields(data []byte, msgDesc protoreflect.MessageDescriptor) string {
-	_, _, _, err := checkDupFieldsInner(data, 0, 1, 1, msgDesc)
+func checkDupFields(data []byte, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) string {
+	_, _, _, err := checkDupFieldsInner(data, 0, 1, 1, msgDesc, registry)
 	return err
 }
 
@@ -10684,7 +10685,7 @@ func skipLineComment(data []byte, i int) int {
 	return i
 }
 
-func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.MessageDescriptor) (int, int, int, string) {
+func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) (int, int, int, string) {
 	nonRepeatedScalar := map[string]bool{}
 	nonRepeatedMsg := map[string]bool{}
 	msgFieldDescs := map[string]protoreflect.MessageDescriptor{}
@@ -10733,6 +10734,104 @@ func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.M
 			i = skipLineComment(data, i)
 			continue
 		}
+		// Handle extension fields: [fqn]
+		if data[i] == '[' {
+			bracketCol := col
+			bracketLine := line
+			i++
+			col++
+			// Parse the FQN inside brackets
+			start := i
+			for i < len(data) && data[i] != ']' && data[i] != '\n' {
+				i++
+				col++
+			}
+			extName := string(data[start:i])
+			if i < len(data) && data[i] == ']' {
+				i++
+				col++
+			}
+			// Skip whitespace
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			colonCol := col
+			_ = bracketLine
+			// Look up extension in registry to check if it's repeated
+			isNonRepeated := false
+			isMsg := false
+			var extMsgDesc protoreflect.MessageDescriptor
+			if registry != nil {
+				if desc, err := registry.FindDescriptorByName(protoreflect.FullName(extName)); err == nil {
+					if extFd, ok := desc.(protoreflect.FieldDescriptor); ok {
+						if extFd.Cardinality() != protoreflect.Repeated {
+							isNonRepeated = true
+							if extFd.Kind() == protoreflect.MessageKind || extFd.Kind() == protoreflect.GroupKind {
+								isMsg = true
+								extMsgDesc = extFd.Message()
+							}
+						}
+					}
+				}
+			}
+			// Use the full extension name as tracking key
+			canonName := extName
+			displayName := extName
+			if i < len(data) && data[i] == ':' {
+				if isNonRepeated {
+					if seenFields[canonName] {
+						return i, line, col, fmt.Sprintf("input:%d:%d: Non-repeated field \"%s\" is specified multiple times.",
+							bracketLine, colonCol, displayName)
+					}
+					seenFields[canonName] = true
+				}
+				i++
+				col++
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
+					i++
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					if isMsg && extMsgDesc != nil {
+						i++
+						col++
+						var err string
+						i, line, col, err = checkDupFieldsInner(data, i, line, col, extMsgDesc, registry)
+						if err != "" {
+							return i, line, col, err
+						}
+					} else {
+						i, line, col = skipTextFormatValue(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				if isNonRepeated {
+					if seenFields[canonName] {
+						return i, line, col, fmt.Sprintf("input:%d:%d: Non-repeated field \"%s\" is specified multiple times.",
+							bracketLine, col, displayName)
+					}
+					seenFields[canonName] = true
+				}
+				if isMsg && extMsgDesc != nil {
+					i++
+					col++
+					var err string
+					i, line, col, err = checkDupFieldsInner(data, i, line, col, extMsgDesc, registry)
+					if err != "" {
+						return i, line, col, err
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			_ = bracketCol
+			continue
+		}
 		if isLetter(data[i]) || data[i] == '_' {
 			start := i
 			for i < len(data) && (isAlphanumeric(data[i]) || data[i] == '_') {
@@ -10770,7 +10869,7 @@ func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.M
 						i++
 						col++
 						var err string
-						i, line, col, err = checkDupFieldsInner(data, i, line, col, subMsg)
+						i, line, col, err = checkDupFieldsInner(data, i, line, col, subMsg, registry)
 						if err != "" {
 							return i, line, col, err
 						}
@@ -10792,7 +10891,7 @@ func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.M
 					i++
 					col++
 					var err string
-					i, line, col, err = checkDupFieldsInner(data, i, line, col, subMsg)
+					i, line, col, err = checkDupFieldsInner(data, i, line, col, subMsg, registry)
 					if err != "" {
 						return i, line, col, err
 					}
