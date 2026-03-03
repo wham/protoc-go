@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Mapping represents a virtual-path to disk-path mapping.
@@ -69,8 +70,28 @@ func (st *SourceTree) findFile(filename string) (string, bool) {
 	return "", false
 }
 
+// IsVirtualPathInvalid checks if a virtual path contains disallowed components.
+// Returns true if the path contains backslashes, consecutive slashes, ".", or "..".
+func IsVirtualPathInvalid(path string) bool {
+	if strings.ContainsRune(path, '\\') {
+		return true
+	}
+	if strings.Contains(path, "//") {
+		return true
+	}
+	for _, component := range strings.Split(path, "/") {
+		if component == "." || component == ".." {
+			return true
+		}
+	}
+	return false
+}
+
 // Open finds and reads a .proto file from the source tree.
 func (st *SourceTree) Open(filename string) (string, error) {
+	if IsVirtualPathInvalid(filename) {
+		return "", &VirtualPathError{Filename: filename}
+	}
 	if diskPath, ok := st.findFile(filename); ok {
 		data, err := os.ReadFile(diskPath)
 		if err == nil {
@@ -78,6 +99,15 @@ func (st *SourceTree) Open(filename string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("file not found: %s", filename)
+}
+
+// VirtualPathError is returned when a filename contains disallowed path components.
+type VirtualPathError struct {
+	Filename string
+}
+
+func (e *VirtualPathError) Error() string {
+	return fmt.Sprintf(`Backslashes, consecutive slashes, ".", or ".." are not allowed in the virtual path`)
 }
 
 // Exists checks if a .proto file exists in the source tree.

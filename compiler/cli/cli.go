@@ -1033,7 +1033,12 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 	content, err := srcTree.Open(filename)
 	if err != nil {
 		if collectErrors != nil {
-			*collectErrors = append(*collectErrors, fmt.Sprintf("%s: File not found.", filename))
+			if vpe, ok := err.(*importer.VirtualPathError); ok {
+				_ = vpe
+				*collectErrors = append(*collectErrors, fmt.Sprintf("%s: %s", filename, vpe.Error()))
+			} else {
+				*collectErrors = append(*collectErrors, fmt.Sprintf("%s: File not found.", filename))
+			}
 			return false, nil
 		}
 		return false, err
