@@ -603,6 +603,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 237. [DONE] Fix `cli@encode_tab_dup` — C++ protoc's `io::Tokenizer` expands tabs to 8-column tab stops (`column_ += kTabWidth - column_ % kTabWidth`), but Go's text format scanning functions treated tabs as single-width characters (`col++`). Added `textTabCol` helper matching C++ tab expansion formula. Updated all text format scanning functions: `checkDupFieldsInner`, `checkClosedEnumValuesInner`, `checkNegUintFieldsInner`, `checkOneofConflictsInner`, `skipTextFormatValue`, `skipBracedBlock`, `resolveNestedMsgType`, `findTokenAfterIdent`, `findFieldNameBefore`. All 5428/5428 tests pass.
 
+238. [DONE] Fix `cli@encode_bracket_value` — Go's `prototext.Unmarshal` reports `unexpected token: [` for string fields receiving bracket syntax (`name: [1]`), which was reformatted to `Expected "{", found "["`. C++ protoc reports `Expected string, got: [` for string/bytes fields. Added field type check in the "unexpected token" handler: uses `findFieldNameBefore` to get the field name, looks up in `msgDesc`, and if the field is StringKind or BytesKind, uses `Expected string, got: TOKEN` format. All 5429/5429 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
