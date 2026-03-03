@@ -783,6 +783,9 @@ func Run(args []string) error {
 
 	// Detect unused imports (warnings only, no errors)
 	unusedImportWarnings := detectUnusedImports(relFiles, orderedFiles, parsed, parseResults)
+	if cfg.errorFormat == "msvs" {
+		unusedImportWarnings = formatErrorsMSVS(unusedImportWarnings, srcTree)
+	}
 	for _, w := range unusedImportWarnings {
 		fmt.Fprintln(os.Stderr, mapErrorFilename(w, srcTree))
 		hadWarnings = true
@@ -5862,7 +5865,11 @@ func formatErrorLineMSVS(line string, srcTree *importer.SourceTree) string {
 			filename = diskPath
 		}
 	}
-	return fmt.Sprintf("%s(%d) : error in column=%d:%s", filename, lineNum, colNum, message)
+	level := "error"
+	if strings.Contains(message, "warning:") {
+		level = "warning"
+	}
+	return fmt.Sprintf("%s(%d) : %s in column=%d:%s", filename, lineNum, level, colNum, message)
 }
 
 type fileOptExtInfo struct {
