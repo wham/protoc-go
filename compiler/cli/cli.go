@@ -562,6 +562,9 @@ func Run(args []string) error {
 				return fmt.Errorf("%s: Unable to parse.", dsFile)
 			}
 			for _, fd := range fds.GetFile() {
+				if _, exists := parsed[fd.GetName()]; exists {
+					continue
+				}
 				parsed[fd.GetName()] = fd
 				orderedFiles = append(orderedFiles, fd.GetName())
 			}
@@ -916,8 +919,12 @@ func Run(args []string) error {
 		resp, err := plugin.RunPlugin(plug.path, req)
 		if err != nil {
 			var startErr *plugin.PluginStartError
+			var exitErr *plugin.PluginExitError
 			if errors.As(err, &startErr) {
 				return fmt.Errorf("--%s_out: protoc-gen-%s: Plugin failed with status code 1.", plug.name, plug.name)
+			}
+			if errors.As(err, &exitErr) {
+				return fmt.Errorf("--%s_out: protoc-gen-%s: Plugin failed with status code %d.", plug.name, plug.name, exitErr.ExitCode)
 			}
 			return err
 		}
@@ -1738,7 +1745,7 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		// --X_out=DIR
+		// --X_out=DIR or --X_out=PARAM:DIR
 		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "_out=") {
 			withoutDashes := arg[2:]
 			eqIdx := strings.Index(withoutDashes, "_out=")
@@ -1746,6 +1753,16 @@ func parseArgs(args []string) (*config, error) {
 			outputDir := withoutDashes[eqIdx+5:]
 			if _, ok := cfg.plugins[pluginName]; !ok {
 				cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
+			}
+			// Split at last colon: PARAM:DIR
+			if colonIdx := strings.LastIndex(outputDir, ":"); colonIdx >= 0 {
+				colonParam := outputDir[:colonIdx]
+				outputDir = outputDir[colonIdx+1:]
+				if cfg.plugins[pluginName].parameter != "" {
+					cfg.plugins[pluginName].parameter += "," + colonParam
+				} else {
+					cfg.plugins[pluginName].parameter = colonParam
+				}
 			}
 			cfg.plugins[pluginName].outputDir = outputDir
 			// If no explicit plugin path, assume protoc-gen-X is on PATH

@@ -23,6 +23,16 @@ func (e *PluginStartError) Error() string {
 	return fmt.Sprintf("plugin %s failed to start", e.Path)
 }
 
+// PluginExitError indicates that a plugin exited with non-zero status.
+type PluginExitError struct {
+	Path     string
+	ExitCode int
+}
+
+func (e *PluginExitError) Error() string {
+	return fmt.Sprintf("plugin %s failed with exit code %d", e.Path, e.ExitCode)
+}
+
 // RunPlugin executes a protoc plugin with the given CodeGeneratorRequest.
 func RunPlugin(pluginPath string, req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error) {
 	reqBytes, err := proto.Marshal(req)
@@ -62,6 +72,9 @@ func RunPlugin(pluginPath string, req *pluginpb.CodeGeneratorRequest) (*pluginpb
 	}
 
 	if err := cmd.Wait(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, &PluginExitError{Path: pluginPath, ExitCode: exitErr.ExitCode()}
+		}
 		return nil, fmt.Errorf("plugin %s failed: %w", pluginPath, err)
 	}
 
