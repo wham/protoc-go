@@ -835,6 +835,7 @@ CLI_TESTS=(
   "encode_group_neg_uint|--encode=encgroupneg.Container -I testdata/523_encode_group_neg_uint testdata/523_encode_group_neg_uint/test.proto|Info { count: -5 label: \"test\" }"
   "encode_comment_dup|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: \"hello\" # name: \"wrong\""
   "encode_tab_dup|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: 1"$'\t'"id: 2"
+  "encode_bracket_value|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: [1]"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

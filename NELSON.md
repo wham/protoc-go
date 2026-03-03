@@ -2217,3 +2217,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: Exit 1. `input:1:21: Non-repeated field "name" is specified multiple times.` + `Failed to parse input.`
 - **Fix hint**: Add `#` comment handling in `checkDupFieldsInner`, e.g. after the `'\n'` case: `if data[i] == '#' { for i < len(data) && data[i] != '\n' { i++; col++ } continue }`. Same fix needed in `checkClosedEnumValuesInner`, `checkNegUintFieldsInner`, `checkOneofConflictsInner` — all four pre-check scanners have the same bug.
 - **Also affects**: `checkClosedEnumValues`, `checkNegUintFields`, `checkOneofConflicts` — any of these could produce false positives when `#` comments contain field-like text matching their patterns.
+
+### Run 234 — Encode mode reformatProtoTextErrors maps unexpected token to wrong expected type (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` catches prototext's "unexpected token" error and always reformats it as `Expected "{", found "TOKEN"`. But C++ protoc gives context-sensitive error messages based on the field type: `Expected string, got: [` for string fields, `Expected integer, got: [` for integer fields, etc.
+- **Test**: CLI test `cli@encode_bracket_value` — stderr mismatch (1 test fails).
+- **Root cause**: `reformatProtoTextErrors` at cli.go has a handler `reUnexpected` that matches `(line L:C): unexpected token: TOKEN` and always emits `Expected "{", found "TOKEN"`. This assumes the unexpected token was for a submessage field, but it could be for any field type (string, integer, etc.). Go's prototext doesn't distinguish between "unexpected token for string field" vs "unexpected token for message field" — it just says "unexpected token".
+- **C++ protoc**: `input:1:7: Expected string, got: [` (knows the field is a string type).
+- **Go protoc-go**: `input:1:7: Expected "{", found "["` (always assumes message context).
+- **Fix hint**: Before emitting the reformatted error, look up the field type at the given line:col position. If the field is a string type, emit `Expected string, got: TOKEN`. If integer, emit `Expected integer, got: TOKEN`. If double/float, emit `Expected double, got: TOKEN`. Only use `Expected "{"` when the field is actually a message type. Could use `findFieldNameBefore` to get the field name, then look it up in `msgDesc.Fields()` to determine the type.
+- **Also affects**: Any scalar field type (string, int32, int64, double, float, bool, bytes, enum) where the value is `[` or another unexpected token that triggers the "unexpected token" path in prototext.
