@@ -845,6 +845,7 @@ CLI_TESTS=(
   "encode_bracket_mismatch|--encode=encbracket.Outer -I testdata/531_encode_bracket_mismatch testdata/531_encode_bracket_mismatch/test.proto|sub < val: 1 }"
   "encode_dup_ext_field|--encode=encextord.Msg -I testdata/477_encode_ext_order testdata/477_encode_ext_order/test.proto|[encextord.extra]: 5 [encextord.extra]: 10 name: \"ab\""
   "encode_invalid_field_name|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|{"
+  "encode_unknown_ext|--encode=encextord.Msg -I testdata/477_encode_ext_order testdata/477_encode_ext_order/test.proto|[unknown.ext]: 5 name: \"test\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

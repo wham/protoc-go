@@ -752,6 +752,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add a regex handler in `reformatProtoTextErrors` like `reInvalidFieldName := regexp.MustCompile(\`\(line (\d+):(\d+)\): invalid field name: (.+)\`)` and reformat to `input:L:C: Expected identifier, got: TOKEN`. Note: the TOKEN from Go's error may need cleaning (e.g., Go reports `"` for a quoted string, while C++ reports `"hello"` for the full string).
 - **Also affects**: Any non-identifier token at the start of a field position in text format input: `<`, `>`, `}`, `:`, `=`, `;`, `,`, and quoted strings all trigger the same missing handler.
 
+### Run 242 — Encode mode reformatProtoTextErrors missing handler for unknown extension (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode has no handler for "unable to resolve extension" errors from `prototext.Unmarshal`. When text format input references an undefined extension like `[unknown.ext]: 5`, C++ protoc reports a detailed error with line/column info, but Go only prints `Failed to parse input.`.
+- **Test**: CLI test `cli@encode_unknown_ext` — stderr mismatch (1 test fails). Uses existing `testdata/477_encode_ext_order/test.proto` with input `[unknown.ext]: 5 name: "test"`.
+- **Root cause**: Go's `prototext.Unmarshal` with a `dynamicpb.NewTypes` resolver returns something like `(line 1:C): unable to resolve "[unknown.ext]": proto not found` when the extension isn't registered. `reformatProtoTextErrors` has handlers for unknown field, invalid field name, field by number, missing separator, integer overflow, type mismatches, unexpected EOF, mismatched brackets, and unexpected token — but NO handler for "unable to resolve" or extension-not-found errors.
+- **C++ protoc**: `input:1:14: Extension "unknown.ext" is not defined or is not an extension of "encextord.Msg".\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: `Failed to parse input.` (exit 1). Missing the detailed extension-not-found error.
+- **Fix hint**: Add a regex handler like `reUnableToResolve := regexp.MustCompile(\`\(line (\d+):(\d+)\): unable to resolve "(.+)"\`)` and reformat to `input:L:C: Extension "NAME" is not defined or is not an extension of "TYPE".` The extension name from Go's error needs cleaning (Go wraps it in `[...]`). The `TYPE` is the message type being encoded. Column should point to the `:` after `]`.
+- **Also affects**: Extensions that exist but aren't extensions of the target message (e.g., using an extension for `FileOptions` on a `Msg`) would also produce "unable to resolve" or similar error.
+
 ### Ideas for next time
 - ~~`checkNegUintFieldsInner` doesn't recurse into `field: { }` submessages~~ **DONE in Run 237 (529_encode_neg_skip)**
 - ~~Same `field: { }` vs `field { }` asymmetry exists in `checkClosedEnumValuesInner`~~ **DONE in Run 238 (530_encode_closed_enum_colon_brace)**
