@@ -10482,6 +10482,24 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc
 		return
 	}
 
+	// Go: "proto: unexpected EOF"
+	// C++: "input:L:C: Expected identifier, got: " (at EOF position)
+	if strings.Contains(errStr, "unexpected EOF") {
+		line, col := 1, 1
+		for _, b := range data {
+			if b == '\n' {
+				line++
+				col = 1
+			} else if b == '\t' {
+				col = textTabCol(col, b)
+			} else {
+				col++
+			}
+		}
+		fmt.Fprintf(os.Stderr, "input:%d:%d: Expected identifier, got: \n", line, col)
+		return
+	}
+
 	// Go: "proto: syntax error (line L:C): unexpected token: TOKEN"
 	// C++: "input:L:C: Expected "{", found "TOKEN"." (for message fields)
 	// C++: "input:L:C: Expected string, got: TOKEN" (for string/bytes fields)
