@@ -611,6 +611,10 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 241. [DONE] Fix `cli@encode_truncated_msg` — Go's `prototext.Unmarshal` returns `proto: unexpected EOF` for truncated messages (e.g., `inner: {\n` with no closing `}`), but C++ protoc reports `input:L:C: Expected identifier, got: ` at the EOF position. Added `unexpected EOF` handler in `reformatProtoTextErrors` that computes EOF line:col from input data and emits the C++ error format. All 5452/5452 tests pass.
 
+242. [DONE] Fix `cli@encode_dup_msg_field` — `checkDupFieldsInner` only tracked duplicate non-repeated scalar fields, but C++ protoc's TextFormat::Parser checks `HasField` for ALL non-repeated fields including message and group fields. Added `nonRepeatedMsg` set tracking non-repeated message/group field names. Added dup checks in both colon path (error at `:` position) and no-colon brace path (error at `{` position). For groups, `groupCanonical` maps message type name to field name so both access patterns track to the same canonical name. All 5463/5463 tests pass.
+
+243. [DONE] Fix `cli@encode_neg_skip` — `checkNegUintFieldsInner` handled `field { ... }` (no colon) message syntax for recursion but not `field: { ... }` (with colon). When `sub: { value: -5 }` was parsed, the `{` after `:` fell through to `skipTextFormatValue` instead of recursing into the message to check for negative unsigned values. Added brace check in the colon branch: if next char after `:` + whitespace is `{`/`<`, recurse into message (if known) or skip braced block (if unknown). All 5474/5474 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
