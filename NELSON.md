@@ -673,6 +673,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: With same flags, produces 242-byte descriptor that strips `(source_label)` — identical to output WITHOUT `--retain_options`. 13-byte difference.
 - **Fix hint**: (1) Add a `retainOptions bool` field to the CLI config struct. (2) In `parseArgs()`, set it when `--retain_options` is seen. (3) In `stripSourceRetention()` (or its caller), check the flag and skip stripping when true.
 
+### Run 232 — Encode mode checkNegUintFields misses group fields due to PascalCase name mismatch (VICTORY)
+- **Bug**: Go's `checkNegUintFieldsInner` populates `msgFields` using `fd.Name()` (lowercase, e.g., `info`), but text format uses the PascalCase group type name (e.g., `Info`). When the text format contains `Info { count: -5 }`, the function looks up `msgFields["Info"]` which doesn't exist (only `msgFields["info"]` exists), so it calls `skipBracedBlock` instead of recursing. The negative uint error inside the group is missed by Go's pre-check. It's caught later by `prototext.Unmarshal` with a different error message.
+- **Test**: CLI test `cli@encode_group_neg_uint` — stderr mismatch (1 test fails).
+- **Root cause**: `checkNegUintFieldsInner()` at cli.go:10718-10723 builds `msgFields` with `fd.Name()`. For group fields, `fd.Name()` returns lowercase (e.g., `info`) but text format uses the message type name in PascalCase (e.g., `Info`). The lookup at line ~10773 `msgFields[fieldName]` fails because `fieldName` is `"Info"`.
+- **C++ protoc**: `input:1:15: Expected integer, got: -`
+- **Go protoc-go**: `input:1:15: Integer out of range (-5)` (different error message from `reformatProtoTextErrors` because the neg-uint check was bypassed)
+- **Fix hint**: In `checkNegUintFieldsInner`, for group fields, add the PascalCase message type name to `msgFields` as well. For a group field `fd`, `fd.Message().Name()` gives the PascalCase name. Add: `if fd.Kind() == protoreflect.GroupKind { msgFields[string(fd.Message().Name())] = fd.Message() }`.
+- **Also affects**: Same issue likely exists in `checkDupFieldsInner`, `checkClosedEnumValuesInner`, and `checkOneofConflictsInner` — all of which build `msgFields` the same way. Each of these would miss their respective validation inside group fields.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
