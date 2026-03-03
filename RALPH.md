@@ -583,6 +583,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 227. [DONE] Fix `520_enum_val_option_sci_order` — SCI (source code info) entries for enum value options were emitted with all built-in options (e.g., `deprecated`) before all custom options (e.g., `(label)`), but C++ protoc emits them in source order. Added `optOrder` tracking during parsing that records the interleaved order of built-in and custom option entries, then uses this ordering during SCI emission. All 5369/5369 tests pass.
 
+228. [DONE] Fix `cli@experimental_editions` — C++ protoc accepts `--experimental_editions` as a no-op boolean flag (editions are now fully supported) and silently accepts it. Go fell through to the generic unknown-flag handler and rejected it with "Missing value for flag". Added `continue` case in `parseArgs()` alongside other no-op flags like `--experimental_allow_proto3_optional`. All 5370/5370 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
