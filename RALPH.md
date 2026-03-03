@@ -597,6 +597,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 234. [DONE] Fix `524_empty_oneof_validation` — C++ protoc rejects oneofs with no fields (only options) with `Oneof must have at least one field.` but Go protoc-go silently accepted them. Added `validateEmptyOneofs` that checks each `oneof_decl` has at least one field referencing it via `oneof_index`. Recursively handles nested messages. All 5415/5415 tests pass.
 
+235. [DONE] Fix `decode@recursion_limit` — C++ protoc's `ParseFromString` has a default recursion limit of 100 for nested messages. Added `depth` parameter to `validateProtoWithSchema` that increments on each sub-message recursion and returns error when `depth >= 100`. This causes deeply nested messages (102 levels in test) to fail with `Failed to parse input.` (exit 1), matching C++ behavior. All 5426/5426 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
