@@ -9913,7 +9913,7 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		if strings.Contains(err.Error(), "invalid UTF-8") {
 			utf8Retry = true
 		} else {
-			reformatProtoTextErrors(err, msgTypeName, data)
+			reformatProtoTextErrors(err, msgTypeName, data, msgDesc)
 			fmt.Fprintln(os.Stderr, "Failed to parse input.")
 			os.Exit(1)
 		}
@@ -9937,7 +9937,7 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 			Resolver:     dynamicpb.NewTypes(byteFiles),
 		}
 		if err := unmarshalOpts2.Unmarshal(data, msg); err != nil {
-			reformatProtoTextErrors(err, msgTypeName, data)
+			reformatProtoTextErrors(err, msgTypeName, data, msgDesc)
 			fmt.Fprintln(os.Stderr, "Failed to parse input.")
 			os.Exit(1)
 		}
@@ -10089,18 +10089,139 @@ func emitUtf8SerializeWarnings(msg *dynamicpb.Message, msgFQN string, origMsgDes
 	}
 }
 
+// resolveNestedMsgType finds the message type at a given line:col in text format input.
+// It scans from the start, tracking `fieldname {` blocks, and returns the innermost
+// message type FQN at the target position.
+func resolveNestedMsgType(data []byte, targetLine, targetCol int, msgDesc protoreflect.MessageDescriptor, topTypeName string) string {
+	type stackEntry struct {
+		typeName string
+		desc     protoreflect.MessageDescriptor
+	}
+	stack := []stackEntry{{topTypeName, msgDesc}}
+	line, col := 1, 1
+	i := 0
+
+	// Simple scanner: track identifiers and braces
+	for i < len(data) {
+		if line > targetLine || (line == targetLine && col >= targetCol) {
+			break
+		}
+		ch := data[i]
+		if ch == '\n' {
+			line++
+			col = 1
+			i++
+			continue
+		}
+		if ch == ' ' || ch == '\t' || ch == '\r' {
+			col++
+			i++
+			continue
+		}
+		if ch == '}' || ch == '>' {
+			if len(stack) > 1 {
+				stack = stack[:len(stack)-1]
+			}
+			col++
+			i++
+			continue
+		}
+		// Read identifier
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' {
+			start := i
+			for i < len(data) && ((data[i] >= 'a' && data[i] <= 'z') || (data[i] >= 'A' && data[i] <= 'Z') || (data[i] >= '0' && data[i] <= '9') || data[i] == '_') {
+				i++
+				col++
+			}
+			ident := string(data[start:i])
+			// Skip whitespace
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
+				i++
+				col++
+			}
+			// Check if followed by { or < (or : { / : <)
+			next := i
+			nextCol := col
+			// Skip optional colon and whitespace
+			if next < len(data) && data[next] == ':' {
+				next++
+				nextCol++
+				for next < len(data) && (data[next] == ' ' || data[next] == '\t' || data[next] == '\r') {
+					next++
+					nextCol++
+				}
+			}
+			if next < len(data) && (data[next] == '{' || data[next] == '<') {
+				// This is a message field — push onto stack
+				cur := stack[len(stack)-1]
+				if cur.desc != nil {
+					fd := cur.desc.Fields().ByName(protoreflect.Name(ident))
+					if fd != nil && fd.Kind() == protoreflect.MessageKind {
+						subDesc := fd.Message()
+						subType := string(subDesc.FullName())
+						stack = append(stack, stackEntry{subType, subDesc})
+					} else if fd != nil && fd.Kind() == protoreflect.GroupKind {
+						subDesc := fd.Message()
+						subType := string(subDesc.FullName())
+						stack = append(stack, stackEntry{subType, subDesc})
+					} else {
+						// Unknown field with brace — push unknown
+						stack = append(stack, stackEntry{cur.typeName, nil})
+					}
+				} else {
+					stack = append(stack, stackEntry{stack[len(stack)-1].typeName, nil})
+				}
+				col = nextCol + 1
+				i = next + 1
+			}
+			continue
+		}
+		// Skip string literals
+		if ch == '"' || ch == '\'' {
+			quote := ch
+			i++
+			col++
+			for i < len(data) && data[i] != quote {
+				if data[i] == '\\' {
+					i++
+					col++
+				}
+				if i < len(data) {
+					if data[i] == '\n' {
+						line++
+						col = 1
+					} else {
+						col++
+					}
+					i++
+				}
+			}
+			if i < len(data) {
+				i++
+				col++
+			}
+			continue
+		}
+		// Skip other characters
+		col++
+		i++
+	}
+	return stack[len(stack)-1].typeName
+}
+
 // reformatProtoTextErrors reformats Go prototext errors to match C++ protoc format.
-func reformatProtoTextErrors(err error, msgTypeName string, data []byte) {
+func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc protoreflect.MessageDescriptor) {
 	errStr := err.Error()
 	// Go prototext errors: "proto:\u00a0(line L:C): unknown field: NAME"
 	// C++ format: "input:L:COL: Message type "TYPE" has no field named "NAME"."
 	re := regexp.MustCompile(`\(line (\d+):(\d+)\): unknown field: (\w+)`)
 	if m := re.FindStringSubmatch(errStr); m != nil {
-		line := m[1]
+		line, _ := strconv.Atoi(m[1])
 		col, _ := strconv.Atoi(m[2])
 		fieldName := m[3]
 		cppCol := col + len(fieldName)
-		fmt.Fprintf(os.Stderr, "input:%s:%d: Message type \"%s\" has no field named \"%s\".\n", line, cppCol, msgTypeName, fieldName)
+		actualType := resolveNestedMsgType(data, line, col, msgDesc, msgTypeName)
+		fmt.Fprintf(os.Stderr, "input:%d:%d: Message type \"%s\" has no field named \"%s\".\n", line, cppCol, actualType, fieldName)
 		return
 	}
 
