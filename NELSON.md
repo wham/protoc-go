@@ -717,7 +717,19 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Add a regex handler in `reformatProtoTextErrors` for prototext's EOF/truncation error that outputs `input:LINE:COL: Expected identifier, got: ` pointing to the position after the last token.
 - **Also affects**: Any truncated text format input, not just message fields — e.g., `name:` (value missing), `inner <` (angle bracket unclosed), etc.
 
+### Run 237 — checkNegUintFieldsInner doesn't recurse into `field: { }` (colon+brace) submessages (VICTORY)
+- **Bug**: Go's `checkNegUintFieldsInner` pre-check scanner in encode mode only recurses into submessages for the `field { }` form (without colon). For `field: { }` (with colon), it calls `skipTextFormatValue` which skips the entire block without checking for negative uint values inside. So `sub: { value: -5 }` where `value` is `uint32` in the inner message is NOT caught by the pre-check. C++ catches it and reports `Expected integer, got: -`. Go falls through to `prototext.Unmarshal` which reports a different error.
+- **Test**: CLI test `cli@encode_neg_skip` — stderr mismatch (1 test fails). Proto in `testdata/529_encode_neg_skip/test.proto`.
+- **Root cause**: `checkNegUintFieldsInner` at cli.go:10997 has two branches after parsing a field name: (1) `:` branch — checks for negative uint, then calls `skipTextFormatValue` (never recurses even if field is a known message type), (2) `{`/`<` branch — recurses if field is in `msgFields`, calls `skipBracedBlock` otherwise. The `:` branch is missing the logic to check if the value starts with `{`/`<` and the field is a known message type, and if so recurse instead of calling `skipTextFormatValue`. Compare with `checkDupFieldsInner` which DOES have this logic after `:`.
+- **C++ protoc**: `input:1:15: Expected integer, got: -\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: `input:1:15: Integer out of range (-5)\nFailed to parse input.` (exit 1). The `reformatProtoTextErrors` handler `reIntOverflow` catches Go's prototext error and reformats it, but with the wrong C++ equivalent message.
+- **Fix hint**: In `checkNegUintFieldsInner`, after the `:` and whitespace skip, check if the next char is `{`/`<` and the field is a known message type. If so, increment `i`, recurse, and continue. Same pattern as `checkDupFieldsInner` lines 10756-10766. Same bug likely exists in `checkClosedEnumValuesInner` and `checkOneofConflictsInner` — both have the same asymmetry between `field:` and `field {` branches.
+- **Also affects**: `checkClosedEnumValuesInner` — if a closed enum field is inside a submessage and specified via `sub: { status: 999 }`, the enum value check would be skipped. `checkOneofConflictsInner` — oneof conflict detection inside `sub: { }` would be skipped. `skipTextFormatValue` also doesn't handle `#` comments inside `{ }` blocks, which is a separate issue.
+
 ### Ideas for next time
+- ~~`checkNegUintFieldsInner` doesn't recurse into `field: { }` submessages~~ **DONE in Run 237 (529_encode_neg_skip)**
+- Same `field: { }` vs `field { }` asymmetry exists in `checkClosedEnumValuesInner` — test with `sub: { status: 999 }` where `status` is a closed enum
+- Same `field: { }` vs `field { }` asymmetry exists in `checkOneofConflictsInner` — test with `sub: { a: 1 b: 2 }` where `a` and `b` are in same oneof
 - Tab column counting also affects `checkNegUintFieldsInner`, `checkClosedEnumValuesInner`, `checkOneofConflictsInner` — test each with tab-before-error input
 - `skipTextFormatValue` and `skipBracedBlock` don't handle `#` comments inside braces — could cause scanners to get confused about nesting depth when braces appear in comments
 - `--print_free_field_numbers` with reserved ranges that overlap or touch — verify merge behavior matches C++

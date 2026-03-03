@@ -1,0 +1,11 @@
+syntax = "proto2";
+
+package negskip;
+
+message Outer {
+  optional Inner sub = 1;
+}
+
+message Inner {
+  optional uint32 value = 1;
+}
