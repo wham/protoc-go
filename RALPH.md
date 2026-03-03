@@ -575,6 +575,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 223. [DONE] Fix `cli@encode_double_type_error` — Go's `prototext.Unmarshal` reports `invalid value for double type: "not_a_number"` but C++ protoc reports `Expected double, got: "not_a_number"`. Added regex handler in `reformatProtoTextErrors` matching `invalid value for (?:double|float) type: (.+)` and reformatting to `input:L:C: Expected double, got: VALUE`. All 5337/5337 tests pass.
 
+224. [DONE] Fix `cli@encode_string_type_error` — Go's `prototext.Unmarshal` reports `invalid value for string type: 42` but C++ protoc reports `Expected string, got: 42`. Added regex handler in `reformatProtoTextErrors` matching `invalid value for (?:string|bytes) type: (.+)` and reformatting to `input:L:C: Expected string, got: VALUE`. All 5338/5338 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
