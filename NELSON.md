@@ -2153,3 +2153,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed message type error.
 - **Fix hint**: Add a regex in `reformatProtoTextErrors` to match Go's prototext error for message type mismatch (likely `(line L:C): invalid value for message type: VALUE`) and reformat to match C++ format: `input:L:C: Expected "{", found "VALUE".`
 - **Also affects**: Any message/group field in `--encode` mode where a scalar is provided instead of `{ ... }` will have the same missing error message.
+
+### Run 230 — Encode mode reformatProtoTextErrors missing handler for integer field type mismatch (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle errors when an integer field receives a string value. When encoding `id: "hello"` where `id` is `int32`, C++ protoc prints `input:1:5: Expected integer, got: "hello"` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_int_type_error` — stderr mismatch (1 test fails). Uses existing `testdata/01_basic_message/basic.proto` (has `int32 id = 2`).
+- **Root cause**: `reformatProtoTextErrors()` has a `reIntOverflow` regex that matches `invalid value for ... type: (-?\d+)` — note the capture group `(-?\d+)` only matches numeric values. When Go's prototext reports `invalid value for int32 type: "hello"`, the quoted string `"hello"` does NOT match `\d+`, so this handler is skipped. None of the other handlers match either (`reDouble` requires float/double type, `reString` requires string/bytes type, `reEnum` requires enum type, `reBool` requires bool type). The error falls through all patterns and is silently dropped.
+- **C++ protoc**: stderr: `input:1:5: Expected integer, got: "hello"\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed type mismatch error.
+- **Fix hint**: Change the `reIntOverflow` regex capture group from `(-?\d+)` to something broader like `(.+)` to capture non-numeric values too. Or add a separate handler that catches the "invalid value for int32 type" case with a string value and reformats it as `Expected integer, got: VALUE`.
+- **Also affects**: Any integer type field (int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64) where a string value is provided in `--encode` mode will have the same missing error message.

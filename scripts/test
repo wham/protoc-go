@@ -830,6 +830,7 @@ CLI_TESTS=(
   "experimental_editions|--experimental_editions --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "dsi_overlap|--descriptor_set_in=testdata/521_dsi_overlap/base.pb:testdata/521_dsi_overlap/main_with_imports.pb --decode=main.MainMsg| "
   "encode_msg_type_error|--encode=encmsgtypeerr.Record -I testdata/522_encode_msg_type_error testdata/522_encode_msg_type_error/test.proto|inner: 42 label: \"ok\""
+  "encode_int_type_error|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: \"hello\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
