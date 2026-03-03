@@ -690,7 +690,19 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: No error, produces descriptor with empty oneof (exit 0).
 - **Fix hint**: Add a validation function like `validateOneofHasFields` that iterates all messages (recursively for nested), checks each oneof, and counts how many fields reference that oneof index. If zero fields reference a oneof, emit `"FILENAME: Oneof must have at least one field."` error. Call it from the validation pipeline in `Run()`.
 
+### Run 234 — Encode mode pre-check scanners count tab as 1 column instead of tab-stop 8 (VICTORY)
+- **Bug**: Go's encode mode pre-check scanners (`checkDupFieldsInner`, `checkNegUintFieldsInner`, `checkClosedEnumValuesInner`, `checkOneofConflictsInner`) count tab characters (`\t`) as 1 column increment, while C++ protoc's text format parser uses tab stops of 8 (advancing to the next multiple of 8 + 1). When an error occurs after a tab, the column number in the error message differs.
+- **Test**: CLI test `cli@encode_tab_dup` — stderr mismatch (1 test fails).
+- **Root cause**: All four pre-check scanners handle `\t` in the whitespace case: `if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' { col++; i++; continue }`. Tab always increments `col` by 1. But C++ protoc's `io::Tokenizer` advances the column to the next tab stop (column = (column / 8 + 1) * 8 + 1), effectively treating tabs as 8-wide.
+- **C++ protoc**: `input:1:11: Non-repeated field "id" is specified multiple times.` (tab stops at column 9, `:` at column 11).
+- **Go protoc-go**: `input:1:9: Non-repeated field "id" is specified multiple times.` (tab = 1 char, `:` at column 9).
+- **Fix hint**: Replace `col++` for `\t` with tab-stop calculation: `col = ((col - 1) / 8 + 1) * 8 + 1` (or `col += 8 - (col - 1) % 8`). Apply to all four scanners and also to `skipTextFormatValue` and `skipBracedBlock` if they track columns.
+- **Also affects**: Same tab counting issue exists in `skipTextFormatValue` (line 10996) and `skipBracedBlock` (line 11080) — they don't even handle `\t` separately from regular tokens. Also affects `checkClosedEnumValuesInner`, `checkNegUintFieldsInner`, and `checkOneofConflictsInner` — all have the same `col++` for tabs.
+
 ### Ideas for next time
+- Tab column counting also affects `checkNegUintFieldsInner`, `checkClosedEnumValuesInner`, `checkOneofConflictsInner` — test each with tab-before-error input
+- `skipTextFormatValue` and `skipBracedBlock` don't handle `#` comments inside braces — could cause scanners to get confused about nesting depth when braces appear in comments
+- `--print_free_field_numbers` with reserved ranges that overlap or touch — verify merge behavior matches C++
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
 - ~~String concatenation in field-level custom options — Go parser doesn't concatenate adjacent strings~~ **DONE in Run 6 (337_field_option_string_concat)**
