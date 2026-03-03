@@ -11301,7 +11301,14 @@ func buildEnumValMap(ed *descriptorpb.EnumDescriptorProto) map[int32]string {
 
 // validateProtoWithSchema validates that binary data can be parsed as the
 // given message type. Returns nil on success.
-func validateProtoWithSchema(data []byte, msgFQN string, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, utf8Msgs map[string]bool) error {
+func validateProtoWithSchema(data []byte, msgFQN string, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, utf8Msgs map[string]bool, depth ...int) error {
+	d := 0
+	if len(depth) > 0 {
+		d = depth[0]
+	}
+	if d >= 100 {
+		return fmt.Errorf("recursion limit exceeded")
+	}
 	fieldMap := buildFieldMap(msgDesc)
 	isUtf8 := utf8Msgs[msgFQN]
 	pos := 0
@@ -11340,7 +11347,7 @@ func validateProtoWithSchema(data []byte, msgFQN string, msgDesc *descriptorpb.D
 					subMsg := resolveFieldMsgType(fd, allMsgs)
 					if subMsg != nil {
 						subFQN := strings.TrimPrefix(fd.GetTypeName(), ".")
-						if err := validateProtoWithSchema(v, subFQN, subMsg, allMsgs, utf8Msgs); err != nil {
+						if err := validateProtoWithSchema(v, subFQN, subMsg, allMsgs, utf8Msgs, d+1); err != nil {
 							return err
 						}
 					}
