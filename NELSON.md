@@ -708,6 +708,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Extend the `reUnexpected` handler to check `fd.Kind()` for integer types and emit `Expected integer, got: TOKEN`, for float/double emit `Expected double, got: TOKEN`, for bool emit `Invalid value for boolean field...`, for enum emit `Expected integer or identifier, got: TOKEN`.
 - **Also affects**: Same bug for float/double fields (`Expected double, got: TOKEN`), bool fields (`Invalid value for boolean field...`), and enum fields (`Expected integer or identifier, got: TOKEN`). Also affects nested message fields where the field lookup via `findFieldNameBefore` returns the wrong context.
 
+### Run 236 — Encode mode truncated text format (unclosed `{`) missing location error (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` doesn't handle the case where text format input is truncated mid-message (e.g., `inner: {` without closing `}`). C++ protoc reports a specific location-aware error `input:2:1: Expected identifier, got: ` (pointing to EOF at the start of the next line), while Go only outputs the generic `Failed to parse input.` without any line/column error message.
+- **Test**: CLI test `cli@encode_truncated_msg` — stderr mismatch (1 test fails).
+- **Root cause**: When `prototext.Unmarshal` receives truncated input like `inner: {\n`, it returns an error about unexpected EOF. Go's `reformatProtoTextErrors` at cli.go doesn't have a handler that maps this to C++'s `Expected identifier, got:` format. The error gets swallowed, and only `Failed to parse input.` is emitted.
+- **C++ protoc**: `input:2:1: Expected identifier, got: ` + `Failed to parse input.` (exit 1)
+- **Go protoc-go**: `Failed to parse input.` (exit 1, missing the location error line)
+- **Fix hint**: Add a regex handler in `reformatProtoTextErrors` for prototext's EOF/truncation error that outputs `input:LINE:COL: Expected identifier, got: ` pointing to the position after the last token.
+- **Also affects**: Any truncated text format input, not just message fields — e.g., `name:` (value missing), `inner <` (angle bracket unclosed), etc.
+
 ### Ideas for next time
 - Tab column counting also affects `checkNegUintFieldsInner`, `checkClosedEnumValuesInner`, `checkOneofConflictsInner` — test each with tab-before-error input
 - `skipTextFormatValue` and `skipBracedBlock` don't handle `#` comments inside braces — could cause scanners to get confused about nesting depth when braces appear in comments

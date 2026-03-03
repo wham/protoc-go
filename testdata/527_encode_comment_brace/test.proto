@@ -1,0 +1,12 @@
+syntax = "proto2";
+
+package skipbrace;
+
+message Outer {
+  optional Inner inner = 1;
+  required uint32 count = 2;
+}
+
+message Inner {
+  optional string name = 1;
+}
