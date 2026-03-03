@@ -837,6 +837,7 @@ CLI_TESTS=(
   "encode_tab_dup|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: 1"$'\t'"id: 2"
   "encode_bracket_value|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: [1]"
   "encode_int_bracket_value|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: [1]"
+  "encode_nested_bracket_double|--encode=encnestedunexp.Outer -I testdata/526_encode_nested_unexpected testdata/526_encode_nested_unexpected/test.proto|inner { score: [ }"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
