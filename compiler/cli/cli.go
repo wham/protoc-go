@@ -9958,7 +9958,7 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
 		os.Exit(1)
 	}
-	if enumErr := checkClosedEnumValues(data, msgDesc); enumErr != "" {
+	if enumErr := checkClosedEnumValues(data, msgDesc, files); enumErr != "" {
 		fmt.Fprintln(os.Stderr, enumErr)
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
 		os.Exit(1)
@@ -10935,12 +10935,12 @@ func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.M
 // not in the enum descriptor (closed enums = proto2). C++ protoc rejects these
 // with "Unknown enumeration value of "VALUE" for field "FIELD"." at the position
 // of the next token after the value. Recurses into nested messages.
-func checkClosedEnumValues(data []byte, msgDesc protoreflect.MessageDescriptor) string {
-	_, _, _, err := checkClosedEnumValuesInner(data, 0, 1, 1, msgDesc)
+func checkClosedEnumValues(data []byte, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) string {
+	_, _, _, err := checkClosedEnumValuesInner(data, 0, 1, 1, msgDesc, registry)
 	return err
 }
 
-func checkClosedEnumValuesInner(data []byte, i, line, col int, msgDesc protoreflect.MessageDescriptor) (int, int, int, string) {
+func checkClosedEnumValuesInner(data []byte, i, line, col int, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) (int, int, int, string) {
 	closedEnums := map[string]protoreflect.EnumDescriptor{}
 	msgFields := map[string]protoreflect.MessageDescriptor{}
 	fields := msgDesc.Fields()
@@ -10980,6 +10980,74 @@ continue
 			i++
 			col++
 			return i, line, col, ""
+		}
+		if data[i] == '[' {
+			i++
+			col++
+			start := i
+			for i < len(data) && data[i] != ']' && data[i] != '\n' {
+				i++
+				col++
+			}
+			extName := string(data[start:i])
+			if i < len(data) && data[i] == ']' {
+				i++
+				col++
+			}
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			isMsg := false
+			var extMsgDesc protoreflect.MessageDescriptor
+			if registry != nil {
+				if desc, err := registry.FindDescriptorByName(protoreflect.FullName(extName)); err == nil {
+					if extFd, ok := desc.(protoreflect.FieldDescriptor); ok {
+						if extFd.Kind() == protoreflect.MessageKind || extFd.Kind() == protoreflect.GroupKind {
+							isMsg = true
+							extMsgDesc = extFd.Message()
+						}
+					}
+				}
+			}
+			if i < len(data) && data[i] == ':' {
+				i++
+				col++
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
+					i++
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					if isMsg && extMsgDesc != nil {
+						i++
+						col++
+						var errStr string
+						i, line, col, errStr = checkClosedEnumValuesInner(data, i, line, col, extMsgDesc, registry)
+						if errStr != "" {
+							return i, line, col, errStr
+						}
+					} else {
+						i, line, col = skipTextFormatValue(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				if isMsg && extMsgDesc != nil {
+					i++
+					col++
+					var errStr string
+					i, line, col, errStr = checkClosedEnumValuesInner(data, i, line, col, extMsgDesc, registry)
+					if errStr != "" {
+						return i, line, col, errStr
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
 		}
 		if isLetter(data[i]) || data[i] == '_' {
 			start := i
@@ -11050,7 +11118,7 @@ continue
 					col++
 					if subMsg, ok := msgFields[fieldName]; ok {
 						var errStr string
-						i, line, col, errStr = checkClosedEnumValuesInner(data, i, line, col, subMsg)
+						i, line, col, errStr = checkClosedEnumValuesInner(data, i, line, col, subMsg, registry)
 						if errStr != "" {
 							return i, line, col, errStr
 						}
@@ -11065,7 +11133,7 @@ continue
 				col++
 				if subMsg, ok := msgFields[fieldName]; ok {
 					var errStr string
-					i, line, col, errStr = checkClosedEnumValuesInner(data, i, line, col, subMsg)
+					i, line, col, errStr = checkClosedEnumValuesInner(data, i, line, col, subMsg, registry)
 					if errStr != "" {
 						return i, line, col, errStr
 					}
