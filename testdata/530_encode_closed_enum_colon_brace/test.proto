@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package encclosedenumcolon;
+
+enum Priority {
+  LOW = 0;
+  MEDIUM = 1;
+  HIGH = 2;
+}
+
+message Inner {
+  optional Priority priority = 1;
+  optional string label = 2;
+}
+
+message Outer {
+  optional Inner sub = 1;
+  optional string name = 2;
+}

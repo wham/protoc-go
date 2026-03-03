@@ -726,9 +726,17 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: In `checkNegUintFieldsInner`, after the `:` and whitespace skip, check if the next char is `{`/`<` and the field is a known message type. If so, increment `i`, recurse, and continue. Same pattern as `checkDupFieldsInner` lines 10756-10766. Same bug likely exists in `checkClosedEnumValuesInner` and `checkOneofConflictsInner` — both have the same asymmetry between `field:` and `field {` branches.
 - **Also affects**: `checkClosedEnumValuesInner` — if a closed enum field is inside a submessage and specified via `sub: { status: 999 }`, the enum value check would be skipped. `checkOneofConflictsInner` — oneof conflict detection inside `sub: { }` would be skipped. `skipTextFormatValue` also doesn't handle `#` comments inside `{ }` blocks, which is a separate issue.
 
+### Run 238 — checkClosedEnumValuesInner doesn't recurse into `field: { }` submessages (VICTORY)
+- **Bug**: Go's `checkClosedEnumValuesInner` in encode mode doesn't recurse into submessages when the colon syntax `sub: { ... }` is used. When encountering `sub: { priority: 99 }` where `priority` is a proto2 closed enum and `99` is not a defined value, the Go compiler silently accepts the input. C++ protoc correctly detects the unknown enum value.
+- **Test**: `530_encode_closed_enum_colon_brace` — CLI test `encode_closed_enum_colon_brace` fails.
+- **Root cause**: In `checkClosedEnumValuesInner` at cli.go:10860-10913, the colon branch checks for closed enum values but after that falls through to `skipTextFormatValue` (line 10913). It never checks if the value after the colon is `{`/`<` for submessage recursion. Compare with the no-colon branch (line 10914) which correctly recurses into `checkClosedEnumValuesInner`. Also compare with `checkNegUintFieldsInner` (line 11005-11016) which correctly handles `field: { }` in its colon branch.
+- **C++ protoc**: `input:1:21: Unknown enumeration value of "99" for field "priority". Failed to parse input.` (exit 1)
+- **Go protoc-go**: Silent success (exit 0) — completely misses the unknown enum value.
+- **Fix hint**: In the colon branch, after the closed enum check falls through, add a check for `{`/`<` and recurse — same as lines 11005-11016 in `checkNegUintFieldsInner`. Insert before the `skipTextFormatValue` call at line 10913.
+
 ### Ideas for next time
 - ~~`checkNegUintFieldsInner` doesn't recurse into `field: { }` submessages~~ **DONE in Run 237 (529_encode_neg_skip)**
-- Same `field: { }` vs `field { }` asymmetry exists in `checkClosedEnumValuesInner` — test with `sub: { status: 999 }` where `status` is a closed enum
+- ~~Same `field: { }` vs `field { }` asymmetry exists in `checkClosedEnumValuesInner`~~ **DONE in Run 238 (530_encode_closed_enum_colon_brace)**
 - Same `field: { }` vs `field { }` asymmetry exists in `checkOneofConflictsInner` — test with `sub: { a: 1 b: 2 }` where `a` and `b` are in same oneof
 - Tab column counting also affects `checkNegUintFieldsInner`, `checkClosedEnumValuesInner`, `checkOneofConflictsInner` — test each with tab-before-error input
 - `skipTextFormatValue` and `skipBracedBlock` don't handle `#` comments inside braces — could cause scanners to get confused about nesting depth when braces appear in comments
