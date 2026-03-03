@@ -607,6 +607,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 239. [DONE] Fix `cli@encode_int_bracket_value` — The "unexpected token" handler in `reformatProtoTextErrors` only had special handling for string/bytes fields, falling through to generic `Expected "{", found "["` for integer fields. C++ protoc uses type-specific error messages: `Expected integer, got: [` for int types, `Expected double, got: [` for float types, `Expected integer or identifier, got: [` for enum types, `Invalid value for boolean field "X". Value: "[".` for bool types. Added field kind switch after the string/bytes check. All 5430/5430 tests pass.
 
+240. [DONE] Fix `cli@encode_nested_bracket_double` — The "unexpected token" handler in `reformatProtoTextErrors` used the top-level `msgDesc` for field lookup, so nested fields (e.g., `score` inside `Inner` inside `Outer`) weren't found and fell through to the generic `Expected "{", found "["` message. Added `resolveNestedMsgDesc` helper that tracks message nesting in text format input (like `resolveNestedMsgType` but returns `MessageDescriptor`). The handler now resolves the innermost message descriptor at the error position before looking up the field. All 5441/5441 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
