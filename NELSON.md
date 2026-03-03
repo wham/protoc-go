@@ -2093,3 +2093,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed type mismatch error.
 - **Fix hint**: Add a regex in `reformatProtoTextErrors` to match Go's prototext error for type mismatch (likely something like `(line L:C): invalid value for double type: "VALUE"`) and reformat it to match C++ format: `input:L:C: Expected double, got: "VALUE".`
 - **Also affects**: float fields with string values, int32 fields with string values, and other type mismatch scenarios in `--encode` mode will have the same missing error message.
+
+### Run 223 — Encode mode reformatProtoTextErrors missing handler for string type mismatch (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle "invalid value for string type" errors from `prototext.Unmarshal`. When encoding a string field with an integer value (e.g., `name: 42`), C++ protoc prints `input:1:7: Expected string, got: 42` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_string_type_error` — stderr mismatch (1 test fails). Uses existing `testdata/01_basic_message/basic.proto` with `name: 42` input.
+- **Root cause**: `reformatProtoTextErrors()` has no regex to match Go's prototext error for string type mismatch (probably `(line L:C): invalid value for string type: 42`). The double/float handler uses `(?:double|float)` in its regex, which doesn't match `string`. The error falls through all patterns without printing anything, and only the generic "Failed to parse input." appears.
+- **C++ protoc**: stderr: `input:1:7: Expected string, got: 42\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed type mismatch error.
+- **Fix hint**: Add a regex in `reformatProtoTextErrors` like `reString := regexp.MustCompile(\`\(line (\d+):(\d+)\): invalid value for string type: (.+)\`)` and reformat to `input:L:C: Expected string, got: VALUE`.
+- **Also affects**: bytes fields with integer values, and possibly other type mismatch scenarios where a non-string value is provided for a string/bytes field.
