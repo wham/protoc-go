@@ -823,6 +823,7 @@ CLI_TESTS=(
   "encode_bool_TRUE|--encode=encboolerr.Record -I testdata/513_encode_bool_error testdata/513_encode_bool_error/test.proto|flag: TRUE label: \"ok\""
   "encode_nested_unknown|--encode=encnestedunknown.Outer -I testdata/514_encode_nested_unknown testdata/514_encode_nested_unknown/test.proto|inner { bad_field: \"hello\" } name: \"test\""
   "decode_dsi_no_proto|--decode=dep.Dep --descriptor_set_in=testdata/474_descriptor_set_in/dep.pb|x"
+  "encode_int_overflow|--encode=encintoverflow.Record -I testdata/516_encode_int_overflow testdata/516_encode_int_overflow/test.proto|val: 4294967296 label: \"ok\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

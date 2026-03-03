@@ -2075,3 +2075,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `Missing input file.` on stderr. Exit 1.
 - **Fix hint**: In `parseArgs()`, when checking for missing input files, also check if `cfg.descriptorSetIn != ""` AND (`cfg.decodeType != ""` OR `cfg.encodeType != ""`). If a descriptor set is provided for encode/decode mode, input proto files should not be required.
 - **Also affects**: `--encode` with `--descriptor_set_in` (no proto files) likely has the same bug — Go would require proto files when C++ doesn't.
+
+### Run 221 — Encode mode reformatProtoTextErrors missing handler for integer overflow (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle "integer out of range" errors from `prototext.Unmarshal`. When encoding a uint32 field with value `4294967296` (exceeds uint32 max), C++ protoc prints `input:1:6: Integer out of range (4294967296)` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_int_overflow` — stderr mismatch (1 test fails). Proto in `testdata/516_encode_int_overflow/test.proto`.
+- **Root cause**: `reformatProtoTextErrors()` only handles 4 error patterns: unknown field, field by number, missing separator, invalid bool value. It has no handler for integer range errors from Go's prototext library. The prototext error for integer overflow doesn't match any of the existing regex patterns, so the function returns without printing anything specific, and only the generic "Failed to parse input." message appears on stderr.
+- **C++ protoc**: stderr: `input:1:6: Integer out of range (4294967296)\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed integer range error.
+- **Fix hint**: Add a regex in `reformatProtoTextErrors` to match Go's prototext error for integer overflow (likely something like `(line L:C): invalid value for uint32 type` or `value out of range`) and reformat it to match C++ format: `input:L:C: Integer out of range (VALUE).`
+- **Also affects**: int32 overflow, sint32 overflow, sfixed32 overflow — any 32-bit integer field with an out-of-range value in `--encode` mode will have the same missing error message.
