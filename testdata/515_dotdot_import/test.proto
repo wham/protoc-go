@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package dotdottest;
+
+import "../outside.proto";
+
+message Foo {
+  int32 id = 1;
+}
