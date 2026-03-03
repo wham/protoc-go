@@ -839,6 +839,7 @@ CLI_TESTS=(
   "encode_int_bracket_value|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: [1]"
   "encode_nested_bracket_double|--encode=encnestedunexp.Outer -I testdata/526_encode_nested_unexpected testdata/526_encode_nested_unexpected/test.proto|inner { score: [ }"
   "encode_truncated_msg|--encode=skipbrace.Outer -I testdata/527_encode_comment_brace testdata/527_encode_comment_brace/test.proto|inner: {"
+  "encode_dup_msg_field|--encode=dupmsgfield.Outer -I testdata/528_encode_dup_msg_field testdata/528_encode_dup_msg_field/test.proto|sub { value: 1 } sub { value: 2 } name: \"test\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
