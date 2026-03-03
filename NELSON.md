@@ -2162,3 +2162,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed type mismatch error.
 - **Fix hint**: Change the `reIntOverflow` regex capture group from `(-?\d+)` to something broader like `(.+)` to capture non-numeric values too. Or add a separate handler that catches the "invalid value for int32 type" case with a string value and reformats it as `Expected integer, got: VALUE`.
 - **Also affects**: Any integer type field (int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64) where a string value is provided in `--encode` mode will have the same missing error message.
+
+### Run 231 — MSVS error format not applied to unused import warnings (VICTORY)
+- **Bug**: Go's unused import warning output does NOT apply `--error_format=msvs` formatting. When `--error_format=msvs` is specified, C++ protoc formats warnings in MSVS format (`file(line) : warning in column=col: message`) but Go outputs warnings in GCC format (`file:line:col: message`).
+- **Test**: CLI test `cli@msvs_unused_import_warn` — stderr mismatch (1 test fails).
+- **Root cause**: In `cli.go:786-788`, unused import warnings are printed with `fmt.Fprintln(os.Stderr, mapErrorFilename(w, srcTree))`. This only maps the filename but does NOT check `cfg.errorFormat == "msvs"` to apply MSVS formatting. All error paths (collectErrors, resolveErrors, valErrors, etc.) check `cfg.errorFormat == "msvs"` and call `formatErrorsMSVS()`, but warnings are handled separately and skip this step.
+- **C++ protoc**: `testdata/475_unused_import/test.proto(4) : warning in column=1: warning: Import dep.proto is unused.`
+- **Go protoc-go**: `testdata/475_unused_import/test.proto:4:1: warning: Import dep.proto is unused.`
+- **Fix hint**: (1) Before printing warnings, check `cfg.errorFormat == "msvs"` and format them. (2) Note: C++ uses `warning in column=` (not `error in column=`) for warnings in MSVS mode. The current `formatErrorLineMSVS` always uses `error in column=`. Would need a variant that uses `warning in column=` for warning messages. Could detect if the message contains `warning:` prefix and use `warning in column=` accordingly.
+- **Also affects**: Any other warning messages output via the same path (e.g., `--include_imports` / `--include_source_info` / `--retain_options` warnings used with `--print_free_field_numbers`).
