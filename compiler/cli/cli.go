@@ -10405,6 +10405,15 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc
 		return
 	}
 
+	// Go: "proto: syntax error (line L:C): invalid field name: TOKEN"
+	// C++: "input:L:C: Expected identifier, got: TOKEN"
+	reInvalidFieldName := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid field name: (.+)`)
+	if m := reInvalidFieldName.FindStringSubmatch(errStr); m != nil {
+		token := strings.TrimSpace(m[3])
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected identifier, got: %s\n", m[1], m[2], token)
+		return
+	}
+
 	// Go: "proto: (line L:C): cannot specify field by number: N"
 	// C++: "input:L:C: Expected identifier, got: N"
 	reFieldNum := regexp.MustCompile(`\(line (\d+):(\d+)\): cannot specify field by number: (\d+)`)
