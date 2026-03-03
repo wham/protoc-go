@@ -10910,7 +10910,21 @@ continue
 						i = valStart
 					}
 				}
-				i, line, col = skipTextFormatValue(data, i, line, col)
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					i++
+					col++
+					if subMsg, ok := msgFields[fieldName]; ok {
+						var errStr string
+						i, line, col, errStr = checkClosedEnumValuesInner(data, i, line, col, subMsg)
+						if errStr != "" {
+							return i, line, col, errStr
+						}
+					} else {
+						i, line, col = skipBracedBlock(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
 			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
 				i++
 				col++
