@@ -2066,3 +2066,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `../outside.proto: File not found.` + `test.proto:5:1: Import "../outside.proto" was not found or had errors.` Exit 1.
 - **Fix hint**: Add a `ValidateVirtualPath(path string) error` function to the importer that checks: (1) no backslash characters, (2) no consecutive slashes `//`, (3) no `.` path components (split by `/` and check each component), (4) no `..` path components. Call it before attempting file resolution. If validation fails, emit the error: `Backslashes, consecutive slashes, ".", or ".." are not allowed in the virtual path`.
 - **Also affects**: Import paths with `.` (e.g., `import "./dep.proto"`), consecutive slashes (e.g., `import "dir//file.proto"`), and backslashes (though backslashes would be rejected by the tokenizer as invalid escape sequences in string literals).
+
+### Run 220 — --decode with --descriptor_set_in requires no proto files, but Go demands them (VICTORY)
+- **Bug**: Go's argument validation requires at least one `.proto` input file on the command line even when using `--decode` with `--descriptor_set_in`. C++ protoc correctly allows `--decode` with `--descriptor_set_in` and no proto files — the message type info comes from the descriptor set, not from parsing proto files.
+- **Test**: CLI test `cli@decode_dsi_no_proto` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: Go's `parseArgs()` in `cli.go` checks for missing input files and returns `"Missing input file."` error before considering that `--descriptor_set_in` provides all needed type information. C++ protoc's `CommandLineInterface::Run()` skips the input file requirement when `--descriptor_set_in` is specified.
+- **C++ protoc**: Loads types from descriptor set, reads stdin, decodes successfully. `15: 10` on stdout. Exit 0.
+- **Go protoc-go**: `Missing input file.` on stderr. Exit 1.
+- **Fix hint**: In `parseArgs()`, when checking for missing input files, also check if `cfg.descriptorSetIn != ""` AND (`cfg.decodeType != ""` OR `cfg.encodeType != ""`). If a descriptor set is provided for encode/decode mode, input proto files should not be required.
+- **Also affects**: `--encode` with `--descriptor_set_in` (no proto files) likely has the same bug — Go would require proto files when C++ doesn't.
