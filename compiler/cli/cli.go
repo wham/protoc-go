@@ -11569,26 +11569,52 @@ func skipTextFormatValue(data []byte, i, line, col int) (int, int, int) {
 	}
 
 	if data[i] == '"' || data[i] == '\'' {
-		// String value - skip to matching quote
-		quote := data[i]
-		i++
-		col++
-		for i < len(data) && data[i] != quote {
-			if data[i] == '\\' && i+1 < len(data) {
+		// String value - skip to matching quote, then skip adjacent string literals
+		for {
+			quote := data[i]
+			i++
+			col++
+			for i < len(data) && data[i] != quote {
+				if data[i] == '\\' && i+1 < len(data) {
+					i++
+					col++
+				}
+				if data[i] == '\n' {
+					line++
+					col = 1
+				} else {
+					col++
+				}
+				i++
+			}
+			if i < len(data) {
 				i++
 				col++
 			}
-			if data[i] == '\n' {
-				line++
-				col = 1
-			} else {
-				col++
+			// Check for adjacent string literal (string concatenation)
+			j := i
+			jcol := col
+			jline := line
+			for j < len(data) && (data[j] == ' ' || data[j] == '\t' || data[j] == '\r') {
+				jcol = textTabCol(jcol, data[j])
+				j++
 			}
-			i++
-		}
-		if i < len(data) {
-			i++
-			col++
+			if j < len(data) && data[j] == '\n' {
+				jline++
+				jcol = 1
+				j++
+				for j < len(data) && (data[j] == ' ' || data[j] == '\t' || data[j] == '\r') {
+					jcol = textTabCol(jcol, data[j])
+					j++
+				}
+			}
+			if j < len(data) && (data[j] == '"' || data[j] == '\'') {
+				i = j
+				col = jcol
+				line = jline
+				continue
+			}
+			break
 		}
 	} else if data[i] == '{' || data[i] == '<' {
 		// Submessage - skip to matching close
