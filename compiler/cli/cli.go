@@ -10672,15 +10672,25 @@ func skipLineComment(data []byte, i int) int {
 
 func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.MessageDescriptor) (int, int, int, string) {
 	nonRepeatedScalar := map[string]bool{}
+	nonRepeatedMsg := map[string]bool{}
 	msgFieldDescs := map[string]protoreflect.MessageDescriptor{}
+	groupCanonical := map[string]string{} // message type name -> field name
 	fields := msgDesc.Fields()
 	for k := 0; k < fields.Len(); k++ {
 		fd := fields.Get(k)
 		if fd.Kind() == protoreflect.MessageKind {
 			msgFieldDescs[string(fd.Name())] = fd.Message()
+			if fd.Cardinality() != protoreflect.Repeated {
+				nonRepeatedMsg[string(fd.Name())] = true
+			}
 		} else if fd.Kind() == protoreflect.GroupKind {
 			msgFieldDescs[string(fd.Name())] = fd.Message()
 			msgFieldDescs[string(fd.Message().Name())] = fd.Message()
+			if fd.Cardinality() != protoreflect.Repeated {
+				nonRepeatedMsg[string(fd.Name())] = true
+				nonRepeatedMsg[string(fd.Message().Name())] = true
+				groupCanonical[string(fd.Message().Name())] = string(fd.Name())
+			}
 		} else if fd.Cardinality() != protoreflect.Repeated {
 			nonRepeatedScalar[string(fd.Name())] = true
 		}
@@ -10721,13 +10731,18 @@ func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.M
 				i++
 			}
 			colonCol := col
+			// Normalize group field names to canonical (lowercased) name for dup tracking
+			canonName := fieldName
+			if cn, ok := groupCanonical[fieldName]; ok {
+				canonName = cn
+			}
 			if i < len(data) && data[i] == ':' {
-				if nonRepeatedScalar[fieldName] {
-					if seenFields[fieldName] {
+				if nonRepeatedScalar[fieldName] || nonRepeatedMsg[fieldName] {
+					if seenFields[canonName] {
 						return i, line, col, fmt.Sprintf("input:%d:%d: Non-repeated field \"%s\" is specified multiple times.",
 							line, colonCol, fieldName)
 					}
-					seenFields[fieldName] = true
+					seenFields[canonName] = true
 				}
 				i++
 				col++
@@ -10752,6 +10767,13 @@ func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.M
 					i, line, col = skipTextFormatValue(data, i, line, col)
 				}
 			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				if nonRepeatedMsg[fieldName] {
+					if seenFields[canonName] {
+						return i, line, col, fmt.Sprintf("input:%d:%d: Non-repeated field \"%s\" is specified multiple times.",
+							line, col, fieldName)
+					}
+					seenFields[canonName] = true
+				}
 				if subMsg, ok := msgFieldDescs[fieldName]; ok {
 					i++
 					col++
