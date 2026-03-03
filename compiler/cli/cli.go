@@ -713,6 +713,7 @@ func Run(args []string) error {
 	buildErrors = append(buildErrors, validateDuplicateReservedNames(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateReservedNameConflicts(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateDuplicateFieldNumbers(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateEmptyOneofs(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateEmptyEnums(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateDuplicateEnumValues(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateExtensionFieldConflicts(orderedFiles, parsed, fieldHints)...)
@@ -2586,6 +2587,40 @@ func collectReservedNameErrors(filename string, msg *descriptorpb.DescriptorProt
 	for i, nested := range msg.GetNestedType() {
 		np := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectReservedNameErrors(filename, nested, np, sci, errs)
+	}
+}
+
+// validateEmptyOneofs checks that all oneofs contain at least one field.
+func validateEmptyOneofs(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for i, msg := range fd.GetMessageType() {
+			collectEmptyOneofErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+	}
+	return errs
+}
+
+func collectEmptyOneofErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	// Count fields per oneof index
+	oneofFieldCount := make(map[int32]int)
+	for _, f := range msg.GetField() {
+		if f.OneofIndex != nil {
+			oneofFieldCount[f.GetOneofIndex()]++
+		}
+	}
+	for i := range msg.GetOneofDecl() {
+		if oneofFieldCount[int32(i)] == 0 {
+			*errs = append(*errs, fmt.Sprintf("%s: Oneof must have at least one field.", filename))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectEmptyOneofErrors(filename, nested, nestedPath, sci, errs)
 	}
 }
 
