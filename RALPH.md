@@ -601,6 +601,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 236. [DONE] Fix `cli@encode_comment_dup` — Text format pre-scan functions (`checkDupFieldsInner`, `checkClosedEnumValuesInner`, `checkNegUintFieldsInner`, `checkOneofConflictsInner`) didn't skip `#` line comments, causing field names inside comments to be treated as real field occurrences. Added `skipLineComment` helper and `#` handling to all 4 functions. All 5427/5427 tests pass.
 
+237. [DONE] Fix `cli@encode_tab_dup` — C++ protoc's `io::Tokenizer` expands tabs to 8-column tab stops (`column_ += kTabWidth - column_ % kTabWidth`), but Go's text format scanning functions treated tabs as single-width characters (`col++`). Added `textTabCol` helper matching C++ tab expansion formula. Updated all text format scanning functions: `checkDupFieldsInner`, `checkClosedEnumValuesInner`, `checkNegUintFieldsInner`, `checkOneofConflictsInner`, `skipTextFormatValue`, `skipBracedBlock`, `resolveNestedMsgType`, `findTokenAfterIdent`, `findFieldNameBefore`. All 5428/5428 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
