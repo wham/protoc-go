@@ -8320,7 +8320,7 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 			floatBits = 0x7FC00000 // C++ canonical float NaN
 		default:
 			v, err := strconv.ParseFloat(value, 32)
-			if err != nil {
+			if err != nil && !errors.Is(err, strconv.ErrRange) {
 				return nil, fmt.Errorf("invalid float value: %s", value)
 			}
 			floatBits = math.Float32bits(float32(v))
@@ -8337,7 +8337,7 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 			bits = 0x7FF8000000000000 // C++ canonical double NaN
 		default:
 			v, err := strconv.ParseFloat(value, 64)
-			if err != nil {
+			if err != nil && !errors.Is(err, strconv.ErrRange) {
 				return nil, fmt.Errorf("invalid double value: %s", value)
 			}
 			bits = math.Float64bits(v)
