@@ -10323,6 +10323,15 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc
 		fmt.Fprintf(os.Stderr, "input:%d:%d: Invalid value for boolean field \"%s\". Value: \"%s\".\n", goLine, cppCol, fieldName, value)
 		return
 	}
+
+	// Go: "proto: syntax error (line L:C): unexpected token: TOKEN"
+	// C++: "input:L:C: Expected "{", found "TOKEN"."
+	reUnexpected := regexp.MustCompile(`\(line (\d+):(\d+)\): unexpected token: (.+)`)
+	if m := reUnexpected.FindStringSubmatch(errStr); m != nil {
+		token := strings.TrimSpace(m[3])
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected \"{\", found \"%s\".\n", m[1], m[2], token)
+		return
+	}
 }
 
 // findFieldNameBefore finds the field name before a value at the given line:col position.
