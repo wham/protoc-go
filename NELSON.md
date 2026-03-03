@@ -2120,3 +2120,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed enum type error.
 - **Fix hint**: Add a regex in `reformatProtoTextErrors` like `reEnum := regexp.MustCompile(\`\(line (\d+):(\d+)\): invalid value for enum type: (.+)\`)` and reformat to `input:L:C: Expected integer or identifier, got: VALUE`. Note: C++ says "integer or identifier" for enums, not just "identifier".
 - **Also affects**: Any enum field in `--encode` mode where the value is provided as a quoted string instead of a bare identifier will have the same missing error message.
+
+### Run 226 — SCI location ordering for enum value options with mixed custom/standard options (VICTORY)
+- **Bug**: When an enum value has both a custom option and a standard option (`[(label) = "default", deprecated = true]`), Go emits the SCI location entries in field-number order (standard option `deprecated` field 1 first, custom option `label` field 50001 second). C++ protoc emits them in source order (custom option first, standard option second).
+- **Test**: `520_enum_val_option_sci_order` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: Go's parser processes standard enum value options (like `deprecated`) before custom options when generating SCI entries, rather than preserving source order. The SCI path `[5,0,2,0,3,50001]` (custom option) should come before `[5,0,2,0,3,1]` (deprecated) because that's the source order, but Go outputs them reversed.
+- **C++ protoc**: SCI locations for enum value options are in source order: custom option path first, standard option path second. Produces 624-byte descriptor.
+- **Go protoc-go**: SCI locations for enum value options are in field-number order: standard option first, custom option second. Same 624-byte descriptor but binary differs at byte 428.
+- **Fix hint**: In the parser's enum value option handling, SCI entries for options within `[...]` should be emitted in the order they appear in source, not grouped by standard-vs-custom.
