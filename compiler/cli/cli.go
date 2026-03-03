@@ -10281,6 +10281,113 @@ func resolveNestedMsgType(data []byte, targetLine, targetCol int, msgDesc protor
 	return stack[len(stack)-1].typeName
 }
 
+// resolveNestedMsgDesc returns the innermost MessageDescriptor at the given position.
+func resolveNestedMsgDesc(data []byte, targetLine, targetCol int, msgDesc protoreflect.MessageDescriptor) protoreflect.MessageDescriptor {
+	type stackEntry struct {
+		desc protoreflect.MessageDescriptor
+	}
+	stack := []stackEntry{{msgDesc}}
+	line, col := 1, 1
+	i := 0
+	for i < len(data) {
+		if line > targetLine || (line == targetLine && col >= targetCol) {
+			break
+		}
+		ch := data[i]
+		if ch == '\n' {
+			line++
+			col = 1
+			i++
+			continue
+		}
+		if ch == ' ' || ch == '\t' || ch == '\r' {
+			col = textTabCol(col, ch)
+			i++
+			continue
+		}
+		if ch == '#' {
+			for i < len(data) && data[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if ch == '}' || ch == '>' {
+			if len(stack) > 1 {
+				stack = stack[:len(stack)-1]
+			}
+			col++
+			i++
+			continue
+		}
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' {
+			start := i
+			for i < len(data) && ((data[i] >= 'a' && data[i] <= 'z') || (data[i] >= 'A' && data[i] <= 'Z') || (data[i] >= '0' && data[i] <= '9') || data[i] == '_') {
+				i++
+				col++
+			}
+			ident := string(data[start:i])
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			next := i
+			nextCol := col
+			if next < len(data) && data[next] == ':' {
+				next++
+				nextCol++
+				for next < len(data) && (data[next] == ' ' || data[next] == '\t' || data[next] == '\r') {
+					nextCol = textTabCol(nextCol, data[next])
+					next++
+				}
+			}
+			if next < len(data) && (data[next] == '{' || data[next] == '<') {
+				cur := stack[len(stack)-1]
+				if cur.desc != nil {
+					fd := cur.desc.Fields().ByName(protoreflect.Name(ident))
+					if fd != nil && (fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind) {
+						stack = append(stack, stackEntry{fd.Message()})
+					} else {
+						stack = append(stack, stackEntry{nil})
+					}
+				} else {
+					stack = append(stack, stackEntry{nil})
+				}
+				col = nextCol + 1
+				i = next + 1
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			quote := ch
+			i++
+			col++
+			for i < len(data) && data[i] != quote {
+				if data[i] == '\\' {
+					i++
+					col++
+				}
+				if i < len(data) {
+					if data[i] == '\n' {
+						line++
+						col = 1
+					} else {
+						col++
+					}
+					i++
+				}
+			}
+			if i < len(data) {
+				i++
+				col++
+			}
+			continue
+		}
+		col++
+		i++
+	}
+	return stack[len(stack)-1].desc
+}
+
 // reformatProtoTextErrors reformats Go prototext errors to match C++ protoc format.
 func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc protoreflect.MessageDescriptor) {
 	errStr := err.Error()
@@ -10385,7 +10492,12 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc
 		goCol, _ := strconv.Atoi(m[2])
 		fieldName := findFieldNameBefore(data, goLine, goCol)
 		if fieldName != "" && msgDesc != nil {
-			fd := msgDesc.Fields().ByName(protoreflect.Name(fieldName))
+			nestedDesc := resolveNestedMsgDesc(data, goLine, goCol, msgDesc)
+			lookupDesc := msgDesc
+			if nestedDesc != nil {
+				lookupDesc = nestedDesc
+			}
+			fd := lookupDesc.Fields().ByName(protoreflect.Name(fieldName))
 			if fd != nil && (fd.Kind() == protoreflect.StringKind || fd.Kind() == protoreflect.BytesKind) {
 				fmt.Fprintf(os.Stderr, "input:%s:%s: Expected string, got: %s\n", m[1], m[2], token)
 				return
