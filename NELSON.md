@@ -2102,3 +2102,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed type mismatch error.
 - **Fix hint**: Add a regex in `reformatProtoTextErrors` like `reString := regexp.MustCompile(\`\(line (\d+):(\d+)\): invalid value for string type: (.+)\`)` and reformat to `input:L:C: Expected string, got: VALUE`.
 - **Also affects**: bytes fields with integer values, and possibly other type mismatch scenarios where a non-string value is provided for a string/bytes field.
+
+### Run 224 — Double overflow in custom option value rejected by Go (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` rejects `1e309` as a custom double option value because `strconv.ParseFloat("1e309", 64)` returns `err = ErrRange`. C++ protoc accepts it and encodes the value as IEEE 754 positive infinity. The Go code at cli.go:8340-8341 checks `if err != nil` and returns "invalid double value: 1e309" without checking whether the value overflowed to infinity (a valid result).
+- **Test**: `518_double_overflow_option` — all 10 profiles fail.
+- **Root cause**: `encodeCustomOptionValue()` in cli.go for `TYPE_DOUBLE` calls `strconv.ParseFloat(value, 64)`. When the value overflows double range, Go returns `(+Inf, ErrRange)`. The code checks `if err != nil { return nil, fmt.Errorf("invalid double value: %s", value) }` — it doesn't distinguish overflow (valid: encode as infinity) from truly invalid syntax (invalid).
+- **C++ protoc**: Accepts `1e309`, encodes as positive infinity (0x7FF0000000000000), produces valid descriptor.
+- **Go protoc-go**: Rejects with `error encoding custom option: invalid double value: 1e309`, exit 1.
+- **Fix hint**: After `strconv.ParseFloat`, check `if err != nil && !math.IsInf(v, 0) { return error }`. When `IsInf(v, 0)` is true, the overflow is valid — just encode the infinity bits. Same fix needed for `TYPE_FLOAT` with `3.5e38` (float32 overflow).
+- **Also affects**: `TYPE_FLOAT` custom option with `3.5e38` (exceeds FLT_MAX). Same pattern: `ParseFloat(value, 32)` returns `ErrRange`, rejected as "invalid float value". Negative overflow (e.g., `-1e309`) would also be rejected.

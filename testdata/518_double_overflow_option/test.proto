@@ -1,0 +1,14 @@
+syntax = "proto2";
+package dblovf;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional double big_val = 50001;
+}
+
+// 1e309 exceeds DBL_MAX (~1.7976931348623158e308) and overflows to +infinity.
+// C++ protoc accepts this and encodes the value as IEEE 754 positive infinity.
+// Go's strconv.ParseFloat("1e309", 64) returns err = ErrRange, causing
+// encodeCustomOptionValue to reject it with "invalid double value: 1e309".
+option (big_val) = 1e309;
