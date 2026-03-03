@@ -10500,6 +10500,20 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc
 		return
 	}
 
+	// Go: "proto: syntax error (line L:C): mismatched close character 'X'"
+	// C++: "input:L:C: Expected ">", found "}"." (when < opened)
+	// C++: "input:L:C: Expected "}", found ">"." (when { opened)
+	reMismatch := regexp.MustCompile(`\(line (\d+):(\d+)\): mismatched close character '(.)'`)
+	if m := reMismatch.FindStringSubmatch(errStr); m != nil {
+		found := m[3]
+		expected := ">"
+		if found == ">" {
+			expected = "}"
+		}
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected \"%s\", found \"%s\".\n", m[1], m[2], expected, found)
+		return
+	}
+
 	// Go: "proto: syntax error (line L:C): unexpected token: TOKEN"
 	// C++: "input:L:C: Expected "{", found "TOKEN"." (for message fields)
 	// C++: "input:L:C: Expected string, got: TOKEN" (for string/bytes fields)
