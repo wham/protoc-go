@@ -2360,3 +2360,11 @@ Already documented above.
 - **C++ protoc**: Accepts `[encextoneof.my_ext] { name: "hello" id: 42 } label: "ok"` — exit 0. Extension's `Inner.name` and `Inner.id` are not in any oneof.
 - **Go protoc-go**: `input:1:40: Field "id" is specified along with field "name", another member of oneof "choice".` + `Failed to parse input.` — exit 1.
 - **Fix hint**: Add `[` handling in `checkOneofConflictsInner`: when `[` is encountered, skip everything until the matching `]`, then skip the optional `:` and the value/submessage with `skipTextFormatValue` or `skipBracedBlock`. Do NOT parse the extension's submessage fields in the top-level oneof context.
+
+### Run 245 — Tab column counting differs in encode mode error messages (VICTORY)
+- **Bug**: Go's `--encode` mode uses Go's `prototext.Unmarshal` which counts tab characters as 1 column. C++ protoc's text format parser expands tabs to 8-column tab stops (standard terminal tab stops). When an error occurs after a tab character, the column number reported differs.
+- **Test**: CLI test `cli@encode_tab_column` — stderr mismatch (1 test fails).
+- **Root cause**: Go's proto library (`google.golang.org/protobuf/encoding/prototext`) counts each byte as one column. C++ protoc's `google::protobuf::io::Tokenizer` expands tabs to the next multiple of 8 columns (columns 8, 16, 24...). After a single tab, C++ says column 9 (1-based) while Go says column 2.
+- **C++ protoc**: `input:1:17: Message type "basic.Person" has no field named "badfield".` (tab→col 9, plus 8 chars "badfield" = col 17 for the colon)
+- **Go protoc-go**: `input:1:10: Message type "basic.Person" has no field named "badfield".` (tab→col 2, plus 8 chars = col 10)
+- **Fix hint**: The `reformatProtoTextErrors` function in `cli.go` would need to re-count columns accounting for tab expansion to match C++ behavior. Alternatively, the Go prototext library would need to be patched (unlikely). A workaround: post-process error positions by scanning the input for tabs and adjusting column numbers. This is tricky because `reformatProtoTextErrors` doesn't have access to the original input text.

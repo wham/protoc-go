@@ -850,6 +850,7 @@ CLI_TESTS=(
   "encode_ext_closed_enum|--encode=encextcenum.Outer -I testdata/533_encode_ext_closed_enum testdata/533_encode_ext_closed_enum/test.proto|[encextcenum.my_ext] { priority: 999 } label: \"ok\""
   "encode_ext_oneof_conflict|--encode=encextoneof.Outer -I testdata/534_encode_ext_oneof_conflict testdata/534_encode_ext_oneof_conflict/test.proto|[encextoneof.my_ext] { name: \"hello\" id: 42 } label: \"ok\""
   "encode_dup_string_concat|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: \"hello\" \"world\" name: \"test\""
+  "encode_tab_column|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|"$'\t'"badfield: 42"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
