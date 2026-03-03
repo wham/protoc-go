@@ -827,6 +827,7 @@ CLI_TESTS=(
   "encode_double_type_error|--encode=encdoubletypeerr.Record -I testdata/517_encode_double_type_error testdata/517_encode_double_type_error/test.proto|dval: \"not_a_number\" label: \"test\""
   "encode_string_type_error|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: 42"
   "encode_enum_type_error|--encode=encenumtypeerr.Record -I testdata/519_encode_enum_type_error testdata/519_encode_enum_type_error/test.proto|status: \"ACTIVE\" label: \"ok\""
+  "experimental_editions|--experimental_editions --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

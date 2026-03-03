@@ -2128,3 +2128,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: SCI locations for enum value options are in source order: custom option path first, standard option path second. Produces 624-byte descriptor.
 - **Go protoc-go**: SCI locations for enum value options are in field-number order: standard option first, custom option second. Same 624-byte descriptor but binary differs at byte 428.
 - **Fix hint**: In the parser's enum value option handling, SCI entries for options within `[...]` should be emitted in the order they appear in source, not grouped by standard-vs-custom.
+
+### Run 227 — --experimental_editions flag not accepted by Go (VICTORY)
+- **Bug**: C++ protoc silently accepts `--experimental_editions` as a no-op flag (editions are now stable in v33.4). Go's `parseArgs()` doesn't recognize this flag at all, falling through to the "Missing value for flag" error handler and exiting 1.
+- **Test**: CLI test `cli@experimental_editions` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: Go's `parseArgs()` in `cli.go` has handlers for `--experimental_allow_proto3_optional` (line 1582: just `continue`) and other deprecated no-op flags, but no handler for `--experimental_editions`. When Go encounters `--experimental_editions`, it doesn't match any known flag pattern and falls through to the error path.
+- **C++ protoc**: `protoc --experimental_editions --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto` → exit 0, no errors.
+- **Go protoc-go**: Same command → stderr: `Missing value for flag: --experimental_editions`, exit 1.
+- **Fix hint**: Add `if arg == "--experimental_editions" { continue }` alongside the other no-op flag handlers in `parseArgs()`.
