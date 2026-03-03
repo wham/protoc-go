@@ -10280,6 +10280,15 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc
 		return
 	}
 
+	// Go: "proto: (line L:C): invalid value for enum type: VALUE"
+	// C++: "input:L:C: Expected integer or identifier, got: VALUE"
+	reEnum := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for enum type: (.+)`)
+	if m := reEnum.FindStringSubmatch(errStr); m != nil {
+		val := strings.TrimSpace(m[3])
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected integer or identifier, got: %s\n", m[1], m[2], val)
+		return
+	}
+
 	// Go: "proto: (line L:C): invalid value for bool type: VALUE"
 	// C++: "input:L:C: Invalid value for boolean field "FIELD". Value: "VALUE"."
 	reBool := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for bool type: (\S+)`)
