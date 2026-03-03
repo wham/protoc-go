@@ -595,6 +595,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 233. [DONE] Fix `cli@encode_group_neg_uint` — `checkNegUintFieldsInner` registered group fields under `fd.Name()` (lowercased, e.g., `info`) but C++ protoc's TextFormat uses the message type name (e.g., `Info`). Added `fd.Message().Name()` registration for GroupKind fields. Applied same fix to `checkDupFieldsInner`, `checkClosedEnumValuesInner`, and `checkOneofConflictsInner`. All 5405/5405 tests pass.
 
+234. [DONE] Fix `524_empty_oneof_validation` — C++ protoc rejects oneofs with no fields (only options) with `Oneof must have at least one field.` but Go protoc-go silently accepted them. Added `validateEmptyOneofs` that checks each `oneof_decl` has at least one field referencing it via `oneof_index`. Recursively handles nested messages. All 5415/5415 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
