@@ -2733,6 +2733,11 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		}
 		var parsedEnumValOpts []enumValOptInfo
 		var pendingCustEnumValOpts []CustomEnumValueOption
+		type enumValOptOrderEntry struct {
+			isCustom bool
+			index    int
+		}
+		var optOrder []enumValOptOrderEntry
 		bracketSkipped := false
 
 		if p.tok.Peek().Value == "[" {
@@ -2845,6 +2850,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 					}
 
 					pendingCustEnumValOpts = append(pendingCustEnumValOpts, custOpt)
+					optOrder = append(optOrder, enumValOptOrderEntry{isCustom: true, index: len(pendingCustEnumValOpts) - 1})
 					hasOpts = true
 
 					next := p.tok.Peek()
@@ -2970,6 +2976,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 							endCol:        endCol,
 							featFieldNum:  featFieldNum,
 						})
+						optOrder = append(optOrder, enumValOptOrderEntry{isCustom: false, index: len(parsedEnumValOpts) - 1})
 					} else {
 						return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", optNameTok.Line+1, optNameTok.Column+1, optName)
 					}
@@ -2984,6 +2991,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 						endLine:       optValTok.Line,
 						endCol:        endCol,
 					})
+					optOrder = append(optOrder, enumValOptOrderEntry{isCustom: false, index: len(parsedEnumValOpts) - 1})
 				}
 
 				if p.tok.Peek().Value == "," {
@@ -3064,27 +3072,29 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 			optPath := append(copyPath(valuePath), 3)
 			p.addLocationSpan(optPath, optsBracketStartLine, optsBracketStartCol,
 				optsBracketEndLine, optsBracketEndCol+1)
-			for _, oi := range parsedEnumValOpts {
-				if oi.featFieldNum != 0 {
-					p.addLocationSpan(append(copyPath(optPath), oi.fieldNum, oi.featFieldNum),
-						oi.nameStartLine, oi.nameStartCol, oi.endLine, oi.endCol)
+			for _, entry := range optOrder {
+				if !entry.isCustom {
+					oi := parsedEnumValOpts[entry.index]
+					if oi.featFieldNum != 0 {
+						p.addLocationSpan(append(copyPath(optPath), oi.fieldNum, oi.featFieldNum),
+							oi.nameStartLine, oi.nameStartCol, oi.endLine, oi.endCol)
+					} else {
+						p.addLocationSpan(append(copyPath(optPath), oi.fieldNum),
+							oi.nameStartLine, oi.nameStartCol, oi.endLine, oi.endCol)
+					}
 				} else {
-					p.addLocationSpan(append(copyPath(optPath), oi.fieldNum),
-						oi.nameStartLine, oi.nameStartCol, oi.endLine, oi.endCol)
+					cust := pendingCustEnumValOpts[entry.index]
+					sciLoc := cust.SCILoc
+					basePath := append(copyPath(optPath), 0) // placeholder field num, resolved later
+					if len(cust.SubFieldPath) > 0 {
+						sciPath := make([]int32, len(basePath)+len(cust.SubFieldPath))
+						copy(sciPath, basePath)
+						sciLoc.Path = sciPath
+					} else {
+						sciLoc.Path = basePath
+					}
+					p.locations = append(p.locations, sciLoc)
 				}
-			}
-			// Add deferred custom enum value option SCI entries
-			for i := range pendingCustEnumValOpts {
-				sciLoc := pendingCustEnumValOpts[i].SCILoc
-				basePath := append(copyPath(optPath), 0) // placeholder field num, resolved later
-				if len(pendingCustEnumValOpts[i].SubFieldPath) > 0 {
-					sciPath := make([]int32, len(basePath)+len(pendingCustEnumValOpts[i].SubFieldPath))
-					copy(sciPath, basePath)
-					sciLoc.Path = sciPath
-				} else {
-					sciLoc.Path = basePath
-				}
-				p.locations = append(p.locations, sciLoc)
 			}
 		}
 
