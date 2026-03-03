@@ -10390,6 +10390,25 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc
 				fmt.Fprintf(os.Stderr, "input:%s:%s: Expected string, got: %s\n", m[1], m[2], token)
 				return
 			}
+			if fd != nil {
+				switch fd.Kind() {
+				case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind,
+					protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind,
+					protoreflect.Uint32Kind, protoreflect.Fixed32Kind,
+					protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+					fmt.Fprintf(os.Stderr, "input:%s:%s: Expected integer, got: %s\n", m[1], m[2], token)
+					return
+				case protoreflect.DoubleKind, protoreflect.FloatKind:
+					fmt.Fprintf(os.Stderr, "input:%s:%s: Expected double, got: %s\n", m[1], m[2], token)
+					return
+				case protoreflect.BoolKind:
+					fmt.Fprintf(os.Stderr, "input:%s:%s: Invalid value for boolean field \"%s\". Value: \"%s\".\n", m[1], m[2], fieldName, token)
+					return
+				case protoreflect.EnumKind:
+					fmt.Fprintf(os.Stderr, "input:%s:%s: Expected integer or identifier, got: %s\n", m[1], m[2], token)
+					return
+				}
+			}
 		}
 		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected \"{\", found \"%s\".\n", m[1], m[2], token)
 		return
