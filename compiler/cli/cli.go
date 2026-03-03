@@ -9968,7 +9968,7 @@ func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescripto
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
 		os.Exit(1)
 	}
-	if conflictErr := checkOneofConflicts(data, msgDesc); conflictErr != "" {
+	if conflictErr := checkOneofConflicts(data, msgDesc, files); conflictErr != "" {
 		fmt.Fprintln(os.Stderr, conflictErr)
 		fmt.Fprintln(os.Stderr, "Failed to parse input.")
 		os.Exit(1)
@@ -11339,12 +11339,12 @@ continue
 // are specified and reports: Field "X" is specified along with field "Y",
 // another member of oneof "Z".
 // Recurses into nested messages.
-func checkOneofConflicts(data []byte, msgDesc protoreflect.MessageDescriptor) string {
-	_, _, _, err := checkOneofConflictsInner(data, 0, 1, 1, msgDesc)
+func checkOneofConflicts(data []byte, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) string {
+	_, _, _, err := checkOneofConflictsInner(data, 0, 1, 1, msgDesc, registry)
 	return err
 }
 
-func checkOneofConflictsInner(data []byte, pos, line, col int, msgDesc protoreflect.MessageDescriptor) (int, int, int, string) {
+func checkOneofConflictsInner(data []byte, pos, line, col int, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) (int, int, int, string) {
 	type fieldOneofInfo struct {
 		oneofIdx  int
 		oneofName string
@@ -11397,6 +11397,74 @@ continue
 			return i, line, col, ""
 		}
 
+		// Handle extension fields: [fqn]
+		if data[i] == '[' {
+			i++
+			col++
+			start := i
+			for i < len(data) && data[i] != ']' && data[i] != '\n' {
+				i++
+				col++
+			}
+			extName := string(data[start:i])
+			if i < len(data) && data[i] == ']' {
+				i++
+				col++
+			}
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			var extMsgDesc protoreflect.MessageDescriptor
+			if registry != nil {
+				if desc, err := registry.FindDescriptorByName(protoreflect.FullName(extName)); err == nil {
+					if extFd, ok := desc.(protoreflect.FieldDescriptor); ok {
+						if extFd.Kind() == protoreflect.MessageKind || extFd.Kind() == protoreflect.GroupKind {
+							extMsgDesc = extFd.Message()
+						}
+					}
+				}
+			}
+			if i < len(data) && data[i] == ':' {
+				i++
+				col++
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
+					i++
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					if extMsgDesc != nil {
+						i++
+						col++
+						var errStr string
+						i, line, col, errStr = checkOneofConflictsInner(data, i, line, col, extMsgDesc, registry)
+						if errStr != "" {
+							return i, line, col, errStr
+						}
+					} else {
+						i, line, col = skipTextFormatValue(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				if extMsgDesc != nil {
+					i++
+					col++
+					var errStr string
+					i, line, col, errStr = checkOneofConflictsInner(data, i, line, col, extMsgDesc, registry)
+					if errStr != "" {
+						return i, line, col, errStr
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
+		}
+
 		if isLetter(data[i]) || data[i] == '_' {
 			start := i
 			for i < len(data) && (isAlphanumeric(data[i]) || data[i] == '_') {
@@ -11430,7 +11498,7 @@ continue
 						i++
 						col++
 						var errStr string
-						i, line, col, errStr = checkOneofConflictsInner(data, i, line, col, subMsg)
+						i, line, col, errStr = checkOneofConflictsInner(data, i, line, col, subMsg, registry)
 						if errStr != "" {
 							return i, line, col, errStr
 						}
@@ -11452,7 +11520,7 @@ continue
 					i++
 					col++
 					var errStr string
-					i, line, col, errStr = checkOneofConflictsInner(data, i, line, col, subMsg)
+					i, line, col, errStr = checkOneofConflictsInner(data, i, line, col, subMsg, registry)
 					if errStr != "" {
 						return i, line, col, errStr
 					}
