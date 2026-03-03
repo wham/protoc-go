@@ -587,6 +587,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 229. [DONE] Fix `cli@dsi_overlap` and `521_dsi_overlap@colon_param` — Three fixes: (1) `--descriptor_set_in` loading now skips files already loaded from previous descriptor set files (dedup by filename). (2) `--X_out=PARAM:DIR` now splits at the last colon to extract plugin parameter and output directory, matching C++ protoc's `GeneratorInfo` parsing. (3) Plugin non-zero exit codes now return `PluginExitError` with C++ error format: `--X_out: protoc-gen-X: Plugin failed with status code N.` All 5381/5381 tests pass.
 
+230. [DONE] Fix `cli@encode_msg_type_error` — Go's `prototext.Unmarshal` reports `unexpected token: 42` when a message field receives a non-message value, but C++ protoc reports `Expected "{", found "42".` Added regex handler in `reformatProtoTextErrors` matching `unexpected token: TOKEN` and reformatting to `input:L:C: Expected "{", found "TOKEN".` All 5392/5392 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
