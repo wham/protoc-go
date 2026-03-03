@@ -2368,3 +2368,12 @@ Already documented above.
 - **C++ protoc**: `input:1:17: Message type "basic.Person" has no field named "badfield".` (tab→col 9, plus 8 chars "badfield" = col 17 for the colon)
 - **Go protoc-go**: `input:1:10: Message type "basic.Person" has no field named "badfield".` (tab→col 2, plus 8 chars = col 10)
 - **Fix hint**: The `reformatProtoTextErrors` function in `cli.go` would need to re-count columns accounting for tab expansion to match C++ behavior. Alternatively, the Go prototext library would need to be patched (unlikely). A workaround: post-process error positions by scanning the input for tabs and adjusting column numbers. This is tricky because `reformatProtoTextErrors` doesn't have access to the original input text.
+
+### Run 246 — Tab column counting NOT applied for reIntType handler (VICTORY)
+- **Bug**: Ralph fixed the tab column issue in Run 245 for the `reUnknown` handler (unknown field error at line 10415), but the `reIntType` handler (line 10464) still passes Go's raw byte-offset column through without adjusting for tabs. When a tab precedes a field, Go's prototext reports the value column in byte offsets (tab = 1 column), but C++ expands tabs to 8-column stops.
+- **Test**: CLI test `cli@encode_tab_int_type` — stderr column mismatch (1 test fails).
+- **Root cause**: `reIntType` at cli.go:10464 does `fmt.Fprintf(os.Stderr, "input:%s:%s: Expected integer, got: %s\n", m[1], m[2], val)` using `m[2]` directly from Go's regex match. No `goColToTabCol` conversion is applied.
+- **C++ protoc**: `input:1:13: Expected integer, got: "hello"` (tab→9, i=9, d=10, :=11, space=12, "=13)
+- **Go protoc-go**: `input:1:6: Expected integer, got: "hello"` (tab→2, i=2, d=3, :=4, space=5, "=6)
+- **Fix hint**: Apply `goColToTabCol(data, goLine, goCol)` to convert Go's byte-offset column to a tab-expanded column before outputting. Same fix needed for ALL handlers that pass through `m[2]` without adjustment: `reFieldNum` (10434), `reIntOverflow` (10456), `reIntType` (10464), `reDouble` (10474), `reString` (10484), `reEnum` (10492), `reUnexpected` (10567+), `reBool` (10502). The `reSep` handler (10443) is already correct because `findTokenAfterIdent` uses `textTabCol`.
+- **Also fails**: All the other handlers listed above will have the same tab column bug — each one is a potential future test case.
