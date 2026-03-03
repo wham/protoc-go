@@ -10121,7 +10121,63 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte) {
 		// Go's line:col points at the field name start. Find the next token after it.
 		foundLine, foundCol, foundTok := findTokenAfterIdent(data, goLine, goCol)
 		fmt.Fprintf(os.Stderr, "input:%d:%d: Expected \":\", found \"%s\".\n", foundLine, foundCol, foundTok)
+		return
 	}
+
+	// Go: "proto: (line L:C): invalid value for bool type: VALUE"
+	// C++: "input:L:C: Invalid value for boolean field "FIELD". Value: "VALUE"."
+	reBool := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for bool type: (\S+)`)
+	if m := reBool.FindStringSubmatch(errStr); m != nil {
+		goLine, _ := strconv.Atoi(m[1])
+		goCol, _ := strconv.Atoi(m[2])
+		value := m[3]
+		fieldName := findFieldNameBefore(data, goLine, goCol)
+		// C++ column is at the next token after the value
+		cppCol := goCol + len(value) + 1
+		fmt.Fprintf(os.Stderr, "input:%d:%d: Invalid value for boolean field \"%s\". Value: \"%s\".\n", goLine, cppCol, fieldName, value)
+		return
+	}
+}
+
+// findFieldNameBefore finds the field name before a value at the given line:col position.
+// Scans backward from the value position to find the identifier before the colon.
+func findFieldNameBefore(data []byte, line, col int) string {
+	// Find byte offset for line:col (1-indexed)
+	curLine := 1
+	curCol := 1
+	i := 0
+	for i < len(data) && (curLine < line || (curLine == line && curCol < col)) {
+		if data[i] == '\n' {
+			curLine++
+			curCol = 1
+		} else {
+			curCol++
+		}
+		i++
+	}
+	// i is at the value position. Scan backwards to find "fieldname:"
+	j := i - 1
+	// Skip whitespace
+	for j >= 0 && (data[j] == ' ' || data[j] == '\t') {
+		j--
+	}
+	// Should be at ':'
+	if j >= 0 && data[j] == ':' {
+		j--
+	}
+	// Skip whitespace
+	for j >= 0 && (data[j] == ' ' || data[j] == '\t') {
+		j--
+	}
+	// Read identifier backwards
+	end := j + 1
+	for j >= 0 && (data[j] == '_' || (data[j] >= 'a' && data[j] <= 'z') || (data[j] >= 'A' && data[j] <= 'Z') || (data[j] >= '0' && data[j] <= '9')) {
+		j--
+	}
+	if j+1 < end {
+		return string(data[j+1 : end])
+	}
+	return ""
 }
 
 // findTokenAfterIdent finds the next token after an identifier at the given line:col (1-indexed).
