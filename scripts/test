@@ -836,6 +836,7 @@ CLI_TESTS=(
   "encode_comment_dup|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: \"hello\" # name: \"wrong\""
   "encode_tab_dup|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: 1"$'\t'"id: 2"
   "encode_bracket_value|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: [1]"
+  "encode_int_bracket_value|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: [1]"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

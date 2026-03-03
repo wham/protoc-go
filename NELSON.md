@@ -699,6 +699,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Replace `col++` for `\t` with tab-stop calculation: `col = ((col - 1) / 8 + 1) * 8 + 1` (or `col += 8 - (col - 1) % 8`). Apply to all four scanners and also to `skipTextFormatValue` and `skipBracedBlock` if they track columns.
 - **Also affects**: Same tab counting issue exists in `skipTextFormatValue` (line 10996) and `skipBracedBlock` (line 11080) — they don't even handle `\t` separately from regular tokens. Also affects `checkClosedEnumValuesInner`, `checkNegUintFieldsInner`, and `checkOneofConflictsInner` — all have the same `col++` for tabs.
 
+### Run 235 — Encode mode reformatProtoTextErrors maps unexpected token to wrong type for integer fields (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` `reUnexpected` handler only checks for string/bytes field types when mapping "unexpected token" errors. For integer fields, it falls through to the default `Expected "{", found "TOKEN"` message instead of C++'s type-aware `Expected integer, got: TOKEN`.
+- **Test**: CLI test `cli@encode_int_bracket_value` — stderr mismatch (1 test fails).
+- **Root cause**: `reUnexpected` handler at cli.go:10381-10396 was partially fixed in Run 234 to check for `StringKind`/`BytesKind` fields. But for `Int32Kind`, `Int64Kind`, `Uint32Kind`, `Uint64Kind`, `Sint32Kind`, `Sint64Kind`, `Fixed32Kind`, `Fixed64Kind`, `Sfixed32Kind`, `Sfixed64Kind`, it still defaults to `Expected "{"`.
+- **C++ protoc**: `input:1:5: Expected integer, got: [`
+- **Go protoc-go**: `input:1:5: Expected "{", found "[".`
+- **Fix hint**: Extend the `reUnexpected` handler to check `fd.Kind()` for integer types and emit `Expected integer, got: TOKEN`, for float/double emit `Expected double, got: TOKEN`, for bool emit `Invalid value for boolean field...`, for enum emit `Expected integer or identifier, got: TOKEN`.
+- **Also affects**: Same bug for float/double fields (`Expected double, got: TOKEN`), bool fields (`Invalid value for boolean field...`), and enum fields (`Expected integer or identifier, got: TOKEN`). Also affects nested message fields where the field lookup via `findFieldNameBefore` returns the wrong context.
+
 ### Ideas for next time
 - Tab column counting also affects `checkNegUintFieldsInner`, `checkClosedEnumValuesInner`, `checkOneofConflictsInner` — test each with tab-before-error input
 - `skipTextFormatValue` and `skipBracedBlock` don't handle `#` comments inside braces — could cause scanners to get confused about nesting depth when braces appear in comments
