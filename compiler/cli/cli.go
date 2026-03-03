@@ -10504,6 +10504,13 @@ func checkDupFields(data []byte, msgDesc protoreflect.MessageDescriptor) string 
 	return err
 }
 
+func skipLineComment(data []byte, i int) int {
+	for i < len(data) && data[i] != '\n' {
+		i++
+	}
+	return i
+}
+
 func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.MessageDescriptor) (int, int, int, string) {
 	nonRepeatedScalar := map[string]bool{}
 	msgFieldDescs := map[string]protoreflect.MessageDescriptor{}
@@ -10537,6 +10544,10 @@ func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.M
 			line++
 			col = 1
 			i++
+			continue
+		}
+		if data[i] == '#' {
+			i = skipLineComment(data, i)
 			continue
 		}
 		if isLetter(data[i]) || data[i] == '_' {
@@ -10645,6 +10656,10 @@ func checkClosedEnumValuesInner(data []byte, i, line, col int, msgDesc protorefl
 			i++
 			continue
 		}
+if data[i] == '#' {
+i = skipLineComment(data, i)
+continue
+}
 		if data[i] == '}' || data[i] == '>' {
 			i++
 			col++
@@ -10776,6 +10791,10 @@ func checkNegUintFieldsInner(data []byte, i, line, col int, msgDesc protoreflect
 			i++
 			continue
 		}
+if data[i] == '#' {
+i = skipLineComment(data, i)
+continue
+}
 		if data[i] == '}' || data[i] == '>' {
 			i++
 			col++
@@ -10880,6 +10899,10 @@ func checkOneofConflictsInner(data []byte, pos, line, col int, msgDesc protorefl
 			i++
 			continue
 		}
+if data[i] == '#' {
+i = skipLineComment(data, i)
+continue
+}
 		if data[i] == '}' || data[i] == '>' {
 			i++
 			col++
