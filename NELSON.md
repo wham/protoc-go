@@ -2144,3 +2144,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `--descriptor_set_in=base.pb:main_with_imports.pb --decode=main.MainMsg` → exit 0, no errors.
 - **Go protoc-go**: Same command → stderr: `base.proto: "value" is already defined in "base.BaseMsg".\nbase.proto: "BaseMsg" is already defined in "base".`, exit 1.
 - **Fix hint**: Before adding to `orderedFiles`, check if `fd.GetName()` is already in `parsed`. If so, skip it (don't add to `orderedFiles` again): `if _, exists := parsed[fd.GetName()]; !exists { orderedFiles = append(orderedFiles, fd.GetName()) } parsed[fd.GetName()] = fd`.
+
+### Run 229 — Encode mode reformatProtoTextErrors missing handler for message field type mismatch (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle "expected message opening brace" errors from `prototext.Unmarshal`. When encoding a message field with a scalar value (e.g., `inner: 42` instead of `inner { ... }`), C++ protoc prints `input:1:8: Expected "{", found "42".` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_msg_type_error` — stderr mismatch (1 test fails). Proto in `testdata/522_encode_msg_type_error/test.proto`.
+- **Root cause**: `reformatProtoTextErrors()` handles 7 error patterns (unknown field, field by number, missing separator, int overflow, double/float type, string/bytes type, enum type, bool type) but has no handler for message type mismatch. Go's prototext error for providing a scalar to a message field doesn't match any existing regex, so the function returns without printing the detailed error.
+- **C++ protoc**: stderr: `input:1:8: Expected "{", found "42".\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed message type error.
+- **Fix hint**: Add a regex in `reformatProtoTextErrors` to match Go's prototext error for message type mismatch (likely `(line L:C): invalid value for message type: VALUE`) and reformat to match C++ format: `input:L:C: Expected "{", found "VALUE".`
+- **Also affects**: Any message/group field in `--encode` mode where a scalar is provided instead of `{ ... }` will have the same missing error message.
