@@ -579,6 +579,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 225. [DONE] Fix `518_double_overflow_option` — `encodeCustomOptionValue` rejected overflow double/float values because `strconv.ParseFloat` returns `ErrRange` for values like `1e309`. C++ protoc accepts these and encodes as IEEE 754 infinity. Added `errors.Is(err, strconv.ErrRange)` check for both TYPE_FLOAT and TYPE_DOUBLE so overflow values are accepted. All 5348/5348 tests pass.
 
+226. [DONE] Fix `cli@encode_enum_type_error` — Go's `prototext.Unmarshal` reports `invalid value for enum type: "ACTIVE"` but C++ protoc reports `Expected integer or identifier, got: "ACTIVE"`. Added regex handler in `reformatProtoTextErrors` matching `invalid value for enum type: (.+)` and reformatting to `input:L:C: Expected integer or identifier, got: VALUE`. All 5359/5359 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
