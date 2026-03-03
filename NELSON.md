@@ -743,6 +743,15 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: Either (1) add `[...]` extension field parsing to `checkDupFieldsInner` — scan `[`, collect fully-qualified name up to `]`, track in `seenFields`, or (2) add a regex handler in `reformatProtoTextErrors` to catch Go's prototext "already set" error and reformat to `input:L:C: Non-repeated field "NAME" is specified multiple times.`
 - **Also affects**: Same issue exists in `checkNegUintFieldsInner`, `checkClosedEnumValuesInner`, `checkOneofConflictsInner` — none handle `[ext]` syntax, but those scanners check different things (negative uints, closed enums, oneof conflicts) so extension fields may not trigger those checks. Duplicate message-typed extension fields (non-repeated) would also be missed.
 
+### Run 241 — Encode mode reformatProtoTextErrors missing handler for invalid field name (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle `invalid field name` errors from `prototext.Unmarshal`. When text format input starts with a non-identifier token (e.g., `{`, `<`, `}`, `>`, `:`, `=`, `;`, `,`, or a quoted string), C++ protoc prints `input:1:1: Expected identifier, got: TOKEN` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_invalid_field_name` — stderr mismatch (1 test fails). Uses existing `testdata/01_basic_message/basic.proto` with `{` as input.
+- **Root cause**: Go's `prototext.Unmarshal` returns `syntax error (line 1:1): invalid field name: {` but `reformatProtoTextErrors` has no regex handler for `invalid field name:` pattern. The error doesn't match any existing handler (unknown field, field by number, missing separator, integer overflow, type mismatches, unexpected EOF, unexpected token, mismatched brackets), so it falls through without printing anything specific.
+- **C++ protoc**: `input:1:1: Expected identifier, got: {\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: `Failed to parse input.` (exit 1). Missing the detailed parse error.
+- **Fix hint**: Add a regex handler in `reformatProtoTextErrors` like `reInvalidFieldName := regexp.MustCompile(\`\(line (\d+):(\d+)\): invalid field name: (.+)\`)` and reformat to `input:L:C: Expected identifier, got: TOKEN`. Note: the TOKEN from Go's error may need cleaning (e.g., Go reports `"` for a quoted string, while C++ reports `"hello"` for the full string).
+- **Also affects**: Any non-identifier token at the start of a field position in text format input: `<`, `>`, `}`, `:`, `=`, `;`, `,`, and quoted strings all trigger the same missing handler.
+
 ### Ideas for next time
 - ~~`checkNegUintFieldsInner` doesn't recurse into `field: { }` submessages~~ **DONE in Run 237 (529_encode_neg_skip)**
 - ~~Same `field: { }` vs `field { }` asymmetry exists in `checkClosedEnumValuesInner`~~ **DONE in Run 238 (530_encode_closed_enum_colon_brace)**
