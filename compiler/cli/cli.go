@@ -10186,7 +10186,7 @@ func resolveNestedMsgType(data []byte, targetLine, targetCol int, msgDesc protor
 			continue
 		}
 		if ch == ' ' || ch == '\t' || ch == '\r' {
-			col++
+			col = textTabCol(col, ch)
 			i++
 			continue
 		}
@@ -10208,8 +10208,8 @@ func resolveNestedMsgType(data []byte, targetLine, targetCol int, msgDesc protor
 			ident := string(data[start:i])
 			// Skip whitespace
 			for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
+				col = textTabCol(col, data[i])
 				i++
-				col++
 			}
 			// Check if followed by { or < (or : { / : <)
 			next := i
@@ -10219,8 +10219,8 @@ func resolveNestedMsgType(data []byte, targetLine, targetCol int, msgDesc protor
 				next++
 				nextCol++
 				for next < len(data) && (data[next] == ' ' || data[next] == '\t' || data[next] == '\r') {
+					nextCol = textTabCol(nextCol, data[next])
 					next++
-					nextCol++
 				}
 			}
 			if next < len(data) && (data[next] == '{' || data[next] == '<') {
@@ -10397,11 +10397,10 @@ func findFieldNameBefore(data []byte, line, col int) string {
 			curLine++
 			curCol = 1
 		} else {
-			curCol++
+			curCol = textTabCol(curCol, data[i])
 		}
 		i++
 	}
-	// i is at the value position. Scan backwards to find "fieldname:"
 	j := i - 1
 	// Skip whitespace
 	for j >= 0 && (data[j] == ' ' || data[j] == '\t') {
@@ -10437,7 +10436,7 @@ func findTokenAfterIdent(data []byte, line, col int) (int, int, string) {
 			curLine++
 			curCol = 1
 		} else {
-			curCol++
+			curCol = textTabCol(curCol, data[i])
 		}
 		i++
 	}
@@ -10452,7 +10451,7 @@ func findTokenAfterIdent(data []byte, line, col int) (int, int, string) {
 			curLine++
 			curCol = 1
 		} else {
-			curCol++
+			curCol = textTabCol(curCol, data[i])
 		}
 		i++
 	}
@@ -10536,7 +10535,7 @@ func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.M
 			return i, line, col, ""
 		}
 		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
-			col++
+			col = textTabCol(col, data[i])
 			i++
 			continue
 		}
@@ -10558,8 +10557,8 @@ func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.M
 			}
 			fieldName := string(data[start:i])
 			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
 				i++
-				col++
 			}
 			colonCol := col
 			if i < len(data) && data[i] == ':' {
@@ -10574,8 +10573,8 @@ func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.M
 				col++
 				// Skip whitespace after colon to check for submessage brace
 				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
 					i++
-					col++
 				}
 				if i < len(data) && (data[i] == '{' || data[i] == '<') {
 					if subMsg, ok := msgFieldDescs[fieldName]; ok {
@@ -10646,7 +10645,7 @@ func checkClosedEnumValuesInner(data []byte, i, line, col int, msgDesc protorefl
 
 	for i < len(data) {
 		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
-			col++
+			col = textTabCol(col, data[i])
 			i++
 			continue
 		}
@@ -10673,15 +10672,15 @@ continue
 			}
 			fieldName := string(data[start:i])
 			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
 				i++
-				col++
 			}
 			if i < len(data) && data[i] == ':' {
 				i++
 				col++
 				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
 					i++
-					col++
 				}
 				if ed, ok := closedEnums[fieldName]; ok && i < len(data) {
 					negative := false
@@ -10706,7 +10705,7 @@ continue
 							ev := ed.Values().ByNumber(protoreflect.EnumNumber(num))
 							if ev == nil {
 								for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
-									col++
+									col = textTabCol(col, data[i])
 									i++
 								}
 								if i < len(data) && data[i] == '\n' {
@@ -10714,7 +10713,7 @@ continue
 									col = 1
 									i++
 									for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
-										col++
+										col = textTabCol(col, data[i])
 										i++
 									}
 								}
@@ -10781,7 +10780,7 @@ func checkNegUintFieldsInner(data []byte, i, line, col int, msgDesc protoreflect
 
 	for i < len(data) {
 		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
-			col++
+			col = textTabCol(col, data[i])
 			i++
 			continue
 		}
@@ -10808,15 +10807,15 @@ continue
 			}
 			fieldName := string(data[start:i])
 			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
 				i++
-				col++
 			}
 			if i < len(data) && data[i] == ':' {
 				i++
 				col++
 				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
 					i++
-					col++
 				}
 				if uintFields[fieldName] && i < len(data) && data[i] == '-' {
 					return i, line, col, fmt.Sprintf("input:%d:%d: Expected integer, got: -", line, col)
@@ -10889,7 +10888,7 @@ func checkOneofConflictsInner(data []byte, pos, line, col int, msgDesc protorefl
 	i := pos
 	for i < len(data) {
 		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
-			col++
+			col = textTabCol(col, data[i])
 			i++
 			continue
 		}
@@ -10918,8 +10917,8 @@ continue
 			fieldName := string(data[start:i])
 
 			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
 				i++
-				col++
 			}
 
 			colonCol := col
@@ -10934,8 +10933,8 @@ continue
 				i++
 				col++
 				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
 					i++
-					col++
 				}
 				if i < len(data) && (data[i] == '{' || data[i] == '<') {
 					if subMsg, ok := msgFieldDescs[fieldName]; ok {
@@ -10992,11 +10991,20 @@ func isAlphanumeric(b byte) bool {
 	return isLetter(b) || (b >= '0' && b <= '9')
 }
 
+// textTabCol advances a 1-based column for a character, expanding tabs to
+// 8-column tab stops matching C++ protoc's io::Tokenizer.
+func textTabCol(col int, ch byte) int {
+	if ch == '\t' {
+		return col + 8 - (col-1)%8
+	}
+	return col + 1
+}
+
 // skipTextFormatValue skips over a text format value (string, number, identifier, submessage).
 func skipTextFormatValue(data []byte, i, line, col int) (int, int, int) {
 	// Skip whitespace
 	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
-		col++
+		col = textTabCol(col, data[i])
 		i++
 	}
 	if i >= len(data) {
@@ -11107,7 +11115,7 @@ func skipBracedBlock(data []byte, i, line, col int) (int, int, int) {
 			col = 0
 		}
 		if i < len(data) {
-			col++
+			col = textTabCol(col, data[i])
 			i++
 		}
 	}
