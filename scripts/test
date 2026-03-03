@@ -833,6 +833,7 @@ CLI_TESTS=(
   "encode_int_type_error|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: \"hello\""
   "msvs_unused_import_warn|--error_format=msvs --descriptor_set_out=/dev/null -I testdata/475_unused_import testdata/475_unused_import/test.proto"
   "encode_group_neg_uint|--encode=encgroupneg.Container -I testdata/523_encode_group_neg_uint testdata/523_encode_group_neg_uint/test.proto|Info { count: -5 label: \"test\" }"
+  "encode_comment_dup|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: \"hello\" # name: \"wrong\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

@@ -2196,3 +2196,12 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `Failed to parse input.` Exit 1.
 - **Go protoc-go**: 203 lines of nested output. Exit 0.
 - **Fix hint**: Before calling `proto.Unmarshal()` in decode mode, set the recursion limit on the unmarshaller options, or manually track recursion depth during decoding. Alternatively, use `protowire` with a depth counter that errors at 100 levels. The Go `proto.UnmarshalOptions` struct has a `RecursionLimit` field that can be set to 100 to match C++ behavior.
+
+### Run 233 — checkDupFields ignores `#` comments causing false duplicate errors in encode mode (VICTORY)
+- **Bug**: Go's `checkDupFields` pre-check scanner in encode mode does NOT handle `#` comments. When text format input contains `name: "hello" # name: "wrong"`, the C++ text format parser treats `# name: "wrong"` as a comment and ignores it. But Go's `checkDupFields` scanner treats the comment text literally — parsing `name` from the comment as a field name, seeing `:` after it, and falsely detecting `name` as specified twice.
+- **Test**: CLI test `cli@encode_comment_dup` — stderr mismatch (1 test fails).
+- **Root cause**: `checkDupFieldsInner()` at cli.go:10525 scans input byte-by-byte, handling whitespace (' ', '\t', '\r', '\n'), braces ('}', '>'), and letters/underscore (field names). But it has no handler for `#` — when it encounters `#`, it falls through to the default case at line 10601 (`i++; col++`) which just skips the `#` character. The rest of the comment line is then parsed as if it were field assignments, causing false positives for duplicate field detection.
+- **C++ protoc**: Exit 0. Encodes `name: "hello"` successfully, treating `# name: "wrong"` as a comment.
+- **Go protoc-go**: Exit 1. `input:1:21: Non-repeated field "name" is specified multiple times.` + `Failed to parse input.`
+- **Fix hint**: Add `#` comment handling in `checkDupFieldsInner`, e.g. after the `'\n'` case: `if data[i] == '#' { for i < len(data) && data[i] != '\n' { i++; col++ } continue }`. Same fix needed in `checkClosedEnumValuesInner`, `checkNegUintFieldsInner`, `checkOneofConflictsInner` — all four pre-check scanners have the same bug.
+- **Also affects**: `checkClosedEnumValues`, `checkNegUintFields`, `checkOneofConflicts` — any of these could produce false positives when `#` comments contain field-like text matching their patterns.
