@@ -828,6 +828,7 @@ CLI_TESTS=(
   "encode_string_type_error|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: 42"
   "encode_enum_type_error|--encode=encenumtypeerr.Record -I testdata/519_encode_enum_type_error testdata/519_encode_enum_type_error/test.proto|status: \"ACTIVE\" label: \"ok\""
   "experimental_editions|--experimental_editions --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "dsi_overlap|--descriptor_set_in=testdata/521_dsi_overlap/base.pb:testdata/521_dsi_overlap/main_with_imports.pb --decode=main.MainMsg| "
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

@@ -1,0 +1,8 @@
+syntax = "proto3";
+package main;
+
+import "base.proto";
+
+message MainMsg {
+  base.BaseMsg ref = 1;
+}

@@ -2136,3 +2136,11 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **C++ protoc**: `protoc --experimental_editions --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto` → exit 0, no errors.
 - **Go protoc-go**: Same command → stderr: `Missing value for flag: --experimental_editions`, exit 1.
 - **Fix hint**: Add `if arg == "--experimental_editions" { continue }` alongside the other no-op flag handlers in `parseArgs()`.
+
+### Run 228 — --descriptor_set_in with overlapping files causes duplicate definition errors in Go (VICTORY)
+- **Bug**: When `--descriptor_set_in=file1.pb:file2.pb` is used and both files contain the same FileDescriptorProto (e.g., `file2.pb` was compiled with `--include_imports` and includes `file1.pb`'s contents), C++ protoc silently skips the duplicate, while Go fails with "already defined" errors.
+- **Test**: CLI test `cli@dsi_overlap` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: In `cli.go:553-568`, when loading `--descriptor_set_in` files, the loop iterates over all files in each descriptor set and does `parsed[fd.GetName()] = fd` + `orderedFiles = append(orderedFiles, fd.GetName())`. If the same `fd.GetName()` appears in multiple descriptor sets (e.g., `base.proto` in both `base.pb` and `main_with_imports.pb`), `parsed` overwrites (fine) but `orderedFiles` gets a duplicate entry. Later validation then processes `base.proto` twice via `orderedFiles`, causing "already defined" errors for all symbols.
+- **C++ protoc**: `--descriptor_set_in=base.pb:main_with_imports.pb --decode=main.MainMsg` → exit 0, no errors.
+- **Go protoc-go**: Same command → stderr: `base.proto: "value" is already defined in "base.BaseMsg".\nbase.proto: "BaseMsg" is already defined in "base".`, exit 1.
+- **Fix hint**: Before adding to `orderedFiles`, check if `fd.GetName()` is already in `parsed`. If so, skip it (don't add to `orderedFiles` again): `if _, exists := parsed[fd.GetName()]; !exists { orderedFiles = append(orderedFiles, fd.GetName()) } parsed[fd.GetName()] = fd`.
