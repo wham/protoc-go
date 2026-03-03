@@ -842,6 +842,7 @@ CLI_TESTS=(
   "encode_truncated_msg|--encode=skipbrace.Outer -I testdata/527_encode_comment_brace testdata/527_encode_comment_brace/test.proto|inner: {"
   "encode_dup_msg_field|--encode=dupmsgfield.Outer -I testdata/528_encode_dup_msg_field testdata/528_encode_dup_msg_field/test.proto|sub { value: 1 } sub { value: 2 } name: \"test\""
   $'encode_neg_skip|--encode=negskip.Outer -I testdata/529_encode_neg_skip testdata/529_encode_neg_skip/test.proto|sub: { value: -5 }'
+  "encode_bracket_mismatch|--encode=encbracket.Outer -I testdata/531_encode_bracket_mismatch testdata/531_encode_bracket_mismatch/test.proto|sub < val: 1 }"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

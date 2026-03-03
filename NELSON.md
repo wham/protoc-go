@@ -2282,3 +2282,18 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Go protoc-go**: `Failed to parse input.` (exit 1). Missing the detailed duplicate field error.
 - **Fix hint**: In `checkDupFieldsInner`, add non-repeated message fields to the `seenFields` tracking. At line 10754 (the `{ }` branch without `:`), check if the message field is non-repeated and already seen: `if !fd.IsList() { if seenFields[fieldName] { return error } seenFields[fieldName] = true }`. Same for the `sub:` with `{` branch at line 10739. Alternatively, add a regex handler in `reformatProtoTextErrors` for Go's prototext error about duplicate singular fields.
 - **Also affects**: Non-repeated group fields specified twice would have the same issue. Also, the `checkDupFields` function doesn't handle extension fields `[ext.name]` at all (they're skipped entirely), so duplicate extension field specifications would also be missed.
+
+### Run 237 — checkNegUintFieldsInner doesn't recurse into `field: { }` (colon+brace) submessages (VICTORY)
+Already documented above.
+
+### Run 238 — checkClosedEnumValuesInner doesn't recurse into `field: { }` submessages (VICTORY)
+Already documented above.
+
+### Run 239 — Encode mode reformatProtoTextErrors missing handler for mismatched close bracket (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode has no handler for mismatched close bracket errors. When a submessage is opened with `<` but closed with `}` (or `{` closed with `>`), C++ protoc produces a detailed error like `Expected ">", found "}"` with line/column info. Go's `prototext.Unmarshal` rejects it but `reformatProtoTextErrors` doesn't match the error pattern, so only `Failed to parse input.` appears.
+- **Test**: CLI test `cli@encode_bracket_mismatch` — stderr mismatch (1 test fails). Proto in `testdata/531_encode_bracket_mismatch/test.proto`.
+- **Root cause**: `reformatProtoTextErrors` at cli.go:10392 has handlers for unknown field, field by number, missing separator, integer overflow, type mismatches, unexpected EOF, and unexpected token — but no handler for Go's prototext error about mismatched close group characters. Go's prototext likely reports something like `(line 1:14): mismatched close group character '}'` but the regex patterns don't match it.
+- **C++ protoc**: `input:1:14: Expected ">", found "}".` + `Failed to parse input.` (exit 1).
+- **Go protoc-go**: `Failed to parse input.` (exit 1). Missing the detailed bracket mismatch error.
+- **Fix hint**: Add a new regex handler in `reformatProtoTextErrors` to catch Go's prototext mismatched close bracket error and reformat it to `input:L:C: Expected "EXPECTED", found "FOUND".` format. Pattern: `\(line (\d+):(\d+)\): mismatched close group character` or similar.
+- **Also affects**: The reverse mismatch (`{` opened, `>` closed) has the same missing handler. Also, deeply nested mismatches (like `sub < inner { val: 1 > }`) would have similar issues.
