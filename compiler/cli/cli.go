@@ -10412,7 +10412,8 @@ func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc
 		line, _ := strconv.Atoi(m[1])
 		col, _ := strconv.Atoi(m[2])
 		fieldName := m[3]
-		cppCol := col + len(fieldName)
+		tabCol := goColToTabCol(data, line, col)
+		cppCol := tabCol + len(fieldName)
 		actualType := resolveNestedMsgType(data, line, col, msgDesc, msgTypeName)
 		fmt.Fprintf(os.Stderr, "input:%d:%d: Message type \"%s\" has no field named \"%s\".\n", line, cppCol, actualType, fieldName)
 		return
@@ -11555,6 +11556,22 @@ func textTabCol(col int, ch byte) int {
 		return col + 8 - (col-1)%8
 	}
 	return col + 1
+}
+
+// goColToTabCol converts a Go byte-based column (1-indexed) to a C++ tab-expanded column.
+func goColToTabCol(data []byte, goLine, goCol int) int {
+	idx := 0
+	for line := 1; line < goLine && idx < len(data); idx++ {
+		if data[idx] == '\n' {
+			line++
+		}
+	}
+	tabCol := 1
+	for c := 1; c < goCol && idx < len(data); c++ {
+		tabCol = textTabCol(tabCol, data[idx])
+		idx++
+	}
+	return tabCol
 }
 
 // skipTextFormatValue skips over a text format value (string, number, identifier, submessage).
