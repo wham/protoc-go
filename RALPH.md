@@ -571,6 +571,8 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 221. [DONE] Fix `cli@decode_dsi_no_proto` — C++ protoc allows `--decode` (or `--encode`) with `--descriptor_set_in` without specifying any .proto files, since types come from the descriptor set. Go rejected with "Missing input file." because the check didn't account for this case. Changed condition to only require input files when `descriptorSetIn` is empty OR neither decode nor encode mode is active. All 5315/5315 tests pass.
 
+222. [DONE] Fix `cli@encode_int_overflow` — Go's `prototext.Unmarshal` reports `invalid value for uint32 type: 4294967296` but C++ protoc reports `Integer out of range (4294967296)`. Added regex handler in `reformatProtoTextErrors` matching `invalid value for TYPE type: VALUE` for all integer types and reformatting to `input:L:C: Integer out of range (VALUE)`. All 5326/5326 tests pass.
+
 ## Notes (continued 2)
 
 - `compiler/importer/importer.go`: `findFile` now includes a round-trip check matching C++ `DiskSourceTree::Open`. After finding a file on disk, uses `filepath.Rel` to reverse-map the disk path back to a virtual filename. If the round-trip doesn't match the original filename, the mapping is rejected. This prevents absolute import paths like `/dep.proto` from resolving (because `filepath.Join(root, "/dep.proto")` normalizes away the leading `/`, but the reverse map produces `dep.proto` not `/dep.proto`).
