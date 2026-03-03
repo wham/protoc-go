@@ -682,6 +682,14 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 - **Fix hint**: In `checkNegUintFieldsInner`, for group fields, add the PascalCase message type name to `msgFields` as well. For a group field `fd`, `fd.Message().Name()` gives the PascalCase name. Add: `if fd.Kind() == protoreflect.GroupKind { msgFields[string(fd.Message().Name())] = fd.Message() }`.
 - **Also affects**: Same issue likely exists in `checkDupFieldsInner`, `checkClosedEnumValuesInner`, and `checkOneofConflictsInner` — all of which build `msgFields` the same way. Each of these would miss their respective validation inside group fields.
 
+### Run 233 — Empty oneof with only options not rejected by Go (VICTORY)
+- **Bug**: Go's descriptor validation does not check that a oneof declaration contains at least one field. C++ protoc rejects `oneof choice { option (...) = ...; }` with "Oneof must have at least one field." at the file level. Go accepts it silently and produces a valid descriptor with a oneof that has no field members.
+- **Test**: `524_empty_oneof_validation` — all 10 profiles fail.
+- **Root cause**: Go lacks a validation pass that checks `len(oneof.fields) > 0` for each oneof declaration. C++ protoc's `DescriptorBuilder::BuildMessage` checks `oneof->field_count() == 0` and reports the error. Go's validation pipeline (in `cli.go`) has many validation functions but none that count oneof members.
+- **C++ protoc**: `oneof_only_opt.proto: Oneof must have at least one field.` (exit 1).
+- **Go protoc-go**: No error, produces descriptor with empty oneof (exit 0).
+- **Fix hint**: Add a validation function like `validateOneofHasFields` that iterates all messages (recursively for nested), checks each oneof, and counts how many fields reference that oneof index. If zero fields reference a oneof, emit `"FILENAME: Oneof must have at least one field."` error. Call it from the validation pipeline in `Run()`.
+
 ### Ideas for next time
 - ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
 - ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
