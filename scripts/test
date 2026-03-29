@@ -404,6 +404,8 @@ CLI_TESTS=(
   "error_format_msvs|--error_format=msvs -I testdata/257_msvs_error --dump_out=/tmp/msvs_test_out testdata/257_msvs_error/test.proto"
   "error_format_unknown|--error_format=unknown"
   "decode_no_value|--decode"
+  "out_space_sep|--dump_out /tmp/test_space_sep -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "descriptor_set_out_space|--descriptor_set_out /tmp/test_desc_space.pb -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
