@@ -1,5 +1,7 @@
 module github.com/wham/protoc-go
 
-go 1.25.5
+go 1.23
 
-require google.golang.org/protobuf v1.36.11 // indirect
+toolchain go1.24.7
+
+require google.golang.org/protobuf v1.36.11
