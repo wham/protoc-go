@@ -943,6 +943,14 @@ func parseArgs(args []string) (*config, error) {
 			cfg.descriptorSetOut = arg[len("--descriptor_set_out="):]
 			continue
 		}
+		if arg == "--descriptor_set_out" {
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("Missing value for flag: %s", arg)
+			}
+			i++
+			cfg.descriptorSetOut = args[i]
+			continue
+		}
 
 		if arg == "--include_imports" {
 			cfg.includeImports = true
@@ -999,6 +1007,12 @@ func parseArgs(args []string) (*config, error) {
 		if strings.HasPrefix(arg, "--dependency_out=") {
 			continue
 		}
+		if arg == "--dependency_out" {
+			if i+1 < len(args) {
+				i++
+			}
+			continue
+		}
 
 		if strings.HasPrefix(arg, "--direct_dependencies=") {
 			continue
@@ -1013,38 +1027,72 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		// --X_out=DIR
-		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "_out=") {
+		// --X_out=DIR or --X_out DIR
+		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "_out") {
 			withoutDashes := arg[2:]
-			eqIdx := strings.Index(withoutDashes, "_out=")
-			pluginName := withoutDashes[:eqIdx]
-			outputDir := withoutDashes[eqIdx+5:]
-			if _, ok := cfg.plugins[pluginName]; !ok {
-				cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
+			if eqIdx := strings.Index(withoutDashes, "_out="); eqIdx >= 0 {
+				pluginName := withoutDashes[:eqIdx]
+				outputDir := withoutDashes[eqIdx+5:]
+				if _, ok := cfg.plugins[pluginName]; !ok {
+					cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
+				}
+				cfg.plugins[pluginName].outputDir = outputDir
+				if cfg.plugins[pluginName].path == "" {
+					cfg.plugins[pluginName].path = "protoc-gen-" + pluginName
+				}
+				continue
 			}
-			cfg.plugins[pluginName].outputDir = outputDir
-			// If no explicit plugin path, assume protoc-gen-X is on PATH
-			if cfg.plugins[pluginName].path == "" {
-				cfg.plugins[pluginName].path = "protoc-gen-" + pluginName
+			if strings.HasSuffix(withoutDashes, "_out") {
+				pluginName := withoutDashes[:len(withoutDashes)-4]
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("Missing value for flag: %s", arg)
+				}
+				i++
+				outputDir := args[i]
+				if _, ok := cfg.plugins[pluginName]; !ok {
+					cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
+				}
+				cfg.plugins[pluginName].outputDir = outputDir
+				if cfg.plugins[pluginName].path == "" {
+					cfg.plugins[pluginName].path = "protoc-gen-" + pluginName
+				}
+				continue
 			}
-			continue
 		}
 
-		// --X_opt=PARAM
-		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "_opt=") {
+		// --X_opt=PARAM or --X_opt PARAM
+		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "_opt") {
 			withoutDashes := arg[2:]
-			eqIdx := strings.Index(withoutDashes, "_opt=")
-			pluginName := withoutDashes[:eqIdx]
-			param := withoutDashes[eqIdx+5:]
-			if _, ok := cfg.plugins[pluginName]; !ok {
-				cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
+			if eqIdx := strings.Index(withoutDashes, "_opt="); eqIdx >= 0 {
+				pluginName := withoutDashes[:eqIdx]
+				param := withoutDashes[eqIdx+5:]
+				if _, ok := cfg.plugins[pluginName]; !ok {
+					cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
+				}
+				if cfg.plugins[pluginName].parameter != "" {
+					cfg.plugins[pluginName].parameter += "," + param
+				} else {
+					cfg.plugins[pluginName].parameter = param
+				}
+				continue
 			}
-			if cfg.plugins[pluginName].parameter != "" {
-				cfg.plugins[pluginName].parameter += "," + param
-			} else {
-				cfg.plugins[pluginName].parameter = param
+			if strings.HasSuffix(withoutDashes, "_opt") {
+				pluginName := withoutDashes[:len(withoutDashes)-4]
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("Missing value for flag: %s", arg)
+				}
+				i++
+				param := args[i]
+				if _, ok := cfg.plugins[pluginName]; !ok {
+					cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
+				}
+				if cfg.plugins[pluginName].parameter != "" {
+					cfg.plugins[pluginName].parameter += "," + param
+				} else {
+					cfg.plugins[pluginName].parameter = param
+				}
+				continue
 			}
-			continue
 		}
 
 		if strings.HasPrefix(arg, "-") {

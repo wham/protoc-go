@@ -4,7 +4,7 @@
 - Only add code comments for really tricky parts; otherwise keep it clean.
 - Don't commit changes to `status.txt` — it's managed by ralph.sh.
 - Use past tense in commit messages (e.g., "Fix bug" → "Fixed bug").
-- Keep pull-request descriptions super short — one or two sentences.
+- Keep pull-request descriptions minimal — a single sentence, no bullet lists, no markdown headers.
 - When I prompt you to make changes that are radically different from what's documented here, please update this file accordingly.
 
 ## What This Is
