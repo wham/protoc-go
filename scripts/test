@@ -406,6 +406,8 @@ CLI_TESTS=(
   "decode_no_value|--decode"
   "out_space_sep|--dump_out /tmp/test_space_sep -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "descriptor_set_out_space|--descriptor_set_out /tmp/test_desc_space.pb -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "proto_path_space|--proto_path testdata/01_basic_message --descriptor_set_out /tmp/test_proto_path_space.pb basic.proto"
+  "error_format_space|--error_format gcc"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

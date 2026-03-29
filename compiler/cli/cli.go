@@ -910,6 +910,14 @@ func parseArgs(args []string) (*config, error) {
 			cfg.protoPaths = append(cfg.protoPaths, arg[len("--proto_path="):])
 			continue
 		}
+		if arg == "--proto_path" {
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("Missing value for flag: %s", arg)
+			}
+			i++
+			cfg.protoPaths = append(cfg.protoPaths, args[i])
+			continue
+		}
 
 		if strings.HasPrefix(arg, "-I") {
 			path := arg[2:]
@@ -927,6 +935,26 @@ func parseArgs(args []string) (*config, error) {
 			if len(parts) == 2 {
 				name := parts[0]
 				// Extract plugin short name: protoc-gen-X → X
+				shortName := name
+				if strings.HasPrefix(name, "protoc-gen-") {
+					shortName = name[len("protoc-gen-"):]
+				}
+				if _, ok := cfg.plugins[shortName]; !ok {
+					cfg.plugins[shortName] = &pluginSpec{name: shortName}
+				}
+				cfg.plugins[shortName].path = parts[1]
+			}
+			continue
+		}
+		if arg == "--plugin" {
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("Missing value for flag: %s", arg)
+			}
+			i++
+			val := args[i]
+			parts := strings.SplitN(val, "=", 2)
+			if len(parts) == 2 {
+				name := parts[0]
 				shortName := name
 				if strings.HasPrefix(name, "protoc-gen-") {
 					shortName = name[len("protoc-gen-"):]
@@ -962,8 +990,18 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		if strings.HasPrefix(arg, "--error_format=") {
-			cfg.errorFormat = strings.TrimPrefix(arg, "--error_format=")
+		if strings.HasPrefix(arg, "--error_format=") || arg == "--error_format" {
+			var val string
+			if arg == "--error_format" {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("Missing value for flag: %s", arg)
+				}
+				i++
+				val = args[i]
+			} else {
+				val = strings.TrimPrefix(arg, "--error_format=")
+			}
+			cfg.errorFormat = val
 			if cfg.errorFormat != "gcc" && cfg.errorFormat != "msvs" {
 				return nil, fmt.Errorf("Unknown error format: %s", cfg.errorFormat)
 			}
@@ -989,8 +1027,20 @@ func parseArgs(args []string) (*config, error) {
 		if strings.HasPrefix(arg, "--descriptor_set_in=") {
 			continue
 		}
+		if arg == "--descriptor_set_in" {
+			if i+1 < len(args) {
+				i++
+			}
+			continue
+		}
 
 		if strings.HasPrefix(arg, "--encode=") || strings.HasPrefix(arg, "--decode=") {
+			continue
+		}
+		if arg == "--encode" || arg == "--decode" {
+			if i+1 < len(args) {
+				i++
+			}
 			continue
 		}
 
@@ -1017,8 +1067,20 @@ func parseArgs(args []string) (*config, error) {
 		if strings.HasPrefix(arg, "--direct_dependencies=") {
 			continue
 		}
+		if arg == "--direct_dependencies" {
+			if i+1 < len(args) {
+				i++
+			}
+			continue
+		}
 
 		if strings.HasPrefix(arg, "--option_dependencies=") {
+			continue
+		}
+		if arg == "--option_dependencies" {
+			if i+1 < len(args) {
+				i++
+			}
 			continue
 		}
 
