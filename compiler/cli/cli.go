@@ -1467,6 +1467,14 @@ func parseArgs(args []string) (*config, error) {
 			}
 			continue
 		}
+		if arg == "--proto_path" {
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("Missing value for flag: %s", arg)
+			}
+			i++
+			cfg.protoPaths = append(cfg.protoPaths, args[i])
+			continue
+		}
 
 		if strings.HasPrefix(arg, "-I") {
 			path := arg[2:]
@@ -1515,6 +1523,26 @@ func parseArgs(args []string) (*config, error) {
 			}
 			continue
 		}
+		if arg == "--plugin" {
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("Missing value for flag: %s", arg)
+			}
+			i++
+			val := args[i]
+			parts := strings.SplitN(val, "=", 2)
+			if len(parts) == 2 {
+				name := parts[0]
+				shortName := name
+				if strings.HasPrefix(name, "protoc-gen-") {
+					shortName = name[len("protoc-gen-"):]
+				}
+				if _, ok := cfg.plugins[shortName]; !ok {
+					cfg.plugins[shortName] = &pluginSpec{name: shortName}
+				}
+				cfg.plugins[shortName].path = parts[1]
+			}
+			continue
+		}
 
 		if strings.HasPrefix(arg, "--descriptor_set_out=") || arg == "--descriptor_set_out" {
 			if cfg.descriptorSetOut != "" {
@@ -1545,6 +1573,14 @@ func parseArgs(args []string) (*config, error) {
 			cfg.descriptorSetOut = val
 			continue
 		}
+		if arg == "--descriptor_set_out" {
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("Missing value for flag: %s", arg)
+			}
+			i++
+			cfg.descriptorSetOut = args[i]
+			continue
+		}
 
 		if arg == "--include_imports" {
 			cfg.includeImports = true
@@ -1556,8 +1592,18 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		if strings.HasPrefix(arg, "--error_format=") {
-			cfg.errorFormat = strings.TrimPrefix(arg, "--error_format=")
+		if strings.HasPrefix(arg, "--error_format=") || arg == "--error_format" {
+			var val string
+			if arg == "--error_format" {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("Missing value for flag: %s", arg)
+				}
+				i++
+				val = args[i]
+			} else {
+				val = strings.TrimPrefix(arg, "--error_format=")
+			}
+			cfg.errorFormat = val
 			if cfg.errorFormat != "gcc" && cfg.errorFormat != "msvs" {
 				return nil, fmt.Errorf("Unknown error format: %s", cfg.errorFormat)
 			}
@@ -1608,6 +1654,12 @@ func parseArgs(args []string) (*config, error) {
 				return cfg, fmt.Errorf("--descriptor_set_in may only be passed once. To specify multiple descriptor sets, pass them all as a single parameter separated by ':'.")
 			}
 			cfg.descriptorSetIn = arg[len("--descriptor_set_in="):]
+			continue
+		}
+		if arg == "--descriptor_set_in" {
+			if i+1 < len(args) {
+				i++
+			}
 			continue
 		}
 
@@ -1665,6 +1717,12 @@ func parseArgs(args []string) (*config, error) {
 			}
 			continue
 		}
+		if arg == "--encode" || arg == "--decode" {
+			if i+1 < len(args) {
+				i++
+			}
+			continue
+		}
 
 		if arg == "--decode_raw" {
 			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
@@ -1696,6 +1754,12 @@ func parseArgs(args []string) (*config, error) {
 			if i+1 < len(args) {
 				i++
 				cfg.dependencyOut = args[i]
+			}
+			continue
+		}
+		if arg == "--dependency_out" {
+			if i+1 < len(args) {
+				i++
 			}
 			continue
 		}
@@ -1736,12 +1800,20 @@ func parseArgs(args []string) (*config, error) {
 			}
 			continue
 		}
+		if arg == "--direct_dependencies" {
+			if i+1 < len(args) {
+				i++
+			}
+			continue
+		}
 
 		if strings.HasPrefix(arg, "--option_dependencies=") {
 			continue
 		}
 		if arg == "--option_dependencies" {
-			i++
+			if i+1 < len(args) {
+				i++
+			}
 			continue
 		}
 
@@ -1750,48 +1822,72 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		// --X_out=DIR or --X_out=PARAM:DIR
-		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "_out=") {
+		// --X_out=DIR or --X_out DIR
+		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "_out") {
 			withoutDashes := arg[2:]
-			eqIdx := strings.Index(withoutDashes, "_out=")
-			pluginName := withoutDashes[:eqIdx]
-			outputDir := withoutDashes[eqIdx+5:]
-			if _, ok := cfg.plugins[pluginName]; !ok {
-				cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
-			}
-			// Split at last colon: PARAM:DIR
-			if colonIdx := strings.LastIndex(outputDir, ":"); colonIdx >= 0 {
-				colonParam := outputDir[:colonIdx]
-				outputDir = outputDir[colonIdx+1:]
-				if cfg.plugins[pluginName].parameter != "" {
-					cfg.plugins[pluginName].parameter += "," + colonParam
-				} else {
-					cfg.plugins[pluginName].parameter = colonParam
+			if eqIdx := strings.Index(withoutDashes, "_out="); eqIdx >= 0 {
+				pluginName := withoutDashes[:eqIdx]
+				outputDir := withoutDashes[eqIdx+5:]
+				if _, ok := cfg.plugins[pluginName]; !ok {
+					cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
 				}
+				cfg.plugins[pluginName].outputDir = outputDir
+				if cfg.plugins[pluginName].path == "" {
+					cfg.plugins[pluginName].path = "protoc-gen-" + pluginName
+				}
+				continue
 			}
-			cfg.plugins[pluginName].outputDir = outputDir
-			// If no explicit plugin path, assume protoc-gen-X is on PATH
-			if cfg.plugins[pluginName].path == "" {
-				cfg.plugins[pluginName].path = "protoc-gen-" + pluginName
+			if strings.HasSuffix(withoutDashes, "_out") {
+				pluginName := withoutDashes[:len(withoutDashes)-4]
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("Missing value for flag: %s", arg)
+				}
+				i++
+				outputDir := args[i]
+				if _, ok := cfg.plugins[pluginName]; !ok {
+					cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
+				}
+				cfg.plugins[pluginName].outputDir = outputDir
+				if cfg.plugins[pluginName].path == "" {
+					cfg.plugins[pluginName].path = "protoc-gen-" + pluginName
+				}
+				continue
 			}
-			continue
 		}
 
-		// --X_opt=PARAM
-		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "_opt=") {
+		// --X_opt=PARAM or --X_opt PARAM
+		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "_opt") {
 			withoutDashes := arg[2:]
-			eqIdx := strings.Index(withoutDashes, "_opt=")
-			pluginName := withoutDashes[:eqIdx]
-			param := withoutDashes[eqIdx+5:]
-			if _, ok := cfg.plugins[pluginName]; !ok {
-				cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
+			if eqIdx := strings.Index(withoutDashes, "_opt="); eqIdx >= 0 {
+				pluginName := withoutDashes[:eqIdx]
+				param := withoutDashes[eqIdx+5:]
+				if _, ok := cfg.plugins[pluginName]; !ok {
+					cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
+				}
+				if cfg.plugins[pluginName].parameter != "" {
+					cfg.plugins[pluginName].parameter += "," + param
+				} else {
+					cfg.plugins[pluginName].parameter = param
+				}
+				continue
 			}
-			if cfg.plugins[pluginName].parameter != "" {
-				cfg.plugins[pluginName].parameter += "," + param
-			} else {
-				cfg.plugins[pluginName].parameter = param
+			if strings.HasSuffix(withoutDashes, "_opt") {
+				pluginName := withoutDashes[:len(withoutDashes)-4]
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("Missing value for flag: %s", arg)
+				}
+				i++
+				param := args[i]
+				if _, ok := cfg.plugins[pluginName]; !ok {
+					cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
+				}
+				if cfg.plugins[pluginName].parameter != "" {
+					cfg.plugins[pluginName].parameter += "," + param
+				} else {
+					cfg.plugins[pluginName].parameter = param
+				}
+				continue
 			}
-			continue
 		}
 
 		if strings.HasPrefix(arg, "-") {
