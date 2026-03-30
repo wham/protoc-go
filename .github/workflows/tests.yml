@@ -1,0 +1,27 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Install protoc
+        run: |
+          PROTOC_VERSION=29.3
+          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip" -o protoc.zip
+          unzip -q protoc.zip -d /tmp/protoc-install
+          echo "/tmp/protoc-install/bin" >> "$GITHUB_PATH"
+
+      - name: Run tests
+        run: scripts/test --summary
