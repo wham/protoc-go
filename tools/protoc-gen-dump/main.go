@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -39,10 +40,15 @@ func run() error {
 		return fmt.Errorf("unmarshaling CodeGeneratorRequest: %w", err)
 	}
 
-	// Write to the output directory specified by the parameter
+	// Write to the output directory specified by the parameter.
+	// When colon syntax is used (--dump_out=PARAM:DIR) with --dump_opt=DIR,
+	// the parameter becomes "PARAM,DIR". Use the last comma-separated value
+	// as the output directory since that's the --dump_opt value.
 	outputDir := req.GetParameter()
 	if outputDir == "" {
 		outputDir = "."
+	} else if idx := strings.LastIndex(outputDir, ","); idx >= 0 {
+		outputDir = outputDir[idx+1:]
 	}
 
 	// Marshal to deterministic JSON for diffing (includes original parameter for debugging)

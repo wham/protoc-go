@@ -650,7 +650,7 @@ run_cli_test() {
 
   # Compare stderr (normalized; strip GLOG prefixes from C++ protobuf LOG lines)
   local cpp_stderr go_stderr
-  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/^[EIWF][0-9][0-9][0-9][0-9] [0-9:.]* [0-9]* [^ ]*] //' | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/^[EIWF][0-9][0-9][0-9][0-9] [0-9:.]* *[0-9]* [^ ]*] //' | sed 's/[[:space:]]*$//' | sed '/^$/d')
   go_stderr=$(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
 
   if [ "$cpp_stderr" != "$go_stderr" ]; then
@@ -658,7 +658,7 @@ run_cli_test() {
     {
       echo "stderr mismatch (exit code=$cpp_exit)"
       diff -u \
-        <(cat "$result_dir/cpp_stderr.txt" | sed 's/^[EIWF][0-9][0-9][0-9][0-9] [0-9:.]* [0-9]* [^ ]*] //' | sed 's/[[:space:]]*$//') \
+        <(cat "$result_dir/cpp_stderr.txt" | sed 's/^[EIWF][0-9][0-9][0-9][0-9] [0-9:.]* *[0-9]* [^ ]*] //' | sed 's/[[:space:]]*$//') \
         <(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//') \
         2>&1 || true
     } > "$failure_file"
@@ -1082,7 +1082,7 @@ run_decode_test() {
   fi
 
   local cpp_stderr go_stderr
-  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/^[EIWF][0-9][0-9][0-9][0-9] [0-9:.]* [0-9]* [^ ]*] //' | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/^[EIWF][0-9][0-9][0-9][0-9] [0-9:.]* *[0-9]* [^ ]*] //' | sed 's/[[:space:]]*$//' | sed '/^$/d')
   go_stderr=$(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
 
   if [ "$cpp_stderr" != "$go_stderr" ]; then
