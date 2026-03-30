@@ -1,0 +1,12 @@
+syntax = "proto2";
+package targtest;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FieldOptions {
+  optional string msg_only_opt = 50001 [targets = TARGET_TYPE_MESSAGE];
+}
+
+message Foo {
+  optional int32 x = 1 [(msg_only_opt) = "hello"];
+}

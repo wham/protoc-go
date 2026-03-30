@@ -1,0 +1,20 @@
+syntax = "proto2";
+
+package optorder;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional string label_z = 50003;
+  optional int32 priority_a = 50001;
+  optional bool active_m = 50002;
+}
+
+// Set options in non-field-number order
+option (label_z) = "hello";
+option (priority_a) = 42;
+option (active_m) = true;
+
+message Dummy {
+  optional int32 id = 1;
+}

@@ -1,0 +1,6 @@
+syntax = "proto3";
+package encnan;
+message Sample {
+  double dval = 1;
+  string label = 2;
+}

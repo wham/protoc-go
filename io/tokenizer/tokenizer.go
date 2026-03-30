@@ -79,15 +79,35 @@ func (t *Tokenizer) tokenize() {
 		ch := t.input[t.pos]
 		t.comments = append(t.comments, cd)
 
+		// Check for control characters (null byte and unprintable bytes 1-31
+		// excluding whitespace chars that are already consumed by collectComments).
+		if isControlChar(ch) {
+			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Invalid control characters encountered in text."})
+			t.advance()
+			for t.pos < len(t.input) && isControlChar(t.input[t.pos]) {
+				t.advance()
+			}
+			continue
+		}
+
 		if ch == '"' || ch == '\'' {
 			t.readString()
 		} else if ch >= '0' && ch <= '9' {
 			t.readNumber()
+			if t.pos < len(t.input) && isIdentStart(t.input[t.pos]) {
+				t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Need space between number and identifier."})
+			}
 		} else if ch == '.' && t.pos+1 < len(t.input) && t.input[t.pos+1] >= '0' && t.input[t.pos+1] <= '9' {
 			t.readFloatStartingWithDot()
+			if t.pos < len(t.input) && isIdentStart(t.input[t.pos]) {
+				t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Need space between number and identifier."})
+			}
 		} else if isIdentStart(ch) {
 			t.readIdent()
 		} else {
+			if ch&0x80 != 0 {
+				t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: fmt.Sprintf("Interpreting non ascii codepoint %d.", ch)})
+			}
 			t.tokens = append(t.tokens, Token{Type: TokenSymbol, Value: string(ch), Line: t.line, Column: t.col})
 			t.advance()
 		}
@@ -117,7 +137,7 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 	// Phase 1: Check for trailing comment on same line as previous token
 	if canAttachToPrev {
 		// Skip non-newline whitespace
-		for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r') {
+		for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r' || t.input[t.pos] == '\v' || t.input[t.pos] == '\f') {
 			t.advance()
 		}
 		if t.pos >= len(t.input) {
@@ -139,15 +159,17 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 			result.PrevTrailing = text
 			canAttachToPrev = false
 			// Consume rest of line
-			for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r') {
+			for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r' || t.input[t.pos] == '\v' || t.input[t.pos] == '\f') {
 				t.advance()
 			}
 			if t.pos < len(t.input) && t.input[t.pos] == '\n' {
 				t.advance()
 			}
 		} else if t.input[t.pos] == '\n' {
+			// C++ protoc: after consuming the newline, can_attach_to_prev_
+			// stays true. A comment on the next line (before a blank line)
+			// is still considered trailing of the previous token.
 			t.advance()
-			canAttachToPrev = false
 		} else {
 			// Next token on same line, no comments
 			return result
@@ -157,7 +179,7 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 	// Phase 2: Collect remaining comments, detect blank lines for detachment
 	for t.pos < len(t.input) {
 		// Skip non-newline whitespace
-		for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r') {
+		for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r' || t.input[t.pos] == '\v' || t.input[t.pos] == '\f') {
 			t.advance()
 		}
 		if t.pos >= len(t.input) {
@@ -191,7 +213,7 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 			hasComment = true
 			isLineComment = false
 			// Consume trailing whitespace and newline
-			for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r') {
+			for t.pos < len(t.input) && (t.input[t.pos] == ' ' || t.input[t.pos] == '\t' || t.input[t.pos] == '\r' || t.input[t.pos] == '\v' || t.input[t.pos] == '\f') {
 				t.advance()
 			}
 			if t.pos < len(t.input) && t.input[t.pos] == '\n' {
@@ -202,6 +224,7 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 			if hasComment {
 				t.flushComment(&result, &commentBuf, canAttachToPrev)
 				canAttachToPrev = false
+				hasComment = false
 			}
 			canAttachToPrev = false
 			t.advance()
@@ -211,9 +234,19 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 		}
 	}
 
-	// Whatever remains in the buffer is the leading comment
+	// C++ protoc flushes the comment buffer when the next token is }, ], or )
+	// (end of scope). The flushed comment becomes trailing (if canAttachToPrev)
+	// or detached (if not). Otherwise it becomes leading of the next token.
 	if hasComment {
-		result.Leading = commentBuf.String()
+		if t.pos < len(t.input) && (t.input[t.pos] == '}' || t.input[t.pos] == ']' || t.input[t.pos] == ')') {
+			if canAttachToPrev {
+				result.PrevTrailing = commentBuf.String()
+			} else {
+				result.Detached = append(result.Detached, commentBuf.String())
+			}
+		} else {
+			result.Leading = commentBuf.String()
+		}
 	}
 
 	return result
@@ -232,14 +265,16 @@ func (t *Tokenizer) flushComment(result *TokenComments, buf *strings.Builder, ca
 // readLineCommentText reads text after "//" until end of line, returns text with trailing \n.
 func (t *Tokenizer) readLineCommentText() string {
 	start := t.pos
-	for t.pos < len(t.input) && t.input[t.pos] != '\n' {
+	for t.pos < len(t.input) && t.input[t.pos] != '\n' && t.input[t.pos] != 0 {
 		t.advance()
 	}
 	text := t.input[start:t.pos]
-	if t.pos < len(t.input) {
+	if t.pos < len(t.input) && t.input[t.pos] == '\n' {
 		t.advance() // skip \n
+		return text + "\n"
 	}
-	return text + "\n"
+	// EOF or null byte without trailing newline
+	return text
 }
 
 // readBlockCommentText reads text between /* and */, returns content without delimiters.
@@ -286,6 +321,22 @@ func (t *Tokenizer) readBlockCommentText(startLine, startCol int) string {
 			continue
 		}
 
+		if ch == '/' && t.pos+1 < len(t.input) && t.input[t.pos+1] == '*' {
+			// Nested block comment — consume '/' but not '*' (so '*/' can end comment).
+			t.advance()
+			t.Errors = append(t.Errors, TokenError{
+				Line: t.line, Column: t.col,
+				Message: `"/*" inside block comment.  Block comments cannot be nested.`,
+			})
+			buf.WriteByte(ch)
+			continue
+		}
+
+		if ch == 0 {
+			// Null byte terminates block comment (same as EOF in C++ protoc)
+			break
+		}
+
 		buf.WriteByte(ch)
 		t.advance()
 	}
@@ -320,6 +371,10 @@ func (t *Tokenizer) readString() {
 	t.advance() // skip opening quote
 	var sb strings.Builder
 	for t.pos < len(t.input) && t.input[t.pos] != quote {
+		if t.input[t.pos] == 0 {
+			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Unexpected end of string."})
+			break
+		}
 		if t.input[t.pos] == '\n' {
 			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Multiline strings are not allowed. Did you miss a \"?."})
 			break
@@ -394,11 +449,27 @@ func (t *Tokenizer) readString() {
 					appendUTF8(&sb, cp)
 					continue
 				case 'U':
-					// Unicode escape: \UNNNNNNNN (exactly 8 hex digits)
+					// Unicode escape: \UNNNNNNNN (exactly 8 hex digits, up to 10ffff)
+					// C++ validates digit-by-digit: 00[01]XXXXX, error at first failing digit
 					t.advance()
+					hexStart := t.col
 					cp, cnt := t.readUnicodeHex(8)
 					if cnt < 8 {
 						t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Expected eight hex digits for \\U escape sequence."})
+						continue
+					}
+					if cp > 0x1FFFFF {
+						errCol := hexStart
+						d0 := (cp >> 28) & 0xF
+						d1 := (cp >> 24) & 0xF
+						if d0 != 0 {
+							errCol = hexStart
+						} else if d1 != 0 {
+							errCol = hexStart + 1
+						} else {
+							errCol = hexStart + 2
+						}
+						t.Errors = append(t.Errors, TokenError{Line: t.line, Column: errCol, Message: "Expected eight hex digits up to 10ffff for \\U escape sequence"})
 						continue
 					}
 					appendUTF8(&sb, cp)
@@ -471,8 +542,12 @@ func (t *Tokenizer) readNumber() {
 			if t.pos < len(t.input) && (t.input[t.pos] == '+' || t.input[t.pos] == '-') {
 				t.advance()
 			}
+			expStart := t.pos
 			for t.pos < len(t.input) && t.input[t.pos] >= '0' && t.input[t.pos] <= '9' {
 				t.advance()
+			}
+			if t.pos == expStart {
+				t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: `"e" must be followed by exponent.`})
 			}
 		}
 	}
@@ -498,8 +573,12 @@ func (t *Tokenizer) readFloatStartingWithDot() {
 		if t.pos < len(t.input) && (t.input[t.pos] == '+' || t.input[t.pos] == '-') {
 			t.advance()
 		}
+		expStart := t.pos
 		for t.pos < len(t.input) && t.input[t.pos] >= '0' && t.input[t.pos] <= '9' {
 			t.advance()
+		}
+		if t.pos == expStart {
+			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: `"e" must be followed by exponent.`})
 		}
 	}
 	t.tokens = append(t.tokens, Token{Type: TokenFloat, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
@@ -593,6 +672,19 @@ func (t *Tokenizer) ExpectString() (Token, error) {
 	return tok, nil
 }
 
+// isControlChar returns true for null byte and unprintable ASCII control characters
+// (bytes 1-31) excluding whitespace characters (tab, newline, carriage return,
+// vertical tab, form feed) which are handled elsewhere.
+func isControlChar(ch byte) bool {
+	if ch == 0 {
+		return true
+	}
+	if ch < ' ' && ch != '\t' && ch != '\n' && ch != '\r' && ch != '\v' && ch != '\f' {
+		return true
+	}
+	return false
+}
+
 func isIdentStart(ch byte) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
 }
@@ -655,7 +747,13 @@ func assembleUTF16(head, trail uint32) uint32 {
 }
 
 func appendUTF8(sb *strings.Builder, cp uint32) {
-	if cp <= 0x10FFFF {
+	if cp >= 0xD800 && cp <= 0xDFFF {
+		// Surrogate codepoints: Go's utf8.EncodeRune replaces these with U+FFFD,
+		// but C++ protoc encodes them as raw UTF-8 bytes. Manually encode.
+		sb.WriteByte(byte(0xE0 | (cp >> 12)))
+		sb.WriteByte(byte(0x80 | ((cp >> 6) & 0x3F)))
+		sb.WriteByte(byte(0x80 | (cp & 0x3F)))
+	} else if cp <= 0x10FFFF {
 		var buf [4]byte
 		n := utf8.EncodeRune(buf[:], rune(cp))
 		sb.Write(buf[:n])

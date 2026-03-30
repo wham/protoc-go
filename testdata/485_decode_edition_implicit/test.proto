@@ -1,0 +1,12 @@
+edition = "2023";
+
+package decodeedimplicit;
+
+option features.field_presence = IMPLICIT;
+
+message Record {
+  int32 id = 1;
+  string name = 2;
+  bool flag = 3;
+  string label = 4;
+}

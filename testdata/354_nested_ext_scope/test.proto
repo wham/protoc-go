@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package scope_test;
+
+import "google/protobuf/descriptor.proto";
+
+message Container {
+  extend google.protobuf.FileOptions {
+    optional int32 nested_opt = 50001;
+  }
+}
+
+// C++ requires (Container.nested_opt) for nested extensions.
+// Using bare name (nested_opt) should fail scope resolution in C++.
+option (nested_opt) = 42;

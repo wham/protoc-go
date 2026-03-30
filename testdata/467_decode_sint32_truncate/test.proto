@@ -1,0 +1,7 @@
+syntax = "proto3";
+package decodesint;
+
+message Record {
+  sint32 value = 1;
+  string label = 2;
+}

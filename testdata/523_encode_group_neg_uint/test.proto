@@ -1,0 +1,10 @@
+syntax = "proto2";
+
+package encgroupneg;
+
+message Container {
+  required group Info = 1 {
+    optional uint32 count = 2;
+    optional string label = 3;
+  }
+}

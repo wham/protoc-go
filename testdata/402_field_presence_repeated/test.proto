@@ -1,0 +1,7 @@
+edition = "2023";
+
+package fpresence;
+
+message Container {
+  repeated int32 values = 1 [features.field_presence = EXPLICIT];
+}

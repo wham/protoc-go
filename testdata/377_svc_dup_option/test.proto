@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package svcdup;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.ServiceOptions {
+  optional int32 svc_tag = 50001;
+}
+
+message Ping {}
+message Pong {}
+
+service Greeter {
+  option (svc_tag) = 42;
+  option (svc_tag) = 99;
+
+  rpc SayHello (Ping) returns (Pong);
+}

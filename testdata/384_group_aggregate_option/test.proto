@@ -1,0 +1,30 @@
+syntax = "proto2";
+
+package test;
+
+import "google/protobuf/descriptor.proto";
+
+message Config {
+  optional group Inner = 1 {
+    optional string name = 1;
+    optional int32 value = 2;
+  }
+}
+
+extend google.protobuf.FileOptions {
+  optional Config cfg = 50001;
+}
+
+// In text format (used by C++ protoc for aggregate options), group fields
+// are referenced by their MESSAGE TYPE NAME (capitalized), not the lowercased
+// field name. Go looks up by field name "inner" but the source says "Inner".
+option (cfg) = {
+  Inner {
+    name: "hello"
+    value: 42
+  }
+};
+
+message Dummy {
+  optional int32 id = 1;
+}

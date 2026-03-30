@@ -1,0 +1,11 @@
+syntax = "proto3";
+package encmsgtypeerr;
+
+message Inner {
+  string val = 1;
+}
+
+message Record {
+  Inner inner = 1;
+  string label = 2;
+}

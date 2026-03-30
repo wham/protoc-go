@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package nanopt;
+
+extend google.protobuf.FileOptions {
+  optional double nan_val = 50001;
+}
+
+option (nan_val) = nan;
+
+message Placeholder {
+  optional string data = 1;
+}

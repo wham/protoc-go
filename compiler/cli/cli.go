@@ -1,23 +1,30 @@
 package cli
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
-	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/wham/protoc-go/compiler/importer"
 	"github.com/wham/protoc-go/compiler/parser"
 	"github.com/wham/protoc-go/compiler/plugin"
 	"github.com/wham/protoc-go/io/tokenizer"
+	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
 )
 
 const usageText = `Usage: protoc [OPTION] PROTO_FILES
@@ -126,6 +133,7 @@ Parse PROTO_FILES and generate output based on the options given:
                               quotes, wildcards, escapes, commands, etc.).
                               Each line corresponds to a single argument,
                               even if it contains spaces.`
+
 var noticesText = `Protoc uses the following open source libraries:
 
 Abseil
@@ -372,22 +380,59 @@ type pluginSpec struct {
 }
 
 type config struct {
-	protoPaths            []string
-	plugins               map[string]*pluginSpec
-	descriptorSetOut      string
-	includeImports        bool
-	includeSourceInfo     bool
-	printFreeFieldNumbers bool
-	decodeRaw             bool
-	notices               bool
-	errorFormat           string // "gcc" (default) or "msvs"
-	protoFiles            []string
+	protoPaths                      []string
+	protoPathMappings               []importer.Mapping
+	plugins                         map[string]*pluginSpec
+	descriptorSetOut                string
+	descriptorSetIn                 string
+	includeImports                  bool
+	includeSourceInfo               bool
+	printFreeFieldNumbers           bool
+	decodeRaw                       bool
+	decodeType                      string
+	encodeType                      string
+	deterministicOutput             bool
+	notices                         bool
+	errorFormat                     string // "gcc" (default) or "msvs"
+	protoFiles                      []string
+	directDependencies              map[string]bool
+	directDependenciesSet           bool
+	directDependenciesViolationMsg  string
+	fatalWarnings                   bool
+	retainOptions                   bool
+	dependencyOut                   string
 }
 
 // Run executes the protocol buffer compiler with the given command-line arguments.
 // This mirrors C++ CommandLineInterface::Run().
+func expandResponseFiles(args []string) ([]string, error) {
+	var expanded []string
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "@") {
+			filename := arg[1:]
+			data, err := os.ReadFile(filename)
+			if err != nil {
+				return nil, fmt.Errorf("Failed to open argument file: %s", filename)
+			}
+			lines := strings.Split(string(data), "\n")
+			for _, line := range lines {
+				if line != "" {
+					expanded = append(expanded, line)
+				}
+			}
+			continue
+		}
+		expanded = append(expanded, arg)
+	}
+	return expanded, nil
+}
+
 func Run(args []string) error {
-	cfg, err := parseArgs(args[1:]) // skip program name
+	expandedArgs, err := expandResponseFiles(args[1:])
+	if err != nil {
+		return err
+	}
+	cfg, err := parseArgs(expandedArgs) // skip program name
 	if err != nil {
 		return err
 	}
@@ -396,6 +441,31 @@ func Run(args []string) error {
 		// No args — print usage and exit successfully
 		fmt.Println(usageText)
 		return nil
+	}
+
+	// Mutual exclusion: --encode and --decode cannot both be specified
+	codecCount := 0
+	if cfg.decodeRaw {
+		codecCount++
+	}
+	if cfg.decodeType != "" {
+		codecCount++
+	}
+	if cfg.encodeType != "" {
+		codecCount++
+	}
+	if codecCount > 1 {
+		return fmt.Errorf("Only one of --encode and --decode can be specified.")
+	}
+
+	// Codec + descriptor_set_out mutual exclusion (must be before --decode_raw early exit)
+	if (cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers) && cfg.descriptorSetOut != "" {
+		return fmt.Errorf("Cannot use --encode or --decode and generate descriptors at the same time.")
+	}
+
+	// Codec + plugin mutual exclusion (must be before --decode_raw early exit)
+	if (cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers) && len(cfg.plugins) > 0 {
+		return fmt.Errorf("Cannot use --encode, --decode or print .proto info and generate code at the same time.")
 	}
 
 	// --decode_raw reads binary proto from stdin and decodes as raw wire format
@@ -421,27 +491,47 @@ func Run(args []string) error {
 	}
 
 	// Validate we have input files
+	// When --decode or --encode is used with --descriptor_set_in, proto files
+	// are not required (types come from the descriptor set).
 	if len(cfg.protoFiles) == 0 {
-		return fmt.Errorf("Missing input file.")
+		if cfg.descriptorSetIn == "" || (cfg.decodeType == "" && cfg.encodeType == "") {
+			return fmt.Errorf("Missing input file.")
+		}
 	}
 
 	// Validate we have output directives
-	if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers {
+	if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers && cfg.decodeType == "" && cfg.encodeType == "" {
 		return fmt.Errorf("Missing output directives.")
 	}
 
+	if cfg.deterministicOutput && cfg.encodeType == "" {
+		return fmt.Errorf("Can only use --deterministic_output with --encode.")
+	}
+
 	// Default proto path
-	if len(cfg.protoPaths) == 0 {
+	if len(cfg.protoPaths) == 0 && len(cfg.protoPathMappings) == 0 {
 		cfg.protoPaths = []string{"."}
 	}
 
 	// Build source tree
-	srcTree := &importer.SourceTree{Roots: cfg.protoPaths}
+	srcTree := &importer.SourceTree{Roots: cfg.protoPaths, Mappings: cfg.protoPathMappings}
 
 	// Validate proto paths
+	hadWarnings := false
 	warnings := srcTree.ValidateRoots()
 	for _, w := range warnings {
 		fmt.Fprintln(os.Stderr, w)
+		hadWarnings = true
+	}
+
+	if cfg.includeImports && cfg.descriptorSetOut == "" {
+		fmt.Fprintln(os.Stderr, "--include_imports only makes sense when combined with --descriptor_set_out.")
+	}
+	if cfg.includeSourceInfo && cfg.descriptorSetOut == "" {
+		fmt.Fprintln(os.Stderr, "--include_source_info only makes sense when combined with --descriptor_set_out.")
+	}
+	if cfg.retainOptions && cfg.descriptorSetOut == "" {
+		fmt.Fprintln(os.Stderr, "--retain_options only makes sense when combined with --descriptor_set_out.")
 	}
 
 	// Make proto files relative to source tree
@@ -461,6 +551,27 @@ func Run(args []string) error {
 	var orderedFiles []string
 	var collectErrors []string
 
+	// Load --descriptor_set_in descriptors (colon-delimited list of files)
+	if cfg.descriptorSetIn != "" {
+		for _, dsFile := range strings.Split(cfg.descriptorSetIn, ":") {
+			data, err := os.ReadFile(dsFile)
+			if err != nil {
+				return fmt.Errorf("%s: %s", dsFile, err.Error())
+			}
+			var fds descriptorpb.FileDescriptorSet
+			if err := proto.Unmarshal(data, &fds); err != nil {
+				return fmt.Errorf("%s: Unable to parse.", dsFile)
+			}
+			for _, fd := range fds.GetFile() {
+				if _, exists := parsed[fd.GetName()]; exists {
+					continue
+				}
+				parsed[fd.GetName()] = fd
+				orderedFiles = append(orderedFiles, fd.GetName())
+			}
+		}
+	}
+
 	for _, f := range relFiles {
 		ok, err := parseRecursive(f, srcTree, parsed, explicitJsonNames, parseResults, &orderedFiles, nil, &collectErrors)
 		if err != nil {
@@ -476,6 +587,30 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(collectErrors, "\n"))
 	}
 
+	// Enforce --direct_dependencies
+	if cfg.directDependenciesSet {
+		violationMsg := cfg.directDependenciesViolationMsg
+		if violationMsg == "" {
+			violationMsg = "File is imported but not declared in --direct_dependencies: %s"
+		}
+		var depErrors []string
+		for _, f := range relFiles {
+			fd := parsed[f]
+			if fd == nil {
+				continue
+			}
+			for _, dep := range fd.GetDependency() {
+				if !cfg.directDependencies[dep] {
+					msg := strings.ReplaceAll(violationMsg, "%s", dep)
+					depErrors = append(depErrors, fmt.Sprintf("%s: %s", f, msg))
+				}
+			}
+		}
+		if len(depErrors) > 0 {
+			return fmt.Errorf("%s", strings.Join(depErrors, "\n"))
+		}
+	}
+
 	// Resolve type references across all files (must happen after all files parsed)
 	var resolveErrors []string
 	for _, name := range orderedFiles {
@@ -489,7 +624,7 @@ func Run(args []string) error {
 	}
 
 	// Resolve custom options (parenthesized extension options)
-	customOptErrors := resolveCustomFileOptions(orderedFiles, parsed, parseResults)
+	customOptErrors, subFieldFileOptNums := resolveCustomFileOptions(orderedFiles, parsed, parseResults)
 	if len(customOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customOptErrors = formatErrorsMSVS(customOptErrors, srcTree)
@@ -497,7 +632,7 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customOptErrors, "\n"))
 	}
 
-	customFieldOptErrors := resolveCustomFieldOptions(orderedFiles, parsed, parseResults)
+	customFieldOptErrors, subFieldFieldOptNums := resolveCustomFieldOptions(orderedFiles, parsed, parseResults)
 	if len(customFieldOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customFieldOptErrors = formatErrorsMSVS(customFieldOptErrors, srcTree)
@@ -505,7 +640,7 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customFieldOptErrors, "\n"))
 	}
 
-	customMsgOptErrors := resolveCustomMessageOptions(orderedFiles, parsed, parseResults)
+	customMsgOptErrors, subFieldMsgOptNums := resolveCustomMessageOptions(orderedFiles, parsed, parseResults)
 	if len(customMsgOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customMsgOptErrors = formatErrorsMSVS(customMsgOptErrors, srcTree)
@@ -513,7 +648,7 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customMsgOptErrors, "\n"))
 	}
 
-	customSvcOptErrors := resolveCustomServiceOptions(orderedFiles, parsed, parseResults)
+	customSvcOptErrors, subFieldSvcOptNums := resolveCustomServiceOptions(orderedFiles, parsed, parseResults)
 	if len(customSvcOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customSvcOptErrors = formatErrorsMSVS(customSvcOptErrors, srcTree)
@@ -521,7 +656,7 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customSvcOptErrors, "\n"))
 	}
 
-	customMethodOptErrors := resolveCustomMethodOptions(orderedFiles, parsed, parseResults)
+	customMethodOptErrors, subFieldMethodOptNums := resolveCustomMethodOptions(orderedFiles, parsed, parseResults)
 	if len(customMethodOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customMethodOptErrors = formatErrorsMSVS(customMethodOptErrors, srcTree)
@@ -529,7 +664,7 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customMethodOptErrors, "\n"))
 	}
 
-	customEnumOptErrors := resolveCustomEnumOptions(orderedFiles, parsed, parseResults)
+	customEnumOptErrors, subFieldEnumOptNums := resolveCustomEnumOptions(orderedFiles, parsed, parseResults)
 	if len(customEnumOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customEnumOptErrors = formatErrorsMSVS(customEnumOptErrors, srcTree)
@@ -537,7 +672,7 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customEnumOptErrors, "\n"))
 	}
 
-	customEnumValOptErrors := resolveCustomEnumValueOptions(orderedFiles, parsed, parseResults)
+	customEnumValOptErrors, subFieldEnumValOptNums := resolveCustomEnumValueOptions(orderedFiles, parsed, parseResults)
 	if len(customEnumValOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customEnumValOptErrors = formatErrorsMSVS(customEnumValOptErrors, srcTree)
@@ -545,7 +680,7 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customEnumValOptErrors, "\n"))
 	}
 
-	customOneofOptErrors := resolveCustomOneofOptions(orderedFiles, parsed, parseResults)
+	customOneofOptErrors, subFieldOneofOptNums := resolveCustomOneofOptions(orderedFiles, parsed, parseResults)
 	if len(customOneofOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customOneofOptErrors = formatErrorsMSVS(customOneofOptErrors, srcTree)
@@ -553,7 +688,7 @@ func Run(args []string) error {
 		return fmt.Errorf("%s", strings.Join(customOneofOptErrors, "\n"))
 	}
 
-	customExtRangeOptErrors := resolveCustomExtRangeOptions(orderedFiles, parsed, parseResults)
+	customExtRangeOptErrors, subFieldExtRangeOptNums := resolveCustomExtRangeOptions(orderedFiles, parsed, parseResults)
 	if len(customExtRangeOptErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			customExtRangeOptErrors = formatErrorsMSVS(customExtRangeOptErrors, srcTree)
@@ -573,11 +708,13 @@ func Run(args []string) error {
 	buildErrors = append(buildErrors, validateExtRangePositive(orderedFiles, parsed, fieldHints)...)
 	buildErrors = append(buildErrors, validatePositiveFieldNumbers(orderedFiles, parsed, fieldHints)...)
 	buildErrors = append(buildErrors, validateMaxFieldNumbers(orderedFiles, parsed, fieldHints)...)
+	buildErrors = append(buildErrors, validateExtRangeMax(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateReservedFieldNumbers(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateDuplicateFieldNumbers(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateReservedNumberConflicts(orderedFiles, parsed, fieldHints)...)
 	buildErrors = append(buildErrors, validateDuplicateReservedNames(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateReservedNameConflicts(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateDuplicateFieldNumbers(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateEmptyOneofs(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateEmptyEnums(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateDuplicateEnumValues(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateExtensionFieldConflicts(orderedFiles, parsed, fieldHints)...)
@@ -589,10 +726,16 @@ func Run(args []string) error {
 	buildErrors = append(buildErrors, validateExtensionRangeOverlaps(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateExtensionReservedOverlaps(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateExtensionRanges(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateDuplicateExtensionNumbers(orderedFiles, parsed)...)
+	dupExtErrors, dupExtWarnings := validateDuplicateExtensionNumbers(orderedFiles, parsed)
+	buildErrors = append(buildErrors, dupExtErrors...)
+	for _, w := range dupExtWarnings {
+		fmt.Fprintln(os.Stderr, mapErrorFilename(w, srcTree))
+		hadWarnings = true
+	}
 	buildErrors = append(buildErrors, validateRequiredExtensions(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateExtensionJsonName(orderedFiles, parsed, explicitJsonNames)...)
 	buildErrors = append(buildErrors, validateMessageSetFields(orderedFiles, parsed)...)
+	buildErrors = append(buildErrors, validateMessageSetExtensions(orderedFiles, parsed)...)
 	if len(buildErrors) > 0 {
 		if cfg.errorFormat == "msvs" {
 			buildErrors = formatErrorsMSVS(buildErrors, srcTree)
@@ -603,7 +746,12 @@ func Run(args []string) error {
 	// Phase 2: Descriptor validation — only runs when no build errors (C++ had_errors_ gate)
 	var valErrors []string
 	if len(dupNameErrs) == 0 {
-		valErrors = append(valErrors, validateJsonNameConflicts(orderedFiles, parsed, explicitJsonNames)...)
+		jsonErrs, jsonWarns := validateJsonNameConflicts(orderedFiles, parsed, explicitJsonNames)
+		valErrors = append(valErrors, jsonErrs...)
+		for _, w := range jsonWarns {
+			fmt.Fprintln(os.Stderr, mapErrorFilename(w, srcTree))
+			hadWarnings = true
+		}
 	}
 	valErrors = append(valErrors, validatePackedNonRepeated(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateLazyNonMessage(orderedFiles, parsed)...)
@@ -613,6 +761,16 @@ func Run(args []string) error {
 	valErrors = append(valErrors, validateEnumDefaultValues(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateProto3(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateEditionGroups(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateEnumPrefixConflict(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateEditionOpenEnumZero(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateFileLevelLegacyRequired(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateRepeatedFieldEncoding(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateFieldPresenceRepeated(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateFieldPresenceOneof(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateMessageEncodingScalar(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateFieldPresenceExtension(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateRequiredExtensionEditions(orderedFiles, parsed)...)
+	valErrors = append(valErrors, validateUtf8ValidationNonString(orderedFiles, parsed)...)
 	featEditionErrs := validateFeaturesEditions(orderedFiles, parsed)
 	valErrors = append(valErrors, featEditionErrs...)
 	if len(featEditionErrs) == 0 {
@@ -623,6 +781,16 @@ func Run(args []string) error {
 			valErrors = formatErrorsMSVS(valErrors, srcTree)
 		}
 		return fmt.Errorf("%s", strings.Join(valErrors, "\n"))
+	}
+
+	// Detect unused imports (warnings only, no errors)
+	unusedImportWarnings := detectUnusedImports(relFiles, orderedFiles, parsed, parseResults)
+	if cfg.errorFormat == "msvs" {
+		unusedImportWarnings = formatErrorsMSVS(unusedImportWarnings, srcTree)
+	}
+	for _, w := range unusedImportWarnings {
+		fmt.Fprintln(os.Stderr, mapErrorFilename(w, srcTree))
+		hadWarnings = true
 	}
 
 	// Handle --print_free_field_numbers mode
@@ -641,6 +809,19 @@ func Run(args []string) error {
 		return nil
 	}
 
+	// Handle --decode mode
+	if cfg.decodeType != "" {
+		return runDecode(cfg.decodeType, parsed, orderedFiles)
+	}
+
+	// Handle --encode mode
+	if cfg.encodeType != "" {
+		return runEncode(cfg.encodeType, parsed, orderedFiles, cfg.deterministicOutput)
+	}
+
+	// Collect source-retention extension field numbers (grouped by extendee type)
+	srcRetentionFields := collectSourceRetentionFields(orderedFiles, parsed)
+
 	// Build ordered list of FileDescriptorProtos (strip source-retention options only for source files)
 	relFileSet := make(map[string]bool)
 	for _, name := range relFiles {
@@ -651,12 +832,20 @@ func Run(args []string) error {
 	for _, name := range orderedFiles {
 		fd := parsed[name]
 		if relFileSet[name] {
-			fd = stripSourceRetention(fd)
+			fd = stripSourceRetention(fd, srcRetentionFields)
 		}
 		// If the file has sub-field custom options, clone and merge unknown fields
 		// so proto_file has merged entries (matching C++ protoc's linked descriptors)
 		if pr := parseResults[name]; pr != nil && hasSubFieldCustomOpts(pr) {
-			fd = cloneWithMergedExtUnknowns(fd)
+			fd = cloneWithMergedExtUnknowns(fd, subFieldFileOptNums[name], subFieldFieldOptNums[name], subFieldMsgOptNums[name], subFieldEnumOptNums[name], subFieldEnumValOptNums[name], subFieldSvcOptNums[name], subFieldMethodOptNums[name], subFieldOneofOptNums[name], subFieldExtRangeOptNums[name])
+		}
+		// Sort unknown fields by field number on Options (C++ proto_file order).
+		// Clone if fd still shares pointer with parsed to avoid modifying source_file_descriptors.
+		if hasOptionsUnknowns(fd) {
+			if fd == parsed[name] {
+				fd = proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
+			}
+			sortFDOptionsUnknownFields(fd)
 		}
 		protoFiles = append(protoFiles, fd)
 		strippedMap[name] = fd
@@ -667,9 +856,14 @@ func Run(args []string) error {
 		fds := &descriptorpb.FileDescriptorSet{}
 		if cfg.includeImports {
 			for _, name := range orderedFiles {
-				fd := strippedMap[name]
-				if !relFileSet[name] {
-					fd = stripSourceRetention(parsed[name])
+				var fd *descriptorpb.FileDescriptorProto
+				if cfg.retainOptions {
+					fd = parsed[name]
+				} else {
+					fd = strippedMap[name]
+					if !relFileSet[name] {
+						fd = stripSourceRetention(parsed[name], srcRetentionFields)
+					}
 				}
 				fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
 				if !cfg.includeSourceInfo {
@@ -680,7 +874,13 @@ func Run(args []string) error {
 		} else {
 			for _, name := range orderedFiles {
 				if relFileSet[name] {
-					fdCopy := proto.Clone(strippedMap[name]).(*descriptorpb.FileDescriptorProto)
+					var fd *descriptorpb.FileDescriptorProto
+					if cfg.retainOptions {
+						fd = parsed[name]
+					} else {
+						fd = strippedMap[name]
+					}
+					fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
 					if !cfg.includeSourceInfo {
 						fdCopy.SourceCodeInfo = nil
 					}
@@ -693,14 +893,15 @@ func Run(args []string) error {
 		if err != nil {
 			return fmt.Errorf("marshaling descriptor set: %w", err)
 		}
-		dir := filepath.Dir(cfg.descriptorSetOut)
-		if dir != "" && dir != "." {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return fmt.Errorf("creating output directory: %w", err)
-			}
+		if err := writeDescriptorSet(cfg.descriptorSetOut, data); err != nil {
+			return err
 		}
-		if err := os.WriteFile(cfg.descriptorSetOut, data, 0o644); err != nil {
-			return fmt.Errorf("writing descriptor set: %w", err)
+	}
+
+	// Handle dependency output
+	if cfg.dependencyOut != "" && cfg.descriptorSetOut != "" {
+		if err := writeDependencyOut(cfg.dependencyOut, cfg.descriptorSetOut, orderedFiles, srcTree); err != nil {
+			return err
 		}
 	}
 
@@ -722,6 +923,14 @@ func Run(args []string) error {
 
 		resp, err := plugin.RunPlugin(plug.path, req)
 		if err != nil {
+			var startErr *plugin.PluginStartError
+			var exitErr *plugin.PluginExitError
+			if errors.As(err, &startErr) {
+				return fmt.Errorf("--%s_out: protoc-gen-%s: Plugin failed with status code 1.", plug.name, plug.name)
+			}
+			if errors.As(err, &exitErr) {
+				return fmt.Errorf("--%s_out: protoc-gen-%s: Plugin failed with status code %d.", plug.name, plug.name, exitErr.ExitCode)
+			}
 			return err
 		}
 
@@ -734,7 +943,61 @@ func Run(args []string) error {
 		}
 	}
 
+	if cfg.fatalWarnings && hadWarnings {
+		return fmt.Errorf("")
+	}
+
 	return nil
+}
+
+// writeDescriptorSet writes the descriptor set file, matching C++ protoc error format.
+func writeDescriptorSet(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+	if err != nil {
+		if pe, ok := err.(*os.PathError); ok {
+			errMsg := pe.Err.Error()
+			if len(errMsg) > 0 {
+				errMsg = strings.ToUpper(errMsg[:1]) + errMsg[1:]
+			}
+			return fmt.Errorf("%s: %s", path, errMsg)
+		}
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write(data)
+	return err
+}
+
+func writeDependencyOut(depPath, target string, orderedFiles []string, srcTree *importer.SourceTree) error {
+	var buf strings.Builder
+	buf.WriteString(target)
+	buf.WriteString(":")
+	for i, name := range orderedFiles {
+		diskFile := name
+		if df, ok := srcTree.VirtualFileToDiskFile(name); ok {
+			diskFile = df
+		}
+		buf.WriteString(" ")
+		buf.WriteString(diskFile)
+		if i < len(orderedFiles)-1 {
+			buf.WriteString("\\\n")
+		}
+	}
+
+	f, err := os.OpenFile(depPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+	if err != nil {
+		if pe, ok := err.(*os.PathError); ok {
+			errMsg := pe.Err.Error()
+			if len(errMsg) > 0 {
+				errMsg = strings.ToUpper(errMsg[:1]) + errMsg[1:]
+			}
+			return fmt.Errorf("%s: %s", depPath, errMsg)
+		}
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write([]byte(buf.String()))
+	return err
 }
 
 func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, parseResults map[string]*parser.ParseResult, orderedFiles *[]string, importStack []string, collectErrors *[]string) (bool, error) {
@@ -767,11 +1030,15 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 				nextFile = filename // self-import
 			}
 			line, col := findImportLocation(cycleStartFd, nextFile)
+			displayName := cycleStart
+			if dp, ok := srcTree.VirtualFileToDiskFile(cycleStart); ok {
+				displayName = dp
+			}
 			if collectErrors != nil {
-				*collectErrors = append(*collectErrors, fmt.Sprintf("%s:%d:%d: File recursively imports itself: %s", cycleStart, line, col, chain))
+				*collectErrors = append(*collectErrors, fmt.Sprintf("%s:%d:%d: File recursively imports itself: %s", displayName, line, col, chain))
 				return false, nil
 			}
-			return false, fmt.Errorf("%s:%d:%d: File recursively imports itself: %s", cycleStart, line, col, chain)
+			return false, fmt.Errorf("%s:%d:%d: File recursively imports itself: %s", displayName, line, col, chain)
 		}
 	}
 
@@ -782,7 +1049,12 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 	content, err := srcTree.Open(filename)
 	if err != nil {
 		if collectErrors != nil {
-			*collectErrors = append(*collectErrors, fmt.Sprintf("%s: File not found.", filename))
+			if vpe, ok := err.(*importer.VirtualPathError); ok {
+				_ = vpe
+				*collectErrors = append(*collectErrors, fmt.Sprintf("%s: %s", filename, vpe.Error()))
+			} else {
+				*collectErrors = append(*collectErrors, fmt.Sprintf("%s: File not found.", filename))
+			}
 			return false, nil
 		}
 		return false, err
@@ -790,6 +1062,14 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 
 	result, err := parser.ParseFile(filename, content)
 	if err != nil {
+		if collectErrors != nil {
+			if me, ok := err.(*parser.MultiError); ok {
+				*collectErrors = append(*collectErrors, me.Errors...)
+			} else {
+				*collectErrors = append(*collectErrors, fmt.Sprintf("%s:%s", filename, err.Error()))
+			}
+			return false, nil
+		}
 		if me, ok := err.(*parser.MultiError); ok {
 			return false, me
 		}
@@ -842,7 +1122,15 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 		}
 
 		// Check for unresolved type errors
-		typeErrors := parser.CheckUnresolvedTypes(fd, availableFiles)
+		// Only search successfully-parsed files for "seems to be defined" hints.
+		// Files with errors (like circular imports) should not be included.
+		validParsed := map[string]*descriptorpb.FileDescriptorProto{}
+		for _, vf := range *orderedFiles {
+			if vfd, ok := parsed[vf]; ok {
+				validParsed[vf] = vfd
+			}
+		}
+		typeErrors := parser.CheckUnresolvedTypes(fd, availableFiles, validParsed)
 		*collectErrors = append(*collectErrors, typeErrors...)
 
 		return false, nil
@@ -884,6 +1172,257 @@ func findImportLocation(fd *descriptorpb.FileDescriptorProto, importedFile strin
 	return 0, 0
 }
 
+// detectUnusedImports checks for imports that are not referenced by any type,
+// extension, or custom option in the importing file. Returns warnings.
+func detectUnusedImports(relFiles []string, orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+	// Build FQN → defining filename map for all symbols
+	fqnToFile := map[string]string{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		prefix := ""
+		if pkg != "" {
+			prefix = pkg
+		}
+		collectFQNsToFile(fd.GetMessageType(), prefix, name, fqnToFile)
+		for _, e := range fd.GetEnumType() {
+			fqn := e.GetName()
+			if prefix != "" {
+				fqn = prefix + "." + e.GetName()
+			}
+			fqnToFile[fqn] = name
+		}
+		for _, svc := range fd.GetService() {
+			fqn := svc.GetName()
+			if prefix != "" {
+				fqn = prefix + "." + svc.GetName()
+			}
+			fqnToFile[fqn] = name
+		}
+	}
+
+	// Build extension (extendee, number) → defining filename map
+	extNumToFile := map[string]map[int32]string{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, ext := range fd.GetExtension() {
+			extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+			if extNumToFile[extendee] == nil {
+				extNumToFile[extendee] = map[int32]string{}
+			}
+			extNumToFile[extendee][ext.GetNumber()] = name
+		}
+		collectMsgExtNumsToFile(fd.GetMessageType(), name, extNumToFile)
+	}
+
+	var warnings []string
+	for _, filename := range relFiles {
+		fd := parsed[filename]
+		if fd == nil {
+			continue
+		}
+
+		// Build set of trackable imports (exclude public imports and deps with public deps)
+		trackable := map[string]bool{}
+		publicIdxSet := map[int]bool{}
+		for _, pubIdx := range fd.GetPublicDependency() {
+			publicIdxSet[int(pubIdx)] = true
+		}
+		for depIdx, dep := range fd.GetDependency() {
+			if publicIdxSet[depIdx] {
+				continue
+			}
+			depFd := parsed[dep]
+			if depFd != nil && len(depFd.GetPublicDependency()) > 0 {
+				continue
+			}
+			trackable[dep] = true
+		}
+
+		if len(trackable) == 0 {
+			continue
+		}
+
+		used := map[string]bool{}
+
+		// Scan type references in the file descriptor
+		markUsedTypes(fd, fqnToFile, used)
+
+		// Scan custom option extension references
+		markUsedExtensions(fd, extNumToFile, used)
+
+		// Emit warnings for unused imports (in dependency order)
+		for _, dep := range fd.GetDependency() {
+			if trackable[dep] && !used[dep] {
+				line, col := findImportLocation(fd, dep)
+				warnings = append(warnings, fmt.Sprintf("%s:%d:%d: warning: Import %s is unused.", filename, line, col, dep))
+			}
+		}
+	}
+
+	return warnings
+}
+
+// collectFQNsToFile recursively collects message/enum FQNs to their defining file.
+func collectFQNsToFile(msgs []*descriptorpb.DescriptorProto, prefix string, filename string, fqnToFile map[string]string) {
+	for _, msg := range msgs {
+		fqn := msg.GetName()
+		if prefix != "" {
+			fqn = prefix + "." + msg.GetName()
+		}
+		fqnToFile[fqn] = filename
+		for _, e := range msg.GetEnumType() {
+			efqn := fqn + "." + e.GetName()
+			fqnToFile[efqn] = filename
+		}
+		collectFQNsToFile(msg.GetNestedType(), fqn, filename, fqnToFile)
+	}
+}
+
+// collectMsgExtNumsToFile collects extension (extendee, number) → filename from nested messages.
+func collectMsgExtNumsToFile(msgs []*descriptorpb.DescriptorProto, filename string, extNumToFile map[string]map[int32]string) {
+	for _, msg := range msgs {
+		for _, ext := range msg.GetExtension() {
+			extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+			if extNumToFile[extendee] == nil {
+				extNumToFile[extendee] = map[int32]string{}
+			}
+			extNumToFile[extendee][ext.GetNumber()] = filename
+		}
+		collectMsgExtNumsToFile(msg.GetNestedType(), filename, extNumToFile)
+	}
+}
+
+// markUsedTypes scans all type references in a FileDescriptorProto and marks
+// the defining files as used.
+func markUsedTypes(fd *descriptorpb.FileDescriptorProto, fqnToFile map[string]string, used map[string]bool) {
+	markFQNUsed := func(typeName string) {
+		fqn := strings.TrimPrefix(typeName, ".")
+		if file, ok := fqnToFile[fqn]; ok {
+			used[file] = true
+		}
+	}
+
+	// Field types in messages
+	var scanMsgs func(msgs []*descriptorpb.DescriptorProto)
+	scanMsgs = func(msgs []*descriptorpb.DescriptorProto) {
+		for _, msg := range msgs {
+			for _, f := range msg.GetField() {
+				if f.GetTypeName() != "" {
+					markFQNUsed(f.GetTypeName())
+				}
+			}
+			for _, ext := range msg.GetExtension() {
+				if ext.GetTypeName() != "" {
+					markFQNUsed(ext.GetTypeName())
+				}
+				if ext.GetExtendee() != "" {
+					markFQNUsed(ext.GetExtendee())
+				}
+			}
+			scanMsgs(msg.GetNestedType())
+		}
+	}
+	scanMsgs(fd.GetMessageType())
+
+	// Top-level extension types and extendees
+	for _, ext := range fd.GetExtension() {
+		if ext.GetTypeName() != "" {
+			markFQNUsed(ext.GetTypeName())
+		}
+		if ext.GetExtendee() != "" {
+			markFQNUsed(ext.GetExtendee())
+		}
+	}
+
+	// Service method input/output types
+	for _, svc := range fd.GetService() {
+		for _, m := range svc.GetMethod() {
+			if m.GetInputType() != "" {
+				markFQNUsed(m.GetInputType())
+			}
+			if m.GetOutputType() != "" {
+				markFQNUsed(m.GetOutputType())
+			}
+		}
+	}
+}
+
+// markUsedExtensions scans unknown fields in all Options messages to find
+// custom extension references and marks the defining files as used.
+func markUsedExtensions(fd *descriptorpb.FileDescriptorProto, extNumToFile map[string]map[int32]string, used map[string]bool) {
+	checkOpts := func(extendee string, opts proto.Message) {
+		if opts == nil {
+			return
+		}
+		raw := opts.ProtoReflect().GetUnknown()
+		if len(raw) == 0 {
+			return
+		}
+		nums := extNumToFile[extendee]
+		if nums == nil {
+			return
+		}
+		for len(raw) > 0 {
+			num, _, n := protowire.ConsumeField(raw)
+			if n < 0 {
+				break
+			}
+			if file, ok := nums[int32(num)]; ok {
+				used[file] = true
+			}
+			raw = raw[n:]
+		}
+	}
+
+	checkOpts("google.protobuf.FileOptions", fd.GetOptions())
+
+	var scanMsgs func(msgs []*descriptorpb.DescriptorProto)
+	scanMsgs = func(msgs []*descriptorpb.DescriptorProto) {
+		for _, msg := range msgs {
+			checkOpts("google.protobuf.MessageOptions", msg.GetOptions())
+			for _, f := range msg.GetField() {
+				checkOpts("google.protobuf.FieldOptions", f.GetOptions())
+			}
+			for _, e := range msg.GetEnumType() {
+				checkOpts("google.protobuf.EnumOptions", e.GetOptions())
+				for _, v := range e.GetValue() {
+					checkOpts("google.protobuf.EnumValueOptions", v.GetOptions())
+				}
+			}
+			for _, oo := range msg.GetOneofDecl() {
+				checkOpts("google.protobuf.OneofOptions", oo.GetOptions())
+			}
+			for _, er := range msg.GetExtensionRange() {
+				checkOpts("google.protobuf.ExtensionRangeOptions", er.GetOptions())
+			}
+			for _, ext := range msg.GetExtension() {
+				checkOpts("google.protobuf.FieldOptions", ext.GetOptions())
+			}
+			scanMsgs(msg.GetNestedType())
+		}
+	}
+	scanMsgs(fd.GetMessageType())
+
+	for _, svc := range fd.GetService() {
+		checkOpts("google.protobuf.ServiceOptions", svc.GetOptions())
+		for _, m := range svc.GetMethod() {
+			checkOpts("google.protobuf.MethodOptions", m.GetOptions())
+		}
+	}
+
+	for _, e := range fd.GetEnumType() {
+		checkOpts("google.protobuf.EnumOptions", e.GetOptions())
+		for _, v := range e.GetValue() {
+			checkOpts("google.protobuf.EnumValueOptions", v.GetOptions())
+		}
+	}
+
+	for _, ext := range fd.GetExtension() {
+		checkOpts("google.protobuf.FieldOptions", ext.GetOptions())
+	}
+}
+
 func parseArgs(args []string) (*config, error) {
 	if len(args) == 0 {
 		return nil, nil
@@ -902,12 +1441,30 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--version" {
-			fmt.Println("libprotoc 29.3")
+			fmt.Println("libprotoc 33.4")
 			os.Exit(0)
 		}
 
-		if strings.HasPrefix(arg, "--proto_path=") {
-			cfg.protoPaths = append(cfg.protoPaths, arg[len("--proto_path="):])
+		if strings.HasPrefix(arg, "--proto_path=") || arg == "--proto_path" {
+			var val string
+			if arg == "--proto_path" {
+				if i+1 < len(args) {
+					i++
+					val = args[i]
+				} else {
+					return cfg, fmt.Errorf("Missing value for flag: --proto_path")
+				}
+			} else {
+				val = arg[len("--proto_path="):]
+			}
+			if eqIdx := strings.Index(val, "="); eqIdx >= 0 {
+				cfg.protoPathMappings = append(cfg.protoPathMappings, importer.Mapping{
+					VirtualPath: val[:eqIdx],
+					DiskPath:    val[eqIdx+1:],
+				})
+			} else {
+				cfg.protoPaths = append(cfg.protoPaths, val)
+			}
 			continue
 		}
 		if arg == "--proto_path" {
@@ -925,12 +1482,32 @@ func parseArgs(args []string) (*config, error) {
 				i++
 				path = args[i]
 			}
-			cfg.protoPaths = append(cfg.protoPaths, path)
+			if path == "" {
+				return nil, fmt.Errorf("Missing value for flag: -I")
+			}
+			if eqIdx := strings.Index(path, "="); eqIdx >= 0 {
+				cfg.protoPathMappings = append(cfg.protoPathMappings, importer.Mapping{
+					VirtualPath: path[:eqIdx],
+					DiskPath:    path[eqIdx+1:],
+				})
+			} else {
+				cfg.protoPaths = append(cfg.protoPaths, path)
+			}
 			continue
 		}
 
-		if strings.HasPrefix(arg, "--plugin=") {
-			val := arg[len("--plugin="):]
+		if strings.HasPrefix(arg, "--plugin=") || arg == "--plugin" {
+			var val string
+			if arg == "--plugin" {
+				if i+1 < len(args) {
+					i++
+					val = args[i]
+				} else {
+					return cfg, fmt.Errorf("Missing value for flag: --plugin")
+				}
+			} else {
+				val = arg[len("--plugin="):]
+			}
 			parts := strings.SplitN(val, "=", 2)
 			if len(parts) == 2 {
 				name := parts[0]
@@ -967,8 +1544,33 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		if strings.HasPrefix(arg, "--descriptor_set_out=") {
-			cfg.descriptorSetOut = arg[len("--descriptor_set_out="):]
+		if strings.HasPrefix(arg, "--descriptor_set_out=") || arg == "--descriptor_set_out" {
+			if cfg.descriptorSetOut != "" {
+				return cfg, fmt.Errorf("--descriptor_set_out may only be passed once.")
+			}
+			if arg == "--descriptor_set_out" {
+				if i+1 < len(args) {
+					i++
+					cfg.descriptorSetOut = args[i]
+				} else {
+					return cfg, fmt.Errorf("Missing value for flag: --descriptor_set_out")
+				}
+			} else {
+				cfg.descriptorSetOut = arg[len("--descriptor_set_out="):]
+			}
+			continue
+		}
+
+		if strings.HasPrefix(arg, "-o") && !strings.HasPrefix(arg, "--") {
+			if cfg.descriptorSetOut != "" {
+				return cfg, fmt.Errorf("--descriptor_set_out may only be passed once.")
+			}
+			val := arg[2:]
+			if val == "" && i+1 < len(args) {
+				i++
+				val = args[i]
+			}
+			cfg.descriptorSetOut = val
 			continue
 		}
 		if arg == "--descriptor_set_out" {
@@ -1007,16 +1609,39 @@ func parseArgs(args []string) (*config, error) {
 			}
 			continue
 		}
+		if arg == "--error_format" {
+			if i+1 < len(args) {
+				i++
+				cfg.errorFormat = args[i]
+				if cfg.errorFormat != "gcc" && cfg.errorFormat != "msvs" {
+					return nil, fmt.Errorf("Unknown error format: %s", cfg.errorFormat)
+				}
+			} else {
+				return nil, fmt.Errorf("Missing value for flag: %s", arg)
+			}
+			continue
+		}
 
 		if arg == "--fatal_warnings" {
+			cfg.fatalWarnings = true
 			continue
 		}
 
 		if arg == "--deterministic_output" {
+			cfg.deterministicOutput = true
 			continue
 		}
 
 		if arg == "--retain_options" {
+			cfg.retainOptions = true
+			continue
+		}
+
+		if arg == "--experimental_allow_proto3_optional" {
+			continue
+		}
+
+		if arg == "--experimental_editions" {
 			continue
 		}
 
@@ -1025,6 +1650,10 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if strings.HasPrefix(arg, "--descriptor_set_in=") {
+			if cfg.descriptorSetIn != "" {
+				return cfg, fmt.Errorf("--descriptor_set_in may only be passed once. To specify multiple descriptor sets, pass them all as a single parameter separated by ':'.")
+			}
+			cfg.descriptorSetIn = arg[len("--descriptor_set_in="):]
 			continue
 		}
 		if arg == "--descriptor_set_in" {
@@ -1034,7 +1663,58 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		if strings.HasPrefix(arg, "--encode=") || strings.HasPrefix(arg, "--decode=") {
+		if arg == "--descriptor_set_in" {
+			if cfg.descriptorSetIn != "" {
+				return cfg, fmt.Errorf("--descriptor_set_in may only be passed once. To specify multiple descriptor sets, pass them all as a single parameter separated by ':'.")
+			}
+			if i+1 < len(args) {
+				i++
+				cfg.descriptorSetIn = args[i]
+			} else {
+				return nil, fmt.Errorf("Missing value for flag: %s", arg)
+			}
+			continue
+		}
+
+		if strings.HasPrefix(arg, "--encode=") {
+			if cfg.encodeType != "" || cfg.decodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
+				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
+			}
+			cfg.encodeType = arg[len("--encode="):]
+			continue
+		}
+
+		if arg == "--encode" {
+			if cfg.encodeType != "" || cfg.decodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
+				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
+			}
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				cfg.encodeType = args[i]
+			} else {
+				return nil, fmt.Errorf("Missing value for flag: %s", arg)
+			}
+			continue
+		}
+
+		if strings.HasPrefix(arg, "--decode=") {
+			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
+				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
+			}
+			cfg.decodeType = arg[len("--decode="):]
+			continue
+		}
+
+		if arg == "--decode" {
+			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
+				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
+			}
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				cfg.decodeType = args[i]
+			} else {
+				return nil, fmt.Errorf("Missing value for flag: %s\nTo decode an unknown message, use --decode_raw.", arg)
+			}
 			continue
 		}
 		if arg == "--encode" || arg == "--decode" {
@@ -1045,16 +1725,36 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--decode_raw" {
+			if cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
+				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
+			}
 			cfg.decodeRaw = true
 			continue
 		}
 
 		if arg == "--print_free_field_numbers" {
+			if cfg.encodeType != "" || cfg.decodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers {
+				return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")
+			}
 			cfg.printFreeFieldNumbers = true
 			continue
 		}
 
 		if strings.HasPrefix(arg, "--dependency_out=") {
+			if cfg.dependencyOut != "" {
+				return cfg, fmt.Errorf("--dependency_out may only be passed once.")
+			}
+			cfg.dependencyOut = arg[len("--dependency_out="):]
+			continue
+		}
+		if arg == "--dependency_out" {
+			if cfg.dependencyOut != "" {
+				return cfg, fmt.Errorf("--dependency_out may only be passed once.")
+			}
+			if i+1 < len(args) {
+				i++
+				cfg.dependencyOut = args[i]
+			}
 			continue
 		}
 		if arg == "--dependency_out" {
@@ -1064,7 +1764,40 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
-		if strings.HasPrefix(arg, "--direct_dependencies=") {
+		if strings.HasPrefix(arg, "--direct_dependencies=") || arg == "--direct_dependencies" {
+			if cfg.directDependenciesSet {
+				return nil, fmt.Errorf("--direct_dependencies may only be passed once. To specify multiple direct dependencies, pass them all as a single parameter separated by ':'.")
+			}
+			cfg.directDependenciesSet = true
+			var val string
+			if arg == "--direct_dependencies" {
+				if i+1 < len(args) {
+					i++
+					val = args[i]
+				}
+			} else {
+				val = arg[len("--direct_dependencies="):]
+			}
+			cfg.directDependencies = make(map[string]bool)
+			if val != "" {
+				for _, dep := range strings.Split(val, ":") {
+					if dep != "" {
+						cfg.directDependencies[dep] = true
+					}
+				}
+			}
+			continue
+		}
+
+		if strings.HasPrefix(arg, "--direct_dependencies_violation_msg=") || arg == "--direct_dependencies_violation_msg" {
+			if arg == "--direct_dependencies_violation_msg" {
+				if i+1 < len(args) {
+					i++
+					cfg.directDependenciesViolationMsg = args[i]
+				}
+			} else {
+				cfg.directDependenciesViolationMsg = arg[len("--direct_dependencies_violation_msg="):]
+			}
 			continue
 		}
 		if arg == "--direct_dependencies" {
@@ -1161,9 +1894,6 @@ func parseArgs(args []string) (*config, error) {
 			if idx := strings.Index(arg, "="); idx >= 0 {
 				flagName := arg[:idx]
 				return nil, fmt.Errorf("Unknown flag: %s", flagName)
-			}
-			if arg == "--decode" {
-				return nil, fmt.Errorf("Missing value for flag: %s\nTo decode an unknown message, use --decode_raw.", arg)
 			}
 			return nil, fmt.Errorf("Missing value for flag: %s", arg)
 		}
@@ -1394,7 +2124,7 @@ func validateJstypeNonInt64(orderedFiles []string, parsed map[string]*descriptor
 
 func collectJstypeErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
 	for i, field := range msg.GetField() {
-		if field.Options != nil && field.Options.Jstype != nil {
+		if field.Options != nil && field.Options.Jstype != nil && field.GetOptions().GetJstype() != descriptorpb.FieldOptions_JS_NORMAL {
 			if !isJstypeAllowedType(field.GetType()) {
 				fieldPath := append(append([]int32{}, msgPath...), 2, int32(i), 5)
 				line, col := findLocationByPath(fieldPath, sci)
@@ -1404,7 +2134,7 @@ func collectJstypeErrors(filename string, msg *descriptorpb.DescriptorProto, msg
 	}
 	// Check message-level extensions
 	for i, ext := range msg.GetExtension() {
-		if ext.Options != nil && ext.Options.Jstype != nil {
+		if ext.Options != nil && ext.Options.Jstype != nil && ext.GetOptions().GetJstype() != descriptorpb.FieldOptions_JS_NORMAL {
 			if !isJstypeAllowedType(ext.GetType()) {
 				extPath := append(append([]int32{}, msgPath...), 6, int32(i), 5)
 				line, col := findLocationByPath(extPath, sci)
@@ -1663,6 +2393,35 @@ func collectMaxFieldNumberErrors(filename string, msg *descriptorpb.DescriptorPr
 		nestedFqn := fqn + "." + nested.GetName()
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectMaxFieldNumberErrors(filename, nested, nestedFqn, nestedPath, sci, errs, hints)
+	}
+}
+
+// validateExtRangeMax checks that extension range numbers don't exceed kMaxFieldNumber.
+func validateExtRangeMax(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, msg := range fd.GetMessageType() {
+			collectExtRangeMaxErrors(fd.GetName(), msg, &errs)
+		}
+	}
+	return errs
+}
+
+func collectExtRangeMaxErrors(filename string, msg *descriptorpb.DescriptorProto, errs *[]string) {
+	if !msg.GetOptions().GetMessageSetWireFormat() {
+		for _, er := range msg.GetExtensionRange() {
+			if er.GetEnd() > kMaxFieldNumber+1 {
+				*errs = append(*errs, fmt.Sprintf("%s: Extension numbers cannot be greater than %d.", filename, kMaxFieldNumber))
+				return
+			}
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		collectExtRangeMaxErrors(filename, nested, errs)
 	}
 }
 
@@ -1928,6 +2687,40 @@ func collectReservedNameErrors(filename string, msg *descriptorpb.DescriptorProt
 	}
 }
 
+// validateEmptyOneofs checks that all oneofs contain at least one field.
+func validateEmptyOneofs(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for i, msg := range fd.GetMessageType() {
+			collectEmptyOneofErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+	}
+	return errs
+}
+
+func collectEmptyOneofErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	// Count fields per oneof index
+	oneofFieldCount := make(map[int32]int)
+	for _, f := range msg.GetField() {
+		if f.OneofIndex != nil {
+			oneofFieldCount[f.GetOneofIndex()]++
+		}
+	}
+	for i := range msg.GetOneofDecl() {
+		if oneofFieldCount[int32(i)] == 0 {
+			*errs = append(*errs, fmt.Sprintf("%s: Oneof must have at least one field.", filename))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectEmptyOneofErrors(filename, nested, nestedPath, sci, errs)
+	}
+}
+
 // validateEmptyEnums checks that all enums contain at least one value.
 func validateEmptyEnums(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
@@ -2043,22 +2836,206 @@ func nextAvailableEnumValue(e *descriptorpb.EnumDescriptorProto) int32 {
 	}
 }
 
-// validateJsonNameConflicts checks that no two fields in a message have conflicting JSON names.
-// C++ protoc runs two passes: one for default-only names, one considering custom json_names.
-func validateJsonNameConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool) []string {
+// enumValueToPascalCase converts an UPPER_SNAKE_CASE enum value name to PascalCase.
+// e.g., "FOO_BAR_BAZ" → "FooBarBaz", "UNKNOWN" → "Unknown"
+func enumValueToPascalCase(input string) string {
+	var result []byte
+	nextUpper := true
+	for i := 0; i < len(input); i++ {
+		c := input[i]
+		if c == '_' {
+			nextUpper = true
+		} else {
+			if nextUpper {
+				result = append(result, upper(c))
+			} else {
+				result = append(result, lower(c))
+			}
+			nextUpper = false
+		}
+	}
+	return string(result)
+}
+
+func upper(c byte) byte {
+	if c >= 'a' && c <= 'z' {
+		return c - 'a' + 'A'
+	}
+	return c
+}
+
+func lower(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c - 'A' + 'a'
+	}
+	return c
+}
+
+// prefixRemoverMaybeRemove tries to strip the enum type name prefix from an enum value name.
+// The prefix is the enum type name with underscores removed and lowercased.
+// Returns the stripped value name, or the original if the prefix doesn't match.
+func prefixRemoverMaybeRemove(enumName, valueName string) string {
+	// Build prefix: strip underscores and lowercase
+	var prefix []byte
+	for i := 0; i < len(enumName); i++ {
+		c := enumName[i]
+		if c != '_' {
+			prefix = append(prefix, lower(c))
+		}
+	}
+
+	// Try to match prefix in valueName, skipping underscores in valueName
+	i, j := 0, 0
+	for i < len(valueName) && j < len(prefix) {
+		if valueName[i] == '_' {
+			i++
+			continue
+		}
+		if lower(valueName[i]) != prefix[j] {
+			return valueName
+		}
+		i++
+		j++
+	}
+
+	// Didn't fully match prefix
+	if j < len(prefix) {
+		return valueName
+	}
+
+	// Skip underscores between prefix and remaining characters
+	for i < len(valueName) && valueName[i] == '_' {
+		i++
+	}
+
+	// Can't strip to empty
+	if i >= len(valueName) {
+		return valueName
+	}
+
+	return valueName[i:]
+}
+
+// validateEnumPrefixConflict checks that enum value names don't conflict after
+// stripping the enum name prefix and PascalCasing. C++ protoc's CheckEnumValueUniqueness.
+func validateEnumPrefixConflict(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
 	for _, name := range orderedFiles {
 		fd := parsed[name]
-		// C++ protoc only treats JSON name conflicts as errors in proto3/editions, not proto2
-		if fd.GetSyntax() != "proto3" && fd.GetSyntax() != "editions" {
-			continue
+		isProto2 := fd.GetSyntax() == "proto2" || (fd.GetSyntax() == "" && fd.GetEdition() == 0)
+		for i, e := range fd.GetEnumType() {
+			if isProto2 && e.GetOptions().GetDeprecatedLegacyJsonFieldConflicts() {
+				continue
+			}
+			collectEnumPrefixConflictErrors(fd.GetName(), e, []int32{5, int32(i)}, fd.GetSourceCodeInfo(), &errs)
 		}
 		for i, msg := range fd.GetMessageType() {
-			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, false, &errs)
-			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, true, &errs)
+			msgPath := []int32{4, int32(i)}
+			collectEnumPrefixConflictInMsg(fd.GetName(), msg, isProto2, msgPath, fd.GetSourceCodeInfo(), &errs)
 		}
 	}
 	return errs
+}
+
+func collectEnumPrefixConflictInMsg(filename string, msg *descriptorpb.DescriptorProto, isProto2 bool, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, e := range msg.GetEnumType() {
+		if isProto2 && e.GetOptions().GetDeprecatedLegacyJsonFieldConflicts() {
+			continue
+		}
+		enumPath := append(append([]int32{}, msgPath...), 4, int32(i))
+		collectEnumPrefixConflictErrors(filename, e, enumPath, sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectEnumPrefixConflictInMsg(filename, nested, isProto2, nestedPath, sci, errs)
+	}
+}
+
+func collectEnumPrefixConflictErrors(filename string, e *descriptorpb.EnumDescriptorProto, enumPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	enumName := e.GetName()
+	// Map: stripped+PascalCased name → (first value name, first value index)
+	type firstEntry struct {
+		name string
+		idx  int
+	}
+	seen := make(map[string]firstEntry)
+	for i, val := range e.GetValue() {
+		stripped := prefixRemoverMaybeRemove(enumName, val.GetName())
+		pascal := enumValueToPascalCase(stripped)
+		if first, ok := seen[pascal]; ok {
+			// Skip if same name (duplicate name check handles it) or same number (alias)
+			if first.name == val.GetName() || e.GetValue()[first.idx].GetNumber() == val.GetNumber() {
+				continue
+			}
+			line, col := findEnumValueNameLocation(enumPath, i, sci)
+			*errs = append(*errs, fmt.Sprintf(
+				"%s:%d:%d: Enum name %s has the same name as %s if you ignore case and strip out the enum name prefix (if any). (If you are using allow_alias, please assign the same number to each enum value name.)",
+				filename, line, col, val.GetName(), first.name))
+		} else {
+			seen[pascal] = firstEntry{name: val.GetName(), idx: i}
+		}
+	}
+}
+
+func findEnumValueNameLocation(enumPath []int32, valueIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if sci == nil {
+		return 0, 0
+	}
+	// Path: enumPath + [2, valueIdx, 1] where 2=value field, 1=name field
+	target := append(append([]int32{}, enumPath...), 2, int32(valueIdx), 1)
+	for _, loc := range sci.GetLocation() {
+		path := loc.GetPath()
+		if len(path) == len(target) {
+			match := true
+			for i := range path {
+				if path[i] != target[i] {
+					match = false
+					break
+				}
+			}
+			if match {
+				span := loc.GetSpan()
+				if len(span) >= 2 {
+					return int(span[0]) + 1, int(span[1]) + 1
+				}
+			}
+		}
+	}
+	return 0, 0
+}
+
+// validateJsonNameConflicts checks that no two fields in a message have conflicting JSON names.
+// C++ protoc runs two passes: one for default-only names, one considering custom json_names.
+// Proto3/editions conflicts are errors; proto2 conflicts are warnings.
+func validateJsonNameConflicts(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool) (errors []string, warnings []string) {
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		isProto2 := fd.GetSyntax() != "proto3" && fd.GetSyntax() != "editions"
+		fileJsonFormat := fd.GetOptions().GetFeatures().GetJsonFormat()
+		var msgs []string
+		for i, msg := range fd.GetMessageType() {
+			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, false, fileJsonFormat, &msgs)
+			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, true, fileJsonFormat, &msgs)
+		}
+		if isProto2 {
+			for _, m := range msgs {
+				// Insert "warning: " after "file:line:col: "
+				idx := strings.Index(m, ": ")
+				if idx >= 0 {
+					pos := idx + 2
+					warnings = append(warnings, m[:pos]+"warning: "+m[pos:])
+				} else {
+					warnings = append(warnings, m)
+				}
+			}
+		} else {
+			errors = append(errors, msgs...)
+		}
+	}
+	return errors, warnings
 }
 
 type jsonNameEntry struct {
@@ -2067,70 +3044,75 @@ type jsonNameEntry struct {
 	isCustom  bool
 }
 
-func collectJsonNameConflictErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, useCustom bool, errs *[]string) {
-	if !msg.GetOptions().GetDeprecatedLegacyJsonFieldConflicts() {
-	seen := make(map[string]jsonNameEntry)
-	for i, field := range msg.GetField() {
-		defaultJsonName := tokenizer.ToJSONName(field.GetName())
-		isCustom := false
-		jsonName := defaultJsonName
-		if useCustom && explicitJsonNames[field] && field.GetJsonName() != defaultJsonName {
-			jsonName = field.GetJsonName()
-			isCustom = true
-		}
-		if match, ok := seen[jsonName]; ok {
-			if useCustom && !isCustom && !match.isCustom {
-				// Both are default names — already reported by the non-custom pass
-				continue
-			}
-			namePath := append(append([]int32{}, msgPath...), 2, int32(i), 1)
-			line, col := findLocationByPath(namePath, sci)
-			thisType := "default"
-			if isCustom {
-				thisType = "custom"
-			}
-			existingType := "default"
-			if match.isCustom {
-				existingType = "custom"
-			}
-			nameSuffix := ""
-			if jsonName != match.jsonName {
-				nameSuffix = fmt.Sprintf(" (\"%s\")", match.jsonName)
-			}
-			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: The %s JSON name of field \"%s\" (\"%s\") conflicts with the %s JSON name of field \"%s\"%s.",
-				filename, line, col, thisType, field.GetName(), jsonName, existingType, match.fieldName, nameSuffix))
-		} else {
-			seen[jsonName] = jsonNameEntry{fieldName: field.GetName(), jsonName: jsonName, isCustom: isCustom}
-		}
+func collectJsonNameConflictErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, useCustom bool, parentJsonFormat descriptorpb.FeatureSet_JsonFormat, errs *[]string) {
+	// Determine effective json_format: message-level overrides file/parent level
+	effectiveJsonFormat := parentJsonFormat
+	if feat := msg.GetOptions().GetFeatures(); feat != nil && feat.JsonFormat != nil {
+		effectiveJsonFormat = feat.GetJsonFormat()
 	}
+	if !msg.GetOptions().GetDeprecatedLegacyJsonFieldConflicts() && effectiveJsonFormat != descriptorpb.FeatureSet_LEGACY_BEST_EFFORT {
+		seen := make(map[string]jsonNameEntry)
+		for i, field := range msg.GetField() {
+			defaultJsonName := tokenizer.ToJSONName(field.GetName())
+			isCustom := false
+			jsonName := defaultJsonName
+			if useCustom && explicitJsonNames[field] && field.GetJsonName() != defaultJsonName {
+				jsonName = field.GetJsonName()
+				isCustom = true
+			}
+			if match, ok := seen[jsonName]; ok {
+				if useCustom && !isCustom && !match.isCustom {
+					// Both are default names — already reported by the non-custom pass
+					continue
+				}
+				namePath := append(append([]int32{}, msgPath...), 2, int32(i), 1)
+				line, col := findLocationByPath(namePath, sci)
+				thisType := "default"
+				if isCustom {
+					thisType = "custom"
+				}
+				existingType := "default"
+				if match.isCustom {
+					existingType = "custom"
+				}
+				nameSuffix := ""
+				if jsonName != match.jsonName {
+					nameSuffix = fmt.Sprintf(" (\"%s\")", match.jsonName)
+				}
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: The %s JSON name of field \"%s\" (\"%s\") conflicts with the %s JSON name of field \"%s\"%s.",
+					filename, line, col, thisType, field.GetName(), jsonName, existingType, match.fieldName, nameSuffix))
+			} else {
+				seen[jsonName] = jsonNameEntry{fieldName: field.GetName(), jsonName: jsonName, isCustom: isCustom}
+			}
+		}
 	}
 	for i, nested := range msg.GetNestedType() {
 		if nested.GetOptions().GetMapEntry() {
 			continue
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
-		collectJsonNameConflictErrors(filename, nested, nestedPath, sci, explicitJsonNames, useCustom, errs)
+		collectJsonNameConflictErrors(filename, nested, nestedPath, sci, explicitJsonNames, useCustom, effectiveJsonFormat, errs)
 	}
 }
 
 // featureTargets maps FeatureSet field names to the entity types where they can be used.
 var featureTargets = map[string]map[string]bool{
-	"field_presence":         {"file": true, "field": true},
-	"enum_type":              {"file": true, "enum": true},
+	"field_presence":          {"file": true, "field": true},
+	"enum_type":               {"file": true, "enum": true},
 	"repeated_field_encoding": {"file": true, "field": true},
-	"utf8_validation":        {"file": true, "field": true},
-	"message_encoding":       {"file": true, "field": true},
-	"json_format":            {"file": true, "message": true, "enum": true},
+	"utf8_validation":         {"file": true, "field": true},
+	"message_encoding":        {"file": true, "field": true},
+	"json_format":             {"file": true, "message": true, "enum": true},
 }
 
 // featureProtoNames maps FeatureSet field names to their full proto path names.
 var featureProtoNames = map[string]string{
-	"field_presence":         "google.protobuf.FeatureSet.field_presence",
-	"enum_type":              "google.protobuf.FeatureSet.enum_type",
+	"field_presence":          "google.protobuf.FeatureSet.field_presence",
+	"enum_type":               "google.protobuf.FeatureSet.enum_type",
 	"repeated_field_encoding": "google.protobuf.FeatureSet.repeated_field_encoding",
-	"utf8_validation":        "google.protobuf.FeatureSet.utf8_validation",
-	"message_encoding":       "google.protobuf.FeatureSet.message_encoding",
-	"json_format":            "google.protobuf.FeatureSet.json_format",
+	"utf8_validation":         "google.protobuf.FeatureSet.utf8_validation",
+	"message_encoding":        "google.protobuf.FeatureSet.message_encoding",
+	"json_format":             "google.protobuf.FeatureSet.json_format",
 }
 
 func validateFeaturesEditions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
@@ -2221,7 +3203,6 @@ func collectFeaturesEditionsInEnum(name string, enumPath []int32, e *descriptorp
 		}
 	}
 }
-
 
 func validateFeatureTargets(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
@@ -2504,6 +3485,355 @@ func collectEditionGroupErrors(filename string, msg *descriptorpb.DescriptorProt
 	}
 }
 
+func isEnumOpen(e *descriptorpb.EnumDescriptorProto, fd *descriptorpb.FileDescriptorProto) bool {
+	// Check enum-level feature first
+	if e.GetOptions() != nil && e.GetOptions().GetFeatures() != nil && e.GetOptions().GetFeatures().EnumType != nil {
+		return e.GetOptions().GetFeatures().GetEnumType() == descriptorpb.FeatureSet_OPEN
+	}
+	// Check file-level feature
+	if fd.GetOptions() != nil && fd.GetOptions().GetFeatures() != nil && fd.GetOptions().GetFeatures().EnumType != nil {
+		return fd.GetOptions().GetFeatures().GetEnumType() == descriptorpb.FeatureSet_OPEN
+	}
+	// Default for edition 2023 is OPEN
+	return true
+}
+
+func validateEditionOpenEnumZero(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		for i, e := range fd.GetEnumType() {
+			if isEnumOpen(e, fd) {
+				collectProto3EnumZeroErrors(fd.GetName(), e, []int32{5, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+			}
+		}
+		for i, msg := range fd.GetMessageType() {
+			collectEditionOpenEnumZeroInMsg(fd.GetName(), fd, msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+		}
+	}
+	return errs
+}
+
+func collectEditionOpenEnumZeroInMsg(filename string, fd *descriptorpb.FileDescriptorProto, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, e := range msg.GetEnumType() {
+		if isEnumOpen(e, fd) {
+			collectProto3EnumZeroErrors(filename, e, append(append([]int32{}, msgPath...), 4, int32(i)), sci, errs)
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		collectEditionOpenEnumZeroInMsg(filename, fd, nested, append(append([]int32{}, msgPath...), 3, int32(i)), sci, errs)
+	}
+}
+
+func validateFileLevelLegacyRequired(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		if fd.GetOptions() != nil && fd.GetOptions().GetFeatures() != nil &&
+			fd.GetOptions().GetFeatures().FieldPresence != nil &&
+			fd.GetOptions().GetFeatures().GetFieldPresence() == descriptorpb.FeatureSet_LEGACY_REQUIRED {
+			errs = append(errs, fmt.Sprintf("%s:1:1: Required presence can't be specified by default.", fd.GetName()))
+		}
+	}
+	return errs
+}
+
+func validateRepeatedFieldEncoding(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectRepeatedFieldEncodingErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		for i, ext := range fd.GetExtension() {
+			checkRepeatedFieldEncodingField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectRepeatedFieldEncodingErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	for i, field := range msg.GetField() {
+		checkRepeatedFieldEncodingField(filename, field, append(clonePath(msgPath), 2, int32(i), 1), sci, errs)
+	}
+	for i, ext := range msg.GetExtension() {
+		checkRepeatedFieldEncodingField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectRepeatedFieldEncodingErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
+	}
+}
+
+func checkRepeatedFieldEncodingField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if field.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
+		return
+	}
+	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().RepeatedFieldEncoding != nil {
+		line, col := findLocationByPath(namePath, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Only repeated fields can specify repeated field encoding.", filename, line, col))
+	}
+}
+
+func validateFieldPresenceRepeated(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectFieldPresenceRepeatedErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		for i, ext := range fd.GetExtension() {
+			checkFieldPresenceRepeatedField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectFieldPresenceRepeatedErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	for i, field := range msg.GetField() {
+		checkFieldPresenceRepeatedField(filename, field, append(clonePath(msgPath), 2, int32(i), 1), sci, errs)
+	}
+	for i, ext := range msg.GetExtension() {
+		checkFieldPresenceRepeatedField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectFieldPresenceRepeatedErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
+	}
+}
+
+func checkFieldPresenceRepeatedField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if field.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
+		return
+	}
+	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().FieldPresence != nil {
+		line, col := findLocationByPath(namePath, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Repeated fields can't specify field presence.", filename, line, col))
+	}
+}
+
+func validateFieldPresenceOneof(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectFieldPresenceOneofErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectFieldPresenceOneofErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, field := range msg.GetField() {
+		if field.OneofIndex != nil && field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().FieldPresence != nil {
+			namePath := append(clonePath(msgPath), 2, int32(i), 1)
+			line, col := findLocationByPath(namePath, sci)
+			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Oneof fields can't specify field presence.", filename, line, col))
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectFieldPresenceOneofErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
+	}
+}
+
+func validateMessageEncodingScalar(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectMessageEncodingScalarErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		for i, ext := range fd.GetExtension() {
+			checkMessageEncodingScalarField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs, false)
+		}
+	}
+	return errs
+}
+
+func collectMessageEncodingScalarErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	// Build set of map entry nested type names
+	mapEntryNames := make(map[string]bool)
+	for _, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			mapEntryNames[nested.GetName()] = true
+		}
+	}
+	for i, field := range msg.GetField() {
+		isMap := false
+		if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
+			tn := field.GetTypeName()
+			if idx := strings.LastIndex(tn, "."); idx >= 0 {
+				tn = tn[idx+1:]
+			}
+			isMap = mapEntryNames[tn]
+		}
+		checkMessageEncodingScalarField(filename, field, append(clonePath(msgPath), 2, int32(i), 1), sci, errs, isMap)
+	}
+	for i, ext := range msg.GetExtension() {
+		checkMessageEncodingScalarField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs, false)
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectMessageEncodingScalarErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
+	}
+}
+
+func checkMessageEncodingScalarField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string, isMapField bool) {
+	if !isMapField && (field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE || field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP) {
+		return
+	}
+	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().MessageEncoding != nil {
+		line, col := findLocationByPath(namePath, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Only message fields can specify message encoding.", filename, line, col))
+	}
+}
+
+func validateRequiredExtensionEditions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectRequiredExtensionEditionsErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		for i, ext := range fd.GetExtension() {
+			checkRequiredExtensionEditionsField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectRequiredExtensionEditionsErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, ext := range msg.GetExtension() {
+		checkRequiredExtensionEditionsField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectRequiredExtensionEditionsErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
+	}
+}
+
+func checkRequiredExtensionEditionsField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil &&
+		field.GetOptions().GetFeatures().FieldPresence != nil &&
+		field.GetOptions().GetFeatures().GetFieldPresence() == descriptorpb.FeatureSet_LEGACY_REQUIRED {
+		line, col := findLocationByPath(namePath, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extensions can't be required.", filename, line, col))
+	}
+}
+
+func validateFieldPresenceExtension(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectFieldPresenceExtensionErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		for i, ext := range fd.GetExtension() {
+			checkFieldPresenceExtensionField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectFieldPresenceExtensionErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	for i, ext := range msg.GetExtension() {
+		checkFieldPresenceExtensionField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectFieldPresenceExtensionErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
+	}
+}
+
+func checkFieldPresenceExtensionField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil &&
+		field.GetOptions().GetFeatures().FieldPresence != nil &&
+		field.GetOptions().GetFeatures().GetFieldPresence() != descriptorpb.FeatureSet_LEGACY_REQUIRED {
+		line, col := findLocationByPath(namePath, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extensions can't specify field presence.", filename, line, col))
+	}
+}
+
+func validateUtf8ValidationNonString(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		sci := fd.GetSourceCodeInfo()
+		for i, msg := range fd.GetMessageType() {
+			collectUtf8ValidationNonStringErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, &errs)
+		}
+		for i, ext := range fd.GetExtension() {
+			checkUtf8ValidationNonStringField(fd.GetName(), ext, []int32{7, int32(i), 1}, sci, &errs)
+		}
+	}
+	return errs
+}
+
+func collectUtf8ValidationNonStringErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if msg.GetOptions().GetMapEntry() {
+		return
+	}
+	for i, field := range msg.GetField() {
+		checkUtf8ValidationNonStringField(filename, field, append(clonePath(msgPath), 2, int32(i), 1), sci, errs)
+	}
+	for i, ext := range msg.GetExtension() {
+		checkUtf8ValidationNonStringField(filename, ext, append(clonePath(msgPath), 6, int32(i), 1), sci, errs)
+	}
+	for i, nested := range msg.GetNestedType() {
+		collectUtf8ValidationNonStringErrors(filename, nested, append(clonePath(msgPath), 3, int32(i)), sci, errs)
+	}
+}
+
+func checkUtf8ValidationNonStringField(filename string, field *descriptorpb.FieldDescriptorProto, namePath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
+	if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING {
+		return
+	}
+	if field.GetOptions() != nil && field.GetOptions().GetFeatures() != nil && field.GetOptions().GetFeatures().Utf8Validation != nil {
+		line, col := findLocationByPath(namePath, sci)
+		*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Only string fields can specify utf8 validation.", filename, line, col))
+	}
+}
+
 func allowedProto3Extendee(name string) bool {
 	// Strip leading dot from fully-qualified name
 	if len(name) > 0 && name[0] == '.' {
@@ -2693,18 +4023,26 @@ func findDefaultValueLocation(field *descriptorpb.FieldDescriptorProto, msg *des
 // validateDuplicateNames checks that no two symbols share the same fully-qualified name.
 func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
+	seen := make(map[string]string)            // FQN -> filename where first defined
+	enumValParent := make(map[string]string)    // fqn -> enum short name
 	for _, name := range orderedFiles {
 		fd := parsed[name]
 		pkg := fd.GetPackage()
 		sci := fd.GetSourceCodeInfo()
 
-		seen := make(map[string]bool)
-		// Track which FQNs are enum values and their parent enum name
-		enumValParent := make(map[string]string) // fqn -> enum short name
 		check := func(fqn, shortName, scope string, line, col int, enumName string) {
-			if seen[fqn] {
+			if firstFile, exists := seen[fqn]; exists {
 				var errMsg string
-				if scope == "" {
+				if firstFile != fd.GetName() {
+					// Cross-file duplicate: use FQN and "in file" format
+					if line > 0 && col > 0 {
+						errMsg = fmt.Sprintf("%s:%d:%d: \"%s\" is already defined in file \"%s\".",
+							fd.GetName(), line, col, fqn, firstFile)
+					} else {
+						errMsg = fmt.Sprintf("%s: \"%s\" is already defined in file \"%s\".",
+							fd.GetName(), fqn, firstFile)
+					}
+				} else if scope == "" {
 					// No package — C++ protoc omits " in ..." suffix
 					if line > 0 && col > 0 {
 						errMsg = fmt.Sprintf("%s:%d:%d: \"%s\" is already defined.",
@@ -2728,7 +4066,7 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 						fd.GetName(), line, col, shortName, scope, enumName))
 				}
 			} else {
-				seen[fqn] = true
+				seen[fqn] = fd.GetName()
 				if enumName != "" {
 					enumValParent[fqn] = enumName
 				}
@@ -3299,6 +4637,76 @@ func collectMessageSetFieldErrors(filename string, msg *descriptorpb.DescriptorP
 	}
 }
 
+// validateMessageSetExtensions checks that extensions of messages with
+// message_set_wire_format must be optional messages.
+func validateMessageSetExtensions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+	// Build set of message FQNs that have message_set_wire_format = true.
+	msgSetMsgs := map[string]bool{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		for _, msg := range fd.GetMessageType() {
+			collectMessageSetMsgs(msg, pkg, msgSetMsgs)
+		}
+	}
+
+	var errs []string
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sci := fd.GetSourceCodeInfo()
+		// File-level extensions
+		for i, ext := range fd.GetExtension() {
+			extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+			if msgSetMsgs[extendee] {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE || ext.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL {
+					line, col := findLocationByPath([]int32{7, int32(i), 5}, sci)
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Extensions of MessageSets must be optional messages.",
+						fd.GetName(), line, col))
+				}
+			}
+		}
+		// Message-level extensions
+		for i, msg := range fd.GetMessageType() {
+			collectMessageSetExtErrors(fd.GetName(), msg, []int32{4, int32(i)}, sci, msgSetMsgs, &errs)
+		}
+	}
+	return errs
+}
+
+func collectMessageSetMsgs(msg *descriptorpb.DescriptorProto, prefix string, out map[string]bool) {
+	fqn := msg.GetName()
+	if prefix != "" {
+		fqn = prefix + "." + fqn
+	}
+	if msg.GetOptions().GetMessageSetWireFormat() {
+		out[fqn] = true
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectMessageSetMsgs(nested, fqn, out)
+	}
+}
+
+func collectMessageSetExtErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, msgSetMsgs map[string]bool, errs *[]string) {
+	for i, ext := range msg.GetExtension() {
+		extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+		if msgSetMsgs[extendee] {
+			if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE || ext.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL {
+				path := append(append([]int32{}, msgPath...), 6, int32(i), 5)
+				line, col := findLocationByPath(path, sci)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Extensions of MessageSets must be optional messages.",
+					filename, line, col))
+			}
+		}
+	}
+	for i, nested := range msg.GetNestedType() {
+		if nested.GetOptions().GetMapEntry() {
+			continue
+		}
+		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
+		collectMessageSetExtErrors(filename, nested, nestedPath, sci, msgSetMsgs, errs)
+	}
+}
+
 // extInfo records where an extension field was defined so we can report duplicates.
 type extInfo struct {
 	fqn      string // fully-qualified name of the extension field
@@ -3309,8 +4717,9 @@ type extInfo struct {
 }
 
 // validateDuplicateExtensionNumbers checks that no two extensions for the same
-// message use the same field number.
-func validateDuplicateExtensionNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
+// message use the same field number. Same-file duplicates are errors; cross-file
+// duplicates are warnings (matching C++ protoc behavior).
+func validateDuplicateExtensionNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) (errors []string, warnings []string) {
 	// Collect all extensions keyed by extendee FQN (without leading dot).
 	extsByMsg := map[string][]extInfo{}
 	for _, name := range orderedFiles {
@@ -3341,20 +4750,30 @@ func validateDuplicateExtensionNumbers(orderedFiles []string, parsed map[string]
 			collectExtInfoInMsg(fd.GetName(), msg, msgFQN, []int32{4, int32(i)}, sci, extsByMsg)
 		}
 	}
-	var errs []string
 	for extendee, exts := range extsByMsg {
-		seen := map[int32]string{} // number -> first extension FQN
+		type seenExt struct {
+			fqn      string
+			filename string
+		}
+		seen := map[int32]seenExt{} // number -> first extension info
 		for _, ei := range exts {
 			if first, ok := seen[ei.number]; ok {
 				line, col := findLocationByPath(ei.sciPath, ei.sci)
-				errs = append(errs, fmt.Sprintf("%s:%d:%d: Extension number %d has already been used in \"%s\" by extension \"%s\".",
-					ei.filename, line, col, ei.number, extendee, first))
+				if ei.filename == first.filename {
+					// Same file: hard error (no "warning:" prefix, no "defined in")
+					errors = append(errors, fmt.Sprintf("%s:%d:%d: Extension number %d has already been used in \"%s\" by extension \"%s\".",
+						ei.filename, line, col, ei.number, extendee, first.fqn))
+				} else {
+					// Cross-file: warning
+					warnings = append(warnings, fmt.Sprintf("%s:%d:%d: warning: Extension number %d has already been used in \"%s\" by extension \"%s\" defined in %s.",
+						ei.filename, line, col, ei.number, extendee, first.fqn, first.filename))
+				}
 			} else {
-				seen[ei.number] = ei.fqn
+				seen[ei.number] = seenExt{fqn: ei.fqn, filename: ei.filename}
 			}
 		}
 	}
-	return errs
+	return errors, warnings
 }
 
 func collectExtInfoInMsg(filename string, msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, out map[string][]extInfo) {
@@ -3513,27 +4932,201 @@ func hasSubFieldCustomOpts(pr *parser.ParseResult) bool {
 			return true
 		}
 	}
+	for _, opt := range pr.CustomFieldOptions {
+		if len(opt.SubFieldPath) > 0 {
+			return true
+		}
+	}
+	for _, opt := range pr.CustomMessageOptions {
+		if len(opt.SubFieldPath) > 0 {
+			return true
+		}
+	}
+	for _, opt := range pr.CustomEnumOptions {
+		if len(opt.SubFieldPath) > 0 {
+			return true
+		}
+	}
+	for _, opt := range pr.CustomServiceOptions {
+		if len(opt.SubFieldPath) > 0 {
+			return true
+		}
+	}
+	for _, opt := range pr.CustomMethodOptions {
+		if len(opt.SubFieldPath) > 0 {
+			return true
+		}
+	}
+	for _, opt := range pr.CustomEnumValueOptions {
+		if len(opt.SubFieldPath) > 0 {
+			return true
+		}
+	}
+	for _, opt := range pr.CustomOneofOptions {
+		if len(opt.SubFieldPath) > 0 {
+			return true
+		}
+	}
+	for _, opt := range pr.CustomExtRangeOptions {
+		if len(opt.SubFieldPath) > 0 {
+			return true
+		}
+	}
 	return false
 }
 
 // cloneWithMergedExtUnknowns clones fd and merges multiple unknown field entries
-// with the same tag (length-delimited) in FileOptions into single entries.
-func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto) *descriptorpb.FileDescriptorProto {
+// with the same tag (length-delimited) in FileOptions, FieldOptions, MessageOptions, EnumOptions, EnumValueOptions, ServiceOptions, MethodOptions, OneofOptions, and ExtensionRangeOptions into single entries.
+func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto, mergeableFileFields map[int32]bool, mergeableFieldOptFields map[int32]bool, mergeableMsgOptFields map[int32]bool, mergeableEnumOptFields map[int32]bool, mergeableEnumValOptFields map[int32]bool, mergeableSvcOptFields map[int32]bool, mergeableMethodOptFields map[int32]bool, mergeableOneofOptFields map[int32]bool, mergeableExtRangeOptFields map[int32]bool) *descriptorpb.FileDescriptorProto {
 	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
-	if fdCopy.Options == nil {
-		return fdCopy
+	if fdCopy.Options != nil {
+		mergeUnknownExtensions(fdCopy.Options.ProtoReflect(), mergeableFileFields)
 	}
-	raw := fdCopy.Options.ProtoReflect().GetUnknown()
+	// Merge field options for top-level extensions (fd.Extension)
+	for _, ext := range fdCopy.GetExtension() {
+		if ext.Options != nil {
+			mergeUnknownExtensions(ext.Options.ProtoReflect(), mergeableFieldOptFields)
+		}
+	}
+	mergeFieldOptionsInMessages(fdCopy.GetMessageType(), mergeableFieldOptFields)
+	mergeMessageOptionsInMessages(fdCopy.GetMessageType(), mergeableMsgOptFields)
+	mergeEnumOptions(fdCopy.GetEnumType(), mergeableEnumOptFields)
+	mergeEnumOptionsInMessages(fdCopy.GetMessageType(), mergeableEnumOptFields)
+	mergeEnumValueOptions(fdCopy.GetEnumType(), mergeableEnumValOptFields)
+	mergeEnumValueOptionsInMessages(fdCopy.GetMessageType(), mergeableEnumValOptFields)
+	mergeServiceOptions(fdCopy.GetService(), mergeableSvcOptFields)
+	mergeMethodOptions(fdCopy.GetService(), mergeableMethodOptFields)
+	mergeOneofOptionsInMessages(fdCopy.GetMessageType(), mergeableOneofOptFields)
+	mergeExtRangeOptionsInMessages(fdCopy.GetMessageType(), mergeableExtRangeOptFields)
+	return fdCopy
+}
+
+// mergeFieldOptionsInMessages recursively merges unknown extensions in FieldOptions
+// for all fields in the given messages and their nested types.
+func mergeFieldOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
+	for _, msg := range msgs {
+		for _, field := range msg.GetField() {
+			if field.Options != nil {
+				mergeUnknownExtensions(field.Options.ProtoReflect(), mergeableFields)
+			}
+		}
+		for _, ext := range msg.GetExtension() {
+			if ext.Options != nil {
+				mergeUnknownExtensions(ext.Options.ProtoReflect(), mergeableFields)
+			}
+		}
+		mergeFieldOptionsInMessages(msg.GetNestedType(), mergeableFields)
+	}
+}
+
+// mergeMessageOptionsInMessages recursively merges unknown extensions in MessageOptions
+// for all messages and their nested types.
+func mergeMessageOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
+	for _, msg := range msgs {
+		if msg.Options != nil {
+			mergeUnknownExtensions(msg.Options.ProtoReflect(), mergeableFields)
+		}
+		mergeMessageOptionsInMessages(msg.GetNestedType(), mergeableFields)
+	}
+}
+
+// mergeEnumOptions merges unknown extensions in EnumOptions for top-level enums.
+func mergeEnumOptions(enums []*descriptorpb.EnumDescriptorProto, mergeableFields map[int32]bool) {
+	for _, enum := range enums {
+		if enum.Options != nil {
+			mergeUnknownExtensions(enum.Options.ProtoReflect(), mergeableFields)
+		}
+	}
+}
+
+// mergeEnumOptionsInMessages recursively merges unknown extensions in EnumOptions
+// for all enums in the given messages and their nested types.
+func mergeEnumOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
+	for _, msg := range msgs {
+		mergeEnumOptions(msg.GetEnumType(), mergeableFields)
+		mergeEnumOptionsInMessages(msg.GetNestedType(), mergeableFields)
+	}
+}
+
+// mergeEnumValueOptions merges unknown extensions in EnumValueOptions
+// for all values in the given enums.
+func mergeEnumValueOptions(enums []*descriptorpb.EnumDescriptorProto, mergeableFields map[int32]bool) {
+	for _, enum := range enums {
+		for _, val := range enum.GetValue() {
+			if val.Options != nil {
+				mergeUnknownExtensions(val.Options.ProtoReflect(), mergeableFields)
+			}
+		}
+	}
+}
+
+// mergeEnumValueOptionsInMessages recursively merges unknown extensions in EnumValueOptions
+// for all enum values in the given messages and their nested types.
+func mergeEnumValueOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
+	for _, msg := range msgs {
+		mergeEnumValueOptions(msg.GetEnumType(), mergeableFields)
+		mergeEnumValueOptionsInMessages(msg.GetNestedType(), mergeableFields)
+	}
+}
+
+// mergeServiceOptions merges unknown extensions in ServiceOptions for all services.
+func mergeServiceOptions(services []*descriptorpb.ServiceDescriptorProto, mergeableFields map[int32]bool) {
+	for _, svc := range services {
+		if svc.Options != nil {
+			mergeUnknownExtensions(svc.Options.ProtoReflect(), mergeableFields)
+		}
+	}
+}
+
+// mergeMethodOptions merges unknown extensions in MethodOptions for all methods in all services.
+func mergeMethodOptions(services []*descriptorpb.ServiceDescriptorProto, mergeableFields map[int32]bool) {
+	for _, svc := range services {
+		for _, method := range svc.GetMethod() {
+			if method.Options != nil {
+				mergeUnknownExtensions(method.Options.ProtoReflect(), mergeableFields)
+			}
+		}
+	}
+}
+
+// mergeOneofOptionsInMessages recursively merges unknown extensions in OneofOptions
+// for all oneofs in the given messages and their nested types.
+func mergeOneofOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
+	for _, msg := range msgs {
+		for _, oneof := range msg.GetOneofDecl() {
+			if oneof.Options != nil {
+				mergeUnknownExtensions(oneof.Options.ProtoReflect(), mergeableFields)
+			}
+		}
+		mergeOneofOptionsInMessages(msg.GetNestedType(), mergeableFields)
+	}
+}
+
+func mergeExtRangeOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
+	for _, msg := range msgs {
+		for _, er := range msg.GetExtensionRange() {
+			if er.Options != nil {
+				mergeUnknownExtensions(er.Options.ProtoReflect(), mergeableFields)
+			}
+		}
+		mergeExtRangeOptionsInMessages(msg.GetNestedType(), mergeableFields)
+	}
+}
+
+// mergeUnknownExtensions merges multiple unknown field entries with the same
+// field number (BytesType) into single entries. If mergeableFields is non-nil,
+// only field numbers in the set are merged; others are left as separate entries.
+func mergeUnknownExtensions(m protoreflect.Message, mergeableFields map[int32]bool) {
+	raw := m.GetUnknown()
 	if len(raw) == 0 {
-		return fdCopy
+		return
 	}
 
-	// Parse entries
 	type entry struct {
 		num     protowire.Number
 		wtyp    protowire.Type
-		payload []byte // only for BytesType
-		raw     []byte // full raw bytes for non-BytesType entries
+		payload []byte
+		raw     []byte
 	}
 	var entries []entry
 	buf := raw
@@ -3541,7 +5134,7 @@ func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto) *descripto
 		entryStart := buf
 		num, wtyp, n := protowire.ConsumeTag(buf)
 		if n < 0 {
-			break
+			return
 		}
 		buf = buf[n:]
 		var payload []byte
@@ -3549,73 +5142,231 @@ func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto) *descripto
 		case protowire.BytesType:
 			v, vn := protowire.ConsumeBytes(buf)
 			if vn < 0 {
-				return fdCopy
+				return
 			}
 			payload = v
 			buf = buf[vn:]
 		case protowire.VarintType:
 			_, vn := protowire.ConsumeVarint(buf)
 			if vn < 0 {
-				return fdCopy
+				return
 			}
 			buf = buf[vn:]
 		case protowire.Fixed32Type:
 			_, vn := protowire.ConsumeFixed32(buf)
 			if vn < 0 {
-				return fdCopy
+				return
 			}
 			buf = buf[vn:]
 		case protowire.Fixed64Type:
 			_, vn := protowire.ConsumeFixed64(buf)
 			if vn < 0 {
-				return fdCopy
+				return
 			}
 			buf = buf[vn:]
 		default:
-			return fdCopy
+			return
 		}
 		entries = append(entries, entry{num: num, wtyp: wtyp, payload: payload, raw: entryStart[:len(entryStart)-len(buf)]})
 	}
 
-	// Group BytesType entries by field number and merge payloads
+	// Check if any BytesType field appears more than once and is mergeable
+	counts := make(map[protowire.Number]int)
+	needsMerge := false
+	for _, e := range entries {
+		if e.wtyp == protowire.BytesType && (mergeableFields == nil || mergeableFields[int32(e.num)]) {
+			counts[e.num]++
+			if counts[e.num] > 1 {
+				needsMerge = true
+			}
+		}
+	}
+	if !needsMerge {
+		return
+	}
+
 	merged := make(map[protowire.Number][]byte)
 	for _, e := range entries {
-		if e.wtyp == protowire.BytesType {
+		if e.wtyp == protowire.BytesType && (mergeableFields == nil || mergeableFields[int32(e.num)]) {
 			merged[e.num] = append(merged[e.num], e.payload...)
 		}
 	}
-	// Reconstruct in order of first appearance
 	emitted := make(map[protowire.Number]bool)
 	var result []byte
 	for _, e := range entries {
-		if e.wtyp == protowire.BytesType {
+		if e.wtyp == protowire.BytesType && (mergeableFields == nil || mergeableFields[int32(e.num)]) {
 			if !emitted[e.num] {
 				emitted[e.num] = true
 				result = protowire.AppendTag(result, e.num, protowire.BytesType)
-				result = protowire.AppendBytes(result, merged[e.num])
+				result = protowire.AppendBytes(result, mergeNestedBytes(merged[e.num]))
 			}
 		} else {
 			result = append(result, e.raw...)
 		}
 	}
-	fdCopy.Options.ProtoReflect().SetUnknown(result)
-	return fdCopy
+	m.SetUnknown(result)
+}
+
+// mergeNestedBytes recursively merges duplicate bytes-type fields within raw
+// protobuf bytes. This handles deep sub-field option merging: when two entries
+// for the same message field exist (e.g., inner { value: "hello" } and
+// inner { num: 42 }), they are merged into one entry (inner { value: "hello",
+// num: 42 }), recursively.
+func mergeNestedBytes(data []byte) []byte {
+	type entry struct {
+		num     protowire.Number
+		wtyp    protowire.Type
+		payload []byte
+		raw     []byte
+	}
+	var entries []entry
+	buf := data
+	for len(buf) > 0 {
+		entryStart := buf
+		num, wtyp, n := protowire.ConsumeTag(buf)
+		if n < 0 {
+			return data
+		}
+		buf = buf[n:]
+		var payload []byte
+		switch wtyp {
+		case protowire.BytesType:
+			v, vn := protowire.ConsumeBytes(buf)
+			if vn < 0 {
+				return data
+			}
+			payload = v
+			buf = buf[vn:]
+		case protowire.VarintType:
+			_, vn := protowire.ConsumeVarint(buf)
+			if vn < 0 {
+				return data
+			}
+			buf = buf[vn:]
+		case protowire.Fixed32Type:
+			_, vn := protowire.ConsumeFixed32(buf)
+			if vn < 0 {
+				return data
+			}
+			buf = buf[vn:]
+		case protowire.Fixed64Type:
+			_, vn := protowire.ConsumeFixed64(buf)
+			if vn < 0 {
+				return data
+			}
+			buf = buf[vn:]
+		case protowire.StartGroupType:
+			_, vn := protowire.ConsumeGroup(num, buf)
+			if vn < 0 {
+				return data
+			}
+			buf = buf[vn:]
+		default:
+			return data
+		}
+		entries = append(entries, entry{num: num, wtyp: wtyp, payload: payload, raw: entryStart[:len(entryStart)-len(buf)]})
+	}
+
+	// Check if any bytes-type field appears more than once
+	counts := make(map[protowire.Number]int)
+	needsMerge := false
+	for _, e := range entries {
+		if e.wtyp == protowire.BytesType {
+			counts[e.num]++
+			if counts[e.num] > 1 {
+				needsMerge = true
+			}
+		}
+	}
+	if !needsMerge {
+		return data
+	}
+
+	merged := make(map[protowire.Number][]byte)
+	for _, e := range entries {
+		if e.wtyp == protowire.BytesType && counts[e.num] > 1 {
+			merged[e.num] = append(merged[e.num], e.payload...)
+		}
+	}
+	emitted := make(map[protowire.Number]bool)
+	var result []byte
+	for _, e := range entries {
+		if e.wtyp == protowire.BytesType && counts[e.num] > 1 {
+			if !emitted[e.num] {
+				emitted[e.num] = true
+				result = protowire.AppendTag(result, e.num, protowire.BytesType)
+				result = protowire.AppendBytes(result, mergeNestedBytes(merged[e.num]))
+			}
+		} else {
+			result = append(result, e.raw...)
+		}
+	}
+	return result
+}
+
+// sourceRetentionFields maps extendee type name (e.g., ".google.protobuf.FieldOptions")
+// to the set of extension field numbers that have retention = RETENTION_SOURCE.
+type sourceRetentionFields map[string]map[int32]bool
+
+// collectSourceRetentionFields builds a map of extension field numbers with RETENTION_SOURCE,
+// grouped by the option type they extend.
+func collectSourceRetentionFields(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) sourceRetentionFields {
+	result := make(sourceRetentionFields)
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, ext := range fd.GetExtension() {
+			if ext.GetOptions().GetRetention() == descriptorpb.FieldOptions_RETENTION_SOURCE {
+				extendee := ext.GetExtendee()
+				if result[extendee] == nil {
+					result[extendee] = make(map[int32]bool)
+				}
+				result[extendee][ext.GetNumber()] = true
+			}
+		}
+		for _, msg := range fd.GetMessageType() {
+			collectSourceRetentionFieldsInMsg(msg, result)
+		}
+	}
+	return result
+}
+
+func collectSourceRetentionFieldsInMsg(msg *descriptorpb.DescriptorProto, result sourceRetentionFields) {
+	for _, ext := range msg.GetExtension() {
+		if ext.GetOptions().GetRetention() == descriptorpb.FieldOptions_RETENTION_SOURCE {
+			extendee := ext.GetExtendee()
+			if result[extendee] == nil {
+				result[extendee] = make(map[int32]bool)
+			}
+			result[extendee][ext.GetNumber()] = true
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectSourceRetentionFieldsInMsg(nested, result)
+	}
 }
 
 // stripSourceRetention returns a copy of fd with source-retention-only options removed.
 // If the descriptor has no such options, returns the original to avoid cloning.
-func stripSourceRetention(fd *descriptorpb.FileDescriptorProto) *descriptorpb.FileDescriptorProto {
-	if !hasExtRangeOpts(fd.GetMessageType()) {
+func stripSourceRetention(fd *descriptorpb.FileDescriptorProto, srcRetFields sourceRetentionFields) *descriptorpb.FileDescriptorProto {
+	needsClone := hasExtRangeOpts(fd.GetMessageType())
+	if !needsClone && len(srcRetFields) > 0 {
+		needsClone = fdHasSourceRetentionOpts(fd, srcRetFields)
+	}
+	if !needsClone {
 		return fd
 	}
 	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
 	// Collect paths of ext ranges whose options become nil after stripping verification.
 	var emptyOptsPaths [][]int32
 	clearExtRangeOptsCollect(fdCopy.GetMessageType(), []int32{4}, &emptyOptsPaths)
+	// Strip source-retention custom option unknown fields
+	var strippedOptsPaths [][]int32
+	stripSourceRetentionOpts(fdCopy, srcRetFields, &strippedOptsPaths)
 	if fdCopy.SourceCodeInfo != nil {
 		var filtered []*descriptorpb.SourceCodeInfo_Location
 		for _, loc := range fdCopy.SourceCodeInfo.Location {
-			if !isStrippedExtRangeOptsPath(loc.Path, emptyOptsPaths) {
+			if !isStrippedExtRangeOptsPath(loc.Path, emptyOptsPaths) &&
+				!isStrippedSourceRetentionPath(loc.Path, strippedOptsPaths) {
 				filtered = append(filtered, loc)
 			}
 		}
@@ -3700,6 +5451,269 @@ func isVerificationPath(path []int32) bool {
 			i += 2 // nested_type
 		} else {
 			return false
+		}
+	}
+	return false
+}
+
+// fdHasSourceRetentionOpts checks if any options in fd have unknown fields
+// that correspond to source-retention extensions.
+func fdHasSourceRetentionOpts(fd *descriptorpb.FileDescriptorProto, srcRetFields sourceRetentionFields) bool {
+	if hasSourceRetUnknowns(fd.GetOptions(), srcRetFields[".google.protobuf.FileOptions"]) {
+		return true
+	}
+	for _, msg := range fd.GetMessageType() {
+		if msgHasSourceRetentionOpts(msg, srcRetFields) {
+			return true
+		}
+	}
+	for _, svc := range fd.GetService() {
+		if hasSourceRetUnknowns(svc.GetOptions(), srcRetFields[".google.protobuf.ServiceOptions"]) {
+			return true
+		}
+		for _, mtd := range svc.GetMethod() {
+			if hasSourceRetUnknowns(mtd.GetOptions(), srcRetFields[".google.protobuf.MethodOptions"]) {
+				return true
+			}
+		}
+	}
+	for _, ext := range fd.GetExtension() {
+		if hasSourceRetUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"]) {
+			return true
+		}
+	}
+	for _, en := range fd.GetEnumType() {
+		if enumHasSourceRetentionOpts(en, srcRetFields) {
+			return true
+		}
+	}
+	return false
+}
+
+func msgHasSourceRetentionOpts(msg *descriptorpb.DescriptorProto, srcRetFields sourceRetentionFields) bool {
+	if hasSourceRetUnknowns(msg.GetOptions(), srcRetFields[".google.protobuf.MessageOptions"]) {
+		return true
+	}
+	for _, f := range msg.GetField() {
+		if hasSourceRetUnknowns(f.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"]) {
+			return true
+		}
+	}
+	for _, oo := range msg.GetOneofDecl() {
+		if hasSourceRetUnknowns(oo.GetOptions(), srcRetFields[".google.protobuf.OneofOptions"]) {
+			return true
+		}
+	}
+	for _, ext := range msg.GetExtension() {
+		if hasSourceRetUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"]) {
+			return true
+		}
+	}
+	for _, en := range msg.GetEnumType() {
+		if enumHasSourceRetentionOpts(en, srcRetFields) {
+			return true
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		if msgHasSourceRetentionOpts(nested, srcRetFields) {
+			return true
+		}
+	}
+	return false
+}
+
+func enumHasSourceRetentionOpts(en *descriptorpb.EnumDescriptorProto, srcRetFields sourceRetentionFields) bool {
+	if hasSourceRetUnknowns(en.GetOptions(), srcRetFields[".google.protobuf.EnumOptions"]) {
+		return true
+	}
+	for _, ev := range en.GetValue() {
+		if hasSourceRetUnknowns(ev.GetOptions(), srcRetFields[".google.protobuf.EnumValueOptions"]) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSourceRetUnknowns(opts proto.Message, retFieldNums map[int32]bool) bool {
+	if opts == nil || len(retFieldNums) == 0 {
+		return false
+	}
+	unknowns := opts.ProtoReflect().GetUnknown()
+	buf := unknowns
+	for len(buf) > 0 {
+		num, _, n := protowire.ConsumeField(buf)
+		if n < 0 {
+			break
+		}
+		if retFieldNums[int32(num)] {
+			return true
+		}
+		buf = buf[n:]
+	}
+	return false
+}
+
+// stripSourceRetentionOpts strips unknown fields for source-retention extensions
+// from all options in the FileDescriptorProto and collects paths of stripped options.
+func stripSourceRetentionOpts(fd *descriptorpb.FileDescriptorProto, srcRetFields sourceRetentionFields, strippedPaths *[][]int32) {
+	if len(srcRetFields) == 0 {
+		return
+	}
+
+	// File options (path: [8])
+	if stripOptsUnknowns(fd.GetOptions(), srcRetFields[".google.protobuf.FileOptions"], []int32{8}, strippedPaths) {
+		fd.Options = nil
+	}
+
+	// Messages (path: [4, i])
+	for mi, msg := range fd.GetMessageType() {
+		stripMsgSourceRetention(msg, srcRetFields, []int32{4, int32(mi)}, strippedPaths)
+	}
+
+	// Enums (path: [5, i])
+	for ei, en := range fd.GetEnumType() {
+		stripEnumSourceRetention(en, srcRetFields, []int32{5, int32(ei)}, strippedPaths)
+	}
+
+	// Services (path: [6, i])
+	for si, svc := range fd.GetService() {
+		svcPath := []int32{6, int32(si)}
+		// Service options (path: [6, i, 3])
+		if stripOptsUnknowns(svc.GetOptions(), srcRetFields[".google.protobuf.ServiceOptions"], append(append([]int32{}, svcPath...), 3), strippedPaths) {
+			svc.Options = nil
+		}
+		// Methods (path: [6, i, 2, j])
+		for mi, mtd := range svc.GetMethod() {
+			if stripOptsUnknowns(mtd.GetOptions(), srcRetFields[".google.protobuf.MethodOptions"], append(append([]int32{}, svcPath...), 2, int32(mi), 3), strippedPaths) {
+				mtd.Options = nil
+			}
+		}
+	}
+
+	// Top-level extensions (path: [7, i])
+	for ei, ext := range fd.GetExtension() {
+		if stripOptsUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"], []int32{7, int32(ei), 8}, strippedPaths) {
+			ext.Options = nil
+		}
+	}
+}
+
+func stripMsgSourceRetention(msg *descriptorpb.DescriptorProto, srcRetFields sourceRetentionFields, msgPath []int32, strippedPaths *[][]int32) {
+	// Message options (path: [..., 7])
+	if stripOptsUnknowns(msg.GetOptions(), srcRetFields[".google.protobuf.MessageOptions"], append(append([]int32{}, msgPath...), 7), strippedPaths) {
+		msg.Options = nil
+	}
+
+	// Fields (path: [..., 2, i, 8])
+	for fi, f := range msg.GetField() {
+		if stripOptsUnknowns(f.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"], append(append([]int32{}, msgPath...), 2, int32(fi), 8), strippedPaths) {
+			f.Options = nil
+		}
+	}
+
+	// Oneofs (path: [..., 8, i, 2])
+	for oi, oo := range msg.GetOneofDecl() {
+		if stripOptsUnknowns(oo.GetOptions(), srcRetFields[".google.protobuf.OneofOptions"], append(append([]int32{}, msgPath...), 8, int32(oi), 2), strippedPaths) {
+			oo.Options = nil
+		}
+	}
+
+	// Extension ranges (path: [..., 5, i, 3])
+	for ri, rng := range msg.GetExtensionRange() {
+		if stripOptsUnknowns(rng.GetOptions(), srcRetFields[".google.protobuf.ExtensionRangeOptions"], append(append([]int32{}, msgPath...), 5, int32(ri), 3), strippedPaths) {
+			rng.Options = nil
+		}
+	}
+
+	// Extensions (path: [..., 6, i, 8])
+	for ei, ext := range msg.GetExtension() {
+		if stripOptsUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"], append(append([]int32{}, msgPath...), 6, int32(ei), 8), strippedPaths) {
+			ext.Options = nil
+		}
+	}
+
+	// Nested enums (path: [..., 4, i])
+	for ei, en := range msg.GetEnumType() {
+		stripEnumSourceRetention(en, srcRetFields, append(append([]int32{}, msgPath...), 4, int32(ei)), strippedPaths)
+	}
+
+	// Nested messages (path: [..., 3, i])
+	for ni, nested := range msg.GetNestedType() {
+		stripMsgSourceRetention(nested, srcRetFields, append(append([]int32{}, msgPath...), 3, int32(ni)), strippedPaths)
+	}
+}
+
+func stripEnumSourceRetention(en *descriptorpb.EnumDescriptorProto, srcRetFields sourceRetentionFields, enumPath []int32, strippedPaths *[][]int32) {
+	// Enum options (path: [..., 3])
+	if stripOptsUnknowns(en.GetOptions(), srcRetFields[".google.protobuf.EnumOptions"], append(append([]int32{}, enumPath...), 3), strippedPaths) {
+		en.Options = nil
+	}
+
+	// Enum values (path: [..., 2, i, 3])
+	for vi, ev := range en.GetValue() {
+		if stripOptsUnknowns(ev.GetOptions(), srcRetFields[".google.protobuf.EnumValueOptions"], append(append([]int32{}, enumPath...), 2, int32(vi), 3), strippedPaths) {
+			ev.Options = nil
+		}
+	}
+}
+
+// stripOptsUnknowns removes unknown fields with source-retention field numbers
+// from the given options message. Returns true if options should be nilled out
+// (all fields removed). Collects stripped paths for SCI filtering.
+func stripOptsUnknowns(opts proto.Message, retFieldNums map[int32]bool, optsPath []int32, strippedPaths *[][]int32) bool {
+	if opts == nil || len(retFieldNums) == 0 {
+		return false
+	}
+	ref := opts.ProtoReflect()
+	unknowns := ref.GetUnknown()
+	if len(unknowns) == 0 {
+		return false
+	}
+
+	var kept []byte
+	stripped := false
+	var strippedNums []int32
+	buf := unknowns
+	for len(buf) > 0 {
+		num, _, n := protowire.ConsumeField(buf)
+		if n < 0 {
+			break
+		}
+		if retFieldNums[int32(num)] {
+			stripped = true
+			strippedNums = append(strippedNums, int32(num))
+		} else {
+			kept = append(kept, buf[:n]...)
+		}
+		buf = buf[n:]
+	}
+
+	if !stripped {
+		return false
+	}
+
+	ref.SetUnknown(kept)
+
+	// Collect stripped SCI paths: the specific field number paths
+	for _, fn := range strippedNums {
+		p := append(append([]int32{}, optsPath...), fn)
+		*strippedPaths = append(*strippedPaths, p)
+	}
+
+	// If options is now empty (no known fields set, no unknown fields), nil it out
+	if len(kept) == 0 && proto.Size(opts) == 0 {
+		*strippedPaths = append(*strippedPaths, append([]int32{}, optsPath...))
+		return true
+	}
+	return false
+}
+
+// isStrippedSourceRetentionPath checks if a SCI path should be stripped because
+// it belongs to a source-retention option that was removed.
+func isStrippedSourceRetentionPath(path []int32, strippedPaths [][]int32) bool {
+	for _, sp := range strippedPaths {
+		if len(path) >= len(sp) && pathPrefix(path, sp) {
+			return true
 		}
 	}
 	return false
@@ -3906,6 +5920,20 @@ func printFreeFieldNumbers(fullName string, msg *descriptorpb.DescriptorProto) {
 	fmt.Println(output)
 }
 
+// mapErrorFilename replaces the virtual filename at the start of an error/warning
+// line with the disk path, matching C++ protoc's ErrorPrinter behavior.
+func mapErrorFilename(line string, srcTree *importer.SourceTree) string {
+	colon := strings.Index(line, ":")
+	if colon < 0 || srcTree == nil {
+		return line
+	}
+	filename := line[:colon]
+	if diskPath, ok := srcTree.VirtualFileToDiskFile(filename); ok {
+		return diskPath + line[colon:]
+	}
+	return line
+}
+
 // formatErrorsMSVS transforms error lines from GCC format to MSVS format.
 // GCC: "file:line:col: message" → MSVS: "file(line) : error in column=col: message"
 // GCC: "file: message" → MSVS: "file: message" (filename resolved to disk path)
@@ -3969,7 +5997,11 @@ func formatErrorLineMSVS(line string, srcTree *importer.SourceTree) string {
 			filename = diskPath
 		}
 	}
-	return fmt.Sprintf("%s(%d) : error in column=%d:%s", filename, lineNum, colNum, message)
+	level := "error"
+	if strings.Contains(message, "warning:") {
+		level = "warning"
+	}
+	return fmt.Sprintf("%s(%d) : %s in column=%d:%s", filename, lineNum, level, colNum, message)
 }
 
 type fileOptExtInfo struct {
@@ -3980,7 +6012,9 @@ type fileOptExtInfo struct {
 // resolveCustomFileOptions resolves parenthesized custom file options against
 // extension definitions. It finds the matching extension field, encodes the
 // value, and sets it on the FileOptions proto as unknown (extension) fields.
-func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+// It also returns a map from filename to the set of extension field numbers
+// that have sub-field options (needed to know which fields to merge in proto_file).
+func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
 	// Build extension map: name → extension field for FileOptions extensions
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -4015,6 +6049,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
 	var errs []string
+	subFieldNums := map[string]map[int32]bool{}
 	for _, name := range orderedFiles {
 		result := parseResults[name]
 		if result == nil {
@@ -4025,10 +6060,14 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 		repeatedIdx := map[int32]int32{}
 		seenCustomOpts := map[string]bool{}
 		for _, opt := range result.CustomFileOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+				continue
+			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_FILE, "file"); terr != "" {
+				errs = append(errs, terr)
 				continue
 			}
 
@@ -4044,8 +6083,70 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 				seenCustomOpts[optKey] = true
 			}
 
+			// Validate boolean option values must be "true" or "false"
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+			// Validate string/bytes option values must be quoted strings
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenString {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				if opt.Value != "inf" && opt.Value != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
+			}
+
 			if len(opt.SubFieldPath) > 0 {
 				// Sub-field option: option (ext).sub1.sub2... = value;
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
 				// Walk through the message type hierarchy for each path segment
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
@@ -4167,7 +6268,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 			}
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectEnumValueNumbers(enums []*descriptorpb.EnumDescriptorProto, prefix string, out map[string]map[string]int32) {
@@ -4207,6 +6308,31 @@ func collectFileOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN s
 	}
 }
 
+// buildMsgFQNMap builds a map from *DescriptorProto to its fully-qualified name
+// for all messages in the given file descriptors.
+func buildMsgFQNMap(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) map[*descriptorpb.DescriptorProto]string {
+	m := map[*descriptorpb.DescriptorProto]string{}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		for _, msg := range fd.GetMessageType() {
+			buildMsgFQNMapRecursive(msg, pkg, m)
+		}
+	}
+	return m
+}
+
+func buildMsgFQNMapRecursive(msg *descriptorpb.DescriptorProto, parentFQN string, m map[*descriptorpb.DescriptorProto]string) {
+	fqn := parentFQN + "." + msg.GetName()
+	if parentFQN == "" {
+		fqn = msg.GetName()
+	}
+	m[msg] = fqn
+	for _, nested := range msg.GetNestedType() {
+		buildMsgFQNMapRecursive(nested, fqn, m)
+	}
+}
+
 // findFileOptionExtension looks up an extension field by name, considering package scope.
 func findFileOptionExtension(name string, currentPkg string, allExts []fileOptExtInfo) (*descriptorpb.FieldDescriptorProto, string) {
 	buildFQN := func(e fileOptExtInfo) string {
@@ -4226,29 +6352,27 @@ func findFileOptionExtension(name string, currentPkg string, allExts []fileOptEx
 		return nil, ""
 	}
 
-	// Try current package scope first
-	if currentPkg != "" {
+	// Walk scopes from innermost (current package) to outermost (root),
+	// matching C++ protoc scope resolution for extension names.
+	scope := currentPkg
+	for {
+		candidate := name
+		if scope != "" {
+			candidate = scope + "." + name
+		}
 		for _, e := range allExts {
-			if e.field.GetName() == name && e.pkg == currentPkg {
+			if buildFQN(e) == candidate {
 				return e.field, buildFQN(e)
 			}
 		}
-	}
-
-	// Try bare name match
-	for _, e := range allExts {
-		if e.field.GetName() == name {
-			return e.field, buildFQN(e)
+		if scope == "" {
+			break
 		}
-	}
-
-	// Try dotted name as relative path
-	if strings.Contains(name, ".") {
-		for _, e := range allExts {
-			extFQN := buildFQN(e)
-			if strings.HasSuffix(extFQN, "."+name) || extFQN == name {
-				return e.field, extFQN
-			}
+		// Move to parent scope
+		if dot := strings.LastIndex(scope, "."); dot >= 0 {
+			scope = scope[:dot]
+		} else {
+			scope = ""
 		}
 	}
 
@@ -4257,7 +6381,8 @@ func findFileOptionExtension(name string, currentPkg string, allExts []fileOptEx
 
 // resolveCustomFieldOptions resolves parenthesized custom options on fields
 // (e.g., [(my_ext) = "value"]) against extension definitions for FieldOptions.
-func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	subFieldNums := map[string]map[int32]bool{}
 	// Build extension map for FieldOptions extensions
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -4290,6 +6415,18 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
+	type fieldRepKey struct {
+		field *descriptorpb.FieldDescriptorProto
+		num   int32
+	}
+	fieldRepeatIdx := map[fieldRepKey]int32{}
+
+	type fieldOptKey struct {
+		field *descriptorpb.FieldDescriptorProto
+		name  string
+	}
+	seenFieldOpts := map[fieldOptKey]bool{}
+
 	var errs []string
 	for _, name := range orderedFiles {
 		result := parseResults[name]
@@ -4304,22 +6441,106 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
 			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_FIELD, "field"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
+
+			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+			if !isRepeated && len(opt.SubFieldPath) == 0 {
+				k := fieldOptKey{opt.Field, opt.ParenName}
+				if seenFieldOpts[k] {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" was already set.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				seenFieldOpts[k] = true
+			}
 
 			// Validate boolean option values must be identifiers
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
-				if opt.ValueType != tokenizer.TokenIdent || (opt.Value != "true" && opt.Value != "false") {
+				if opt.ValueType != tokenizer.TokenIdent {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.ValTok.Line+1, opt.ValTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
 						name, opt.ValTok.Line+1, opt.ValTok.Column+1, extFQN))
 					continue
 				}
 			}
 
-			// Update SCI path with actual field number
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.ValTok.Line+1, opt.ValTok.Column+1, extFQN))
+					continue
+				}
+			}
+			// Validate string/bytes option values must be quoted strings
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenString {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.ValTok.Line+1, opt.ValTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				floatCheckVal := opt.Value
+				if strings.HasPrefix(floatCheckVal, "-") {
+					floatCheckVal = floatCheckVal[1:]
+				}
+				if floatCheckVal != "inf" && floatCheckVal != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
 			}
 
+			// For repeated extensions, append an index to the SCI path
+			if ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED && opt.SCILoc != nil {
+				key := fieldRepKey{opt.Field, ext.GetNumber()}
+				idx := fieldRepeatIdx[key]
+				fieldRepeatIdx[key]++
+				insertPos := len(opt.SCILoc.Path) - len(opt.SubFieldPath)
+				newPath := make([]int32, len(opt.SCILoc.Path)+1)
+				copy(newPath, opt.SCILoc.Path[:insertPos])
+				newPath[insertPos] = idx
+				copy(newPath[insertPos+1:], opt.SCILoc.Path[insertPos:])
+				opt.SCILoc.Path = newPath
+			}
+
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
+			}
+
 			if len(opt.SubFieldPath) > 0 {
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -4357,12 +6578,7 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -4418,7 +6634,7 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 				append(opt.Field.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectFieldOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -4435,7 +6651,7 @@ func collectFieldOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN 
 
 // resolveCustomMessageOptions resolves parenthesized custom options on messages
 // (e.g., option (my_msg_label) = "primary";) against extension definitions for MessageOptions.
-func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
 	// Build extension map for MessageOptions extensions
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -4467,8 +6683,16 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
+	msgFQNMap := buildMsgFQNMap(orderedFiles, parsed)
+
+	type msgOptKey struct {
+		msg  *descriptorpb.DescriptorProto
+		name string
+	}
+	seenMsgOpts := map[msgOptKey]bool{}
 
 	var errs []string
+	subFieldNums := map[string]map[int32]bool{}
 	for _, name := range orderedFiles {
 		result := parseResults[name]
 		if result == nil {
@@ -4476,11 +6700,30 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomMessageOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			scope := fd.GetPackage()
+			if fqn, ok := msgFQNMap[opt.Message]; ok {
+				scope = fqn
+			}
+			ext, extFQN := findFileOptionExtension(opt.InnerName, scope, allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
+			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_MESSAGE, "message"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
+
+			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+			if !isRepeated && len(opt.SubFieldPath) == 0 {
+				k := msgOptKey{opt.Message, opt.ParenName}
+				if seenMsgOpts[k] {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" was already set.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				seenMsgOpts[k] = true
 			}
 
 			// Update SCI path with actual field number
@@ -4488,7 +6731,73 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
 			}
 
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
+			}
+
+			// Validate boolean option values must be "true" or "false"
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+			// Validate string/bytes option values must be quoted strings
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenString {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				floatCheckVal := opt.Value
+				if strings.HasPrefix(floatCheckVal, "-") {
+					floatCheckVal = floatCheckVal[1:]
+				}
+				if floatCheckVal != "inf" && floatCheckVal != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
 			if len(opt.SubFieldPath) > 0 {
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -4526,12 +6835,7 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -4587,7 +6891,7 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 				append(opt.Message.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectMessageOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -4604,7 +6908,8 @@ func collectMessageOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQ
 
 // resolveCustomServiceOptions resolves parenthesized custom options on services
 // (e.g., option (service_label) = "primary";) against extensions of ServiceOptions.
-func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -4634,6 +6939,12 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
+	type svcOptKey struct {
+		svc  *descriptorpb.ServiceDescriptorProto
+		name string
+	}
+	seenSvcOpts := map[svcOptKey]bool{}
+
 	var errs []string
 	for _, name := range orderedFiles {
 		result := parseResults[name]
@@ -4642,18 +6953,99 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomServiceOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
+			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_SERVICE, "service"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
+
+			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+			if !isRepeated && len(opt.SubFieldPath) == 0 {
+				k := svcOptKey{opt.Service, opt.ParenName}
+				if seenSvcOpts[k] {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" was already set.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				seenSvcOpts[k] = true
 			}
 
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
 			}
 
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
+			}
+
+			// Validate boolean option values must be "true" or "false"
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+			// Validate string/bytes option values must be quoted strings
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenString {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				floatCheckVal := opt.Value
+				if strings.HasPrefix(floatCheckVal, "-") {
+					floatCheckVal = floatCheckVal[1:]
+				}
+				if floatCheckVal != "inf" && floatCheckVal != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -4691,12 +7083,7 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -4750,7 +7137,7 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 				append(opt.Service.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectServiceOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -4767,7 +7154,8 @@ func collectServiceOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQ
 
 // resolveCustomMethodOptions resolves parenthesized custom options on methods
 // (e.g., option (auth_role) = "admin";) against extensions of MethodOptions.
-func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -4797,6 +7185,12 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
+	type mtdOptKey struct {
+		mtd  *descriptorpb.MethodDescriptorProto
+		name string
+	}
+	seenMtdOpts := map[mtdOptKey]bool{}
+
 	var errs []string
 	for _, name := range orderedFiles {
 		result := parseResults[name]
@@ -4805,18 +7199,99 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomMethodOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
+			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_METHOD, "method"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
+
+			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+			if !isRepeated && len(opt.SubFieldPath) == 0 {
+				k := mtdOptKey{opt.Method, opt.ParenName}
+				if seenMtdOpts[k] {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" was already set.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				seenMtdOpts[k] = true
 			}
 
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
 			}
 
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
+			}
+
+			// Validate boolean option values must be "true" or "false"
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+			// Validate string/bytes option values must be quoted strings
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenString {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				floatCheckVal := opt.Value
+				if strings.HasPrefix(floatCheckVal, "-") {
+					floatCheckVal = floatCheckVal[1:]
+				}
+				if floatCheckVal != "inf" && floatCheckVal != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -4854,12 +7329,7 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -4913,7 +7383,7 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 				append(opt.Method.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectMethodOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -4930,7 +7400,8 @@ func collectMethodOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN
 
 // resolveCustomEnumOptions resolves parenthesized custom options on enums
 // (e.g., option (enum_label) = "status_tracker";) against extensions of EnumOptions.
-func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -4960,6 +7431,12 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
+	type enumOptKey struct {
+		enum *descriptorpb.EnumDescriptorProto
+		name string
+	}
+	seenEnumOpts := map[enumOptKey]bool{}
+
 	var errs []string
 	for _, name := range orderedFiles {
 		result := parseResults[name]
@@ -4968,18 +7445,99 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomEnumOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
+			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_ENUM, "enum"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
+
+			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+			if !isRepeated && len(opt.SubFieldPath) == 0 {
+				k := enumOptKey{opt.Enum, opt.ParenName}
+				if seenEnumOpts[k] {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" was already set.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				seenEnumOpts[k] = true
 			}
 
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
 			}
 
+			// Validate boolean option values must be "true" or "false"
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+			// Validate string/bytes option values must be quoted strings
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenString {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				floatCheckVal := opt.Value
+				if strings.HasPrefix(floatCheckVal, "-") {
+					floatCheckVal = floatCheckVal[1:]
+				}
+				if floatCheckVal != "inf" && floatCheckVal != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
+			}
+
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -5017,12 +7575,7 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -5076,7 +7629,7 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 				append(opt.Enum.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectEnumOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -5093,7 +7646,8 @@ func collectEnumOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN s
 
 // resolveCustomEnumValueOptions resolves parenthesized custom options on enum values
 // (e.g., HIGH = 1 [(display_name) = "High Priority"]) against extension definitions for EnumValueOptions.
-func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -5123,6 +7677,12 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
+	type evOptKey struct {
+		ev   *descriptorpb.EnumValueDescriptorProto
+		name string
+	}
+	seenEvOpts := map[evOptKey]bool{}
+
 	var errs []string
 	for _, name := range orderedFiles {
 		result := parseResults[name]
@@ -5131,18 +7691,99 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomEnumValueOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
+			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_ENUM_ENTRY, "enum entry"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
+
+			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+			if !isRepeated && len(opt.SubFieldPath) == 0 {
+				k := evOptKey{opt.EnumValue, opt.ParenName}
+				if seenEvOpts[k] {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" was already set.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				seenEvOpts[k] = true
 			}
 
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
 			}
 
+			// Validate boolean option values must be "true" or "false"
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+			// Validate string/bytes option values must be quoted strings
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenString {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				floatCheckVal := opt.Value
+				if strings.HasPrefix(floatCheckVal, "-") {
+					floatCheckVal = floatCheckVal[1:]
+				}
+				if floatCheckVal != "inf" && floatCheckVal != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
+			}
+
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -5180,12 +7821,7 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -5239,7 +7875,7 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 				append(opt.EnumValue.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectEnumValueOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -5256,7 +7892,8 @@ func collectEnumValueOptionsExtensions(msg *descriptorpb.DescriptorProto, parent
 
 // resolveCustomOneofOptions resolves parenthesized custom options on oneofs
 // (e.g., option (oneof_label) = "primary";) against extensions of OneofOptions.
-func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -5286,6 +7923,12 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
+	type oneofOptKey struct {
+		oneof *descriptorpb.OneofDescriptorProto
+		name  string
+	}
+	seenOneofOpts := map[oneofOptKey]bool{}
+
 	var errs []string
 	for _, name := range orderedFiles {
 		result := parseResults[name]
@@ -5294,18 +7937,99 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomOneofOptions {
-			ext, _ := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
+			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_ONEOF, "oneof"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
+
+			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+			if !isRepeated && len(opt.SubFieldPath) == 0 {
+				k := oneofOptKey{opt.Oneof, opt.ParenName}
+				if seenOneofOpts[k] {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" was already set.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				seenOneofOpts[k] = true
 			}
 
 			if opt.SCILoc != nil && len(opt.SCILoc.Path) >= 2 {
 				opt.SCILoc.Path[len(opt.SCILoc.Path)-1-len(opt.SubFieldPath)] = ext.GetNumber()
 			}
 
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
+					continue
+				}
+			}
+
+			// Validate boolean option values must be "true" or "false"
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+			// Validate string/bytes option values must be quoted strings
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenString {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				floatCheckVal := opt.Value
+				if strings.HasPrefix(floatCheckVal, "-") {
+					floatCheckVal = floatCheckVal[1:]
+				}
+				if floatCheckVal != "inf" && floatCheckVal != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -5343,12 +8067,7 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 				if !valid {
 					continue
 				}
-
-				value := opt.Value
-				if opt.Negative {
-					value = "-" + value
-				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, value, opt.ValueType, enumValueNumbers)
+				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
 				if err != nil {
 					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
 					continue
@@ -5402,7 +8121,7 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 				append(opt.Oneof.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectOneofOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -5419,7 +8138,8 @@ func collectOneofOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN 
 
 // resolveCustomExtRangeOptions resolves parenthesized custom options on extension ranges
 // (e.g., extensions 100 to 199 [(my_annotation) = "annotated"];) against extension definitions.
-func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -5449,6 +8169,12 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
 
+	type extRangeOptKey struct {
+		rng  *descriptorpb.DescriptorProto_ExtensionRange
+		name string
+	}
+	seenExtRangeOpts := map[extRangeOptKey]bool{}
+
 	var errs []string
 	for _, name := range orderedFiles {
 		result := parseResults[name]
@@ -5463,12 +8189,81 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 				continue
 			}
+			if terr := checkOptionTargets(ext, extFQN, name, descriptorpb.FieldOptions_TARGET_TYPE_EXTENSION_RANGE, "extension range"); terr != "" {
+				errs = append(errs, terr)
+				continue
+			}
+
+			isRepeated := ext.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED
+			if !isRepeated && len(opt.SubFieldPath) == 0 {
+				dup := false
+				for _, rng := range opt.Ranges {
+					k := extRangeOptKey{rng, opt.ParenName}
+					if seenExtRangeOpts[k] {
+						dup = true
+						break
+					}
+				}
+				if dup {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" was already set.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				for _, rng := range opt.Ranges {
+					k := extRangeOptKey{rng, opt.ParenName}
+					seenExtRangeOpts[k] = true
+				}
+			}
 
 			// Validate boolean option values
 			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
-				if opt.ValueType != tokenizer.TokenIdent || (opt.Value != "true" && opt.Value != "false") {
+				if opt.ValueType != tokenizer.TokenIdent {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for boolean option \"%s\".",
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, extFQN))
+					continue
+				}
+				if opt.Value != "true" && opt.Value != "false" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be \"true\" or \"false\" for boolean option \"%s\".",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate enum option values must be identifiers
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenIdent {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be identifier for enum-valued option \"%s\".",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, extFQN))
+					continue
+				}
+			}
+			// Validate string/bytes option values must be quoted strings
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if opt.ValueType != tokenizer.TokenString {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be quoted string for string option \"%s\".",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, extFQN))
+					continue
+				}
+			}
+
+			// Validate float/double identifier values must be lowercase "inf" or "nan"
+			if (ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT || ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE) && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 && opt.ValueType == tokenizer.TokenIdent {
+				if opt.Value != "inf" && opt.Value != "nan" {
+					typeName := "float"
+					if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE {
+						typeName = "double"
+					}
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Value must be number for %s option \"%s\".",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, typeName, extFQN))
+					continue
+				}
+			}
+
+			// Validate integer range for 32-bit types
+			if opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 {
+				if rangeErr := checkIntRangeOption(ext, opt.Value, opt.Negative, extFQN); rangeErr != "" {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: %s",
+						name, opt.AggregateBraceTok.Line+1, opt.AggregateBraceTok.Column+1, rangeErr))
 					continue
 				}
 			}
@@ -5481,6 +8276,15 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 			}
 
 			if len(opt.SubFieldPath) > 0 {
+				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
+						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
+					continue
+				}
+				if subFieldNums[name] == nil {
+					subFieldNums[name] = map[int32]bool{}
+				}
+				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -5585,7 +8389,7 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 			}
 		}
 	}
-	return errs
+	return errs, subFieldNums
 }
 
 func collectExtRangeOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -5608,6 +8412,9 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 	switch ext.GetType() {
 	case descriptorpb.FieldDescriptorProto_TYPE_STRING,
 		descriptorpb.FieldDescriptorProto_TYPE_BYTES:
+		if valueType != tokenizer.TokenString {
+			return nil, &aggregateStringExpectedError{gotValue: value}
+		}
 		b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
 		b = protowire.AppendString(b, value)
 	case descriptorpb.FieldDescriptorProto_TYPE_INT32,
@@ -5616,7 +8423,13 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		descriptorpb.FieldDescriptorProto_TYPE_SINT64:
 		v, err := strconv.ParseInt(value, 0, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid integer value: %s", value)
+			return nil, &aggregateIntExpectedError{gotValue: value}
+		}
+		if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_INT32 ||
+			ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_SINT32 {
+			if v < math.MinInt32 || v > math.MaxInt32 {
+				return nil, &aggregateIntRangeError{rawValue: value}
+			}
 		}
 		if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_SINT32 ||
 			ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_SINT64 {
@@ -5630,7 +8443,12 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		descriptorpb.FieldDescriptorProto_TYPE_UINT64:
 		v, err := strconv.ParseUint(value, 0, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid unsigned integer value: %s", value)
+			return nil, &aggregateIntExpectedError{gotValue: value}
+		}
+		if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_UINT32 {
+			if v > math.MaxUint32 {
+				return nil, &aggregateIntRangeError{rawValue: value}
+			}
 		}
 		b = protowire.AppendTag(b, fieldNum, protowire.VarintType)
 		b = protowire.AppendVarint(b, v)
@@ -5642,22 +8460,53 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 		case "false", "False", "f", "0":
 			b = protowire.AppendVarint(b, 0)
 		default:
+			if _, err := strconv.ParseUint(value, 0, 64); err == nil {
+				return nil, &aggregateIntRangeError{rawValue: value}
+			}
+			if len(value) > 0 && value[0] == '-' {
+				if _, err := strconv.ParseInt(value, 0, 64); err == nil {
+					return nil, &aggregateIntRangeError{rawValue: value}
+				}
+			}
 			return nil, &aggregateBoolError{fieldName: ext.GetName(), value: value}
 		}
 	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
-		v, err := strconv.ParseFloat(value, 32)
-		if err != nil {
-			return nil, fmt.Errorf("invalid float value: %s", value)
+		if valueType == tokenizer.TokenString {
+			return nil, &aggregateFloatExpectedError{gotValue: "\"" + value + "\""}
+		}
+		var floatBits uint32
+		switch strings.ToLower(value) {
+		case "nan", "-nan":
+			floatBits = 0x7FC00000 // C++ canonical float NaN
+		default:
+			v, err := strconv.ParseFloat(value, 32)
+			if err != nil && !errors.Is(err, strconv.ErrRange) {
+				return nil, fmt.Errorf("invalid float value: %s", value)
+			}
+			floatBits = math.Float32bits(float32(v))
 		}
 		b = protowire.AppendTag(b, fieldNum, protowire.Fixed32Type)
-		b = protowire.AppendFixed32(b, math.Float32bits(float32(v)))
+		b = protowire.AppendFixed32(b, floatBits)
 	case descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
-		v, err := strconv.ParseFloat(value, 64)
-		if err != nil {
-			return nil, fmt.Errorf("invalid double value: %s", value)
+		if valueType == tokenizer.TokenString {
+			return nil, &aggregateFloatExpectedError{gotValue: "\"" + value + "\""}
+		}
+		var bits uint64
+		switch strings.ToLower(value) {
+		case "nan", "-nan":
+			bits = 0x7FF8000000000000 // C++ canonical double NaN
+		default:
+			v, err := strconv.ParseFloat(value, 64)
+			if err != nil && !errors.Is(err, strconv.ErrRange) {
+				return nil, fmt.Errorf("invalid double value: %s", value)
+			}
+			bits = math.Float64bits(v)
+			if math.IsNaN(v) {
+				bits = 0x7FF8000000000000
+			}
 		}
 		b = protowire.AppendTag(b, fieldNum, protowire.Fixed64Type)
-		b = protowire.AppendFixed64(b, math.Float64bits(v))
+		b = protowire.AppendFixed64(b, bits)
 	case descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
 		v, err := strconv.ParseUint(value, 0, 32)
 		if err != nil {
@@ -5700,7 +8549,7 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 			}
 			num, found := vals[value]
 			if !found {
-				return nil, fmt.Errorf("enum type %q has no value named %q", ext.GetTypeName(), value)
+				return nil, &aggregateEnumError{enumValue: value, fieldName: ext.GetName()}
 			}
 			v = int64(num)
 		}
@@ -5723,6 +8572,14 @@ func collectMsgFields(msgs []*descriptorpb.DescriptorProto, prefix string, out m
 		fields := map[string]*descriptorpb.FieldDescriptorProto{}
 		for _, f := range msg.GetField() {
 			fields[f.GetName()] = f
+			// Group fields are referenced by message type name in text format
+			if f.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+				tn := f.GetTypeName()
+				if idx := strings.LastIndex(tn, "."); idx >= 0 {
+					tn = tn[idx+1:]
+				}
+				fields[tn] = f
+			}
 		}
 		out[fqn] = fields
 		collectMsgFields(msg.GetNestedType(), fqn, out)
@@ -5788,9 +8645,13 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 		return nil, fmt.Errorf("unknown message type %s for aggregate option", ext.GetTypeName())
 	}
 
-	// Encode each field of the aggregate
+	// Encode each field of the aggregate, then sort by field number (C++ protoc order)
 	seenFields := map[string]bool{}
-	var inner []byte
+	type encodedEntry struct {
+		fieldNum int32
+		data     []byte
+	}
+	var entries []encodedEntry
 	for _, af := range aggFields {
 		var subField *descriptorpb.FieldDescriptorProto
 		if af.IsExtension {
@@ -5814,14 +8675,20 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 			}
 			seenFields[af.Name] = true
 		}
+		if af.TrailingCommaToken != "" {
+			return nil, &aggregateTrailingTokenError{fieldType: subField.GetType(), token: af.TrailingCommaToken}
+		}
 		if len(af.SubFields) > 0 {
 			// Nested message literal — recurse
 			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			if err != nil {
 				return nil, err
 			}
-			inner = append(inner, subBytes...)
+			entries = append(entries, encodedEntry{subField.GetNumber(), subBytes})
 		} else {
+			if af.Positive {
+				return nil, &aggregatePositiveSignError{fieldType: subField.GetType()}
+			}
 			val := af.Value
 			if af.Negative {
 				val = "-" + val
@@ -5830,15 +8697,27 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 			if err != nil {
 				return nil, fmt.Errorf("field %s: %w", af.Name, err)
 			}
-			inner = append(inner, encoded...)
+			entries = append(entries, encodedEntry{subField.GetNumber(), encoded})
 		}
 	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].fieldNum < entries[j].fieldNum
+	})
+	var inner []byte
+	for _, e := range entries {
+		inner = append(inner, e.data...)
+	}
 
-	// Wrap in length-delimited tag
 	fieldNum := protowire.Number(ext.GetNumber())
 	var b []byte
-	b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
-	b = protowire.AppendBytes(b, inner)
+	if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+		b = protowire.AppendTag(b, fieldNum, protowire.StartGroupType)
+		b = append(b, inner...)
+		b = protowire.AppendTag(b, fieldNum, protowire.EndGroupType)
+	} else {
+		b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
+		b = protowire.AppendBytes(b, inner)
+	}
 	return b, nil
 }
 
@@ -5854,8 +8733,38 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 	}
 
 	seenFields := map[string]bool{}
-	var inner []byte
+	type encodedEntry struct {
+		fieldNum int32
+		data     []byte
+	}
+	var entries []encodedEntry
 	for _, af := range aggFields {
+		// Any type URL expansion: [type.googleapis.com/pkg.MsgType]: { ... }
+		if af.IsExtension && typeName == "google.protobuf.Any" && strings.Contains(af.Name, "/") {
+			// Encode type_url (field 1)
+			var anyBytes []byte
+			anyBytes = protowire.AppendTag(anyBytes, 1, protowire.BytesType)
+			anyBytes = protowire.AppendString(anyBytes, af.Name)
+			// Extract message type from URL (part after last '/')
+			slashIdx := strings.LastIndex(af.Name, "/")
+			msgType := af.Name[slashIdx+1:]
+			// Create a synthetic field descriptor to recurse into
+			syntheticField := &descriptorpb.FieldDescriptorProto{
+				Name:     proto.String("value"),
+				Number:   proto.Int32(2),
+				Type:     descriptorpb.FieldDescriptorProto_TYPE_MESSAGE.Enum(),
+				TypeName: proto.String("." + msgType),
+				Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+			}
+			valBytes, err := encodeAggregateFields(syntheticField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
+			if err != nil {
+				return nil, err
+			}
+			anyBytes = append(anyBytes, valBytes...)
+			// Any expansion uses field numbers 1 and 2, treat as field 1 for sorting
+			entries = append(entries, encodedEntry{1, anyBytes})
+			continue
+		}
 		var subField *descriptorpb.FieldDescriptorProto
 		if af.IsExtension {
 			if exts, ok := extByExtendee[typeName]; ok {
@@ -5877,13 +8786,19 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 			}
 			seenFields[af.Name] = true
 		}
+		if af.TrailingCommaToken != "" {
+			return nil, &aggregateTrailingTokenError{fieldType: subField.GetType(), token: af.TrailingCommaToken}
+		}
 		if len(af.SubFields) > 0 {
 			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
 			if err != nil {
 				return nil, err
 			}
-			inner = append(inner, subBytes...)
+			entries = append(entries, encodedEntry{subField.GetNumber(), subBytes})
 		} else {
+			if af.Positive {
+				return nil, &aggregatePositiveSignError{fieldType: subField.GetType()}
+			}
 			val := af.Value
 			if af.Negative {
 				val = "-" + val
@@ -5892,16 +8807,35 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 			if err != nil {
 				return nil, fmt.Errorf("field %s: %w", af.Name, err)
 			}
-			inner = append(inner, encoded...)
+			entries = append(entries, encodedEntry{subField.GetNumber(), encoded})
 		}
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].fieldNum < entries[j].fieldNum
+	})
+	var inner []byte
+	for _, e := range entries {
+		inner = append(inner, e.data...)
 	}
 
 	fieldNum := protowire.Number(field.GetNumber())
 	var b []byte
-	b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
-	b = protowire.AppendBytes(b, inner)
+	if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+		b = protowire.AppendTag(b, fieldNum, protowire.StartGroupType)
+		b = append(b, inner...)
+		b = protowire.AppendTag(b, fieldNum, protowire.EndGroupType)
+	} else {
+		b = protowire.AppendTag(b, fieldNum, protowire.BytesType)
+		b = protowire.AppendBytes(b, inner)
+	}
 	return b, nil
 }
+
+type utf8ValidationError struct {
+	msg string
+}
+
+func (e *utf8ValidationError) Error() string { return e.msg }
 
 type aggregateDupFieldError struct {
 	fieldName string
@@ -5920,6 +8854,151 @@ func (e *aggregateBoolError) Error() string {
 	return fmt.Sprintf("Invalid value for boolean field \"%s\". Value: \"%s\".", e.fieldName, e.value)
 }
 
+type aggregateIntRangeError struct {
+	rawValue string
+}
+
+func (e *aggregateIntRangeError) Error() string {
+	return fmt.Sprintf("Integer out of range (%s)", e.rawValue)
+}
+
+type aggregatePositiveSignError struct {
+	fieldType descriptorpb.FieldDescriptorProto_Type
+}
+
+func (e *aggregatePositiveSignError) Error() string {
+	switch e.fieldType {
+	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT,
+		descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		return "Expected double, got: +"
+	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
+		return "Expected identifier, got: +"
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING,
+		descriptorpb.FieldDescriptorProto_TYPE_BYTES:
+		return "Expected string, got: +"
+	default:
+		return "Expected integer, got: +"
+	}
+}
+
+type aggregateStringExpectedError struct {
+	gotValue string
+}
+
+func (e *aggregateStringExpectedError) Error() string {
+	return fmt.Sprintf("Expected string, got: %s", e.gotValue)
+}
+
+type aggregateTrailingTokenError struct {
+	fieldType descriptorpb.FieldDescriptorProto_Type
+	token     string
+}
+
+func (e *aggregateTrailingTokenError) Error() string {
+	switch e.fieldType {
+	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT,
+		descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		return fmt.Sprintf("Expected double, got: %s", e.token)
+	case descriptorpb.FieldDescriptorProto_TYPE_BOOL,
+		descriptorpb.FieldDescriptorProto_TYPE_ENUM:
+		return fmt.Sprintf("Expected identifier, got: %s", e.token)
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING,
+		descriptorpb.FieldDescriptorProto_TYPE_BYTES:
+		return fmt.Sprintf("Expected string, got: %s", e.token)
+	default:
+		return fmt.Sprintf("Expected integer, got: %s", e.token)
+	}
+}
+
+type aggregateFloatExpectedError struct {
+	gotValue string
+}
+
+func (e *aggregateFloatExpectedError) Error() string {
+	return fmt.Sprintf("Expected double, got: %s", e.gotValue)
+}
+
+type aggregateIntExpectedError struct {
+	gotValue string
+}
+
+func (e *aggregateIntExpectedError) Error() string {
+	return fmt.Sprintf("Expected integer, got: %s", e.gotValue)
+}
+
+type aggregateEnumError struct {
+	enumValue string
+	fieldName string
+}
+
+func (e *aggregateEnumError) Error() string {
+	return fmt.Sprintf("Unknown enumeration value of \"%s\" for field \"%s\".", e.enumValue, e.fieldName)
+}
+
+// checkOptionTargets validates that a custom option's targets allow it on the given entity type.
+func checkOptionTargets(ext *descriptorpb.FieldDescriptorProto, extFQN string, filename string, entityType descriptorpb.FieldOptions_OptionTargetType, entityName string) string {
+	targets := ext.GetOptions().GetTargets()
+	if len(targets) == 0 {
+		return ""
+	}
+	for _, t := range targets {
+		if t == entityType {
+			return ""
+		}
+	}
+	return fmt.Sprintf("%s: Option %s cannot be set on an entity of type `%s`.", filename, extFQN, entityName)
+}
+
+// checkIntRangeOption validates that integer values fit in 32-bit types.
+// Returns an error string if out of range, empty string if OK.
+func checkIntRangeOption(ext *descriptorpb.FieldDescriptorProto, value string, negative bool, extFQN string) string {
+	switch ext.GetType() {
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32, descriptorpb.FieldDescriptorProto_TYPE_SINT32, descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+		s := value
+		if negative {
+			s = "-" + s
+		}
+		v, err := strconv.ParseInt(s, 0, 64)
+		if err != nil {
+			return ""
+		}
+		if v < math.MinInt32 || v > math.MaxInt32 {
+			typeName := "int32"
+			if ext.GetType() == descriptorpb.FieldDescriptorProto_TYPE_SINT32 {
+				typeName = "sint32"
+			}
+			return fmt.Sprintf("Value out of range, %d to %d, for %s option \"%s\".",
+				int64(math.MinInt32), int64(math.MaxInt32), typeName, extFQN)
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32, descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
+		s := value
+		if negative {
+			s = "-" + s
+		}
+		v, err := strconv.ParseInt(s, 0, 64)
+		if err != nil {
+			uv, uerr := strconv.ParseUint(s, 0, 64)
+			if uerr != nil {
+				return ""
+			}
+			if uv > math.MaxUint32 {
+				return fmt.Sprintf("Value out of range, 0 to %d, for uint32 option \"%s\".",
+					uint64(math.MaxUint32), extFQN)
+			}
+			return ""
+		}
+		if v < 0 {
+			return fmt.Sprintf("Value must be integer, from 0 to %d, for uint32 option \"%s\".",
+				uint64(math.MaxUint32), extFQN)
+		}
+		if v > math.MaxUint32 {
+			return fmt.Sprintf("Value out of range, 0 to %d, for uint32 option \"%s\".",
+				uint64(math.MaxUint32), extFQN)
+		}
+	}
+	return ""
+}
+
 func formatAggregateError(err error, filename string, braceTok tokenizer.Token, optName string) string {
 	var dupErr *aggregateDupFieldError
 	if errors.As(err, &dupErr) {
@@ -5931,7 +9010,60 @@ func formatAggregateError(err error, filename string, braceTok tokenizer.Token, 
 		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
 			filename, braceTok.Line+1, braceTok.Column+1, optName, boolErr.Error())
 	}
+	var posErr *aggregatePositiveSignError
+	if errors.As(err, &posErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, posErr.Error())
+	}
+	var intRangeErr *aggregateIntRangeError
+	if errors.As(err, &intRangeErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, intRangeErr.Error())
+	}
+	var strErr *aggregateStringExpectedError
+	if errors.As(err, &strErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, strErr.Error())
+	}
+	var floatErr *aggregateFloatExpectedError
+	if errors.As(err, &floatErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, floatErr.Error())
+	}
+	var intExpErr *aggregateIntExpectedError
+	if errors.As(err, &intExpErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, intExpErr.Error())
+	}
+	var enumErr *aggregateEnumError
+	if errors.As(err, &enumErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, enumErr.Error())
+	}
+	var trailErr *aggregateTrailingTokenError
+	if errors.As(err, &trailErr) {
+		return fmt.Sprintf("%s:%d:%d: Error while parsing option value for \"%s\": %s",
+			filename, braceTok.Line+1, braceTok.Column+1, optName, trailErr.Error())
+	}
 	return fmt.Sprintf("%s: error encoding custom option: %v", filename, err)
+}
+
+// consumeVarintTruncated reads a varint (up to 10 bytes), truncating to 64 bits.
+// C++ protoc accepts overflow varints; Go's protowire.ConsumeVarint rejects them.
+func consumeVarintTruncated(data []byte) (uint64, int) {
+	var val uint64
+	for i := 0; i < len(data) && i < 10; i++ {
+		b := data[i]
+		if i < 9 {
+			val |= uint64(b&0x7f) << (7 * uint(i))
+		} else {
+			val |= uint64(b&0x7f) << 63
+		}
+		if b&0x80 == 0 {
+			return val, i + 1
+		}
+	}
+	return 0, -1
 }
 
 func decodeRawProto(w *os.File, data []byte, indent int) error {
@@ -5944,7 +9076,7 @@ func decodeRawProto(w *os.File, data []byte, indent int) error {
 		prefix := strings.Repeat("  ", indent)
 		switch wtype {
 		case protowire.VarintType:
-			v, vn := protowire.ConsumeVarint(data)
+			v, vn := consumeVarintTruncated(data)
 			if vn < 0 {
 				return fmt.Errorf("invalid varint")
 			}
@@ -6012,7 +9144,7 @@ func validateRawProto(data []byte) error {
 		data = data[n:]
 		switch wtype {
 		case protowire.VarintType:
-			_, vn := protowire.ConsumeVarint(data)
+			_, vn := consumeVarintTruncated(data)
 			if vn < 0 {
 				return fmt.Errorf("invalid")
 			}
@@ -6034,7 +9166,8 @@ func validateRawProto(data []byte) error {
 			}
 			data = data[vn:]
 		case protowire.StartGroupType:
-			// skip group contents
+			// recursively validate group contents until matching EndGroup
+			found := false
 			for len(data) > 0 {
 				gNum, gType, gn := protowire.ConsumeTag(data)
 				if gn < 0 {
@@ -6042,15 +9175,82 @@ func validateRawProto(data []byte) error {
 				}
 				if gType == protowire.EndGroupType && gNum == num {
 					data = data[gn:]
+					found = true
 					break
 				}
-				return fmt.Errorf("group validation not implemented")
+				// validate the inner field (recursion handles nested groups)
+				innerData := data
+				innerN := validateRawField(innerData)
+				if innerN < 0 {
+					return fmt.Errorf("invalid")
+				}
+				data = data[innerN:]
+			}
+			if !found {
+				return fmt.Errorf("invalid")
 			}
 		default:
 			return fmt.Errorf("invalid")
 		}
 	}
 	return nil
+}
+
+// validateRawField validates a single protobuf field and returns bytes consumed, or -1 on error.
+func validateRawField(data []byte) int {
+	num, wtype, n := protowire.ConsumeTag(data)
+	if n < 0 || num < 1 {
+		return -1
+	}
+	consumed := n
+	rest := data[n:]
+	switch wtype {
+	case protowire.VarintType:
+		_, vn := consumeVarintTruncated(rest)
+		if vn < 0 {
+			return -1
+		}
+		consumed += vn
+	case protowire.Fixed64Type:
+		if len(rest) < 8 {
+			return -1
+		}
+		consumed += 8
+	case protowire.Fixed32Type:
+		if len(rest) < 4 {
+			return -1
+		}
+		consumed += 4
+	case protowire.BytesType:
+		_, vn := protowire.ConsumeBytes(rest)
+		if vn < 0 {
+			return -1
+		}
+		consumed += vn
+	case protowire.StartGroupType:
+		rest2 := rest
+		for {
+			if len(rest2) == 0 {
+				return -1
+			}
+			gNum, gType, gn := protowire.ConsumeTag(rest2)
+			if gn < 0 {
+				return -1
+			}
+			if gType == protowire.EndGroupType && gNum == num {
+				consumed += (len(rest) - len(rest2)) + gn
+				break
+			}
+			innerN := validateRawField(rest2)
+			if innerN < 0 {
+				return -1
+			}
+			rest2 = rest2[innerN:]
+		}
+	default:
+		return -1
+	}
+	return consumed
 }
 
 func decodeRawField(w *os.File, data []byte, indent int) (int, error) {
@@ -6063,7 +9263,7 @@ func decodeRawField(w *os.File, data []byte, indent int) (int, error) {
 	prefix := strings.Repeat("  ", indent)
 	switch wtype {
 	case protowire.VarintType:
-		v, vn := protowire.ConsumeVarint(rest)
+		v, vn := consumeVarintTruncated(rest)
 		if vn < 0 {
 			return 0, fmt.Errorf("invalid varint")
 		}
@@ -6096,6 +9296,26 @@ func decodeRawField(w *os.File, data []byte, indent int) (int, error) {
 		} else {
 			fmt.Fprintf(w, "%s%d: \"%s\"\n", prefix, num, cEscapeForDecode(v))
 		}
+	case protowire.StartGroupType:
+		fmt.Fprintf(w, "%s%d {\n", prefix, num)
+		for len(rest) > 0 {
+			peekNum, peekType, peekN := protowire.ConsumeTag(rest)
+			if peekN < 0 {
+				return 0, fmt.Errorf("invalid tag in group")
+			}
+			if peekType == protowire.EndGroupType && peekNum == num {
+				consumed += (len(data) - n - len(rest)) + peekN
+				rest = rest[peekN:]
+				break
+			}
+			innerConsumed, err := decodeRawField(w, rest, indent+1)
+			if err != nil {
+				return 0, err
+			}
+			rest = rest[innerConsumed:]
+		}
+		consumed = len(data) - len(rest)
+		fmt.Fprintf(w, "%s}\n", prefix)
 	default:
 		return 0, fmt.Errorf("unknown wire type")
 	}
@@ -6112,6 +9332,8 @@ func cEscapeForDecode(data []byte) string {
 			sb.WriteString(`\r`)
 		case '\t':
 			sb.WriteString(`\t`)
+		case '\'':
+			sb.WriteString(`\'`)
 		case '"':
 			sb.WriteString(`\"`)
 		case '\\':
@@ -6127,3 +9349,3724 @@ func cEscapeForDecode(data []byte) string {
 	return sb.String()
 }
 
+// sortUnknownFields sorts raw protobuf unknown fields by field number (stable).
+// C++ protoc emits extension/unknown fields in field-number order; we must match.
+func sortUnknownFields(raw []byte) []byte {
+	if len(raw) == 0 {
+		return raw
+	}
+	type entry struct {
+		num  protowire.Number
+		data []byte
+	}
+	var entries []entry
+	r := raw
+	for len(r) > 0 {
+		num, _, n := protowire.ConsumeTag(r)
+		if n < 0 {
+			return raw
+		}
+		_, _, total := protowire.ConsumeField(r)
+		if total < 0 {
+			return raw
+		}
+		entries = append(entries, entry{num: num, data: append([]byte(nil), r[:total]...)})
+		r = r[total:]
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		return entries[i].num < entries[j].num
+	})
+	var result []byte
+	for _, e := range entries {
+		result = append(result, e.data...)
+	}
+	return result
+}
+
+// reorderAndRestoreMapEntries handles both reordering map entries to match
+// source order AND restoring duplicate map entries that Go's proto.Marshal
+// deduplicates. C++ protoc treats map fields as repeated sub-messages,
+// preserving all entries including duplicates with the same key.
+func reorderAndRestoreMapEntries(out []byte, msgDesc protoreflect.MessageDescriptor, textInput string, types *dynamicpb.Types) []byte {
+	for i := 0; i < msgDesc.Fields().Len(); i++ {
+		fd := msgDesc.Fields().Get(i)
+		if !fd.IsMap() {
+			continue
+		}
+		fieldName := string(fd.Name())
+		allEntryTexts := extractAllTextMapEntryTexts(textInput, fieldName)
+		if len(allEntryTexts) == 0 {
+			continue
+		}
+
+		type entryWithKey struct {
+			key  string
+			text string
+		}
+		var entries []entryWithKey
+		keyCount := map[string]int{}
+		hasDup := false
+		for _, et := range allEntryTexts {
+			key := ""
+			if k, ok := extractMapKeyFromEntry(et); ok {
+				key = k
+			}
+			if fd.MapKey().Kind() == protoreflect.BoolKind {
+				switch key {
+				case "true":
+					key = "1"
+				case "false":
+					key = "0"
+				}
+			}
+			entries = append(entries, entryWithKey{key: key, text: et})
+			keyCount[key]++
+			if keyCount[key] > 1 {
+				hasDup = true
+			}
+		}
+
+		if hasDup {
+			// Rebuild ALL entries from text (including duplicates)
+			opts := prototext.UnmarshalOptions{
+				AllowPartial: true,
+				Resolver:     types,
+			}
+			var binEntries [][]byte
+			for _, e := range entries {
+				entryMsg := dynamicpb.NewMessage(fd.Message())
+				if err := opts.Unmarshal([]byte(e.text), entryMsg); err != nil {
+					continue
+				}
+				entryBytes, err := proto.MarshalOptions{Deterministic: true, AllowPartial: true}.Marshal(entryMsg)
+				if err != nil {
+					continue
+				}
+				var wrapped []byte
+				wrapped = protowire.AppendTag(wrapped, fd.Number(), protowire.BytesType)
+				wrapped = protowire.AppendBytes(wrapped, entryBytes)
+				binEntries = append(binEntries, wrapped)
+			}
+			out = replaceFieldEntries(out, fd.Number(), binEntries)
+		} else {
+			// Just reorder (no duplicates)
+			sourceKeys := make([]string, len(entries))
+			for j, e := range entries {
+				sourceKeys[j] = e.key
+			}
+			out = reorderWireEntriesByKeys(out, fd.Number(), sourceKeys)
+		}
+	}
+	return out
+}
+
+// extractAllTextMapEntryTexts extracts all map entry texts (content between
+// braces) for a given field name, preserving duplicates and source order.
+func extractAllTextMapEntryTexts(text, fieldName string) []string {
+	var entries []string
+	fnLen := len(fieldName)
+	i := 0
+	for i < len(text) {
+		pos := strings.Index(text[i:], fieldName)
+		if pos < 0 {
+			break
+		}
+		pos += i
+		if pos > 0 {
+			c := text[pos-1]
+			if isIdentChar(c) {
+				i = pos + fnLen
+				continue
+			}
+		}
+		endPos := pos + fnLen
+		if endPos < len(text) && isIdentChar(text[endPos]) {
+			i = endPos
+			continue
+		}
+		j := endPos
+		for j < len(text) && (text[j] == ' ' || text[j] == '\t' || text[j] == '\n' || text[j] == '\r') {
+			j++
+		}
+		if j >= len(text) || (text[j] != '{' && text[j] != '<') {
+			i = j
+			continue
+		}
+		openBrace := text[j]
+		closeBrace := byte('}')
+		if openBrace == '<' {
+			closeBrace = '>'
+		}
+		j++
+		depth := 1
+		entryStart := j
+		for j < len(text) && depth > 0 {
+			switch text[j] {
+			case openBrace:
+				depth++
+			case closeBrace:
+				depth--
+			case '"':
+				j++
+				for j < len(text) && text[j] != '"' {
+					if text[j] == '\\' {
+						j++
+					}
+					j++
+				}
+			case '\'':
+				j++
+				for j < len(text) && text[j] != '\'' {
+					if text[j] == '\\' {
+						j++
+					}
+					j++
+				}
+			}
+			j++
+		}
+		entryText := text[entryStart : j-1]
+		entries = append(entries, entryText)
+		i = j
+	}
+	return entries
+}
+
+// replaceFieldEntries replaces all wire entries for a given field number
+// with the provided new entries, preserving the position in the output.
+func replaceFieldEntries(data []byte, fieldNum protowire.Number, newEntries [][]byte) []byte {
+	var result []byte
+	inserted := false
+
+	buf := data
+	for len(buf) > 0 {
+		num, _, n := protowire.ConsumeTag(buf)
+		if n < 0 {
+			return data
+		}
+		_, _, total := protowire.ConsumeField(buf)
+		if total < 0 {
+			return data
+		}
+		if num == fieldNum {
+			if !inserted {
+				for _, e := range newEntries {
+					result = append(result, e...)
+				}
+				inserted = true
+			}
+			// Skip existing entry
+		} else {
+			result = append(result, buf[:total]...)
+		}
+		buf = buf[total:]
+	}
+	if !inserted && len(newEntries) > 0 {
+		for _, e := range newEntries {
+			result = append(result, e...)
+		}
+	}
+	return result
+}
+
+// reorderMapEntriesBySource reorders map entries in marshaled binary protobuf
+// to match the source order from text format input. C++ protoc preserves map
+// insertion order while Go's Deterministic marshal sorts keys alphabetically.
+func reorderMapEntriesBySource(out []byte, msgDesc protoreflect.MessageDescriptor, textInput string) []byte {
+	for i := 0; i < msgDesc.Fields().Len(); i++ {
+		fd := msgDesc.Fields().Get(i)
+		if !fd.IsMap() {
+			continue
+		}
+		sourceKeys := extractTextMapKeys(textInput, string(fd.Name()))
+		if len(sourceKeys) == 0 {
+			continue
+		}
+		// Normalize bool text keys ("true"/"false") to varint representation ("1"/"0")
+		if fd.MapKey().Kind() == protoreflect.BoolKind {
+			for k := range sourceKeys {
+				switch sourceKeys[k] {
+				case "true":
+					sourceKeys[k] = "1"
+				case "false":
+					sourceKeys[k] = "0"
+				}
+			}
+		}
+		out = reorderWireEntriesByKeys(out, fd.Number(), sourceKeys)
+	}
+	return out
+}
+
+// extractTextMapKeys extracts map key values from text format in source order.
+// Returns unique keys in first-occurrence order.
+func extractTextMapKeys(text, fieldName string) []string {
+	var keys []string
+	seen := map[string]bool{}
+	fnLen := len(fieldName)
+	i := 0
+	for i < len(text) {
+		pos := strings.Index(text[i:], fieldName)
+		if pos < 0 {
+			break
+		}
+		pos += i
+		// Word boundary check
+		if pos > 0 {
+			c := text[pos-1]
+			if isIdentChar(c) {
+				i = pos + fnLen
+				continue
+			}
+		}
+		endPos := pos + fnLen
+		if endPos < len(text) && isIdentChar(text[endPos]) {
+			i = endPos
+			continue
+		}
+		// Skip whitespace
+		j := endPos
+		for j < len(text) && (text[j] == ' ' || text[j] == '\t' || text[j] == '\n' || text[j] == '\r') {
+			j++
+		}
+		if j >= len(text) || (text[j] != '{' && text[j] != '<') {
+			i = j
+			continue
+		}
+		openBrace := text[j]
+		closeBrace := byte('}')
+		if openBrace == '<' {
+			closeBrace = '>'
+		}
+		j++ // skip open brace
+		// Find matching close brace
+		depth := 1
+		entryStart := j
+		for j < len(text) && depth > 0 {
+			switch text[j] {
+			case openBrace:
+				depth++
+			case closeBrace:
+				depth--
+			case '"':
+				j++
+				for j < len(text) && text[j] != '"' {
+					if text[j] == '\\' {
+						j++
+					}
+					j++
+				}
+			case '\'':
+				j++
+				for j < len(text) && text[j] != '\'' {
+					if text[j] == '\\' {
+						j++
+					}
+					j++
+				}
+			}
+			j++
+		}
+		entryText := text[entryStart : j-1]
+		if key, ok := extractMapKeyFromEntry(entryText); ok {
+			if !seen[key] {
+				keys = append(keys, key)
+				seen[key] = true
+			}
+		}
+		i = j
+	}
+	return keys
+}
+
+func isIdentChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// extractMapKeyFromEntry extracts the key value from a map entry text like
+// "key: \"c\" value: 3".
+func extractMapKeyFromEntry(entry string) (string, bool) {
+	idx := strings.Index(entry, "key")
+	if idx < 0 {
+		return "", false
+	}
+	j := idx + 3
+	for j < len(entry) && (entry[j] == ' ' || entry[j] == '\t') {
+		j++
+	}
+	if j >= len(entry) || entry[j] != ':' {
+		return "", false
+	}
+	j++ // skip ':'
+	for j < len(entry) && (entry[j] == ' ' || entry[j] == '\t' || entry[j] == '\n' || entry[j] == '\r') {
+		j++
+	}
+	if j >= len(entry) {
+		return "", false
+	}
+	if entry[j] == '"' || entry[j] == '\'' {
+		quote := entry[j]
+		j++
+		var key []byte
+		for j < len(entry) && entry[j] != quote {
+			if entry[j] == '\\' && j+1 < len(entry) {
+				j++
+			}
+			key = append(key, entry[j])
+			j++
+		}
+		return string(key), true
+	}
+	// Non-string key (int, bool)
+	end := j
+	for end < len(entry) && entry[end] != ' ' && entry[end] != '\t' && entry[end] != '\n' && entry[end] != '\r' && entry[end] != '}' && entry[end] != '>' {
+		end++
+	}
+	return entry[j:end], true
+}
+
+// reorderWireEntriesByKeys reorders wire entries for a given field number
+// to match the provided source key ordering.
+func reorderWireEntriesByKeys(data []byte, fieldNum protowire.Number, sourceKeys []string) []byte {
+	type wireEntry struct {
+		raw []byte
+		key string
+	}
+	var before [][]byte
+	var mapEntries []wireEntry
+	var after [][]byte
+	seenMap := false
+
+	buf := data
+	for len(buf) > 0 {
+		num, wtype, n := protowire.ConsumeTag(buf)
+		if n < 0 {
+			return data
+		}
+		_, _, total := protowire.ConsumeField(buf)
+		if total < 0 {
+			return data
+		}
+		entryBytes := append([]byte(nil), buf[:total]...)
+		if num == fieldNum {
+			seenMap = true
+			var key string
+			if wtype == protowire.BytesType {
+				payload, _ := protowire.ConsumeBytes(buf[n:])
+				key = extractBinaryMapKeyStr(payload)
+			}
+			mapEntries = append(mapEntries, wireEntry{raw: entryBytes, key: key})
+		} else if !seenMap {
+			before = append(before, entryBytes)
+		} else {
+			after = append(after, entryBytes)
+		}
+		buf = buf[total:]
+	}
+	if len(mapEntries) == 0 {
+		return data
+	}
+	// Build key → entry mapping
+	keyToEntry := map[string][]byte{}
+	for _, me := range mapEntries {
+		keyToEntry[me.key] = me.raw
+	}
+	var result []byte
+	for _, b := range before {
+		result = append(result, b...)
+	}
+	used := map[string]bool{}
+	for _, sk := range sourceKeys {
+		if raw, ok := keyToEntry[sk]; ok && !used[sk] {
+			result = append(result, raw...)
+			used[sk] = true
+		}
+	}
+	// Any entries not in source keys
+	for _, me := range mapEntries {
+		if !used[me.key] {
+			result = append(result, me.raw...)
+			used[me.key] = true
+		}
+	}
+	for _, a := range after {
+		result = append(result, a...)
+	}
+	return result
+}
+
+// extractBinaryMapKeyStr extracts the key (field 1) from a map entry submessage
+// and returns it as a string representation.
+func extractBinaryMapKeyStr(entryBytes []byte) string {
+	buf := entryBytes
+	for len(buf) > 0 {
+		num, wtype, n := protowire.ConsumeTag(buf)
+		if n < 0 {
+			return ""
+		}
+		switch wtype {
+		case protowire.VarintType:
+			v, m := protowire.ConsumeVarint(buf[n:])
+			if m < 0 {
+				return ""
+			}
+			if num == 1 {
+				return fmt.Sprintf("%d", v)
+			}
+			buf = buf[n+m:]
+		case protowire.Fixed32Type:
+			if len(buf[n:]) < 4 {
+				return ""
+			}
+			if num == 1 {
+				v := binary.LittleEndian.Uint32(buf[n : n+4])
+				return fmt.Sprintf("%d", v)
+			}
+			buf = buf[n+4:]
+		case protowire.Fixed64Type:
+			if len(buf[n:]) < 8 {
+				return ""
+			}
+			if num == 1 {
+				v := binary.LittleEndian.Uint64(buf[n : n+8])
+				return fmt.Sprintf("%d", v)
+			}
+			buf = buf[n+8:]
+		case protowire.BytesType:
+			v, m := protowire.ConsumeBytes(buf[n:])
+			if m < 0 {
+				return ""
+			}
+			if num == 1 {
+				return string(v)
+			}
+			buf = buf[n+m:]
+		default:
+			return ""
+		}
+	}
+	return ""
+}
+
+// sortOptionsUnknownFields sorts unknown fields on all Options messages in all
+// parsed files, so that custom extension options appear in field-number order
+// (matching C++ protoc behavior).
+func sortOptionsUnknownFields(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) {
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		sortFDOptionsUnknownFields(fd)
+	}
+}
+
+// sortFDOptionsUnknownFields sorts unknown fields on all Options messages in fd.
+func sortFDOptionsUnknownFields(fd *descriptorpb.FileDescriptorProto) {
+	sortProtoUnknown(fd.GetOptions())
+	for _, msg := range fd.GetMessageType() {
+		sortMessageOptionsDeep(msg)
+	}
+	for _, e := range fd.GetEnumType() {
+		sortEnumOptions(e)
+	}
+	for _, ext := range fd.GetExtension() {
+		sortProtoUnknown(ext.GetOptions())
+	}
+	for _, svc := range fd.GetService() {
+		sortProtoUnknown(svc.GetOptions())
+		for _, m := range svc.GetMethod() {
+			sortProtoUnknown(m.GetOptions())
+		}
+	}
+}
+
+// hasOptionsUnknowns returns true if any Options message in fd has unknown fields.
+func hasOptionsUnknowns(fd *descriptorpb.FileDescriptorProto) bool {
+	if hasUnknown(fd.GetOptions()) {
+		return true
+	}
+	for _, msg := range fd.GetMessageType() {
+		if hasMessageOptionsUnknowns(msg) {
+			return true
+		}
+	}
+	for _, e := range fd.GetEnumType() {
+		if hasEnumOptionsUnknowns(e) {
+			return true
+		}
+	}
+	for _, ext := range fd.GetExtension() {
+		if hasUnknown(ext.GetOptions()) {
+			return true
+		}
+	}
+	for _, svc := range fd.GetService() {
+		if hasUnknown(svc.GetOptions()) {
+			return true
+		}
+		for _, m := range svc.GetMethod() {
+			if hasUnknown(m.GetOptions()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasMessageOptionsUnknowns(msg *descriptorpb.DescriptorProto) bool {
+	if hasUnknown(msg.GetOptions()) {
+		return true
+	}
+	for _, f := range msg.GetField() {
+		if hasUnknown(f.GetOptions()) {
+			return true
+		}
+	}
+	for _, o := range msg.GetOneofDecl() {
+		if hasUnknown(o.GetOptions()) {
+			return true
+		}
+	}
+	for _, e := range msg.GetEnumType() {
+		if hasEnumOptionsUnknowns(e) {
+			return true
+		}
+	}
+	for _, ext := range msg.GetExtension() {
+		if hasUnknown(ext.GetOptions()) {
+			return true
+		}
+	}
+	for _, rng := range msg.GetExtensionRange() {
+		if hasUnknown(rng.GetOptions()) {
+			return true
+		}
+	}
+	for _, nested := range msg.GetNestedType() {
+		if hasMessageOptionsUnknowns(nested) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEnumOptionsUnknowns(e *descriptorpb.EnumDescriptorProto) bool {
+	if hasUnknown(e.GetOptions()) {
+		return true
+	}
+	for _, v := range e.GetValue() {
+		if hasUnknown(v.GetOptions()) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasUnknown(m proto.Message) bool {
+	if m == nil {
+		return false
+	}
+	return len(m.ProtoReflect().GetUnknown()) > 0
+}
+
+func sortMessageOptionsDeep(msg *descriptorpb.DescriptorProto) {
+	sortProtoUnknown(msg.GetOptions())
+	for _, f := range msg.GetField() {
+		sortProtoUnknown(f.GetOptions())
+	}
+	for _, o := range msg.GetOneofDecl() {
+		sortProtoUnknown(o.GetOptions())
+	}
+	for _, e := range msg.GetEnumType() {
+		sortEnumOptions(e)
+	}
+	for _, ext := range msg.GetExtension() {
+		sortProtoUnknown(ext.GetOptions())
+	}
+	for _, rng := range msg.GetExtensionRange() {
+		sortProtoUnknown(rng.GetOptions())
+	}
+	for _, nested := range msg.GetNestedType() {
+		sortMessageOptionsDeep(nested)
+	}
+}
+
+func sortEnumOptions(e *descriptorpb.EnumDescriptorProto) {
+	sortProtoUnknown(e.GetOptions())
+	for _, v := range e.GetValue() {
+		sortProtoUnknown(v.GetOptions())
+	}
+}
+
+func sortProtoUnknown(m proto.Message) {
+	if m == nil {
+		return
+	}
+	ref := m.ProtoReflect()
+	raw := ref.GetUnknown()
+	if len(raw) == 0 {
+		return
+	}
+	sorted := sortUnknownFields(raw)
+	ref.SetUnknown(sorted)
+}
+
+// decodeExt holds info about an extension field for --decode mode.
+type decodeExt struct {
+	fqn string
+	fd  *descriptorpb.FieldDescriptorProto
+}
+
+// runEncode implements --encode mode: reads text format protobuf from stdin
+// and writes binary protobuf to stdout using the schema from parsed proto files.
+func runEncode(msgTypeName string, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles []string, deterministicOutput bool) error {
+	// Build a FileDescriptorSet from parsed files in dependency order
+	fds := &descriptorpb.FileDescriptorSet{}
+	for _, name := range orderedFiles {
+		fds.File = append(fds.File, parsed[name])
+	}
+
+	// Create protoreflect file descriptors
+	files, err := protodesc.NewFiles(fds)
+	if err != nil {
+		return fmt.Errorf("Type not defined: %s", msgTypeName)
+	}
+
+	// Find the message descriptor
+	fullName := protoreflect.FullName(msgTypeName)
+	md, findErr := files.FindDescriptorByName(fullName)
+	if findErr != nil {
+		return fmt.Errorf("Type not defined: %s", msgTypeName)
+	}
+	msgDesc, ok := md.(protoreflect.MessageDescriptor)
+	if !ok {
+		return fmt.Errorf("Type not defined: %s", msgTypeName)
+	}
+
+	// Read text format from stdin
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("Failed to read input.")
+	}
+
+	// Check for duplicate non-repeated fields and oneof conflicts before unmarshalling
+	// (prototext silently accepts both). C++ checks both in MergeField during parsing.
+	if dupErr := checkDupFields(data, msgDesc, files); dupErr != "" {
+		fmt.Fprintln(os.Stderr, dupErr)
+		fmt.Fprintln(os.Stderr, "Failed to parse input.")
+		os.Exit(1)
+	}
+	if enumErr := checkClosedEnumValues(data, msgDesc, files); enumErr != "" {
+		fmt.Fprintln(os.Stderr, enumErr)
+		fmt.Fprintln(os.Stderr, "Failed to parse input.")
+		os.Exit(1)
+	}
+	if negErr := checkNegUintFields(data, msgDesc, files); negErr != "" {
+		fmt.Fprintln(os.Stderr, negErr)
+		fmt.Fprintln(os.Stderr, "Failed to parse input.")
+		os.Exit(1)
+	}
+	if conflictErr := checkOneofConflicts(data, msgDesc, files); conflictErr != "" {
+		fmt.Fprintln(os.Stderr, conflictErr)
+		fmt.Fprintln(os.Stderr, "Failed to parse input.")
+		os.Exit(1)
+	}
+
+	// Create a dynamic message and parse text format into it
+	msg := dynamicpb.NewMessage(msgDesc)
+	types := dynamicpb.NewTypes(files)
+	unmarshalOpts := prototext.UnmarshalOptions{
+		AllowPartial: true,
+		Resolver:     types,
+	}
+	utf8Retry := false
+	if err := unmarshalOpts.Unmarshal(data, msg); err != nil {
+		if strings.Contains(err.Error(), "invalid UTF-8") {
+			utf8Retry = true
+		} else {
+			reformatProtoTextErrors(err, msgTypeName, data, msgDesc)
+			fmt.Fprintln(os.Stderr, "Failed to parse input.")
+			os.Exit(1)
+		}
+	}
+
+	if utf8Retry {
+		// C++ protoc accepts invalid UTF-8 in string fields during parsing and
+		// only emits a LOG(ERROR) warning during serialization. Go's prototext
+		// rejects it. Clone descriptors with string→bytes to bypass validation.
+		byteFds := cloneFdsStringToBytes(fds)
+		byteFiles, err := protodesc.NewFiles(byteFds)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Failed to parse input.")
+			os.Exit(1)
+		}
+		md2, _ := byteFiles.FindDescriptorByName(fullName)
+		msgDesc2 := md2.(protoreflect.MessageDescriptor)
+		msg = dynamicpb.NewMessage(msgDesc2)
+		unmarshalOpts2 := prototext.UnmarshalOptions{
+			AllowPartial: true,
+			Resolver:     dynamicpb.NewTypes(byteFiles),
+		}
+		if err := unmarshalOpts2.Unmarshal(data, msg); err != nil {
+			reformatProtoTextErrors(err, msgTypeName, data, msgDesc)
+			fmt.Fprintln(os.Stderr, "Failed to parse input.")
+			os.Exit(1)
+		}
+		// Emit C++ format warnings for string fields with invalid UTF-8
+		emitUtf8SerializeWarnings(msg, msgTypeName, msgDesc)
+	}
+
+	// Check for missing required fields (warning)
+	if missing := findMissingRequiredReflect(msg); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "warning:  Input message is missing required fields:  %s\n", strings.Join(missing, ", "))
+	}
+
+	// Replace Go's NaN (0x7FF8000000000001) with C++ canonical NaN (0x7FF8000000000000)
+	canonicalizeNaN(msg)
+
+	// Serialize to binary and write to stdout.
+	// Always use Deterministic: true so fields are in field number order,
+	// matching C++ protoc's Message::SerializeToString().
+	marshalOpts := proto.MarshalOptions{
+		AllowPartial:  true,
+		Deterministic: true,
+	}
+	out, err := marshalOpts.Marshal(msg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "output: I/O error.")
+		os.Exit(1)
+	}
+
+	// Go's dynamicpb marshal may not interleave extensions with regular fields
+	// in field number order. Sort the top-level fields to match C++ protoc.
+	out = sortUnknownFields(out)
+
+	// C++ protoc preserves map entry insertion order (from text format source),
+	// including duplicate entries with the same key (since map fields are repeated
+	// sub-messages). Go's proto.Marshal deduplicates map keys and sorts alphabetically.
+	// Restore duplicates and reorder entries to match source order, unless
+	// --deterministic_output is set (which means C++ also sorts by key).
+	if !deterministicOutput {
+		out = reorderAndRestoreMapEntries(out, msgDesc, string(data), types)
+	}
+
+	os.Stdout.Write(out)
+	return nil
+}
+
+// canonicalizeNaN walks a dynamic message and replaces Go's NaN bit pattern
+// (0x7FF8000000000001 for double, 0x7FC00001 for float) with C++ canonical NaN
+// (0x7FF8000000000000 for double, 0x7FC00000 for float).
+func canonicalizeNaN(msg *dynamicpb.Message) {
+	msg.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+		if fd.IsList() {
+			list := v.List()
+			for i := 0; i < list.Len(); i++ {
+				elem := list.Get(i)
+				switch fd.Kind() {
+				case protoreflect.DoubleKind:
+					if math.IsNaN(elem.Float()) {
+						list.Set(i, protoreflect.ValueOfFloat64(math.Float64frombits(0x7FF8000000000000)))
+					}
+				case protoreflect.FloatKind:
+					if math.IsNaN(float64(float32(elem.Float()))) {
+						list.Set(i, protoreflect.ValueOfFloat32(math.Float32frombits(0x7FC00000)))
+					}
+				case protoreflect.MessageKind, protoreflect.GroupKind:
+					canonicalizeNaN(elem.Message().(*dynamicpb.Message))
+				}
+			}
+		} else if fd.IsMap() {
+			m := v.Map()
+			switch fd.MapValue().Kind() {
+			case protoreflect.DoubleKind:
+				m.Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
+					if math.IsNaN(mv.Float()) {
+						m.Set(k, protoreflect.ValueOfFloat64(math.Float64frombits(0x7FF8000000000000)))
+					}
+					return true
+				})
+			case protoreflect.FloatKind:
+				m.Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
+					if math.IsNaN(float64(float32(mv.Float()))) {
+						m.Set(k, protoreflect.ValueOfFloat32(math.Float32frombits(0x7FC00000)))
+					}
+					return true
+				})
+			case protoreflect.MessageKind, protoreflect.GroupKind:
+				m.Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
+					canonicalizeNaN(mv.Message().(*dynamicpb.Message))
+					return true
+				})
+			}
+		} else {
+			switch fd.Kind() {
+			case protoreflect.DoubleKind:
+				if math.IsNaN(v.Float()) {
+					msg.Set(fd, protoreflect.ValueOfFloat64(math.Float64frombits(0x7FF8000000000000)))
+				}
+			case protoreflect.FloatKind:
+				if math.IsNaN(float64(float32(v.Float()))) {
+					msg.Set(fd, protoreflect.ValueOfFloat32(math.Float32frombits(0x7FC00000)))
+				}
+			case protoreflect.MessageKind, protoreflect.GroupKind:
+				canonicalizeNaN(v.Message().(*dynamicpb.Message))
+			}
+		}
+		return true
+	})
+}
+
+// cloneFdsStringToBytes clones a FileDescriptorSet, changing all string fields to bytes.
+func cloneFdsStringToBytes(fds *descriptorpb.FileDescriptorSet) *descriptorpb.FileDescriptorSet {
+	clone := proto.Clone(fds).(*descriptorpb.FileDescriptorSet)
+	for _, fd := range clone.File {
+		for _, msg := range fd.MessageType {
+			convertMsgStringToBytes(msg)
+		}
+	}
+	return clone
+}
+
+func convertMsgStringToBytes(msg *descriptorpb.DescriptorProto) {
+	for _, f := range msg.Field {
+		if f.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING {
+			t := descriptorpb.FieldDescriptorProto_TYPE_BYTES
+			f.Type = &t
+		}
+	}
+	for _, nested := range msg.NestedType {
+		convertMsgStringToBytes(nested)
+	}
+}
+
+// emitUtf8SerializeWarnings emits C++ protoc format warnings for string fields with invalid UTF-8.
+func emitUtf8SerializeWarnings(msg *dynamicpb.Message, msgFQN string, origMsgDesc protoreflect.MessageDescriptor) {
+	origMsgDesc.Fields().Len() // ensure valid
+	for i := 0; i < origMsgDesc.Fields().Len(); i++ {
+		fd := origMsgDesc.Fields().Get(i)
+		if fd.Kind() != protoreflect.StringKind {
+			continue
+		}
+		// The msg was unmarshaled with bytes type, so look up by number
+		bytesFd := msg.Descriptor().Fields().ByNumber(fd.Number())
+		if bytesFd == nil || !msg.Has(bytesFd) {
+			continue
+		}
+		val := msg.Get(bytesFd).Bytes()
+		if !utf8.Valid(val) {
+			fmt.Fprintf(os.Stderr, "String field '%s.%s' contains invalid UTF-8 data when serializing a protocol buffer. Use the 'bytes' type if you intend to send raw bytes. \n", msgFQN, fd.Name())
+		}
+	}
+}
+
+// resolveNestedMsgType finds the message type at a given line:col in text format input.
+// It scans from the start, tracking `fieldname {` blocks, and returns the innermost
+// message type FQN at the target position.
+func resolveNestedMsgType(data []byte, targetLine, targetCol int, msgDesc protoreflect.MessageDescriptor, topTypeName string) string {
+	type stackEntry struct {
+		typeName string
+		desc     protoreflect.MessageDescriptor
+	}
+	stack := []stackEntry{{topTypeName, msgDesc}}
+	line, col := 1, 1
+	i := 0
+
+	// Simple scanner: track identifiers and braces
+	for i < len(data) {
+		if line > targetLine || (line == targetLine && col >= targetCol) {
+			break
+		}
+		ch := data[i]
+		if ch == '\n' {
+			line++
+			col = 1
+			i++
+			continue
+		}
+		if ch == ' ' || ch == '\t' || ch == '\r' {
+			col = textTabCol(col, ch)
+			i++
+			continue
+		}
+		if ch == '}' || ch == '>' {
+			if len(stack) > 1 {
+				stack = stack[:len(stack)-1]
+			}
+			col++
+			i++
+			continue
+		}
+		// Read identifier
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' {
+			start := i
+			for i < len(data) && ((data[i] >= 'a' && data[i] <= 'z') || (data[i] >= 'A' && data[i] <= 'Z') || (data[i] >= '0' && data[i] <= '9') || data[i] == '_') {
+				i++
+				col++
+			}
+			ident := string(data[start:i])
+			// Skip whitespace
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			// Check if followed by { or < (or : { / : <)
+			next := i
+			nextCol := col
+			// Skip optional colon and whitespace
+			if next < len(data) && data[next] == ':' {
+				next++
+				nextCol++
+				for next < len(data) && (data[next] == ' ' || data[next] == '\t' || data[next] == '\r') {
+					nextCol = textTabCol(nextCol, data[next])
+					next++
+				}
+			}
+			if next < len(data) && (data[next] == '{' || data[next] == '<') {
+				// This is a message field — push onto stack
+				cur := stack[len(stack)-1]
+				if cur.desc != nil {
+					fd := cur.desc.Fields().ByName(protoreflect.Name(ident))
+					if fd != nil && fd.Kind() == protoreflect.MessageKind {
+						subDesc := fd.Message()
+						subType := string(subDesc.FullName())
+						stack = append(stack, stackEntry{subType, subDesc})
+					} else if fd != nil && fd.Kind() == protoreflect.GroupKind {
+						subDesc := fd.Message()
+						subType := string(subDesc.FullName())
+						stack = append(stack, stackEntry{subType, subDesc})
+					} else {
+						// Unknown field with brace — push unknown
+						stack = append(stack, stackEntry{cur.typeName, nil})
+					}
+				} else {
+					stack = append(stack, stackEntry{stack[len(stack)-1].typeName, nil})
+				}
+				col = nextCol + 1
+				i = next + 1
+			}
+			continue
+		}
+		// Skip string literals
+		if ch == '"' || ch == '\'' {
+			quote := ch
+			i++
+			col++
+			for i < len(data) && data[i] != quote {
+				if data[i] == '\\' {
+					i++
+					col++
+				}
+				if i < len(data) {
+					if data[i] == '\n' {
+						line++
+						col = 1
+					} else {
+						col++
+					}
+					i++
+				}
+			}
+			if i < len(data) {
+				i++
+				col++
+			}
+			continue
+		}
+		// Skip other characters
+		col++
+		i++
+	}
+	return stack[len(stack)-1].typeName
+}
+
+// resolveNestedMsgDesc returns the innermost MessageDescriptor at the given position.
+func resolveNestedMsgDesc(data []byte, targetLine, targetCol int, msgDesc protoreflect.MessageDescriptor) protoreflect.MessageDescriptor {
+	type stackEntry struct {
+		desc protoreflect.MessageDescriptor
+	}
+	stack := []stackEntry{{msgDesc}}
+	line, col := 1, 1
+	i := 0
+	for i < len(data) {
+		if line > targetLine || (line == targetLine && col >= targetCol) {
+			break
+		}
+		ch := data[i]
+		if ch == '\n' {
+			line++
+			col = 1
+			i++
+			continue
+		}
+		if ch == ' ' || ch == '\t' || ch == '\r' {
+			col = textTabCol(col, ch)
+			i++
+			continue
+		}
+		if ch == '#' {
+			for i < len(data) && data[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		if ch == '}' || ch == '>' {
+			if len(stack) > 1 {
+				stack = stack[:len(stack)-1]
+			}
+			col++
+			i++
+			continue
+		}
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_' {
+			start := i
+			for i < len(data) && ((data[i] >= 'a' && data[i] <= 'z') || (data[i] >= 'A' && data[i] <= 'Z') || (data[i] >= '0' && data[i] <= '9') || data[i] == '_') {
+				i++
+				col++
+			}
+			ident := string(data[start:i])
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			next := i
+			nextCol := col
+			if next < len(data) && data[next] == ':' {
+				next++
+				nextCol++
+				for next < len(data) && (data[next] == ' ' || data[next] == '\t' || data[next] == '\r') {
+					nextCol = textTabCol(nextCol, data[next])
+					next++
+				}
+			}
+			if next < len(data) && (data[next] == '{' || data[next] == '<') {
+				cur := stack[len(stack)-1]
+				if cur.desc != nil {
+					fd := cur.desc.Fields().ByName(protoreflect.Name(ident))
+					if fd != nil && (fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind) {
+						stack = append(stack, stackEntry{fd.Message()})
+					} else {
+						stack = append(stack, stackEntry{nil})
+					}
+				} else {
+					stack = append(stack, stackEntry{nil})
+				}
+				col = nextCol + 1
+				i = next + 1
+			}
+			continue
+		}
+		if ch == '"' || ch == '\'' {
+			quote := ch
+			i++
+			col++
+			for i < len(data) && data[i] != quote {
+				if data[i] == '\\' {
+					i++
+					col++
+				}
+				if i < len(data) {
+					if data[i] == '\n' {
+						line++
+						col = 1
+					} else {
+						col++
+					}
+					i++
+				}
+			}
+			if i < len(data) {
+				i++
+				col++
+			}
+			continue
+		}
+		col++
+		i++
+	}
+	return stack[len(stack)-1].desc
+}
+
+// reformatProtoTextErrors reformats Go prototext errors to match C++ protoc format.
+func reformatProtoTextErrors(err error, msgTypeName string, data []byte, msgDesc protoreflect.MessageDescriptor) {
+	errStr := err.Error()
+	// Go prototext errors: "proto:\u00a0(line L:C): unknown field: [ext.name]"
+	// C++ format: "input:L:COL: Extension "ext.name" is not defined or is not an extension of "TYPE"."
+	reExt := regexp.MustCompile(`\(line (\d+):(\d+)\): unknown field: \[([^\]]+)\]`)
+	if m := reExt.FindStringSubmatch(errStr); m != nil {
+		line, _ := strconv.Atoi(m[1])
+		col, _ := strconv.Atoi(m[2])
+		extName := m[3]
+		cppCol := col + len("["+extName+"]") // position after ']'
+		actualType := resolveNestedMsgType(data, line, col, msgDesc, msgTypeName)
+		fmt.Fprintf(os.Stderr, "input:%d:%d: Extension \"%s\" is not defined or is not an extension of \"%s\".\n", line, cppCol, extName, actualType)
+		return
+	}
+
+	// Go prototext errors: "proto:\u00a0(line L:C): unknown field: NAME"
+	// C++ format: "input:L:COL: Message type "TYPE" has no field named "NAME"."
+	re := regexp.MustCompile(`\(line (\d+):(\d+)\): unknown field: (\w+)`)
+	if m := re.FindStringSubmatch(errStr); m != nil {
+		line, _ := strconv.Atoi(m[1])
+		col, _ := strconv.Atoi(m[2])
+		fieldName := m[3]
+		tabCol := goColToTabCol(data, line, col)
+		cppCol := tabCol + len(fieldName)
+		actualType := resolveNestedMsgType(data, line, col, msgDesc, msgTypeName)
+		fmt.Fprintf(os.Stderr, "input:%d:%d: Message type \"%s\" has no field named \"%s\".\n", line, cppCol, actualType, fieldName)
+		return
+	}
+
+	// Go: "proto: syntax error (line L:C): invalid field name: TOKEN"
+	// C++: "input:L:C: Expected identifier, got: TOKEN"
+	reInvalidFieldName := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid field name: (.+)`)
+	if m := reInvalidFieldName.FindStringSubmatch(errStr); m != nil {
+		token := strings.TrimSpace(m[3])
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected identifier, got: %s\n", m[1], m[2], token)
+		return
+	}
+
+	// Go: "proto: (line L:C): cannot specify field by number: N"
+	// C++: "input:L:C: Expected identifier, got: N"
+	reFieldNum := regexp.MustCompile(`\(line (\d+):(\d+)\): cannot specify field by number: (\d+)`)
+	if m := reFieldNum.FindStringSubmatch(errStr); m != nil {
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected identifier, got: %s\n", m[1], m[2], m[3])
+		return
+	}
+
+	// Go: "proto: syntax error (line L:C): missing field separator :"
+	// C++: "input:L:C: Expected ":", found "TOKEN"."
+	reSep := regexp.MustCompile(`\(line (\d+):(\d+)\): missing field separator :`)
+	if m := reSep.FindStringSubmatch(errStr); m != nil {
+		goLine, _ := strconv.Atoi(m[1])
+		goCol, _ := strconv.Atoi(m[2])
+		// Go's line:col points at the field name start. Find the next token after it.
+		foundLine, foundCol, foundTok := findTokenAfterIdent(data, goLine, goCol)
+		fmt.Fprintf(os.Stderr, "input:%d:%d: Expected \":\", found \"%s\".\n", foundLine, foundCol, foundTok)
+		return
+	}
+
+	// Go: "proto: (line L:C): invalid value for uint32 type: VALUE"
+	// C++: "input:L:C: Integer out of range (VALUE)"
+	reIntOverflow := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for (?:u?int32|u?int64|sint32|sint64|fixed32|fixed64|sfixed32|sfixed64) type: (-?\d+)`)
+	if m := reIntOverflow.FindStringSubmatch(errStr); m != nil {
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Integer out of range (%s)\n", m[1], m[2], m[3])
+		return
+	}
+
+	// Go: "proto: (line L:C): invalid value for int32 type: "hello""
+	// C++: "input:L:C: Expected integer, got: "hello""
+	reIntType := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for (?:u?int32|u?int64|sint32|sint64|fixed32|fixed64|sfixed32|sfixed64) type: (.+)`)
+	if m := reIntType.FindStringSubmatch(errStr); m != nil {
+		val := strings.TrimSpace(m[3])
+		goLine, _ := strconv.Atoi(m[1])
+		goCol, _ := strconv.Atoi(m[2])
+		tabCol := goColToTabCol(data, goLine, goCol)
+		fmt.Fprintf(os.Stderr, "input:%d:%d: Expected integer, got: %s\n", goLine, tabCol, val)
+		return
+	}
+
+	// Go: "proto: (line L:C): invalid value for double type: "VALUE""
+	// C++: "input:L:C: Expected double, got: "VALUE""
+	reDouble := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for (?:double|float) type: (.+)`)
+	if m := reDouble.FindStringSubmatch(errStr); m != nil {
+		val := strings.TrimSpace(m[3])
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected double, got: %s\n", m[1], m[2], val)
+		return
+	}
+
+	// Go: "proto: (line L:C): invalid value for string type: VALUE"
+	// C++: "input:L:C: Expected string, got: VALUE"
+	reString := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for (?:string|bytes) type: (.+)`)
+	if m := reString.FindStringSubmatch(errStr); m != nil {
+		val := strings.TrimSpace(m[3])
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected string, got: %s\n", m[1], m[2], val)
+		return
+	}
+
+	// Go: "proto: (line L:C): invalid value for enum type: VALUE"
+	// C++: "input:L:C: Expected integer or identifier, got: VALUE"
+	reEnum := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for enum type: (.+)`)
+	if m := reEnum.FindStringSubmatch(errStr); m != nil {
+		val := strings.TrimSpace(m[3])
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected integer or identifier, got: %s\n", m[1], m[2], val)
+		return
+	}
+
+	// Go: "proto: (line L:C): invalid value for bool type: VALUE"
+	// C++: "input:L:C: Invalid value for boolean field "FIELD". Value: "VALUE"."
+	reBool := regexp.MustCompile(`\(line (\d+):(\d+)\): invalid value for bool type: (\S+)`)
+	if m := reBool.FindStringSubmatch(errStr); m != nil {
+		goLine, _ := strconv.Atoi(m[1])
+		goCol, _ := strconv.Atoi(m[2])
+		value := m[3]
+		fieldName := findFieldNameBefore(data, goLine, goCol)
+		// C++ column is at the next token after the value
+		cppCol := goCol + len(value) + 1
+		fmt.Fprintf(os.Stderr, "input:%d:%d: Invalid value for boolean field \"%s\". Value: \"%s\".\n", goLine, cppCol, fieldName, value)
+		return
+	}
+
+	// Go: "proto: unexpected EOF"
+	// C++: "input:L:C: Expected identifier, got: " (at EOF position)
+	if strings.Contains(errStr, "unexpected EOF") {
+		line, col := 1, 1
+		for _, b := range data {
+			if b == '\n' {
+				line++
+				col = 1
+			} else if b == '\t' {
+				col = textTabCol(col, b)
+			} else {
+				col++
+			}
+		}
+		fmt.Fprintf(os.Stderr, "input:%d:%d: Expected identifier, got: \n", line, col)
+		return
+	}
+
+	// Go: "proto: syntax error (line L:C): mismatched close character 'X'"
+	// C++: "input:L:C: Expected ">", found "}"." (when < opened)
+	// C++: "input:L:C: Expected "}", found ">"." (when { opened)
+	reMismatch := regexp.MustCompile(`\(line (\d+):(\d+)\): mismatched close character '(.)'`)
+	if m := reMismatch.FindStringSubmatch(errStr); m != nil {
+		found := m[3]
+		expected := ">"
+		if found == ">" {
+			expected = "}"
+		}
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected \"%s\", found \"%s\".\n", m[1], m[2], expected, found)
+		return
+	}
+
+	// Go: "proto: syntax error (line L:C): unexpected token: TOKEN"
+	// C++: "input:L:C: Expected "{", found "TOKEN"." (for message fields)
+	// C++: "input:L:C: Expected string, got: TOKEN" (for string/bytes fields)
+	reUnexpected := regexp.MustCompile(`\(line (\d+):(\d+)\): unexpected token: (.+)`)
+	if m := reUnexpected.FindStringSubmatch(errStr); m != nil {
+		token := strings.TrimSpace(m[3])
+		goLine, _ := strconv.Atoi(m[1])
+		goCol, _ := strconv.Atoi(m[2])
+		fieldName := findFieldNameBefore(data, goLine, goCol)
+		if fieldName != "" && msgDesc != nil {
+			nestedDesc := resolveNestedMsgDesc(data, goLine, goCol, msgDesc)
+			lookupDesc := msgDesc
+			if nestedDesc != nil {
+				lookupDesc = nestedDesc
+			}
+			fd := lookupDesc.Fields().ByName(protoreflect.Name(fieldName))
+			if fd != nil && (fd.Kind() == protoreflect.StringKind || fd.Kind() == protoreflect.BytesKind) {
+				fmt.Fprintf(os.Stderr, "input:%s:%s: Expected string, got: %s\n", m[1], m[2], token)
+				return
+			}
+			if fd != nil {
+				switch fd.Kind() {
+				case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind,
+					protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind,
+					protoreflect.Uint32Kind, protoreflect.Fixed32Kind,
+					protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+					fmt.Fprintf(os.Stderr, "input:%s:%s: Expected integer, got: %s\n", m[1], m[2], token)
+					return
+				case protoreflect.DoubleKind, protoreflect.FloatKind:
+					fmt.Fprintf(os.Stderr, "input:%s:%s: Expected double, got: %s\n", m[1], m[2], token)
+					return
+				case protoreflect.BoolKind:
+					fmt.Fprintf(os.Stderr, "input:%s:%s: Invalid value for boolean field \"%s\". Value: \"%s\".\n", m[1], m[2], fieldName, token)
+					return
+				case protoreflect.EnumKind:
+					fmt.Fprintf(os.Stderr, "input:%s:%s: Expected integer or identifier, got: %s\n", m[1], m[2], token)
+					return
+				}
+			}
+		}
+		fmt.Fprintf(os.Stderr, "input:%s:%s: Expected \"{\", found \"%s\".\n", m[1], m[2], token)
+		return
+	}
+}
+
+// findFieldNameBefore finds the field name before a value at the given line:col position.
+// Scans backward from the value position to find the identifier before the colon.
+func findFieldNameBefore(data []byte, line, col int) string {
+	// Find byte offset for line:col (1-indexed)
+	curLine := 1
+	curCol := 1
+	i := 0
+	for i < len(data) && (curLine < line || (curLine == line && curCol < col)) {
+		if data[i] == '\n' {
+			curLine++
+			curCol = 1
+		} else {
+			curCol = textTabCol(curCol, data[i])
+		}
+		i++
+	}
+	j := i - 1
+	// Skip whitespace
+	for j >= 0 && (data[j] == ' ' || data[j] == '\t') {
+		j--
+	}
+	// Should be at ':'
+	if j >= 0 && data[j] == ':' {
+		j--
+	}
+	// Skip whitespace
+	for j >= 0 && (data[j] == ' ' || data[j] == '\t') {
+		j--
+	}
+	// Read identifier backwards
+	end := j + 1
+	for j >= 0 && (data[j] == '_' || (data[j] >= 'a' && data[j] <= 'z') || (data[j] >= 'A' && data[j] <= 'Z') || (data[j] >= '0' && data[j] <= '9')) {
+		j--
+	}
+	if j+1 < end {
+		return string(data[j+1 : end])
+	}
+	return ""
+}
+
+// findTokenAfterIdent finds the next token after an identifier at the given line:col (1-indexed).
+func findTokenAfterIdent(data []byte, line, col int) (int, int, string) {
+	// Find the byte offset for line:col
+	curLine := 1
+	curCol := 1
+	i := 0
+	for i < len(data) && (curLine < line || (curLine == line && curCol < col)) {
+		if data[i] == '\n' {
+			curLine++
+			curCol = 1
+		} else {
+			curCol = textTabCol(curCol, data[i])
+		}
+		i++
+	}
+	// i is now at the field name start. Skip the identifier.
+	for i < len(data) && (data[i] == '_' || (data[i] >= 'a' && data[i] <= 'z') || (data[i] >= 'A' && data[i] <= 'Z') || (data[i] >= '0' && data[i] <= '9')) {
+		curCol++
+		i++
+	}
+	// Skip whitespace, tracking line/col
+	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r' || data[i] == '\n') {
+		if data[i] == '\n' {
+			curLine++
+			curCol = 1
+		} else {
+			curCol = textTabCol(curCol, data[i])
+		}
+		i++
+	}
+	if i >= len(data) {
+		return curLine, curCol, ""
+	}
+	// Read the token at this position
+	tokStart := i
+	tokLine := curLine
+	tokCol := curCol
+	if data[i] == '"' || data[i] == '\'' {
+		// String literal — read until matching unescaped quote
+		quote := data[i]
+		i++
+		for i < len(data) && data[i] != quote {
+			if data[i] == '\\' {
+				i++ // skip escaped char
+			}
+			i++
+		}
+		if i < len(data) {
+			i++ // skip closing quote
+		}
+		return tokLine, tokCol, string(data[tokStart:i])
+	}
+	if (data[i] >= '0' && data[i] <= '9') || data[i] == '-' || data[i] == '+' {
+		// Number
+		for i < len(data) && data[i] != ' ' && data[i] != '\t' && data[i] != '\r' && data[i] != '\n' && data[i] != ':' && data[i] != '{' && data[i] != '}' && data[i] != ',' && data[i] != ';' {
+			i++
+		}
+		return tokLine, tokCol, string(data[tokStart:i])
+	}
+	if data[i] == '_' || (data[i] >= 'a' && data[i] <= 'z') || (data[i] >= 'A' && data[i] <= 'Z') {
+		// Identifier
+		for i < len(data) && (data[i] == '_' || (data[i] >= 'a' && data[i] <= 'z') || (data[i] >= 'A' && data[i] <= 'Z') || (data[i] >= '0' && data[i] <= '9')) {
+			i++
+		}
+		return tokLine, tokCol, string(data[tokStart:i])
+	}
+	// Single symbol
+	return tokLine, tokCol, string(data[tokStart : tokStart+1])
+}
+
+// checkDupFields scans text format input for duplicate non-repeated scalar fields.
+// C++ protoc's TextFormat::Parser checks HasField before setting a value and reports:
+// Non-repeated field "X" is specified multiple times.
+func checkDupFields(data []byte, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) string {
+	_, _, _, err := checkDupFieldsInner(data, 0, 1, 1, msgDesc, registry)
+	return err
+}
+
+func skipLineComment(data []byte, i int) int {
+	for i < len(data) && data[i] != '\n' {
+		i++
+	}
+	return i
+}
+
+func checkDupFieldsInner(data []byte, pos, line, col int, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) (int, int, int, string) {
+	nonRepeatedScalar := map[string]bool{}
+	nonRepeatedMsg := map[string]bool{}
+	msgFieldDescs := map[string]protoreflect.MessageDescriptor{}
+	groupCanonical := map[string]string{} // message type name -> field name
+	fields := msgDesc.Fields()
+	for k := 0; k < fields.Len(); k++ {
+		fd := fields.Get(k)
+		if fd.Kind() == protoreflect.MessageKind {
+			msgFieldDescs[string(fd.Name())] = fd.Message()
+			if fd.Cardinality() != protoreflect.Repeated {
+				nonRepeatedMsg[string(fd.Name())] = true
+			}
+		} else if fd.Kind() == protoreflect.GroupKind {
+			msgFieldDescs[string(fd.Name())] = fd.Message()
+			msgFieldDescs[string(fd.Message().Name())] = fd.Message()
+			if fd.Cardinality() != protoreflect.Repeated {
+				nonRepeatedMsg[string(fd.Name())] = true
+				nonRepeatedMsg[string(fd.Message().Name())] = true
+				groupCanonical[string(fd.Message().Name())] = string(fd.Name())
+			}
+		} else if fd.Cardinality() != protoreflect.Repeated {
+			nonRepeatedScalar[string(fd.Name())] = true
+		}
+	}
+
+	seenFields := map[string]bool{}
+	i := pos
+	for i < len(data) {
+		if data[i] == '}' || data[i] == '>' {
+			i++
+			col++
+			return i, line, col, ""
+		}
+		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
+			col = textTabCol(col, data[i])
+			i++
+			continue
+		}
+		if data[i] == '\n' {
+			line++
+			col = 1
+			i++
+			continue
+		}
+		if data[i] == '#' {
+			i = skipLineComment(data, i)
+			continue
+		}
+		// Handle extension fields: [fqn]
+		if data[i] == '[' {
+			bracketCol := col
+			bracketLine := line
+			i++
+			col++
+			// Parse the FQN inside brackets
+			start := i
+			for i < len(data) && data[i] != ']' && data[i] != '\n' {
+				i++
+				col++
+			}
+			extName := string(data[start:i])
+			if i < len(data) && data[i] == ']' {
+				i++
+				col++
+			}
+			// Skip whitespace
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			colonCol := col
+			_ = bracketLine
+			// Look up extension in registry to check if it's repeated
+			isNonRepeated := false
+			isMsg := false
+			var extMsgDesc protoreflect.MessageDescriptor
+			if registry != nil {
+				if desc, err := registry.FindDescriptorByName(protoreflect.FullName(extName)); err == nil {
+					if extFd, ok := desc.(protoreflect.FieldDescriptor); ok {
+						if extFd.Cardinality() != protoreflect.Repeated {
+							isNonRepeated = true
+							if extFd.Kind() == protoreflect.MessageKind || extFd.Kind() == protoreflect.GroupKind {
+								isMsg = true
+								extMsgDesc = extFd.Message()
+							}
+						}
+					}
+				}
+			}
+			// Use the full extension name as tracking key
+			canonName := extName
+			displayName := extName
+			if i < len(data) && data[i] == ':' {
+				if isNonRepeated {
+					if seenFields[canonName] {
+						return i, line, col, fmt.Sprintf("input:%d:%d: Non-repeated field \"%s\" is specified multiple times.",
+							bracketLine, colonCol, displayName)
+					}
+					seenFields[canonName] = true
+				}
+				i++
+				col++
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
+					i++
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					if isMsg && extMsgDesc != nil {
+						i++
+						col++
+						var err string
+						i, line, col, err = checkDupFieldsInner(data, i, line, col, extMsgDesc, registry)
+						if err != "" {
+							return i, line, col, err
+						}
+					} else {
+						i, line, col = skipTextFormatValue(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				if isNonRepeated {
+					if seenFields[canonName] {
+						return i, line, col, fmt.Sprintf("input:%d:%d: Non-repeated field \"%s\" is specified multiple times.",
+							bracketLine, col, displayName)
+					}
+					seenFields[canonName] = true
+				}
+				if isMsg && extMsgDesc != nil {
+					i++
+					col++
+					var err string
+					i, line, col, err = checkDupFieldsInner(data, i, line, col, extMsgDesc, registry)
+					if err != "" {
+						return i, line, col, err
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			_ = bracketCol
+			continue
+		}
+		if isLetter(data[i]) || data[i] == '_' {
+			start := i
+			for i < len(data) && (isAlphanumeric(data[i]) || data[i] == '_') {
+				i++
+				col++
+			}
+			fieldName := string(data[start:i])
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			colonCol := col
+			// Normalize group field names to canonical (lowercased) name for dup tracking
+			canonName := fieldName
+			if cn, ok := groupCanonical[fieldName]; ok {
+				canonName = cn
+			}
+			if i < len(data) && data[i] == ':' {
+				if nonRepeatedScalar[fieldName] || nonRepeatedMsg[fieldName] {
+					if seenFields[canonName] {
+						return i, line, col, fmt.Sprintf("input:%d:%d: Non-repeated field \"%s\" is specified multiple times.",
+							line, colonCol, fieldName)
+					}
+					seenFields[canonName] = true
+				}
+				i++
+				col++
+				// Skip whitespace after colon to check for submessage brace
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
+					i++
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					if subMsg, ok := msgFieldDescs[fieldName]; ok {
+						i++
+						col++
+						var err string
+						i, line, col, err = checkDupFieldsInner(data, i, line, col, subMsg, registry)
+						if err != "" {
+							return i, line, col, err
+						}
+					} else {
+						i, line, col = skipTextFormatValue(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				if nonRepeatedMsg[fieldName] {
+					if seenFields[canonName] {
+						return i, line, col, fmt.Sprintf("input:%d:%d: Non-repeated field \"%s\" is specified multiple times.",
+							line, col, fieldName)
+					}
+					seenFields[canonName] = true
+				}
+				if subMsg, ok := msgFieldDescs[fieldName]; ok {
+					i++
+					col++
+					var err string
+					i, line, col, err = checkDupFieldsInner(data, i, line, col, subMsg, registry)
+					if err != "" {
+						return i, line, col, err
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
+		}
+		i++
+		col++
+	}
+	return i, line, col, ""
+}
+
+// checkClosedEnumValues scans text format input for enum fields with values
+// not in the enum descriptor (closed enums = proto2). C++ protoc rejects these
+// with "Unknown enumeration value of "VALUE" for field "FIELD"." at the position
+// of the next token after the value. Recurses into nested messages.
+func checkClosedEnumValues(data []byte, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) string {
+	_, _, _, err := checkClosedEnumValuesInner(data, 0, 1, 1, msgDesc, registry)
+	return err
+}
+
+func checkClosedEnumValuesInner(data []byte, i, line, col int, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) (int, int, int, string) {
+	closedEnums := map[string]protoreflect.EnumDescriptor{}
+	msgFields := map[string]protoreflect.MessageDescriptor{}
+	fields := msgDesc.Fields()
+	for fi := 0; fi < fields.Len(); fi++ {
+		fd := fields.Get(fi)
+		switch fd.Kind() {
+		case protoreflect.EnumKind:
+			ed := fd.Enum()
+			if ed.ParentFile().Syntax() == protoreflect.Proto2 {
+				closedEnums[string(fd.Name())] = ed
+			}
+		case protoreflect.MessageKind:
+			msgFields[string(fd.Name())] = fd.Message()
+		case protoreflect.GroupKind:
+			msgFields[string(fd.Name())] = fd.Message()
+			msgFields[string(fd.Message().Name())] = fd.Message()
+		}
+	}
+
+	for i < len(data) {
+		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
+			col = textTabCol(col, data[i])
+			i++
+			continue
+		}
+		if data[i] == '\n' {
+			line++
+			col = 1
+			i++
+			continue
+		}
+if data[i] == '#' {
+i = skipLineComment(data, i)
+continue
+}
+		if data[i] == '}' || data[i] == '>' {
+			i++
+			col++
+			return i, line, col, ""
+		}
+		if data[i] == '[' {
+			i++
+			col++
+			start := i
+			for i < len(data) && data[i] != ']' && data[i] != '\n' {
+				i++
+				col++
+			}
+			extName := string(data[start:i])
+			if i < len(data) && data[i] == ']' {
+				i++
+				col++
+			}
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			isMsg := false
+			var extMsgDesc protoreflect.MessageDescriptor
+			if registry != nil {
+				if desc, err := registry.FindDescriptorByName(protoreflect.FullName(extName)); err == nil {
+					if extFd, ok := desc.(protoreflect.FieldDescriptor); ok {
+						if extFd.Kind() == protoreflect.MessageKind || extFd.Kind() == protoreflect.GroupKind {
+							isMsg = true
+							extMsgDesc = extFd.Message()
+						}
+					}
+				}
+			}
+			if i < len(data) && data[i] == ':' {
+				i++
+				col++
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
+					i++
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					if isMsg && extMsgDesc != nil {
+						i++
+						col++
+						var errStr string
+						i, line, col, errStr = checkClosedEnumValuesInner(data, i, line, col, extMsgDesc, registry)
+						if errStr != "" {
+							return i, line, col, errStr
+						}
+					} else {
+						i, line, col = skipTextFormatValue(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				if isMsg && extMsgDesc != nil {
+					i++
+					col++
+					var errStr string
+					i, line, col, errStr = checkClosedEnumValuesInner(data, i, line, col, extMsgDesc, registry)
+					if errStr != "" {
+						return i, line, col, errStr
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
+		}
+		if isLetter(data[i]) || data[i] == '_' {
+			start := i
+			for i < len(data) && (isAlphanumeric(data[i]) || data[i] == '_') {
+				i++
+				col++
+			}
+			fieldName := string(data[start:i])
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			if i < len(data) && data[i] == ':' {
+				i++
+				col++
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
+					i++
+				}
+				if ed, ok := closedEnums[fieldName]; ok && i < len(data) {
+					negative := false
+					valStart := i
+					if data[i] == '-' {
+						negative = true
+						i++
+						col++
+					}
+					if i < len(data) && data[i] >= '0' && data[i] <= '9' {
+						numStart := i
+						for i < len(data) && data[i] >= '0' && data[i] <= '9' {
+							i++
+							col++
+						}
+						numStr := string(data[numStart:i])
+						num, err := strconv.ParseInt(numStr, 10, 32)
+						if err == nil {
+							if negative {
+								num = -num
+							}
+							ev := ed.Values().ByNumber(protoreflect.EnumNumber(num))
+							if ev == nil {
+								for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
+									col = textTabCol(col, data[i])
+									i++
+								}
+								if i < len(data) && data[i] == '\n' {
+									line++
+									col = 1
+									i++
+									for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
+										col = textTabCol(col, data[i])
+										i++
+									}
+								}
+								valStr := string(data[valStart : numStart+len(numStr)])
+								return i, line, col, fmt.Sprintf("input:%d:%d: Unknown enumeration value of \"%s\" for field \"%s\".",
+									line, col, valStr, fieldName)
+							}
+						}
+						continue
+					}
+					if negative {
+						i = valStart
+					}
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					i++
+					col++
+					if subMsg, ok := msgFields[fieldName]; ok {
+						var errStr string
+						i, line, col, errStr = checkClosedEnumValuesInner(data, i, line, col, subMsg, registry)
+						if errStr != "" {
+							return i, line, col, errStr
+						}
+					} else {
+						i, line, col = skipBracedBlock(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				i++
+				col++
+				if subMsg, ok := msgFields[fieldName]; ok {
+					var errStr string
+					i, line, col, errStr = checkClosedEnumValuesInner(data, i, line, col, subMsg, registry)
+					if errStr != "" {
+						return i, line, col, errStr
+					}
+				} else {
+					i, line, col = skipBracedBlock(data, i, line, col)
+				}
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
+		}
+		i++
+		col++
+	}
+	return i, line, col, ""
+}
+
+// checkNegUintFields scans text format input for negative values on unsigned
+// integer fields. C++ protoc's ConsumeUnsignedInteger rejects `-` with
+// "Expected integer, got: -". Recurses into nested messages.
+func checkNegUintFields(data []byte, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) string {
+	_, _, _, err := checkNegUintFieldsInner(data, 0, 1, 1, msgDesc, registry)
+	return err
+}
+
+func checkNegUintFieldsInner(data []byte, i, line, col int, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) (int, int, int, string) {
+	uintFields := map[string]bool{}
+	msgFields := map[string]protoreflect.MessageDescriptor{}
+	fields := msgDesc.Fields()
+	for fi := 0; fi < fields.Len(); fi++ {
+		fd := fields.Get(fi)
+		switch fd.Kind() {
+		case protoreflect.Uint32Kind, protoreflect.Uint64Kind,
+			protoreflect.Fixed32Kind, protoreflect.Fixed64Kind:
+			uintFields[string(fd.Name())] = true
+		case protoreflect.MessageKind:
+			msgFields[string(fd.Name())] = fd.Message()
+		case protoreflect.GroupKind:
+			msgFields[string(fd.Name())] = fd.Message()
+			msgFields[string(fd.Message().Name())] = fd.Message()
+		}
+	}
+
+	for i < len(data) {
+		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
+			col = textTabCol(col, data[i])
+			i++
+			continue
+		}
+		if data[i] == '\n' {
+			line++
+			col = 1
+			i++
+			continue
+		}
+if data[i] == '#' {
+i = skipLineComment(data, i)
+continue
+}
+		if data[i] == '}' || data[i] == '>' {
+			i++
+			col++
+			return i, line, col, ""
+		}
+		if data[i] == '[' {
+			i++
+			col++
+			start := i
+			for i < len(data) && data[i] != ']' && data[i] != '\n' {
+				i++
+				col++
+			}
+			extName := string(data[start:i])
+			if i < len(data) && data[i] == ']' {
+				i++
+				col++
+			}
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			isUint := false
+			isMsg := false
+			var extMsgDesc protoreflect.MessageDescriptor
+			if registry != nil {
+				if desc, err := registry.FindDescriptorByName(protoreflect.FullName(extName)); err == nil {
+					if extFd, ok := desc.(protoreflect.FieldDescriptor); ok {
+						switch extFd.Kind() {
+						case protoreflect.Uint32Kind, protoreflect.Uint64Kind,
+							protoreflect.Fixed32Kind, protoreflect.Fixed64Kind:
+							isUint = true
+						case protoreflect.MessageKind, protoreflect.GroupKind:
+							isMsg = true
+							extMsgDesc = extFd.Message()
+						}
+					}
+				}
+			}
+			if i < len(data) && data[i] == ':' {
+				i++
+				col++
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
+					i++
+				}
+				if isUint && i < len(data) && data[i] == '-' {
+					return i, line, col, fmt.Sprintf("input:%d:%d: Expected integer, got: -", line, col)
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					if isMsg && extMsgDesc != nil {
+						i++
+						col++
+						var errStr string
+						i, line, col, errStr = checkNegUintFieldsInner(data, i, line, col, extMsgDesc, registry)
+						if errStr != "" {
+							return i, line, col, errStr
+						}
+					} else {
+						i, line, col = skipTextFormatValue(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				if isMsg && extMsgDesc != nil {
+					i++
+					col++
+					var errStr string
+					i, line, col, errStr = checkNegUintFieldsInner(data, i, line, col, extMsgDesc, registry)
+					if errStr != "" {
+						return i, line, col, errStr
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
+		}
+		if isLetter(data[i]) || data[i] == '_' {
+			start := i
+			for i < len(data) && (isAlphanumeric(data[i]) || data[i] == '_') {
+				i++
+				col++
+			}
+			fieldName := string(data[start:i])
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			if i < len(data) && data[i] == ':' {
+				i++
+				col++
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
+					i++
+				}
+				if uintFields[fieldName] && i < len(data) && data[i] == '-' {
+					return i, line, col, fmt.Sprintf("input:%d:%d: Expected integer, got: -", line, col)
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					i++
+					col++
+					if subMsg, ok := msgFields[fieldName]; ok {
+						var errStr string
+						i, line, col, errStr = checkNegUintFieldsInner(data, i, line, col, subMsg, registry)
+						if errStr != "" {
+							return i, line, col, errStr
+						}
+					} else {
+						i, line, col = skipBracedBlock(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				i++
+				col++
+				if subMsg, ok := msgFields[fieldName]; ok {
+					var errStr string
+					i, line, col, errStr = checkNegUintFieldsInner(data, i, line, col, subMsg, registry)
+					if errStr != "" {
+						return i, line, col, errStr
+					}
+				} else {
+					i, line, col = skipBracedBlock(data, i, line, col)
+				}
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
+		}
+		i++
+		col++
+	}
+	return i, line, col, ""
+}
+
+// checkOneofConflicts scans text format input for oneof field conflicts.
+// Returns error string if a conflict is found, empty string otherwise.
+// C++ protoc's TextFormat::Parser detects when two fields from the same oneof
+// are specified and reports: Field "X" is specified along with field "Y",
+// another member of oneof "Z".
+// Recurses into nested messages.
+func checkOneofConflicts(data []byte, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) string {
+	_, _, _, err := checkOneofConflictsInner(data, 0, 1, 1, msgDesc, registry)
+	return err
+}
+
+func checkOneofConflictsInner(data []byte, pos, line, col int, msgDesc protoreflect.MessageDescriptor, registry *protoregistry.Files) (int, int, int, string) {
+	type fieldOneofInfo struct {
+		oneofIdx  int
+		oneofName string
+	}
+	fieldToOneof := map[string]fieldOneofInfo{}
+	msgFieldDescs := map[string]protoreflect.MessageDescriptor{}
+	fields := msgDesc.Fields()
+	for k := 0; k < fields.Len(); k++ {
+		fd := fields.Get(k)
+		od := fd.ContainingOneof()
+		if od != nil && !od.IsSynthetic() {
+			fieldToOneof[string(fd.Name())] = fieldOneofInfo{
+				oneofIdx:  od.Index(),
+				oneofName: string(od.Name()),
+			}
+		}
+		if fd.Kind() == protoreflect.MessageKind {
+			msgFieldDescs[string(fd.Name())] = fd.Message()
+		} else if fd.Kind() == protoreflect.GroupKind {
+			msgFieldDescs[string(fd.Name())] = fd.Message()
+			msgFieldDescs[string(fd.Message().Name())] = fd.Message()
+		}
+	}
+
+	type oneofState struct {
+		fieldName string
+	}
+	oneofSet := map[int]oneofState{}
+
+	i := pos
+	for i < len(data) {
+		if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' {
+			col = textTabCol(col, data[i])
+			i++
+			continue
+		}
+		if data[i] == '\n' {
+			line++
+			col = 1
+			i++
+			continue
+		}
+if data[i] == '#' {
+i = skipLineComment(data, i)
+continue
+}
+		if data[i] == '}' || data[i] == '>' {
+			i++
+			col++
+			return i, line, col, ""
+		}
+
+		// Handle extension fields: [fqn]
+		if data[i] == '[' {
+			i++
+			col++
+			start := i
+			for i < len(data) && data[i] != ']' && data[i] != '\n' {
+				i++
+				col++
+			}
+			extName := string(data[start:i])
+			if i < len(data) && data[i] == ']' {
+				i++
+				col++
+			}
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+			var extMsgDesc protoreflect.MessageDescriptor
+			if registry != nil {
+				if desc, err := registry.FindDescriptorByName(protoreflect.FullName(extName)); err == nil {
+					if extFd, ok := desc.(protoreflect.FieldDescriptor); ok {
+						if extFd.Kind() == protoreflect.MessageKind || extFd.Kind() == protoreflect.GroupKind {
+							extMsgDesc = extFd.Message()
+						}
+					}
+				}
+			}
+			if i < len(data) && data[i] == ':' {
+				i++
+				col++
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
+					i++
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					if extMsgDesc != nil {
+						i++
+						col++
+						var errStr string
+						i, line, col, errStr = checkOneofConflictsInner(data, i, line, col, extMsgDesc, registry)
+						if errStr != "" {
+							return i, line, col, errStr
+						}
+					} else {
+						i, line, col = skipTextFormatValue(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				if extMsgDesc != nil {
+					i++
+					col++
+					var errStr string
+					i, line, col, errStr = checkOneofConflictsInner(data, i, line, col, extMsgDesc, registry)
+					if errStr != "" {
+						return i, line, col, errStr
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
+		}
+
+		if isLetter(data[i]) || data[i] == '_' {
+			start := i
+			for i < len(data) && (isAlphanumeric(data[i]) || data[i] == '_') {
+				i++
+				col++
+			}
+			fieldName := string(data[start:i])
+
+			for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+				col = textTabCol(col, data[i])
+				i++
+			}
+
+			colonCol := col
+			if i < len(data) && data[i] == ':' {
+				if info, ok := fieldToOneof[fieldName]; ok {
+					if prev, exists := oneofSet[info.oneofIdx]; exists {
+						return i, line, col, fmt.Sprintf("input:%d:%d: Field \"%s\" is specified along with field \"%s\", another member of oneof \"%s\".",
+							line, colonCol, fieldName, prev.fieldName, info.oneofName)
+					}
+					oneofSet[info.oneofIdx] = oneofState{fieldName: fieldName}
+				}
+				i++
+				col++
+				for i < len(data) && (data[i] == ' ' || data[i] == '\t') {
+					col = textTabCol(col, data[i])
+					i++
+				}
+				if i < len(data) && (data[i] == '{' || data[i] == '<') {
+					if subMsg, ok := msgFieldDescs[fieldName]; ok {
+						i++
+						col++
+						var errStr string
+						i, line, col, errStr = checkOneofConflictsInner(data, i, line, col, subMsg, registry)
+						if errStr != "" {
+							return i, line, col, errStr
+						}
+					} else {
+						i, line, col = skipTextFormatValue(data, i, line, col)
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else if i < len(data) && (data[i] == '{' || data[i] == '<') {
+				if info, ok := fieldToOneof[fieldName]; ok {
+					if prev, exists := oneofSet[info.oneofIdx]; exists {
+						return i, line, col, fmt.Sprintf("input:%d:%d: Field \"%s\" is specified along with field \"%s\", another member of oneof \"%s\".",
+							line, colonCol, fieldName, prev.fieldName, info.oneofName)
+					}
+					oneofSet[info.oneofIdx] = oneofState{fieldName: fieldName}
+				}
+				if subMsg, ok := msgFieldDescs[fieldName]; ok {
+					i++
+					col++
+					var errStr string
+					i, line, col, errStr = checkOneofConflictsInner(data, i, line, col, subMsg, registry)
+					if errStr != "" {
+						return i, line, col, errStr
+					}
+				} else {
+					i, line, col = skipTextFormatValue(data, i, line, col)
+				}
+			} else {
+				i, line, col = skipTextFormatValue(data, i, line, col)
+			}
+			continue
+		}
+
+		i++
+		col++
+	}
+
+	return i, line, col, ""
+}
+
+func isLetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
+func isAlphanumeric(b byte) bool {
+	return isLetter(b) || (b >= '0' && b <= '9')
+}
+
+// textTabCol advances a 1-based column for a character, expanding tabs to
+// 8-column tab stops matching C++ protoc's io::Tokenizer.
+func textTabCol(col int, ch byte) int {
+	if ch == '\t' {
+		return col + 8 - (col-1)%8
+	}
+	return col + 1
+}
+
+// goColToTabCol converts a Go byte-based column (1-indexed) to a C++ tab-expanded column.
+func goColToTabCol(data []byte, goLine, goCol int) int {
+	idx := 0
+	for line := 1; line < goLine && idx < len(data); idx++ {
+		if data[idx] == '\n' {
+			line++
+		}
+	}
+	tabCol := 1
+	for c := 1; c < goCol && idx < len(data); c++ {
+		tabCol = textTabCol(tabCol, data[idx])
+		idx++
+	}
+	return tabCol
+}
+
+// skipTextFormatValue skips over a text format value (string, number, identifier, submessage).
+func skipTextFormatValue(data []byte, i, line, col int) (int, int, int) {
+	// Skip whitespace
+	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r') {
+		col = textTabCol(col, data[i])
+		i++
+	}
+	if i >= len(data) {
+		return i, line, col
+	}
+
+	if data[i] == '"' || data[i] == '\'' {
+		// String value - skip to matching quote, then skip adjacent string literals
+		for {
+			quote := data[i]
+			i++
+			col++
+			for i < len(data) && data[i] != quote {
+				if data[i] == '\\' && i+1 < len(data) {
+					i++
+					col++
+				}
+				if data[i] == '\n' {
+					line++
+					col = 1
+				} else {
+					col++
+				}
+				i++
+			}
+			if i < len(data) {
+				i++
+				col++
+			}
+			// Check for adjacent string literal (string concatenation)
+			j := i
+			jcol := col
+			jline := line
+			for j < len(data) && (data[j] == ' ' || data[j] == '\t' || data[j] == '\r') {
+				jcol = textTabCol(jcol, data[j])
+				j++
+			}
+			if j < len(data) && data[j] == '\n' {
+				jline++
+				jcol = 1
+				j++
+				for j < len(data) && (data[j] == ' ' || data[j] == '\t' || data[j] == '\r') {
+					jcol = textTabCol(jcol, data[j])
+					j++
+				}
+			}
+			if j < len(data) && (data[j] == '"' || data[j] == '\'') {
+				i = j
+				col = jcol
+				line = jline
+				continue
+			}
+			break
+		}
+	} else if data[i] == '{' || data[i] == '<' {
+		// Submessage - skip to matching close
+		close := byte('}')
+		if data[i] == '<' {
+			close = '>'
+		}
+		depth := 1
+		i++
+		col++
+		for i < len(data) && depth > 0 {
+			if data[i] == '{' || data[i] == '<' {
+				depth++
+			} else if data[i] == close || (data[i] == '}' && close == '}') || (data[i] == '>' && close == '>') {
+				depth--
+			} else if data[i] == '"' || data[i] == '\'' {
+				quote := data[i]
+				i++
+				col++
+				for i < len(data) && data[i] != quote {
+					if data[i] == '\\' && i+1 < len(data) {
+						i++
+						col++
+					}
+					if data[i] == '\n' {
+						line++
+						col = 1
+					} else {
+						col++
+					}
+					i++
+				}
+			}
+			if data[i] == '\n' {
+				line++
+				col = 1
+			} else {
+				col++
+			}
+			i++
+		}
+	} else {
+		// Number, identifier, or other token - skip to whitespace/newline
+		for i < len(data) && data[i] != ' ' && data[i] != '\t' && data[i] != '\r' && data[i] != '\n' {
+			col++
+			i++
+		}
+	}
+
+	return i, line, col
+}
+
+// skipBracedBlock skips content inside a `{...}` or `<...>` block (already past opening brace).
+func skipBracedBlock(data []byte, i, line, col int) (int, int, int) {
+	depth := 1
+	for i < len(data) && depth > 0 {
+		switch data[i] {
+		case '{', '<':
+			depth++
+		case '}', '>':
+			depth--
+		case '"', '\'':
+			quote := data[i]
+			i++
+			col++
+			for i < len(data) && data[i] != quote {
+				if data[i] == '\\' && i+1 < len(data) {
+					i++
+					col++
+				}
+				if data[i] == '\n' {
+					line++
+					col = 1
+				} else {
+					col++
+				}
+				i++
+			}
+		case '\n':
+			line++
+			col = 0
+		}
+		if i < len(data) {
+			col = textTabCol(col, data[i])
+			i++
+		}
+	}
+	return i, line, col
+}
+
+// findMissingRequiredReflect finds missing required fields using protoreflect.
+func findMissingRequiredReflect(msg *dynamicpb.Message) []string {
+	var missing []string
+	collectMissingRequired(msg.ProtoReflect(), "", &missing)
+	return missing
+}
+
+func collectMissingRequired(m protoreflect.Message, prefix string, missing *[]string) {
+	md := m.Descriptor()
+	fields := md.Fields()
+	// Pass 1: collect missing required fields at this level
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		if fd.Cardinality() == protoreflect.Required && !m.Has(fd) {
+			*missing = append(*missing, prefix+string(fd.Name()))
+		}
+	}
+	// Pass 2: recurse into set message/group sub-fields
+	for i := 0; i < fields.Len(); i++ {
+		fd := fields.Get(i)
+		fieldName := prefix + string(fd.Name())
+		isMsg := fd.Kind() == protoreflect.MessageKind || fd.Kind() == protoreflect.GroupKind
+		if isMsg && fd.IsList() && m.Has(fd) {
+			list := m.Get(fd).List()
+			for j := 0; j < list.Len(); j++ {
+				sub := list.Get(j).Message()
+				elemPrefix := fmt.Sprintf("%s%s[%d].", prefix, fd.Name(), j)
+				collectMissingRequired(sub, elemPrefix, missing)
+			}
+		} else if isMsg && !fd.IsList() && !fd.IsMap() && m.Has(fd) {
+			sub := m.Get(fd).Message()
+			collectMissingRequired(sub, fieldName+".", missing)
+		}
+	}
+}
+
+// runDecode implements --decode mode: reads binary protobuf from stdin and
+// prints text format using the schema from parsed proto files.
+func runDecode(msgTypeName string, parsed map[string]*descriptorpb.FileDescriptorProto, orderedFiles []string) error {
+	// Find the message descriptor
+	msgDesc, allMsgs, allEnums, allExts, closedEnums, utf8Msgs, noPresenceMsgs := findMessageType(msgTypeName, parsed)
+	if msgDesc == nil {
+		return fmt.Errorf("Type not defined: %s", msgTypeName)
+	}
+
+	// Read binary data from stdin
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("Failed to read input.")
+	}
+
+	// Try to parse the data to validate it
+	if err := validateProtoWithSchema(data, msgTypeName, msgDesc, allMsgs, utf8Msgs); err != nil {
+		var u8err *utf8ValidationError
+		if errors.As(err, &u8err) {
+			fmt.Fprintln(os.Stderr, u8err.Error())
+		}
+		fmt.Fprintln(os.Stderr, "Failed to parse input.")
+		os.Exit(1)
+	}
+
+	// Check for missing required fields (warning, not error)
+	if missing := findMissingRequired(data, msgDesc, allMsgs, ""); len(missing) > 0 {
+		fmt.Fprintf(os.Stderr, "warning:  Input message is missing required fields:  %s\n", strings.Join(missing, ", "))
+	}
+
+	// Print in text format
+	printTextProto(os.Stdout, data, msgTypeName, msgDesc, allMsgs, allEnums, allExts, closedEnums, noPresenceMsgs, 0)
+	return nil
+}
+
+// findMessageType searches all parsed FileDescriptorProtos for a message
+// with the given fully-qualified name. Returns the descriptor, maps of all
+// messages, enums, and extensions.
+func findMessageType(fullName string, parsed map[string]*descriptorpb.FileDescriptorProto) (*descriptorpb.DescriptorProto, map[string]*descriptorpb.DescriptorProto, map[string]map[int32]string, map[string]map[int32]*decodeExt, map[string]bool, map[string]bool, map[string]bool) {
+	allMsgs := make(map[string]*descriptorpb.DescriptorProto)
+	allEnums := make(map[string]map[int32]string)
+	allExts := make(map[string]map[int32]*decodeExt)
+	closedEnums := make(map[string]bool)
+	utf8Msgs := make(map[string]bool)
+	noPresenceMsgs := make(map[string]bool)
+	for _, fd := range parsed {
+		pkg := fd.GetPackage()
+		isEditions := fd.GetSyntax() == "editions"
+		isClosed := fd.GetSyntax() != "proto3" && !isEditions
+		isProto3 := fd.GetSyntax() == "proto3"
+		fileImplicit := isEditions &&
+			fd.GetOptions().GetFeatures().GetFieldPresence() == descriptorpb.FeatureSet_IMPLICIT
+		for _, msg := range fd.GetMessageType() {
+			collectMsgsForDecode(pkg, "", msg, allMsgs, allEnums, allExts, closedEnums, isClosed, isEditions, fd)
+			if isProto3 || fileImplicit {
+				collectUtf8Msgs(pkg, "", msg, utf8Msgs)
+				collectNoPresenceMsgs(pkg, "", msg, noPresenceMsgs)
+			}
+		}
+		for _, ed := range fd.GetEnumType() {
+			var fqn string
+			if pkg != "" {
+				fqn = pkg + "." + ed.GetName()
+			} else {
+				fqn = ed.GetName()
+			}
+			allEnums[fqn] = buildEnumValMap(ed)
+			if isEditions {
+				if !isEnumOpen(ed, fd) {
+					closedEnums[fqn] = true
+				}
+			} else if isClosed {
+				closedEnums[fqn] = true
+			}
+		}
+		for _, ext := range fd.GetExtension() {
+			addDecodeExt(allExts, pkg, "", ext)
+		}
+	}
+	return allMsgs[fullName], allMsgs, allEnums, allExts, closedEnums, utf8Msgs, noPresenceMsgs
+}
+
+func addDecodeExt(allExts map[string]map[int32]*decodeExt, pkg, prefix string, ext *descriptorpb.FieldDescriptorProto) {
+	extendee := strings.TrimPrefix(ext.GetExtendee(), ".")
+	if allExts[extendee] == nil {
+		allExts[extendee] = make(map[int32]*decodeExt)
+	}
+	var extFQN string
+	if pkg != "" {
+		extFQN = pkg + "." + prefix + ext.GetName()
+	} else {
+		extFQN = prefix + ext.GetName()
+	}
+	allExts[extendee][ext.GetNumber()] = &decodeExt{fqn: extFQN, fd: ext}
+}
+
+func collectMsgsForDecode(pkg, prefix string, msg *descriptorpb.DescriptorProto, out map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, allExts map[string]map[int32]*decodeExt, closedEnums map[string]bool, isClosed bool, isEditions bool, fd *descriptorpb.FileDescriptorProto) {
+	var fqn string
+	if pkg != "" {
+		fqn = pkg + "." + prefix + msg.GetName()
+	} else {
+		fqn = prefix + msg.GetName()
+	}
+	out[fqn] = msg
+	for _, ed := range msg.GetEnumType() {
+		enumFQN := fqn + "." + ed.GetName()
+		allEnums[enumFQN] = buildEnumValMap(ed)
+		if isEditions {
+			if !isEnumOpen(ed, fd) {
+				closedEnums[enumFQN] = true
+			}
+		} else if isClosed {
+			closedEnums[enumFQN] = true
+		}
+	}
+	for _, ext := range msg.GetExtension() {
+		addDecodeExt(allExts, pkg, prefix+msg.GetName()+".", ext)
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectMsgsForDecode(pkg, prefix+msg.GetName()+".", nested, out, allEnums, allExts, closedEnums, isClosed, isEditions, fd)
+	}
+}
+
+func collectUtf8Msgs(pkg, prefix string, msg *descriptorpb.DescriptorProto, utf8Msgs map[string]bool) {
+	var fqn string
+	if pkg != "" {
+		fqn = pkg + "." + prefix + msg.GetName()
+	} else {
+		fqn = prefix + msg.GetName()
+	}
+	utf8Msgs[fqn] = true
+	for _, nested := range msg.GetNestedType() {
+		collectUtf8Msgs(pkg, prefix+msg.GetName()+".", nested, utf8Msgs)
+	}
+}
+
+// collectNoPresenceMsgs marks proto3 messages where singular scalar fields
+// have implicit presence (default values are suppressed in text output).
+func collectNoPresenceMsgs(pkg, prefix string, msg *descriptorpb.DescriptorProto, noPresenceMsgs map[string]bool) {
+	var fqn string
+	if pkg != "" {
+		fqn = pkg + "." + prefix + msg.GetName()
+	} else {
+		fqn = prefix + msg.GetName()
+	}
+	noPresenceMsgs[fqn] = true
+	for _, nested := range msg.GetNestedType() {
+		collectNoPresenceMsgs(pkg, prefix+msg.GetName()+".", nested, noPresenceMsgs)
+	}
+}
+
+// fieldHasExplicitPresence returns true if the field has per-field
+// features.field_presence = EXPLICIT or LEGACY_REQUIRED, overriding
+// the message/file-level implicit presence.
+func fieldHasExplicitPresence(fd *descriptorpb.FieldDescriptorProto) bool {
+	if fd.GetOptions().GetFeatures() == nil || fd.GetOptions().GetFeatures().FieldPresence == nil {
+		return false
+	}
+	fp := fd.GetOptions().GetFeatures().GetFieldPresence()
+	return fp == descriptorpb.FeatureSet_EXPLICIT || fp == descriptorpb.FeatureSet_LEGACY_REQUIRED
+}
+
+func buildEnumValMap(ed *descriptorpb.EnumDescriptorProto) map[int32]string {
+	m := make(map[int32]string)
+	for _, v := range ed.GetValue() {
+		if _, exists := m[v.GetNumber()]; !exists {
+			m[v.GetNumber()] = v.GetName()
+		}
+	}
+	return m
+}
+
+// validateProtoWithSchema validates that binary data can be parsed as the
+// given message type. Returns nil on success.
+func validateProtoWithSchema(data []byte, msgFQN string, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, utf8Msgs map[string]bool, depth ...int) error {
+	d := 0
+	if len(depth) > 0 {
+		d = depth[0]
+	}
+	if d >= 100 {
+		return fmt.Errorf("recursion limit exceeded")
+	}
+	fieldMap := buildFieldMap(msgDesc)
+	isUtf8 := utf8Msgs[msgFQN]
+	pos := 0
+	for pos < len(data) {
+		num, wtype, n := protowire.ConsumeTag(data[pos:])
+		if n < 0 || num < 1 {
+			return fmt.Errorf("invalid tag")
+		}
+		pos += n
+		switch wtype {
+		case protowire.VarintType:
+			_, vn := protowire.ConsumeVarint(data[pos:])
+			if vn < 0 {
+				return fmt.Errorf("invalid varint")
+			}
+			pos += vn
+		case protowire.Fixed64Type:
+			if pos+8 > len(data) {
+				return fmt.Errorf("invalid fixed64")
+			}
+			pos += 8
+		case protowire.Fixed32Type:
+			if pos+4 > len(data) {
+				return fmt.Errorf("invalid fixed32")
+			}
+			pos += 4
+		case protowire.BytesType:
+			v, vn := protowire.ConsumeBytes(data[pos:])
+			if vn < 0 {
+				return fmt.Errorf("invalid bytes")
+			}
+			pos += vn
+			fd := fieldMap[int32(num)]
+			if fd != nil {
+				if isMessageField(fd) {
+					subMsg := resolveFieldMsgType(fd, allMsgs)
+					if subMsg != nil {
+						subFQN := strings.TrimPrefix(fd.GetTypeName(), ".")
+						if err := validateProtoWithSchema(v, subFQN, subMsg, allMsgs, utf8Msgs, d+1); err != nil {
+							return err
+						}
+					}
+				} else if isUtf8 && fd.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING {
+					if !utf8.Valid(v) {
+						return &utf8ValidationError{msg: fmt.Sprintf("String field '%s.%s' contains invalid UTF-8 data when parsing a protocol buffer. Use the 'bytes' type if you intend to send raw bytes. ", msgFQN, fd.GetName())}
+					}
+				} else if fd.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED && isPackableType(fd.GetType()) {
+					if err := validatePackedData(v, fd.GetType()); err != nil {
+						return err
+					}
+				}
+			}
+		case protowire.StartGroupType:
+			// Skip to EndGroup, handling nested groups with depth counter
+			depth := 1
+			for pos < len(data) && depth > 0 {
+				gNum, gType, gn := protowire.ConsumeTag(data[pos:])
+				if gn < 0 {
+					return fmt.Errorf("invalid tag in group")
+				}
+				pos += gn
+				if gType == protowire.EndGroupType {
+					depth--
+					if depth == 0 && gNum == num {
+						break
+					}
+					continue
+				}
+				switch gType {
+				case protowire.StartGroupType:
+					depth++
+				case protowire.VarintType:
+					_, vn := protowire.ConsumeVarint(data[pos:])
+					if vn < 0 {
+						return fmt.Errorf("invalid varint in group")
+					}
+					pos += vn
+				case protowire.Fixed64Type:
+					pos += 8
+				case protowire.Fixed32Type:
+					pos += 4
+				case protowire.BytesType:
+					_, vn := protowire.ConsumeBytes(data[pos:])
+					if vn < 0 {
+						return fmt.Errorf("invalid bytes in group")
+					}
+					pos += vn
+				default:
+					return fmt.Errorf("unknown wire type in group")
+				}
+			}
+		default:
+			return fmt.Errorf("unknown wire type %d", wtype)
+		}
+	}
+	return nil
+}
+
+// validatePackedData checks that packed repeated field data is well-formed.
+func validatePackedData(data []byte, typ descriptorpb.FieldDescriptorProto_Type) error {
+	switch typ {
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		if len(data)%8 != 0 {
+			return fmt.Errorf("invalid packed fixed64")
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
+		if len(data)%4 != 0 {
+			return fmt.Errorf("invalid packed fixed32")
+		}
+	default:
+		// Varint-encoded types: validate each varint
+		pos := 0
+		for pos < len(data) {
+			_, vn := protowire.ConsumeVarint(data[pos:])
+			if vn < 0 {
+				return fmt.Errorf("invalid packed varint")
+			}
+			pos += vn
+		}
+	}
+	return nil
+}
+
+func buildFieldMap(msg *descriptorpb.DescriptorProto) map[int32]*descriptorpb.FieldDescriptorProto {
+	m := make(map[int32]*descriptorpb.FieldDescriptorProto)
+	for _, f := range msg.GetField() {
+		m[f.GetNumber()] = f
+	}
+	return m
+}
+
+// findMissingRequired returns the names of missing required fields in the given
+// protobuf data, using dot-separated paths for nested messages.
+func findMissingRequired(data []byte, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, prefix string) []string {
+	// Collect which field numbers are present
+	present := make(map[int32]bool)
+	// Also collect bytes for message fields to recurse into
+	type msgFieldData struct {
+		fd   *descriptorpb.FieldDescriptorProto
+		data []byte
+	}
+	var msgFields []msgFieldData
+	fieldMap := buildFieldMap(msgDesc)
+
+	pos := 0
+	for pos < len(data) {
+		num, wtype, n := protowire.ConsumeTag(data[pos:])
+		if n < 0 {
+			break
+		}
+		pos += n
+		present[int32(num)] = true
+		switch wtype {
+		case protowire.VarintType:
+			_, vn := protowire.ConsumeVarint(data[pos:])
+			if vn < 0 {
+				return nil
+			}
+			pos += vn
+		case protowire.Fixed64Type:
+			pos += 8
+		case protowire.Fixed32Type:
+			pos += 4
+		case protowire.BytesType:
+			v, vn := protowire.ConsumeBytes(data[pos:])
+			if vn < 0 {
+				return nil
+			}
+			pos += vn
+			fd := fieldMap[int32(num)]
+			if fd != nil && isMessageField(fd) {
+				msgFields = append(msgFields, msgFieldData{fd, v})
+			}
+		case protowire.StartGroupType:
+			// Skip group contents
+			depth := 1
+			for pos < len(data) && depth > 0 {
+				_, gType, gn := protowire.ConsumeTag(data[pos:])
+				if gn < 0 {
+					return nil
+				}
+				pos += gn
+				switch gType {
+				case protowire.StartGroupType:
+					depth++
+				case protowire.EndGroupType:
+					depth--
+				case protowire.VarintType:
+					_, vn := protowire.ConsumeVarint(data[pos:])
+					if vn < 0 {
+						return nil
+					}
+					pos += vn
+				case protowire.Fixed64Type:
+					pos += 8
+				case protowire.Fixed32Type:
+					pos += 4
+				case protowire.BytesType:
+					_, vn := protowire.ConsumeBytes(data[pos:])
+					if vn < 0 {
+						return nil
+					}
+					pos += vn
+				}
+			}
+		}
+	}
+
+	var missing []string
+	// Check required fields at this level
+	for _, f := range msgDesc.GetField() {
+		if f.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REQUIRED && !present[f.GetNumber()] {
+			name := f.GetName()
+			if prefix != "" {
+				name = prefix + "." + name
+			}
+			missing = append(missing, name)
+		}
+	}
+
+	// Recurse into present message fields to check their required fields
+	for _, mf := range msgFields {
+		subMsg := resolveFieldMsgType(mf.fd, allMsgs)
+		if subMsg != nil {
+			subPrefix := mf.fd.GetName()
+			if prefix != "" {
+				subPrefix = prefix + "." + subPrefix
+			}
+			missing = append(missing, findMissingRequired(mf.data, subMsg, allMsgs, subPrefix)...)
+		}
+	}
+
+	return missing
+}
+
+func isMessageField(fd *descriptorpb.FieldDescriptorProto) bool {
+	t := fd.GetType()
+	return t == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE || t == descriptorpb.FieldDescriptorProto_TYPE_GROUP
+}
+
+func resolveFieldMsgType(fd *descriptorpb.FieldDescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto) *descriptorpb.DescriptorProto {
+	tn := fd.GetTypeName()
+	if strings.HasPrefix(tn, ".") {
+		tn = tn[1:]
+	}
+	return allMsgs[tn]
+}
+
+func wireTypeMatchesProtoType(wt protowire.Type, pt descriptorpb.FieldDescriptorProto_Type) bool {
+	switch pt {
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32,
+		descriptorpb.FieldDescriptorProto_TYPE_INT64,
+		descriptorpb.FieldDescriptorProto_TYPE_UINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_UINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_SINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_BOOL,
+		descriptorpb.FieldDescriptorProto_TYPE_ENUM:
+		return wt == protowire.VarintType
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64,
+		descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		return wt == protowire.Fixed64Type
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32,
+		descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
+		return wt == protowire.Fixed32Type
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING,
+		descriptorpb.FieldDescriptorProto_TYPE_BYTES,
+		descriptorpb.FieldDescriptorProto_TYPE_MESSAGE:
+		return wt == protowire.BytesType
+	case descriptorpb.FieldDescriptorProto_TYPE_GROUP:
+		return wt == protowire.StartGroupType
+	}
+	return false
+}
+
+// printTextProto prints binary protobuf data in text format using the message
+// schema. Known fields are printed by name, unknown fields by number.
+// This matches C++ protoc's TextFormat::Print behavior for --decode.
+func printTextProto(w *os.File, data []byte, msgFQN string, msgDesc *descriptorpb.DescriptorProto, allMsgs map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, allExts map[string]map[int32]*decodeExt, closedEnums map[string]bool, noPresenceMsgs map[string]bool, indent int) {
+	fieldMap := buildFieldMap(msgDesc)
+	extMap := allExts[msgFQN] // extensions for this message type
+
+	// Collect all known and unknown field entries in wire order
+	type fieldEntry struct {
+		num     protowire.Number
+		wtype   protowire.Type
+		known   *descriptorpb.FieldDescriptorProto
+		extFQN  string // non-empty for extension fields
+		varint  uint64
+		fixed32 uint32
+		fixed64 uint64
+		bytes   []byte
+		group   []byte
+	}
+
+	var knownEntries []fieldEntry
+	var unknownEntries []fieldEntry
+
+	pos := 0
+	for pos < len(data) {
+		num, wtype, n := protowire.ConsumeTag(data[pos:])
+		if n < 0 || num < 1 {
+			break
+		}
+		pos += n
+		fd := fieldMap[int32(num)]
+		var extFQN string
+		if fd == nil && extMap != nil {
+			if ext := extMap[int32(num)]; ext != nil {
+				fd = ext.fd
+				extFQN = ext.fqn
+			}
+		}
+		entry := fieldEntry{num: num, wtype: wtype, known: fd, extFQN: extFQN}
+
+		switch wtype {
+		case protowire.VarintType:
+			v, vn := protowire.ConsumeVarint(data[pos:])
+			if vn < 0 {
+				break
+			}
+			pos += vn
+			entry.varint = v
+		case protowire.Fixed64Type:
+			v, vn := protowire.ConsumeFixed64(data[pos:])
+			if vn < 0 {
+				break
+			}
+			pos += vn
+			entry.fixed64 = v
+		case protowire.Fixed32Type:
+			v, vn := protowire.ConsumeFixed32(data[pos:])
+			if vn < 0 {
+				break
+			}
+			pos += vn
+			entry.fixed32 = v
+		case protowire.BytesType:
+			v, vn := protowire.ConsumeBytes(data[pos:])
+			if vn < 0 {
+				break
+			}
+			pos += vn
+			entry.bytes = v
+		case protowire.StartGroupType:
+			// Consume until EndGroup
+			start := pos
+			depth := 1
+			for pos < len(data) && depth > 0 {
+				gNum, gType, gn := protowire.ConsumeTag(data[pos:])
+				if gn < 0 {
+					break
+				}
+				if gType == protowire.EndGroupType && gNum == num {
+					pos += gn
+					depth--
+					continue
+				}
+				pos += gn
+				switch gType {
+				case protowire.VarintType:
+					_, vn := protowire.ConsumeVarint(data[pos:])
+					if vn < 0 {
+						break
+					}
+					pos += vn
+				case protowire.Fixed64Type:
+					pos += 8
+				case protowire.Fixed32Type:
+					pos += 4
+				case protowire.BytesType:
+					_, vn := protowire.ConsumeBytes(data[pos:])
+					if vn < 0 {
+						break
+					}
+					pos += vn
+				case protowire.StartGroupType:
+					depth++
+				}
+			}
+			entry.group = data[start : pos-protowire.SizeTag(num)]
+		default:
+			continue
+		}
+
+		// Unpack packed repeated fields: when a repeated packable field
+		// arrives with BytesType wire type, decode the bytes into individual entries.
+		if fd != nil && wtype == protowire.BytesType &&
+			fd.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED &&
+			isPackableType(fd.GetType()) {
+			packed := entry.bytes
+			ppos := 0
+			for ppos < len(packed) {
+				pe := fieldEntry{num: num, known: fd, extFQN: extFQN}
+				switch fd.GetType() {
+				case descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
+					descriptorpb.FieldDescriptorProto_TYPE_SFIXED64,
+					descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+					pe.wtype = protowire.Fixed64Type
+					v, vn := protowire.ConsumeFixed64(packed[ppos:])
+					if vn < 0 {
+						ppos = len(packed)
+						continue
+					}
+					ppos += vn
+					pe.fixed64 = v
+				case descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
+					descriptorpb.FieldDescriptorProto_TYPE_SFIXED32,
+					descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
+					pe.wtype = protowire.Fixed32Type
+					v, vn := protowire.ConsumeFixed32(packed[ppos:])
+					if vn < 0 {
+						ppos = len(packed)
+						continue
+					}
+					ppos += vn
+					pe.fixed32 = v
+				default:
+					pe.wtype = protowire.VarintType
+					v, vn := protowire.ConsumeVarint(packed[ppos:])
+					if vn < 0 {
+						ppos = len(packed)
+						continue
+					}
+					ppos += vn
+					pe.varint = v
+				}
+				// For closed enums, unknown values become unknown fields
+				if fd.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && pe.wtype == protowire.VarintType {
+					tn := strings.TrimPrefix(fd.GetTypeName(), ".")
+					if closedEnums[tn] {
+						valMap := allEnums[tn]
+						if _, ok := valMap[int32(pe.varint)]; !ok {
+							ue := fieldEntry{num: num, wtype: protowire.VarintType, varint: pe.varint}
+							unknownEntries = append(unknownEntries, ue)
+							continue
+						}
+					}
+				}
+				knownEntries = append(knownEntries, pe)
+			}
+		} else if fd != nil && wireTypeMatchesProtoType(wtype, fd.GetType()) {
+			// In proto2 (closed enums), unknown enum values become unknown fields
+			if fd.GetType() == descriptorpb.FieldDescriptorProto_TYPE_ENUM && wtype == protowire.VarintType {
+				tn := strings.TrimPrefix(fd.GetTypeName(), ".")
+				if closedEnums[tn] {
+					valMap := allEnums[tn]
+					if _, ok := valMap[int32(entry.varint)]; !ok {
+						unknownEntries = append(unknownEntries, entry)
+						continue
+					}
+				}
+			}
+			knownEntries = append(knownEntries, entry)
+		} else {
+			unknownEntries = append(unknownEntries, entry)
+		}
+	}
+
+	// Deduplicate non-repeated fields to match C++ protoc's ParseFromString.
+	// For singular scalars: keep last entry only.
+	// For singular messages: merge all entries' bytes into one.
+	// For oneof fields: keep only the last member.
+	if msgDesc != nil {
+		repeatedFields := make(map[int32]bool)
+		fieldToOneof := make(map[int32]int32)
+		for _, f := range msgDesc.GetField() {
+			if f.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
+				repeatedFields[f.GetNumber()] = true
+			}
+			if f.OneofIndex != nil {
+				fieldToOneof[f.GetNumber()] = f.GetOneofIndex()
+			}
+		}
+		// Also mark extension fields that are repeated
+		if extMap != nil {
+			for num, ext := range extMap {
+				if ext.fd.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
+					repeatedFields[num] = true
+				}
+			}
+		}
+
+		// For non-repeated, non-oneof fields: keep last entry per field number
+		// For non-repeated message/group fields: merge bytes of all entries
+		lastIdx := make(map[protowire.Number]int) // field number → last index
+		for i, e := range knownEntries {
+			if !repeatedFields[int32(e.num)] {
+				lastIdx[e.num] = i
+			}
+		}
+
+		// Merge non-repeated message/group fields (concatenate bytes)
+		if len(lastIdx) > 0 {
+			mergedBytes := make(map[protowire.Number][]byte)
+			for i, e := range knownEntries {
+				if repeatedFields[int32(e.num)] {
+					continue
+				}
+				if e.known != nil && (e.known.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE ||
+					e.known.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP) {
+					if e.wtype == protowire.BytesType {
+						if _, seen := mergedBytes[e.num]; seen {
+							mergedBytes[e.num] = append(mergedBytes[e.num], e.bytes...)
+							knownEntries[lastIdx[e.num]].bytes = mergedBytes[e.num]
+						} else {
+							b := make([]byte, len(e.bytes))
+							copy(b, e.bytes)
+							mergedBytes[e.num] = b
+						}
+					} else if e.wtype == protowire.StartGroupType {
+						if _, seen := mergedBytes[e.num]; seen {
+							mergedBytes[e.num] = append(mergedBytes[e.num], e.group...)
+							knownEntries[lastIdx[e.num]].group = mergedBytes[e.num]
+						} else {
+							b := make([]byte, len(e.group))
+							copy(b, e.group)
+							mergedBytes[e.num] = b
+						}
+					}
+					_ = i
+				}
+			}
+
+			filtered := make([]fieldEntry, 0, len(knownEntries))
+			for i, e := range knownEntries {
+				if repeatedFields[int32(e.num)] {
+					filtered = append(filtered, e)
+				} else if lastIdx[e.num] == i {
+					filtered = append(filtered, e)
+				}
+			}
+			knownEntries = filtered
+		}
+
+		// Deduplicate oneof fields: keep only the last entry per oneof
+		if len(fieldToOneof) > 0 {
+			lastOneofIdx := make(map[int32]int)
+			for i, e := range knownEntries {
+				if oi, ok := fieldToOneof[int32(e.num)]; ok {
+					lastOneofIdx[oi] = i
+				}
+			}
+			filtered := knownEntries[:0]
+			for i, e := range knownEntries {
+				oi, isOneof := fieldToOneof[int32(e.num)]
+				if !isOneof || lastOneofIdx[oi] == i {
+					filtered = append(filtered, e)
+				}
+			}
+			knownEntries = filtered
+		}
+	}
+
+	// For proto3 messages, suppress singular scalar fields with default values.
+	// C++ protoc's ParseFromString + TextFormat::Print skips these because
+	// proto3 singular scalars have implicit presence (HasField returns false for defaults).
+	if noPresenceMsgs[msgFQN] && msgDesc != nil {
+		filtered := knownEntries[:0]
+		for _, e := range knownEntries {
+			fd := e.known
+			if fd != nil && fd.GetLabel() != descriptorpb.FieldDescriptorProto_LABEL_REPEATED &&
+				fd.OneofIndex == nil &&
+				fd.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE &&
+				fd.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP &&
+				!fieldHasExplicitPresence(fd) {
+				// Implicit presence field: skip if default value
+				isDefault := false
+				switch e.wtype {
+				case protowire.VarintType:
+					isDefault = e.varint == 0
+				case protowire.Fixed32Type:
+					isDefault = e.fixed32 == 0
+				case protowire.Fixed64Type:
+					isDefault = e.fixed64 == 0
+				case protowire.BytesType:
+					isDefault = len(e.bytes) == 0
+				}
+				if isDefault {
+					continue
+				}
+			}
+			filtered = append(filtered, e)
+		}
+		knownEntries = filtered
+	}
+
+	// For map entries, C++ protoc always prints both key (field 1) and value (field 2),
+	// even if they're missing from the wire data. Add default entries for missing fields.
+	if msgDesc != nil && msgDesc.GetOptions().GetMapEntry() {
+		presentFields := make(map[int32]bool)
+		for _, e := range knownEntries {
+			presentFields[int32(e.num)] = true
+		}
+		for _, f := range msgDesc.GetField() {
+			if !presentFields[f.GetNumber()] {
+				e := fieldEntry{num: protowire.Number(f.GetNumber()), known: f}
+				switch f.GetType() {
+				case descriptorpb.FieldDescriptorProto_TYPE_STRING,
+					descriptorpb.FieldDescriptorProto_TYPE_BYTES,
+					descriptorpb.FieldDescriptorProto_TYPE_MESSAGE:
+					e.wtype = protowire.BytesType
+					e.bytes = []byte{}
+				case descriptorpb.FieldDescriptorProto_TYPE_FLOAT,
+					descriptorpb.FieldDescriptorProto_TYPE_FIXED32,
+					descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+					e.wtype = protowire.Fixed32Type
+				case descriptorpb.FieldDescriptorProto_TYPE_DOUBLE,
+					descriptorpb.FieldDescriptorProto_TYPE_FIXED64,
+					descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+					e.wtype = protowire.Fixed64Type
+				case descriptorpb.FieldDescriptorProto_TYPE_GROUP:
+					e.wtype = protowire.StartGroupType
+					e.group = []byte{}
+				default:
+					e.wtype = protowire.VarintType
+				}
+				knownEntries = append(knownEntries, e)
+			}
+		}
+	}
+
+	prefix := strings.Repeat("  ", indent)
+
+	// Print known fields first (sorted by field number, map entries sorted by key)
+	sort.SliceStable(knownEntries, func(i, j int) bool {
+		if knownEntries[i].num != knownEntries[j].num {
+			return knownEntries[i].num < knownEntries[j].num
+		}
+		// Same field number: sort map entries by key
+		ei, ej := knownEntries[i], knownEntries[j]
+		if ei.known != nil && ei.known.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE &&
+			ei.known.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
+			subMsg := resolveFieldMsgType(ei.known, allMsgs)
+			if subMsg != nil && subMsg.GetOptions().GetMapEntry() {
+				return compareMapEntryKeys(ei.bytes, ej.bytes, subMsg) < 0
+			}
+		}
+		return false
+	})
+	for _, e := range knownEntries {
+		printKnownField(w, e, prefix, allMsgs, allEnums, allExts, closedEnums, noPresenceMsgs, indent)
+	}
+
+	// Print unknown fields (in wire order)
+	// C++ protoc discards unknown fields from map entries during ParseFromString.
+	if msgDesc == nil || !msgDesc.GetOptions().GetMapEntry() {
+		for _, e := range unknownEntries {
+			printUnknownField(w, e, prefix, indent, allMsgs)
+		}
+	}
+}
+
+func printKnownField(w *os.File, e struct {
+	num     protowire.Number
+	wtype   protowire.Type
+	known   *descriptorpb.FieldDescriptorProto
+	extFQN  string
+	varint  uint64
+	fixed32 uint32
+	fixed64 uint64
+	bytes   []byte
+	group   []byte
+}, prefix string, allMsgs map[string]*descriptorpb.DescriptorProto, allEnums map[string]map[int32]string, allExts map[string]map[int32]*decodeExt, closedEnums map[string]bool, noPresenceMsgs map[string]bool, indent int) {
+	fd := e.known
+	name := fd.GetName()
+	if e.extFQN != "" {
+		name = "[" + e.extFQN + "]"
+	}
+	t := fd.GetType()
+
+	switch t {
+	case descriptorpb.FieldDescriptorProto_TYPE_DOUBLE:
+		if e.wtype == protowire.Fixed64Type {
+			v := math.Float64frombits(e.fixed64)
+			fmt.Fprintf(w, "%s%s: %s\n", prefix, name, formatTextDouble(v))
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_FLOAT:
+		if e.wtype == protowire.Fixed32Type {
+			v := math.Float32frombits(e.fixed32)
+			fmt.Fprintf(w, "%s%s: %s\n", prefix, name, formatTextFloat(v))
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_INT64:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int64(e.varint))
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT64:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, e.varint)
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int32(e.varint))
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, uint32(e.varint))
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED64:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, e.fixed64)
+	case descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, uint32(e.fixed32))
+	case descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int64(e.fixed64))
+	case descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int32(e.fixed32))
+	case descriptorpb.FieldDescriptorProto_TYPE_SINT32:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int32(protowire.DecodeZigZag(uint64(uint32(e.varint)))))
+	case descriptorpb.FieldDescriptorProto_TYPE_SINT64:
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, protowire.DecodeZigZag(e.varint))
+	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
+		if e.varint != 0 {
+			fmt.Fprintf(w, "%s%s: true\n", prefix, name)
+		} else {
+			fmt.Fprintf(w, "%s%s: false\n", prefix, name)
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING:
+		fmt.Fprintf(w, "%s%s: \"%s\"\n", prefix, name, cEscapeForDecode(e.bytes))
+	case descriptorpb.FieldDescriptorProto_TYPE_BYTES:
+		fmt.Fprintf(w, "%s%s: \"%s\"\n", prefix, name, cEscapeForDecode(e.bytes))
+	case descriptorpb.FieldDescriptorProto_TYPE_ENUM:
+		tn := fd.GetTypeName()
+		if strings.HasPrefix(tn, ".") {
+			tn = tn[1:]
+		}
+		valMap := allEnums[tn]
+		if valName, ok := valMap[int32(e.varint)]; ok {
+			fmt.Fprintf(w, "%s%s: %s\n", prefix, name, valName)
+		} else {
+			fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int32(e.varint))
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_MESSAGE:
+		subMsg := resolveFieldMsgType(fd, allMsgs)
+		subFQN := strings.TrimPrefix(fd.GetTypeName(), ".")
+		if subMsg != nil {
+			fmt.Fprintf(w, "%s%s {\n", prefix, name)
+			printTextProto(w, e.bytes, subFQN, subMsg, allMsgs, allEnums, allExts, closedEnums, noPresenceMsgs, indent+1)
+			fmt.Fprintf(w, "%s}\n", prefix)
+		} else {
+			fmt.Fprintf(w, "%s%s {\n", prefix, name)
+			decodeRawProto(w, e.bytes, indent+1)
+			fmt.Fprintf(w, "%s}\n", prefix)
+		}
+	case descriptorpb.FieldDescriptorProto_TYPE_GROUP:
+		subMsg := resolveFieldMsgType(fd, allMsgs)
+		subFQN := strings.TrimPrefix(fd.GetTypeName(), ".")
+		groupName := fd.GetTypeName()
+		if idx := strings.LastIndex(groupName, "."); idx >= 0 {
+			groupName = groupName[idx+1:]
+		}
+		if strings.HasPrefix(groupName, ".") {
+			groupName = groupName[1:]
+		}
+		if e.extFQN != "" {
+			groupName = name
+		}
+		if subMsg != nil {
+			fmt.Fprintf(w, "%s%s {\n", prefix, groupName)
+			printTextProto(w, e.group, subFQN, subMsg, allMsgs, allEnums, allExts, closedEnums, noPresenceMsgs, indent+1)
+			fmt.Fprintf(w, "%s}\n", prefix)
+		} else {
+			fmt.Fprintf(w, "%s%s {\n", prefix, groupName)
+			decodeRawProto(w, e.group, indent+1)
+			fmt.Fprintf(w, "%s}\n", prefix)
+		}
+	default:
+		// Fallback: print raw
+		fmt.Fprintf(w, "%s%s: %d\n", prefix, name, e.varint)
+	}
+}
+
+// printUnknownField prints an unknown field in C++ TextFormat style.
+func printUnknownField(w *os.File, e struct {
+	num     protowire.Number
+	wtype   protowire.Type
+	known   *descriptorpb.FieldDescriptorProto
+	extFQN  string
+	varint  uint64
+	fixed32 uint32
+	fixed64 uint64
+	bytes   []byte
+	group   []byte
+}, prefix string, indent int, allMsgs map[string]*descriptorpb.DescriptorProto) {
+	switch e.wtype {
+	case protowire.VarintType:
+		fmt.Fprintf(w, "%s%d: %d\n", prefix, e.num, e.varint)
+	case protowire.Fixed64Type:
+		fmt.Fprintf(w, "%s%d: 0x%016x\n", prefix, e.num, e.fixed64)
+	case protowire.Fixed32Type:
+		fmt.Fprintf(w, "%s%d: 0x%08x\n", prefix, e.num, e.fixed32)
+	case protowire.BytesType:
+		if tryErr := validateRawProto(e.bytes); tryErr == nil && len(e.bytes) > 0 {
+			fmt.Fprintf(w, "%s%d {\n", prefix, e.num)
+			decodeRawProto(w, e.bytes, indent+1)
+			fmt.Fprintf(w, "%s}\n", prefix)
+		} else {
+			fmt.Fprintf(w, "%s%d: \"%s\"\n", prefix, e.num, cEscapeForDecode(e.bytes))
+		}
+	case protowire.StartGroupType:
+		fmt.Fprintf(w, "%s%d {\n", prefix, e.num)
+		decodeRawProto(w, e.group, indent+1)
+		fmt.Fprintf(w, "%s}\n", prefix)
+	}
+}
+
+// compareMapEntryKeys compares two map entry byte payloads by their key field (field 1).
+// Returns <0, 0, >0 for less, equal, greater. Key type is determined from the map entry descriptor.
+func compareMapEntryKeys(a, b []byte, mapEntry *descriptorpb.DescriptorProto) int {
+	var keyFd *descriptorpb.FieldDescriptorProto
+	for _, f := range mapEntry.GetField() {
+		if f.GetNumber() == 1 {
+			keyFd = f
+			break
+		}
+	}
+	if keyFd == nil {
+		return 0
+	}
+	aKey := extractMapKey(a, keyFd)
+	bKey := extractMapKey(b, keyFd)
+	switch keyFd.GetType() {
+	case descriptorpb.FieldDescriptorProto_TYPE_STRING:
+		as, bs := string(aKey.bytes), string(bKey.bytes)
+		if as < bs {
+			return -1
+		}
+		if as > bs {
+			return 1
+		}
+		return 0
+	case descriptorpb.FieldDescriptorProto_TYPE_BOOL:
+		// false < true
+		ai, bi := int(aKey.varint), int(bKey.varint)
+		return ai - bi
+	case descriptorpb.FieldDescriptorProto_TYPE_INT32, descriptorpb.FieldDescriptorProto_TYPE_SINT32,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+		var av, bv int32
+		switch keyFd.GetType() {
+		case descriptorpb.FieldDescriptorProto_TYPE_SINT32:
+			av, bv = int32(protowire.DecodeZigZag(uint64(uint32(aKey.varint)))), int32(protowire.DecodeZigZag(uint64(uint32(bKey.varint))))
+		case descriptorpb.FieldDescriptorProto_TYPE_SFIXED32:
+			av, bv = int32(aKey.fixed32), int32(bKey.fixed32)
+		default:
+			av, bv = int32(aKey.varint), int32(bKey.varint)
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+		return 0
+	case descriptorpb.FieldDescriptorProto_TYPE_INT64, descriptorpb.FieldDescriptorProto_TYPE_SINT64,
+		descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+		var av, bv int64
+		switch keyFd.GetType() {
+		case descriptorpb.FieldDescriptorProto_TYPE_SINT64:
+			av, bv = int64(protowire.DecodeZigZag(aKey.varint)), int64(protowire.DecodeZigZag(bKey.varint))
+		case descriptorpb.FieldDescriptorProto_TYPE_SFIXED64:
+			av, bv = int64(aKey.fixed64), int64(bKey.fixed64)
+		default:
+			av, bv = int64(aKey.varint), int64(bKey.varint)
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+		return 0
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT32, descriptorpb.FieldDescriptorProto_TYPE_FIXED32:
+		var av, bv uint32
+		if keyFd.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FIXED32 {
+			av, bv = aKey.fixed32, bKey.fixed32
+		} else {
+			av, bv = uint32(aKey.varint), uint32(bKey.varint)
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+		return 0
+	case descriptorpb.FieldDescriptorProto_TYPE_UINT64, descriptorpb.FieldDescriptorProto_TYPE_FIXED64:
+		var av, bv uint64
+		if keyFd.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FIXED64 {
+			av, bv = aKey.fixed64, bKey.fixed64
+		} else {
+			av, bv = aKey.varint, bKey.varint
+		}
+		if av < bv {
+			return -1
+		}
+		if av > bv {
+			return 1
+		}
+		return 0
+	}
+	return 0
+}
+
+type mapKeyValue struct {
+	varint  uint64
+	fixed32 uint32
+	fixed64 uint64
+	bytes   []byte
+}
+
+func extractMapKey(data []byte, keyFd *descriptorpb.FieldDescriptorProto) mapKeyValue {
+	pos := 0
+	for pos < len(data) {
+		num, wtype, n := protowire.ConsumeTag(data[pos:])
+		if n < 0 {
+			break
+		}
+		pos += n
+		switch wtype {
+		case protowire.VarintType:
+			v, vn := protowire.ConsumeVarint(data[pos:])
+			if vn < 0 {
+				return mapKeyValue{}
+			}
+			pos += vn
+			if num == 1 {
+				return mapKeyValue{varint: v}
+			}
+		case protowire.Fixed64Type:
+			v, vn := protowire.ConsumeFixed64(data[pos:])
+			if vn < 0 {
+				return mapKeyValue{}
+			}
+			pos += vn
+			if num == 1 {
+				return mapKeyValue{fixed64: v}
+			}
+		case protowire.Fixed32Type:
+			v, vn := protowire.ConsumeFixed32(data[pos:])
+			if vn < 0 {
+				return mapKeyValue{}
+			}
+			pos += vn
+			if num == 1 {
+				return mapKeyValue{fixed32: v}
+			}
+		case protowire.BytesType:
+			v, vn := protowire.ConsumeBytes(data[pos:])
+			if vn < 0 {
+				return mapKeyValue{}
+			}
+			pos += vn
+			if num == 1 {
+				return mapKeyValue{bytes: v}
+			}
+		case protowire.StartGroupType:
+			depth := 1
+			for pos < len(data) && depth > 0 {
+				_, gType, gn := protowire.ConsumeTag(data[pos:])
+				if gn < 0 {
+					return mapKeyValue{}
+				}
+				pos += gn
+				switch gType {
+				case protowire.VarintType:
+					_, vn := protowire.ConsumeVarint(data[pos:])
+					if vn < 0 {
+						return mapKeyValue{}
+					}
+					pos += vn
+				case protowire.Fixed64Type:
+					pos += 8
+				case protowire.Fixed32Type:
+					pos += 4
+				case protowire.BytesType:
+					_, vn := protowire.ConsumeBytes(data[pos:])
+					if vn < 0 {
+						return mapKeyValue{}
+					}
+					pos += vn
+				case protowire.StartGroupType:
+					depth++
+				case protowire.EndGroupType:
+					depth--
+				}
+			}
+		default:
+			return mapKeyValue{}
+		}
+	}
+	return mapKeyValue{}
+}
+
+func formatTextDouble(v float64) string {
+	if math.IsInf(v, 1) {
+		return "inf"
+	}
+	if math.IsInf(v, -1) {
+		return "-inf"
+	}
+	if math.IsNaN(v) {
+		return "nan"
+	}
+	// Match C++ SimpleDtoa: try 15 significant digits, fallback to 17.
+	s := strconv.FormatFloat(v, 'g', 15, 64)
+	if v2, err := strconv.ParseFloat(s, 64); err != nil || v2 != v {
+		s = strconv.FormatFloat(v, 'g', 17, 64)
+	}
+	return s
+}
+
+func formatTextFloat(v float32) string {
+	v64 := float64(v)
+	if math.IsInf(v64, 1) {
+		return "inf"
+	}
+	if math.IsInf(v64, -1) {
+		return "-inf"
+	}
+	if math.IsNaN(v64) {
+		return "nan"
+	}
+	// Match C++ SimpleFtoa: try 6 digits, fallback to 9.
+	bits := math.Float32bits(v)
+	if bits&0x7F800000 == 0 && v != 0 {
+		// Subnormal: C strtof doesn't reliably round-trip 6 digits.
+		return strconv.FormatFloat(v64, 'g', 9, 64)
+	}
+	s := strconv.FormatFloat(v64, 'g', 6, 64)
+	if v2, err := strconv.ParseFloat(s, 32); err != nil || float32(v2) != v {
+		s = strconv.FormatFloat(v64, 'g', 9, 64)
+	}
+	return s
+}

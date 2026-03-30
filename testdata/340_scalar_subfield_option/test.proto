@@ -1,0 +1,11 @@
+syntax = "proto2";
+
+package scalarsubfield;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional int32 my_scalar = 50001;
+}
+
+option (my_scalar).nonexistent = 42;

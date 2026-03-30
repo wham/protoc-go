@@ -1,0 +1,11 @@
+syntax = "proto2";
+
+package trailbrace;
+
+// Leading on message
+message Msg {
+  // Trailing on the message opening
+
+  // Leading on field x
+  optional int32 x = 1;
+}

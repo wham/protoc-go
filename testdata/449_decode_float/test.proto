@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package decodefloat;
+
+message Measurement {
+  float value = 1;
+  string label = 2;
+}

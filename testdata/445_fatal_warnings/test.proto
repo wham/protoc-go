@@ -1,0 +1,8 @@
+syntax = "proto2";
+package fatalwarn;
+
+import "dep.proto";
+
+extend Base {
+  optional string ext_b = 100;
+}

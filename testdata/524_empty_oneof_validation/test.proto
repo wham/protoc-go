@@ -1,0 +1,15 @@
+syntax = "proto2";
+package emptyoneof;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.OneofOptions {
+  optional int32 my_oo_opt = 50001;
+}
+
+message Container {
+  oneof choice {
+    option (my_oo_opt) = 42;
+  }
+  optional int32 x = 1;
+}

@@ -1,0 +1,27 @@
+syntax = "proto2";
+
+package enumvalmerge;
+
+import "google/protobuf/descriptor.proto";
+
+message ValueMeta {
+  optional string label = 1;
+  optional int32 weight = 2;
+}
+
+extend google.protobuf.EnumValueOptions {
+  optional ValueMeta val_cfg = 50001;
+}
+
+message Request {
+  optional string id = 1;
+}
+
+message Response {
+  optional string result = 1;
+}
+
+enum Priority {
+  LOW = 0 [(val_cfg).label = "low priority", (val_cfg).weight = 1];
+  HIGH = 1 [(val_cfg).label = "high priority", (val_cfg).weight = 10];
+}

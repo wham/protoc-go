@@ -1,0 +1,7 @@
+syntax = "proto2";
+
+package trailingempty;
+
+message Payload {
+  optional string data = 1;
+};

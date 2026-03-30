@@ -1,0 +1,7 @@
+edition = "2023";
+
+package utf8nonstr;
+
+message Container {
+  int32 value = 1 [features.utf8_validation = NONE];
+}

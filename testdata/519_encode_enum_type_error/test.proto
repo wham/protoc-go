@@ -1,0 +1,13 @@
+syntax = "proto3";
+package encenumtypeerr;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message Record {
+  Status status = 1;
+  string label = 2;
+}

@@ -1,0 +1,14 @@
+edition = "2023";
+
+package decodeeditionenum;
+
+enum Priority {
+  PRIORITY_UNKNOWN = 0;
+  PRIORITY_LOW = 1;
+  PRIORITY_HIGH = 2;
+}
+
+message Record {
+  Priority p = 1;
+  string label = 2;
+}

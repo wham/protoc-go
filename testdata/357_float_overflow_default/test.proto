@@ -1,0 +1,9 @@
+syntax = "proto2";
+package test;
+
+message FloatOverflow {
+  // 3.5e38 exceeds FLT_MAX (~3.4028235e38) and overflows to +infinity.
+  // C++ protoc normalizes this to "inf" via SimpleFtoa.
+  // Go protoc-go produces "+Inf" via strconv.FormatFloat.
+  optional float big = 1 [default = 3.5e38];
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package synconflict;
+
+message Msg {
+  oneof _foo {
+    string a = 1;
+    string b = 2;
+  }
+  optional string foo = 3;
+}

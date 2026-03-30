@@ -1,0 +1,20 @@
+syntax = "proto2";
+
+package aggstrint;
+
+import "google/protobuf/descriptor.proto";
+
+message Config {
+  optional string name = 1;
+  optional int32 value = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional Config cfg = 50001;
+}
+
+option (cfg) = { name: 42 value: 10 };
+
+message Dummy {
+  optional int32 id = 1;
+}

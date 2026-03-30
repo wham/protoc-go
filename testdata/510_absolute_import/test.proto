@@ -1,0 +1,6 @@
+syntax = "proto3";
+package absimport;
+import "/dep.proto";
+message Container {
+  Base b = 1;
+}

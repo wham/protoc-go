@@ -1,0 +1,8 @@
+syntax = "proto3";
+package directdep;
+
+import "dep.proto";
+
+message Main {
+  dep.DepMsg ref = 1;
+}

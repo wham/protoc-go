@@ -1,0 +1,16 @@
+syntax = "proto2";
+
+package aggfloatstr;
+
+import "google/protobuf/descriptor.proto";
+
+message Config {
+  optional double ratio = 1;
+  optional string name = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional Config cfg = 50001;
+}
+
+option (cfg) = { ratio: "not_a_number" name: "valid" };

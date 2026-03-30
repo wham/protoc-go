@@ -1,0 +1,11 @@
+syntax = "proto2";
+package encnestedneguint;
+
+message Inner {
+  optional uint32 count = 1;
+}
+
+message Outer {
+  optional Inner inner = 1;
+  optional string label = 2;
+}

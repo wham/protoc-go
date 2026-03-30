@@ -6,18 +6,94 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// Mapping represents a virtual-path to disk-path mapping.
+// VirtualPath "" means root mapping (no prefix stripping).
+type Mapping struct {
+	VirtualPath string
+	DiskPath    string
+}
 
 // SourceTree represents a set of directories to search for .proto files.
 type SourceTree struct {
-	Roots []string
+	Roots    []string // Simple root directories (VirtualPath="")
+	Mappings []Mapping
+}
+
+// allMappings returns all mappings including those from Roots.
+func (st *SourceTree) allMappings() []Mapping {
+	var all []Mapping
+	for _, root := range st.Roots {
+		all = append(all, Mapping{VirtualPath: "", DiskPath: root})
+	}
+	all = append(all, st.Mappings...)
+	return all
+}
+
+// findFile tries to find filename on disk using the configured mappings.
+// Includes a round-trip check matching C++ DiskSourceTree::Open: after finding
+// a disk file, verifies that the disk path maps back to the same virtual filename.
+func (st *SourceTree) findFile(filename string) (string, bool) {
+	for _, m := range st.allMappings() {
+		prefix := m.VirtualPath
+		if prefix != "" {
+			prefix += "/"
+		}
+		if !startsWith(filename, prefix) {
+			continue
+		}
+		remainder := filename[len(prefix):]
+		diskFile := filepath.Join(m.DiskPath, remainder)
+		if _, err := os.Stat(diskFile); err == nil {
+			// Round-trip check: verify disk file maps back to same virtual filename.
+			// filepath.Join normalizes paths (strips leading "/" from remainder),
+			// so "/dep.proto" resolves to the same disk file as "dep.proto" but
+			// the reverse mapping gives "dep.proto", not "/dep.proto".
+			rel, err := filepath.Rel(m.DiskPath, diskFile)
+			if err != nil {
+				continue
+			}
+			var roundTrip string
+			if m.VirtualPath != "" {
+				roundTrip = m.VirtualPath + "/" + rel
+			} else {
+				roundTrip = rel
+			}
+			if roundTrip != filename {
+				continue
+			}
+			return diskFile, true
+		}
+	}
+	return "", false
+}
+
+// IsVirtualPathInvalid checks if a virtual path contains disallowed components.
+// Returns true if the path contains backslashes, consecutive slashes, ".", or "..".
+func IsVirtualPathInvalid(path string) bool {
+	if strings.ContainsRune(path, '\\') {
+		return true
+	}
+	if strings.Contains(path, "//") {
+		return true
+	}
+	for _, component := range strings.Split(path, "/") {
+		if component == "." || component == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // Open finds and reads a .proto file from the source tree.
 func (st *SourceTree) Open(filename string) (string, error) {
-	for _, root := range st.Roots {
-		path := filepath.Join(root, filename)
-		data, err := os.ReadFile(path)
+	if IsVirtualPathInvalid(filename) {
+		return "", &VirtualPathError{Filename: filename}
+	}
+	if diskPath, ok := st.findFile(filename); ok {
+		data, err := os.ReadFile(diskPath)
 		if err == nil {
 			return string(data), nil
 		}
@@ -25,34 +101,37 @@ func (st *SourceTree) Open(filename string) (string, error) {
 	return "", fmt.Errorf("file not found: %s", filename)
 }
 
+// VirtualPathError is returned when a filename contains disallowed path components.
+type VirtualPathError struct {
+	Filename string
+}
+
+func (e *VirtualPathError) Error() string {
+	return fmt.Sprintf(`Backslashes, consecutive slashes, ".", or ".." are not allowed in the virtual path`)
+}
+
 // Exists checks if a .proto file exists in the source tree.
 func (st *SourceTree) Exists(filename string) bool {
-	for _, root := range st.Roots {
-		path := filepath.Join(root, filename)
-		if _, err := os.Stat(path); err == nil {
-			return true
-		}
-	}
-	return false
+	_, ok := st.findFile(filename)
+	return ok
 }
 
 // VirtualFileToDiskFile maps a virtual filename to the disk path.
 func (st *SourceTree) VirtualFileToDiskFile(filename string) (string, bool) {
-	for _, root := range st.Roots {
-		path := filepath.Join(root, filename)
-		if _, err := os.Stat(path); err == nil {
-			return path, true
-		}
-	}
-	return "", false
+	return st.findFile(filename)
 }
 
 // ValidateRoots checks that all root directories exist and returns warnings.
 func (st *SourceTree) ValidateRoots() []string {
 	var warnings []string
-	for _, root := range st.Roots {
-		if _, err := os.Stat(root); os.IsNotExist(err) {
-			warnings = append(warnings, fmt.Sprintf("%s: warning: directory does not exist.", root))
+	for _, m := range st.allMappings() {
+		if _, err := os.Stat(m.DiskPath); os.IsNotExist(err) {
+			// C++ uses the original flag value for the warning
+			label := m.DiskPath
+			if m.VirtualPath != "" {
+				label = m.VirtualPath + "=" + m.DiskPath
+			}
+			warnings = append(warnings, fmt.Sprintf("%s: warning: directory does not exist.", label))
 		}
 	}
 	return warnings
@@ -67,19 +146,23 @@ func (st *SourceTree) MakeRelative(filename string) (string, error) {
 		}
 	}
 
-	// Try to make relative to each root
+	// Try to make relative to each mapping
 	abs, err := filepath.Abs(filename)
 	if err != nil {
 		return "", fmt.Errorf("Could not make proto path relative: %s: %s", filename, err)
 	}
 
-	for _, root := range st.Roots {
-		rootAbs, err := filepath.Abs(root)
+	for _, m := range st.allMappings() {
+		rootAbs, err := filepath.Abs(m.DiskPath)
 		if err != nil {
 			continue
 		}
 		rel, err := filepath.Rel(rootAbs, abs)
 		if err == nil && !filepath.IsAbs(rel) && rel != ".." && !startsWith(rel, ".."+string(filepath.Separator)) {
+			// Prepend virtual path prefix if any
+			if m.VirtualPath != "" {
+				rel = m.VirtualPath + "/" + rel
+			}
 			return rel, nil
 		}
 	}

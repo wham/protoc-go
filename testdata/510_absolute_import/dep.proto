@@ -1,0 +1,5 @@
+syntax = "proto3";
+package absimport;
+message Base {
+  int32 id = 1;
+}

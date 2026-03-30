@@ -1,0 +1,10 @@
+syntax = "proto2";
+package neguint;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional uint32 my_val = 50001;
+}
+
+option (my_val) = -1;

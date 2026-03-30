@@ -1,0 +1,17 @@
+syntax = "proto2";
+
+package enumoptint;
+
+import "google/protobuf/descriptor.proto";
+
+enum Level {
+  LOW = 0;
+  MED = 1;
+  HIGH = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional Level my_level = 50001;
+}
+
+option (my_level) = 1;

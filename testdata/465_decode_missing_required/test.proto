@@ -1,0 +1,8 @@
+syntax = "proto2";
+package decodemissing;
+
+message Record {
+  required int32 id = 1;
+  required string name = 2;
+  optional int32 extra = 3;
+}

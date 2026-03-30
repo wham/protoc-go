@@ -1,0 +1,17 @@
+syntax = "proto2";
+
+package svcboolcase;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.ServiceOptions {
+  optional bool svc_flag = 50001;
+}
+
+message Req {}
+message Resp {}
+
+service MyService {
+  option (svc_flag) = True;
+  rpc Search(Req) returns (Resp);
+}

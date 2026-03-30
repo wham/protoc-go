@@ -1,0 +1,12 @@
+syntax = "proto2";
+
+package extrangeopt;
+
+message Container {
+  optional int32 id = 1;
+
+  // C++ protoc rejects "deprecated" on extension ranges because
+  // ExtensionRangeOptions does not have a "deprecated" field.
+  // Go incorrectly accepts it.
+  extensions 100 to 200 [deprecated = true];
+}

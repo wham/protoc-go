@@ -1,0 +1,13 @@
+syntax = "proto2";
+
+package floatcase;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional float my_float = 50001;
+}
+
+// C++ protoc only accepts lowercase "inf" — rejects "Inf" with capital I.
+// Go accepts "Inf" via strconv.ParseFloat which is case-insensitive.
+option (my_float) = Inf;

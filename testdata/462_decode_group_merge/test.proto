@@ -1,0 +1,11 @@
+syntax = "proto2";
+
+package decodegroupmerge;
+
+message Record {
+  optional group Inner = 1 {
+    optional string name = 1;
+    optional int32 value = 2;
+  }
+  optional string label = 2;
+}

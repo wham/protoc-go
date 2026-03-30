@@ -1,0 +1,16 @@
+syntax = "proto2";
+package grpoptenc;
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional group MyGroupOpt = 50001 {
+    optional string label = 1;
+    optional int32 count = 2;
+  }
+}
+
+option (mygroupopt) = { label: "hello" count: 42 };
+
+message Placeholder {
+  optional string name = 1;
+}

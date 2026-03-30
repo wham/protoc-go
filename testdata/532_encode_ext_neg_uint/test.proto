@@ -1,0 +1,17 @@
+syntax = "proto2";
+
+package encextneg;
+
+message Inner {
+  optional int32 count = 1;
+}
+
+message Outer {
+  optional uint32 count = 1;
+  optional string label = 2;
+  extensions 100 to 200;
+}
+
+extend Outer {
+  optional Inner my_ext = 100;
+}

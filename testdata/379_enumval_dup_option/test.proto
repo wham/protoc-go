@@ -1,0 +1,18 @@
+syntax = "proto2";
+
+package evdupopt;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.EnumValueOptions {
+  optional int32 val_tag = 50001;
+}
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1 [(val_tag) = 42, (val_tag) = 99];
+}
+
+message Dummy {
+  optional int32 id = 1;
+}

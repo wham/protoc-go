@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package partial;
+
+import "dep.proto";
+
+message Main {
+  string name = 1;
+  Dependency dep = 2;
+}

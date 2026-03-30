@@ -1,0 +1,23 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package fieldrepmerge;
+
+message Config {
+  optional string name = 1;
+  optional int32 value = 2;
+}
+
+extend google.protobuf.FieldOptions {
+  optional Config field_cfg = 50000;
+  repeated string field_tags = 50001;
+}
+
+message Payload {
+  // field_a has sub-field option — triggers mergeFieldOptionsInMessages
+  optional string field_a = 1 [(field_cfg).name = "primary", (field_cfg).value = 10];
+
+  // field_b has repeated string option — should NOT be merged
+  optional string field_b = 2 [(field_tags) = "alpha", (field_tags) = "beta"];
+}

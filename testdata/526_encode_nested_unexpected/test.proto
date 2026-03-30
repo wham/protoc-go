@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package encnestedunexp;
+
+message Inner {
+  double score = 1;
+}
+
+message Outer {
+  string name = 1;
+  Inner inner = 2;
+}

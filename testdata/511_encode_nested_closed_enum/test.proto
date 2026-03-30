@@ -1,0 +1,19 @@
+syntax = "proto2";
+
+package nestedclosedenum;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message Inner {
+  optional Status status = 1;
+  optional string label = 2;
+}
+
+message Outer {
+  optional Inner inner = 1;
+  optional string name = 2;
+}

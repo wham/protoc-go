@@ -1,0 +1,24 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package repsubfield;
+
+message Config {
+  optional string name = 1;
+  optional int32 value = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional Config my_config = 50000;
+  repeated string tags = 50001;
+}
+
+option (my_config).name = "test";
+option (my_config).value = 42;
+option (tags) = "alpha";
+option (tags) = "beta";
+
+message Payload {
+  optional string data = 1;
+}

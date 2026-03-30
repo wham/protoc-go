@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package anyexpand;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/descriptor.proto";
+
+message MyData {
+  string name = 1;
+  int32 value = 2;
+}
+
+message MyOption {
+  google.protobuf.Any details = 1;
+}
+
+extend google.protobuf.FileOptions {
+  MyOption my_opt = 50001;
+}
+
+option (my_opt) = {
+  details: {
+    [type.googleapis.com/anyexpand.MyData]: {
+      name: "hello"
+      value: 42
+    }
+  }
+};
+
+message Placeholder {
+  string id = 1;
+}

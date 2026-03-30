@@ -1,0 +1,3 @@
+syntax = "proto3";
+package héllo;
+message Foo { int32 x = 1; }

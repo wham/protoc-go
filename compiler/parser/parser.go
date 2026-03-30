@@ -48,10 +48,14 @@ func invalidOctalError(filename string, tok tokenizer.Token) string {
 // parseIntLenient wraps strconv.ParseInt but treats bare "0x"/"0X" as 0,
 // matching C++ protoc's ParseInteger which returns 0 for hex prefix with no digits.
 func parseIntLenient(s string, base int, bitSize int) (int64, error) {
-	if s == "0x" || s == "0X" {
+	if isBareHexPrefix(s) {
 		return 0, nil
 	}
 	return strconv.ParseInt(s, base, bitSize)
+}
+
+func isBareHexPrefix(s string) bool {
+	return s == "0x" || s == "0X"
 }
 
 type parser struct {
@@ -102,8 +106,10 @@ type AggregateField struct {
 	Value       string
 	ValueType   tokenizer.TokenType
 	Negative    bool               // true if value was preceded by '-'
-	SubFields   []AggregateField   // nested message literal fields
-	IsExtension bool               // true if name was bracketed [ext.name]
+	Positive    bool               // true if value was preceded by '+'
+	SubFields          []AggregateField   // nested message literal fields
+	IsExtension        bool               // true if name was bracketed [ext.name]
+	TrailingCommaToken string             // non-empty if trailing comma in list (e.g., "]")
 }
 
 // CustomFieldOption represents a parenthesized custom option on a field
@@ -357,7 +363,8 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 			}
 		case ";":
 			// Empty statement — consume and continue (C++ protoc allows these)
-			p.tok.Next()
+			semi := p.tok.Next()
+			p.trackEnd(semi)
 		case "}":
 			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected top-level statement (e.g. \"message\").", p.filename, tok.Line+1, tok.Column+1))
 			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Unmatched \"}\".", p.filename, tok.Line+1, tok.Column+1))
@@ -543,7 +550,7 @@ func (p *parser) parseEdition(fd *descriptorpb.FileDescriptorProto) error {
 
 	edEnum, ok := editionMap[valTok.Value]
 	if !ok {
-		return fmt.Errorf("%d:%d: unknown edition %q", valTok.Line+1, valTok.Column+1, valTok.Value)
+		return fmt.Errorf("%d:%d: Unknown edition %q.", valTok.Line+1, valTok.Column+1, valTok.Value)
 	}
 	if edEnum > descriptorpb.Edition_EDITION_2024 {
 		return fmt.Errorf("%d:%d: Edition %s is later than the maximum supported edition 2024", startTok.Line+1, startTok.Column+1, valTok.Value)
@@ -611,9 +618,9 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 		isWeak = true
 	}
 
-	pathTok, err := p.tok.ExpectString()
-	if err != nil {
-		return err
+	pathTok := p.tok.Next()
+	if pathTok.Type != tokenizer.TokenString {
+		return fmt.Errorf("%d:%d: Expected a string naming the file to import.", pathTok.Line+1, pathTok.Column+1)
 	}
 	// Adjacent string literal concatenation (like C/C++)
 	importPath := pathTok.Value
@@ -654,6 +661,15 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 	}
 
 	return nil
+}
+
+// syntheticOneofName generates the synthetic oneof name for a proto3 optional field,
+// matching C++ GenerateSyntheticOneofs: prepend "_" only if the name doesn't already start with "_".
+func syntheticOneofName(fieldName string) string {
+	if len(fieldName) == 0 || fieldName[0] != '_' {
+		return "_" + fieldName
+	}
+	return fieldName
 }
 
 func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, error) {
@@ -738,7 +754,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 				if field.Proto3Optional != nil && *field.Proto3Optional {
 					syntheticOneofs = append(syntheticOneofs, syntheticOneof{
 						field: field,
-						name:  "_" + field.GetName(),
+						name:  syntheticOneofName(field.GetName()),
 					})
 				}
 				msg.Field = append(msg.Field, field)
@@ -773,6 +789,16 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 				msg.NestedType = append(msg.NestedType, nested)
 				fieldIdx++
 				nestedMsgIdx++
+			} else if tok.Value == "group" {
+				// Label-less group (proto3/editions)
+				field, nested, err := p.parseGroupFieldNoLabel(path, fieldIdx, nestedMsgIdx)
+				if err != nil {
+					return nil, err
+				}
+				msg.Field = append(msg.Field, field)
+				msg.NestedType = append(msg.NestedType, nested)
+				fieldIdx++
+				nestedMsgIdx++
 			} else {
 				field, err := p.parseField(append(copyPath(path), 2, fieldIdx))
 				if err != nil {
@@ -781,7 +807,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 				if field.Proto3Optional != nil && *field.Proto3Optional {
 					syntheticOneofs = append(syntheticOneofs, syntheticOneof{
 						field: field,
-						name:  "_" + field.GetName(),
+						name:  syntheticOneofName(field.GetName()),
 					})
 				}
 				msg.Field = append(msg.Field, field)
@@ -791,12 +817,27 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 	}
 
 	// Append synthetic oneofs after all declared oneofs (C++ protoc ordering)
-	for _, so := range syntheticOneofs {
-		so.field.OneofIndex = proto.Int32(oneofIdx)
-		msg.OneofDecl = append(msg.OneofDecl, &descriptorpb.OneofDescriptorProto{
-			Name: proto.String(so.name),
-		})
-		oneofIdx++
+	// Match C++ GenerateSyntheticOneofs: resolve name conflicts by prepending "X"
+	if len(syntheticOneofs) > 0 {
+		names := make(map[string]bool)
+		for _, f := range msg.Field {
+			names[f.GetName()] = true
+		}
+		for _, o := range msg.OneofDecl {
+			names[o.GetName()] = true
+		}
+		for _, so := range syntheticOneofs {
+			oneofName := so.name
+			for names[oneofName] {
+				oneofName = "X" + oneofName
+			}
+			names[oneofName] = true
+			so.field.OneofIndex = proto.Int32(oneofIdx)
+			msg.OneofDecl = append(msg.OneofDecl, &descriptorpb.OneofDescriptorProto{
+				Name: proto.String(oneofName),
+			})
+			oneofIdx++
+		}
 	}
 
 	endTok := p.tok.Next() // consume "}"
@@ -824,8 +865,15 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 
 	// Determine if this is a name reservation (first token is a string) or range reservation
 	if p.tok.Peek().Type == tokenizer.TokenString {
+		if p.syntax == "editions" {
+			pk := p.tok.Peek()
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Reserved names must be identifiers in editions, not string literals.", p.filename, pk.Line+1, pk.Column+1))
+			p.skipToToken(";")
+			return nil
+		}
 		// reserved "name1", "name2";
 		stmtPath := append(copyPath(msgPath), 10) // field 10 = reserved_name
+		startNameCount := *nameIdx
 		for {
 			nameTok, err := p.tok.ExpectString()
 			if err != nil {
@@ -860,14 +908,16 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 		p.trackEnd(endTok)
 		// Statement-level span
 		p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
-		// Move statement span before individual names
+		// Move statement span before individual names added in this call
+		namesAdded := int(*nameIdx - startNameCount)
 		stmtLoc := p.locations[len(p.locations)-1]
-		copy(p.locations[len(p.locations)-int(*nameIdx):], p.locations[len(p.locations)-int(*nameIdx)-1:len(p.locations)-1])
-		p.locations[len(p.locations)-int(*nameIdx)-1] = stmtLoc
-		p.attachComments(len(p.locations)-int(*nameIdx)-1, firstIdx)
+		copy(p.locations[len(p.locations)-namesAdded:], p.locations[len(p.locations)-namesAdded-1:len(p.locations)-1])
+		p.locations[len(p.locations)-namesAdded-1] = stmtLoc
+		p.attachComments(len(p.locations)-namesAdded-1, firstIdx)
 	} else if p.tok.Peek().Type == tokenizer.TokenIdent && p.syntax == "editions" {
 		// Editions supports bare identifier reserved names: reserved foo, bar;
 		stmtPath := append(copyPath(msgPath), 10) // field 10 = reserved_name
+		startNameCount := *nameIdx
 		for {
 			nameTok := p.tok.Next() // consume identifier
 			nameVal := nameTok.Value
@@ -891,11 +941,12 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 		p.trackEnd(endTok)
 		// Statement-level span
 		p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
-		// Move statement span before individual names
+		// Move statement span before individual names added in this call
+		namesAdded := int(*nameIdx - startNameCount)
 		stmtLoc := p.locations[len(p.locations)-1]
-		copy(p.locations[len(p.locations)-int(*nameIdx):], p.locations[len(p.locations)-int(*nameIdx)-1:len(p.locations)-1])
-		p.locations[len(p.locations)-int(*nameIdx)-1] = stmtLoc
-		p.attachComments(len(p.locations)-int(*nameIdx)-1, firstIdx)
+		copy(p.locations[len(p.locations)-namesAdded:], p.locations[len(p.locations)-namesAdded-1:len(p.locations)-1])
+		p.locations[len(p.locations)-namesAdded-1] = stmtLoc
+		p.attachComments(len(p.locations)-namesAdded-1, firstIdx)
 	} else {
 		// reserved 2, 15, 9 to 11;
 		stmtPath := append(copyPath(msgPath), 9) // field 9 = reserved_range
@@ -1002,9 +1053,9 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 	locsBefore := len(p.locations)
 
 	for {
-		numTok, err := p.tok.ExpectInt()
-		if err != nil {
-			return err
+		numTok := p.tok.Next()
+		if numTok.Type != tokenizer.TokenInt {
+			return fmt.Errorf("%d:%d: Expected field number range.", numTok.Line+1, numTok.Column+1)
 		}
 		startNum, parseErr := parseIntLenient(numTok.Value, 0, 64)
 		if parseErr != nil || startNum > math.MaxInt32 || startNum < math.MinInt32 {
@@ -1029,9 +1080,9 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 				endNumCol = maxTok.Column
 				endNumLen = len(maxTok.Value)
 			} else {
-				endNumTok, err := p.tok.ExpectInt()
-				if err != nil {
-					return err
+				endNumTok := p.tok.Next()
+				if endNumTok.Type != tokenizer.TokenInt {
+					return fmt.Errorf("%d:%d: Expected field number range.", endNumTok.Line+1, endNumTok.Column+1)
 				}
 				e, parseErr := parseIntLenient(endNumTok.Value, 0, 64)
 				if parseErr != nil || e > math.MaxInt32 || e < math.MinInt32 {
@@ -1091,9 +1142,6 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 				if err != nil {
 					return err
 				}
-				if _, err := p.tok.Expect("="); err != nil {
-					return err
-				}
 
 				var custOpt CustomExtRangeOption
 				custOpt.ParenName = fullName
@@ -1104,11 +1152,15 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 				custOpt.InnerName = inner
 				custOpt.NameTok = nameTok
 
-				// Parse sub-field path
+				// Parse sub-field path before "="
 				for p.tok.Peek().Value == "." {
 					p.tok.Next() // consume "."
 					subTok := p.tok.Next()
 					custOpt.SubFieldPath = append(custOpt.SubFieldPath, subTok.Value)
+				}
+
+				if _, err := p.tok.Expect("="); err != nil {
+					return err
 				}
 
 				if p.tok.Peek().Value == "{" {
@@ -1137,17 +1189,33 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 					}
 				} else {
 					negative := false
+					var negTok tokenizer.Token
 					if p.tok.Peek().Value == "-" {
-						p.tok.Next()
+						negTok = p.tok.Next()
 						negative = true
 					}
 					valTok := p.tok.Next()
+					if negative {
+						custOpt.AggregateBraceTok = negTok
+					} else {
+						custOpt.AggregateBraceTok = valTok
+					}
 					custOpt.Value = valTok.Value
 					custOpt.ValueType = valTok.Type
 					custOpt.Negative = negative
 					endCol := valTok.Column + len(valTok.Value)
 					if valTok.RawLen > 0 {
 						endCol = valTok.Column + valTok.RawLen
+					}
+					// Adjacent string concatenation
+					for valTok.Type == tokenizer.TokenString && p.tok.Peek().Type == tokenizer.TokenString {
+						nextStr := p.tok.Next()
+						custOpt.Value += nextStr.Value
+						endCol = nextStr.Column + len(nextStr.Value)
+						if nextStr.RawLen > 0 {
+							endCol = nextStr.Column + nextStr.RawLen
+						}
+						valTok = nextStr
 					}
 					custOpt.ValEndLine = valTok.Line
 					custOpt.ValEndCol = endCol
@@ -1203,6 +1271,8 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 						msg.ExtensionRange[i].Options.Verification = &v
 					}
 					parsedOpts = append(parsedOpts, extRangeOpt{3, nameTok, valTok})
+				} else {
+					return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, nameTok.Value)
 				}
 			}
 			} // end else (non-parenthesized)
@@ -1368,6 +1438,16 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 			fd.MessageType = append(fd.MessageType, nested)
 			continue
 		}
+		if peek.Value == "group" {
+			nestedMsgIdx := int32(len(fd.MessageType))
+			field, nested, err := p.parseGroupFieldNoLabelInExtend(fieldPath, []int32{4, nestedMsgIdx}, extendeeName, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
+			if err != nil {
+				return err
+			}
+			fd.Extension = append(fd.Extension, field)
+			fd.MessageType = append(fd.MessageType, nested)
+			continue
+		}
 
 		// Track location count before parseField to insert extendee span right after field span
 		locCountBefore := len(p.locations)
@@ -1466,9 +1546,8 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 		return nil, nil, err
 	}
 
-	// SCI: field placeholder
+	// SCI: field placeholder (no comments — C++ attaches them to nested type)
 	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
-	p.attachComments(fieldLocIdx, firstIdx)
 
 	// SCI: extendee (right after field span)
 	p.addLocationSpan(append(copyPath(fieldPath), 2),
@@ -1493,8 +1572,9 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 	// Append deferred option SCI locations after number span
 	p.locations = append(p.locations, optionLocs...)
 
-	// SCI: nested message placeholder
+	// SCI: nested message placeholder (comments attach here for groups)
 	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
+	p.attachComments(nestedLocIdx, firstIdx)
 
 	// SCI: nested message name
 	p.addLocationSpan(append(copyPath(nestedPath), 1),
@@ -1589,6 +1669,18 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 			*nestedMsgIdx++
 			continue
 		}
+		if peek.Value == "group" {
+			nestedPath := append(copyPath(msgPath), 3, *nestedMsgIdx)
+			field, nested, err := p.parseGroupFieldNoLabelInExtend(fieldPath, nestedPath, extendeeName, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
+			if err != nil {
+				return err
+			}
+			msg.Extension = append(msg.Extension, field)
+			msg.NestedType = append(msg.NestedType, nested)
+			*extIdx++
+			*nestedMsgIdx++
+			continue
+		}
 
 		locCountBefore := len(p.locations)
 
@@ -1671,8 +1763,9 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		}
 
 		// Read value
+		var msgNegTok tokenizer.Token
 		if p.tok.Peek().Value == "-" {
-			p.tok.Next()
+			msgNegTok = p.tok.Next()
 			custOpt.Negative = true
 		}
 
@@ -1690,6 +1783,11 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
+			if custOpt.Negative {
+				custOpt.AggregateBraceTok = msgNegTok
+			} else {
+				custOpt.AggregateBraceTok = valTok
+			}
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -2117,9 +2215,8 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 		return nil, nil, err
 	}
 
-	// Source code info for the field
+	// Source code info for the field (no comments — C++ attaches them to nested type)
 	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
-	p.attachComments(fieldLocIdx, firstIdx)
 
 	// No label span for oneof group fields
 
@@ -2138,8 +2235,9 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	// Append deferred option SCI locations after number span
 	p.locations = append(p.locations, optionLocs...)
 
-	// Nested message type placeholder
+	// Nested message type placeholder (comments attach here for groups)
 	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
+	p.attachComments(nestedLocIdx, firstIdx)
 
 	// Nested type name span
 	p.addLocationSpan(append(copyPath(nestedPath), 1),
@@ -2150,6 +2248,121 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// Parse group body (full message body: fields, enums, nested messages, etc.)
+	nested := &descriptorpb.DescriptorProto{
+		Name: proto.String(groupName),
+	}
+	if err := p.parseGroupBody(nested, nestedPath); err != nil {
+		return nil, nil, err
+	}
+
+	endTok := p.tok.Next() // consume "}"
+	p.trackEnd(endTok)
+
+	// Update field and nested type spans
+	groupSpan := multiSpan(groupTok.Line, groupTok.Column, endTok.Line, endTok.Column+1)
+	p.locations[fieldLocIdx].Span = groupSpan
+	p.locations[nestedLocIdx].Span = groupSpan
+
+	return field, nested, nil
+}
+
+// parseGroupFieldNoLabel parses a group field without a label (for proto3/editions).
+// "group" Name "=" Number "{" fields... "}"
+func (p *parser) parseGroupFieldNoLabel(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
+	return p.parseGroupFieldInOneof(msgPath, fieldIdx, nestedMsgIdx)
+}
+
+// parseGroupFieldNoLabelInExtend parses a group field without a label inside an extend block.
+func (p *parser) parseGroupFieldNoLabelInExtend(fieldPath, nestedPath []int32, extendeeName string, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol int) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
+	firstIdx := p.tok.CurrentIndex()
+	field := &descriptorpb.FieldDescriptorProto{}
+	field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+
+	// "group" keyword
+	groupTok := p.tok.Next()
+
+	// Group name (must start with uppercase)
+	nameTok, err := p.tok.ExpectIdent()
+	if err != nil {
+		return nil, nil, err
+	}
+	groupName := nameTok.Value
+	if len(groupName) == 0 || groupName[0] < 'A' || groupName[0] > 'Z' {
+		return nil, nil, fmt.Errorf("%d:%d: Group names must start with a capital letter.", nameTok.Line+1, nameTok.Column+1)
+	}
+	fieldName := strings.ToLower(groupName)
+
+	field.Name = proto.String(fieldName)
+	field.JsonName = proto.String(tokenizer.ToJSONName(fieldName))
+	field.Type = descriptorpb.FieldDescriptorProto_TYPE_GROUP.Enum()
+	field.TypeName = proto.String(groupName)
+	field.Extendee = proto.String(extendeeName)
+
+	// = number
+	if _, err := p.tok.Expect("="); err != nil {
+		return nil, nil, err
+	}
+	numTok, err := p.tok.ExpectInt()
+	if err != nil {
+		return nil, nil, err
+	}
+	num, parseErr := parseIntLenient(numTok.Value, 0, 64)
+	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
+		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
+	}
+	field.Number = proto.Int32(int32(num))
+
+	// Optional field options [deprecated = true, etc.]
+	var optionLocs []*descriptorpb.SourceCodeInfo_Location
+	if p.tok.Peek().Value == "[" {
+		var err error
+		optionLocs, err = p.parseFieldOptions(field, fieldPath)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if _, err := p.tok.Expect("{"); err != nil {
+		return nil, nil, err
+	}
+
+	// SCI: field placeholder (no comments — C++ attaches them to nested type)
+	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
+
+	// SCI: extendee (right after field span)
+	p.addLocationSpan(append(copyPath(fieldPath), 2),
+		extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
+
+	// No label span for label-less group fields
+
+	// SCI: type ("group" keyword)
+	p.addLocationSpan(append(copyPath(fieldPath), 5),
+		groupTok.Line, groupTok.Column, groupTok.Line, groupTok.Column+len(groupTok.Value))
+
+	// SCI: name
+	p.addLocationSpan(append(copyPath(fieldPath), 1),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// SCI: number
+	p.addLocationSpan(append(copyPath(fieldPath), 3),
+		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+
+	// Append deferred option SCI locations after number span
+	p.locations = append(p.locations, optionLocs...)
+
+	// SCI: nested message placeholder (comments attach here for groups)
+	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
+	p.attachComments(nestedLocIdx, firstIdx)
+
+	// SCI: nested message name
+	p.addLocationSpan(append(copyPath(nestedPath), 1),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// SCI: type_name
+	p.addLocationSpan(append(copyPath(fieldPath), 6),
+		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+
+	// Parse group body
 	nested := &descriptorpb.DescriptorProto{
 		Name: proto.String(groupName),
 	}
@@ -2230,7 +2443,7 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 				if field.Proto3Optional != nil && *field.Proto3Optional {
 					syntheticOneofs = append(syntheticOneofs, syntheticOneof{
 						field: field,
-						name:  "_" + field.GetName(),
+						name:  syntheticOneofName(field.GetName()),
 					})
 				}
 				nested.Field = append(nested.Field, field)
@@ -2264,6 +2477,15 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 				nested.NestedType = append(nested.NestedType, nestedType)
 				fieldIdx++
 				nestedMsgIdx++
+			} else if tok.Value == "group" {
+				field, nestedType, err := p.parseGroupFieldNoLabel(nestedPath, fieldIdx, nestedMsgIdx)
+				if err != nil {
+					return err
+				}
+				nested.Field = append(nested.Field, field)
+				nested.NestedType = append(nested.NestedType, nestedType)
+				fieldIdx++
+				nestedMsgIdx++
 			} else {
 				field, err := p.parseField(append(copyPath(nestedPath), 2, fieldIdx))
 				if err != nil {
@@ -2272,7 +2494,7 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 				if field.Proto3Optional != nil && *field.Proto3Optional {
 					syntheticOneofs = append(syntheticOneofs, syntheticOneof{
 						field: field,
-						name:  "_" + field.GetName(),
+						name:  syntheticOneofName(field.GetName()),
 					})
 				}
 				nested.Field = append(nested.Field, field)
@@ -2281,12 +2503,26 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 		}
 	}
 
-	for _, so := range syntheticOneofs {
-		so.field.OneofIndex = proto.Int32(oneofIdx)
-		nested.OneofDecl = append(nested.OneofDecl, &descriptorpb.OneofDescriptorProto{
-			Name: proto.String(so.name),
-		})
-		oneofIdx++
+	if len(syntheticOneofs) > 0 {
+		names := make(map[string]bool)
+		for _, f := range nested.Field {
+			names[f.GetName()] = true
+		}
+		for _, o := range nested.OneofDecl {
+			names[o.GetName()] = true
+		}
+		for _, so := range syntheticOneofs {
+			oneofName := so.name
+			for names[oneofName] {
+				oneofName = "X" + oneofName
+			}
+			names[oneofName] = true
+			so.field.OneofIndex = proto.Int32(oneofIdx)
+			nested.OneofDecl = append(nested.OneofDecl, &descriptorpb.OneofDescriptorProto{
+				Name: proto.String(oneofName),
+			})
+			oneofIdx++
+		}
 	}
 
 	if nested.GetOptions().GetMessageSetWireFormat() {
@@ -2367,9 +2603,8 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 		return nil, nil, err
 	}
 
-	// Source code info for the field
+	// Source code info for the field (no comments — C++ attaches them to nested type)
 	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
-	p.attachComments(fieldLocIdx, firstIdx)
 
 	// Label span
 	p.addLocationSpan(append(copyPath(fieldPath), 4),
@@ -2390,8 +2625,9 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 	// Append deferred option SCI locations after number span
 	p.locations = append(p.locations, optionLocs...)
 
-	// Nested message type placeholder
+	// Nested message type placeholder (comments attach here for groups)
 	nestedLocIdx := p.addLocationPlaceholder(nestedPath)
+	p.attachComments(nestedLocIdx, firstIdx)
 
 	// Nested type name span
 	p.addLocationSpan(append(copyPath(nestedPath), 1),
@@ -2497,6 +2733,11 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		}
 		var parsedEnumValOpts []enumValOptInfo
 		var pendingCustEnumValOpts []CustomEnumValueOption
+		type enumValOptOrderEntry struct {
+			isCustom bool
+			index    int
+		}
+		var optOrder []enumValOptOrderEntry
 		bracketSkipped := false
 
 		if p.tok.Peek().Value == "[" {
@@ -2554,8 +2795,9 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 					}
 
 					neg := false
+					var evNegTok tokenizer.Token
 					if p.tok.Peek().Value == "-" {
-						p.tok.Next()
+						evNegTok = p.tok.Next()
 						neg = true
 					}
 					custOpt.Negative = neg
@@ -2574,7 +2816,20 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 					} else {
 						valTok := p.tok.Next()
 						p.trackEnd(valTok)
+						if neg {
+							custOpt.AggregateBraceTok = evNegTok
+						} else {
+							custOpt.AggregateBraceTok = valTok
+						}
 						custOpt.Value = valTok.Value
+						// Adjacent string concatenation
+						if valTok.Type == tokenizer.TokenString {
+							for p.tok.Peek().Type == tokenizer.TokenString {
+								nextTok := p.tok.Next()
+								p.trackEnd(nextTok)
+								custOpt.Value += nextTok.Value
+							}
+						}
 						if neg {
 							custOpt.Value = "-" + custOpt.Value
 						}
@@ -2595,6 +2850,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 					}
 
 					pendingCustEnumValOpts = append(pendingCustEnumValOpts, custOpt)
+					optOrder = append(optOrder, enumValOptOrderEntry{isCustom: true, index: len(pendingCustEnumValOpts) - 1})
 					hasOpts = true
 
 					next := p.tok.Peek()
@@ -2720,6 +2976,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 							endCol:        endCol,
 							featFieldNum:  featFieldNum,
 						})
+						optOrder = append(optOrder, enumValOptOrderEntry{isCustom: false, index: len(parsedEnumValOpts) - 1})
 					} else {
 						return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", optNameTok.Line+1, optNameTok.Column+1, optName)
 					}
@@ -2734,6 +2991,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 						endLine:       optValTok.Line,
 						endCol:        endCol,
 					})
+					optOrder = append(optOrder, enumValOptOrderEntry{isCustom: false, index: len(parsedEnumValOpts) - 1})
 				}
 
 				if p.tok.Peek().Value == "," {
@@ -2814,27 +3072,29 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 			optPath := append(copyPath(valuePath), 3)
 			p.addLocationSpan(optPath, optsBracketStartLine, optsBracketStartCol,
 				optsBracketEndLine, optsBracketEndCol+1)
-			for _, oi := range parsedEnumValOpts {
-				if oi.featFieldNum != 0 {
-					p.addLocationSpan(append(copyPath(optPath), oi.fieldNum, oi.featFieldNum),
-						oi.nameStartLine, oi.nameStartCol, oi.endLine, oi.endCol)
+			for _, entry := range optOrder {
+				if !entry.isCustom {
+					oi := parsedEnumValOpts[entry.index]
+					if oi.featFieldNum != 0 {
+						p.addLocationSpan(append(copyPath(optPath), oi.fieldNum, oi.featFieldNum),
+							oi.nameStartLine, oi.nameStartCol, oi.endLine, oi.endCol)
+					} else {
+						p.addLocationSpan(append(copyPath(optPath), oi.fieldNum),
+							oi.nameStartLine, oi.nameStartCol, oi.endLine, oi.endCol)
+					}
 				} else {
-					p.addLocationSpan(append(copyPath(optPath), oi.fieldNum),
-						oi.nameStartLine, oi.nameStartCol, oi.endLine, oi.endCol)
+					cust := pendingCustEnumValOpts[entry.index]
+					sciLoc := cust.SCILoc
+					basePath := append(copyPath(optPath), 0) // placeholder field num, resolved later
+					if len(cust.SubFieldPath) > 0 {
+						sciPath := make([]int32, len(basePath)+len(cust.SubFieldPath))
+						copy(sciPath, basePath)
+						sciLoc.Path = sciPath
+					} else {
+						sciLoc.Path = basePath
+					}
+					p.locations = append(p.locations, sciLoc)
 				}
-			}
-			// Add deferred custom enum value option SCI entries
-			for i := range pendingCustEnumValOpts {
-				sciLoc := pendingCustEnumValOpts[i].SCILoc
-				basePath := append(copyPath(optPath), 0) // placeholder field num, resolved later
-				if len(pendingCustEnumValOpts[i].SubFieldPath) > 0 {
-					sciPath := make([]int32, len(basePath)+len(pendingCustEnumValOpts[i].SubFieldPath))
-					copy(sciPath, basePath)
-					sciLoc.Path = sciPath
-				} else {
-					sciLoc.Path = basePath
-				}
-				p.locations = append(p.locations, sciLoc)
 			}
 		}
 
@@ -2843,6 +3103,13 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 
 	endTok := p.tok.Next() // consume "}"
 	p.trackEnd(endTok)
+
+	// Validate allow_alias: if explicitly set to false, it has no effect
+	if opts := e.GetOptions(); opts != nil && opts.AllowAlias != nil && !opts.GetAllowAlias() {
+		nextTok := p.tok.Peek()
+		return nil, fmt.Errorf("%d:%d: \"%s\" declares 'option allow_alias = false;' which has no effect. Please remove the declaration.",
+			nextTok.Line+1, nextTok.Column+1, e.GetName())
+	}
 
 	// Validate allow_alias: if set to true, there must be at least one duplicate value
 	if e.GetOptions().GetAllowAlias() {
@@ -2922,8 +3189,9 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		}
 
 		// Read value
+		var enumNegTok tokenizer.Token
 		if p.tok.Peek().Value == "-" {
-			p.tok.Next()
+			enumNegTok = p.tok.Next()
 			custOpt.Negative = true
 		}
 
@@ -2941,6 +3209,11 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
+			if custOpt.Negative {
+				custOpt.AggregateBraceTok = enumNegTok
+			} else {
+				custOpt.AggregateBraceTok = valTok
+			}
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -3147,8 +3420,15 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 	startTok := p.tok.Next() // consume "reserved"
 
 	if p.tok.Peek().Type == tokenizer.TokenString {
+		if p.syntax == "editions" {
+			pk := p.tok.Peek()
+			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Reserved names must be identifiers in editions, not string literals.", p.filename, pk.Line+1, pk.Column+1))
+			p.skipToToken(";")
+			return nil
+		}
 		// reserved "NAME1", "NAME2";
 		stmtPath := append(copyPath(enumPath), 5) // field 5 = reserved_name
+		startNameCount := *nameIdx
 		for {
 			nameTok, err := p.tok.ExpectString()
 			if err != nil {
@@ -3181,11 +3461,12 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 		}
 		p.trackEnd(endTok)
 		p.addLocationSpan(stmtPath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
-		// Move statement span before individual names
+		// Move statement span before individual names added in this call
+		namesAdded := int(*nameIdx - startNameCount)
 		stmtLoc := p.locations[len(p.locations)-1]
-		copy(p.locations[len(p.locations)-int(*nameIdx):], p.locations[len(p.locations)-int(*nameIdx)-1:len(p.locations)-1])
-		p.locations[len(p.locations)-int(*nameIdx)-1] = stmtLoc
-		p.attachComments(len(p.locations)-int(*nameIdx)-1, firstIdx)
+		copy(p.locations[len(p.locations)-namesAdded:], p.locations[len(p.locations)-namesAdded-1:len(p.locations)-1])
+		p.locations[len(p.locations)-namesAdded-1] = stmtLoc
+		p.attachComments(len(p.locations)-namesAdded-1, firstIdx)
 	} else {
 		// reserved 2, 3, 10 to 20;
 		stmtPath := append(copyPath(enumPath), 4) // field 4 = reserved_range
@@ -3213,14 +3494,15 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 				return err
 			}
 			startNum, parseErr := parseIntLenient(numTok.Value, 0, 64)
-			if parseErr != nil || startNum > math.MaxInt32 || startNum < math.MinInt32 {
+			startUpperBound := int64(math.MaxInt32)
+			if startNeg {
+				startUpperBound = int64(math.MaxInt32) + 1
+			}
+			if parseErr != nil || startNum > startUpperBound || startNum < math.MinInt32 {
 				return fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 			}
 			if startNeg {
 				startNum = -startNum
-				if startNum < math.MinInt32 {
-					return fmt.Errorf("%d:%d: Integer out of range.", startMinusTok.Line+1, startMinusTok.Column+1)
-				}
 			}
 			spanStartLine, spanStartCol := numTok.Line, numTok.Column
 			if startNeg {
@@ -3259,14 +3541,15 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 						return err
 					}
 					en, parseErr := parseIntLenient(endNumTok.Value, 0, 64)
-					if parseErr != nil || en > math.MaxInt32 || en < math.MinInt32 {
+					endUpperBound := int64(math.MaxInt32)
+					if endNeg {
+						endUpperBound = int64(math.MaxInt32) + 1
+					}
+					if parseErr != nil || en > endUpperBound || en < math.MinInt32 {
 						return fmt.Errorf("%d:%d: Integer out of range.", endNumTok.Line+1, endNumTok.Column+1)
 					}
 					if endNeg {
 						en = -en
-						if en < math.MinInt32 {
-							return fmt.Errorf("%d:%d: Integer out of range.", endMinusTok.Line+1, endMinusTok.Column+1)
-						}
 					}
 					endNum = en
 					endSpanLine = endNumTok.Line
@@ -3419,8 +3702,9 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 		custOpt.NameTok = nameTok
 		custOpt.Service = svc
 
+		var negTok tokenizer.Token
 		if p.tok.Peek().Value == "-" {
-			p.tok.Next()
+			negTok = p.tok.Next()
 			custOpt.Negative = true
 		}
 
@@ -3438,6 +3722,11 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
+			if custOpt.Negative {
+				custOpt.AggregateBraceTok = negTok
+			} else {
+				custOpt.AggregateBraceTok = valTok
+			}
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -3666,8 +3955,9 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 			return nil
 		}
 
+		var negTok tokenizer.Token
 		if p.tok.Peek().Value == "-" {
-			p.tok.Next()
+			negTok = p.tok.Next()
 			custOpt.Negative = true
 		}
 
@@ -3685,6 +3975,11 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
+			if custOpt.Negative {
+				custOpt.AggregateBraceTok = negTok
+			} else {
+				custOpt.AggregateBraceTok = valTok
+			}
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -4168,8 +4463,9 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 			return errBreakOneof
 		}
 
+		var negTok tokenizer.Token
 		if p.tok.Peek().Value == "-" {
-			p.tok.Next()
+			negTok = p.tok.Next()
 			custOpt.Negative = true
 		}
 
@@ -4187,6 +4483,11 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 		} else {
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
+			if custOpt.Negative {
+				custOpt.AggregateBraceTok = negTok
+			} else {
+				custOpt.AggregateBraceTok = valTok
+			}
 			val := valTok.Value
 			if custOpt.Negative {
 				val = "-" + val
@@ -4535,9 +4836,11 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 
 		var aggregateFields []AggregateField
 		negative := false
+		var negFileTok tokenizer.Token
 
 		if valTok.Value == "-" {
 			negative = true
+			negFileTok = valTok
 			valTok = p.tok.Next()
 			p.trackEnd(valTok)
 		}
@@ -4592,6 +4895,10 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		})
 		p.attachComments(len(p.locations)-1, firstIdx)
 
+		braceTok := valTok
+		if negative {
+			braceTok = negFileTok
+		}
 		p.customFileOptions = append(p.customFileOptions, CustomFileOption{
 			ParenName:         fullName,
 			InnerName:         innerName,
@@ -4602,7 +4909,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 			SCIIndex:          sciIdx,
 			NameTok:           nameTok,
 			AggregateFields:   aggregateFields,
-			AggregateBraceTok: valTok,
+			AggregateBraceTok: braceTok,
 		})
 		return nil
 	}
@@ -4882,6 +5189,12 @@ func (p *parser) parseParenthesizedOptionName(openTok tokenizer.Token) (string, 
 	innerTok := p.tok.Next()
 	p.trackEnd(innerTok)
 	fullName := "(" + innerTok.Value
+	// Handle leading dot for fully-qualified names like (.pkg.ext)
+	if innerTok.Value == "." {
+		partTok := p.tok.Next()
+		p.trackEnd(partTok)
+		fullName += partTok.Value
+	}
 	for p.tok.Peek().Value == "." {
 		dotTok := p.tok.Next()
 		p.trackEnd(dotTok)
@@ -4901,25 +5214,25 @@ func (p *parser) parseParenthesizedOptionName(openTok tokenizer.Token) (string, 
 // consumeAggregate reads key:value pairs inside a message literal { ... }.
 // Called after consuming '{'. Stops before '}'.
 func (p *parser) consumeAggregate() ([]AggregateField, error) {
-	var fields []AggregateField
+	fields := []AggregateField{}
 	for p.tok.Peek().Value != "}" && p.tok.Peek().Type != tokenizer.TokenEOF {
 		isExtension := false
 		var fieldName string
 
 		if p.tok.Peek().Value == "[" {
-			// Extension field reference: [ext.name]
+			// Extension field reference or Any type URL: [ext.name] or [type.googleapis.com/pkg.Msg]
 			bracketTok := p.tok.Next() // consume '['
 			p.trackEnd(bracketTok)
 			isExtension = true
 			nameTok := p.tok.Next()
 			p.trackEnd(nameTok)
 			fieldName = nameTok.Value
-			for p.tok.Peek().Value == "." {
-				dotTok := p.tok.Next()
-				p.trackEnd(dotTok)
+			for p.tok.Peek().Value == "." || p.tok.Peek().Value == "/" {
+				sepTok := p.tok.Next()
+				p.trackEnd(sepTok)
 				partTok := p.tok.Next()
 				p.trackEnd(partTok)
-				fieldName += "." + partTok.Value
+				fieldName += sepTok.Value + partTok.Value
 			}
 			closeBracket := p.tok.Next() // consume ']'
 			p.trackEnd(closeBracket)
@@ -5006,10 +5319,15 @@ func (p *parser) consumeAggregate() ([]AggregateField, error) {
 					})
 				} else {
 					negative := false
+					positive := false
 					valTok := p.tok.Next()
 					p.trackEnd(valTok)
 					if valTok.Value == "-" {
 						negative = true
+						valTok = p.tok.Next()
+						p.trackEnd(valTok)
+					} else if valTok.Value == "+" {
+						positive = true
 						valTok = p.tok.Next()
 						p.trackEnd(valTok)
 					}
@@ -5026,22 +5344,36 @@ func (p *parser) consumeAggregate() ([]AggregateField, error) {
 						Value:       val,
 						ValueType:   valTok.Type,
 						Negative:    negative,
+						Positive:    positive,
 						IsExtension: isExtension,
 					})
 				}
 				if p.tok.Peek().Value == "," {
 					sepTok := p.tok.Next()
 					p.trackEnd(sepTok)
+					if p.tok.Peek().Value == "]" {
+						fields = append(fields, AggregateField{
+							Name:               fieldName,
+							TrailingCommaToken: "]",
+							IsExtension:        isExtension,
+						})
+						break
+					}
 				}
 			}
 			closeBr := p.tok.Next() // consume ']'
 			p.trackEnd(closeBr)
 		} else {
 			negative := false
+			positive := false
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
 			if valTok.Value == "-" {
 				negative = true
+				valTok = p.tok.Next()
+				p.trackEnd(valTok)
+			} else if valTok.Value == "+" {
+				positive = true
 				valTok = p.tok.Next()
 				p.trackEnd(valTok)
 			}
@@ -5061,6 +5393,7 @@ func (p *parser) consumeAggregate() ([]AggregateField, error) {
 				Value:       val,
 				ValueType:   valTok.Type,
 				Negative:    negative,
+				Positive:    positive,
 				IsExtension: isExtension,
 			})
 		}
@@ -5077,7 +5410,7 @@ func (p *parser) consumeAggregate() ([]AggregateField, error) {
 // consumeAggregateAngle reads key:value pairs inside a message literal < ... >.
 // Called after consuming '<'. Stops before '>'.
 func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
-	var fields []AggregateField
+	fields := []AggregateField{}
 	for p.tok.Peek().Value != ">" && p.tok.Peek().Type != tokenizer.TokenEOF {
 		isExtension := false
 		var fieldName string
@@ -5089,12 +5422,12 @@ func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
 			nameTok := p.tok.Next()
 			p.trackEnd(nameTok)
 			fieldName = nameTok.Value
-			for p.tok.Peek().Value == "." {
-				dotTok := p.tok.Next()
-				p.trackEnd(dotTok)
+			for p.tok.Peek().Value == "." || p.tok.Peek().Value == "/" {
+				sepTok := p.tok.Next()
+				p.trackEnd(sepTok)
 				partTok := p.tok.Next()
 				p.trackEnd(partTok)
-				fieldName += "." + partTok.Value
+				fieldName += sepTok.Value + partTok.Value
 			}
 			closeBracket := p.tok.Next()
 			p.trackEnd(closeBracket)
@@ -5181,10 +5514,15 @@ func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
 					})
 				} else {
 					negative := false
+					positive := false
 					valTok := p.tok.Next()
 					p.trackEnd(valTok)
 					if valTok.Value == "-" {
 						negative = true
+						valTok = p.tok.Next()
+						p.trackEnd(valTok)
+					} else if valTok.Value == "+" {
+						positive = true
 						valTok = p.tok.Next()
 						p.trackEnd(valTok)
 					}
@@ -5201,22 +5539,36 @@ func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
 						Value:       val,
 						ValueType:   valTok.Type,
 						Negative:    negative,
+						Positive:    positive,
 						IsExtension: isExtension,
 					})
 				}
 				if p.tok.Peek().Value == "," {
 					sepTok := p.tok.Next()
 					p.trackEnd(sepTok)
+					if p.tok.Peek().Value == "]" {
+						fields = append(fields, AggregateField{
+							Name:               fieldName,
+							TrailingCommaToken: "]",
+							IsExtension:        isExtension,
+						})
+						break
+					}
 				}
 			}
 			closeBr := p.tok.Next() // consume ']'
 			p.trackEnd(closeBr)
 		} else {
 			negative := false
+			positive := false
 			valTok := p.tok.Next()
 			p.trackEnd(valTok)
 			if valTok.Value == "-" {
 				negative = true
+				valTok = p.tok.Next()
+				p.trackEnd(valTok)
+			} else if valTok.Value == "+" {
+				positive = true
 				valTok = p.tok.Next()
 				p.trackEnd(valTok)
 			}
@@ -5236,6 +5588,7 @@ func (p *parser) consumeAggregateAngle() ([]AggregateField, error) {
 				Value:       val,
 				ValueType:   valTok.Type,
 				Negative:    negative,
+				Positive:    positive,
 				IsExtension: isExtension,
 			})
 		}
@@ -5334,8 +5687,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			}
 
 			negative := false
+			var fieldNegTok tokenizer.Token
 			if p.tok.Peek().Value == "-" {
-				p.tok.Next()
+				fieldNegTok = p.tok.Next()
 				negative = true
 			}
 			custOpt.Negative = negative
@@ -5355,7 +5709,19 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			} else {
 				valTok := p.tok.Next()
 				p.trackEnd(valTok)
+				if negative {
+					custOpt.AggregateBraceTok = fieldNegTok
+				} else {
+					custOpt.AggregateBraceTok = valTok
+				}
 				custOpt.Value = valTok.Value
+				if valTok.Type == tokenizer.TokenString {
+					for p.tok.Peek().Type == tokenizer.TokenString {
+						nextStr := p.tok.Next()
+						p.trackEnd(nextStr)
+						custOpt.Value += nextStr.Value
+					}
+				}
 				if negative {
 					custOpt.Value = "-" + custOpt.Value
 				}
@@ -5507,15 +5873,29 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 					return optLocs, nil
 				}
 			}
-			// Float/double fields reject string literal default values
-			if (field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE ||
-				field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT) && valTok.Type == tokenizer.TokenString {
-				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected number.", p.filename, valTok.Line+1, valTok.Column+1))
-				p.skipToToken("]")
-				return optLocs, nil
+			// Float/double fields reject string literal and non-inf/nan identifier default values
+			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE ||
+				field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT {
+				if valTok.Type == tokenizer.TokenString {
+					p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected number.", p.filename, valTok.Line+1, valTok.Column+1))
+					p.skipToToken("]")
+					return optLocs, nil
+				}
+				if valTok.Type == tokenizer.TokenIdent {
+					if valTok.Value != "inf" && valTok.Value != "nan" {
+						p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected number.", p.filename, valTok.Line+1, valTok.Column+1))
+						p.skipToToken("]")
+						return optLocs, nil
+					}
+				}
+				if valTok.Type != tokenizer.TokenInt && valTok.Type != tokenizer.TokenFloat && valTok.Type != tokenizer.TokenIdent {
+					p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected number.", p.filename, valTok.Line+1, valTok.Column+1))
+					p.skipToToken("]")
+					return optLocs, nil
+				}
 			}
-			// Integer fields reject string literal, float literal, and identifier default values
-			if isIntegerType(field.GetType()) && (valTok.Type == tokenizer.TokenString || valTok.Type == tokenizer.TokenFloat || valTok.Type == tokenizer.TokenIdent) {
+			// Integer fields require integer literal default values
+			if isIntegerType(field.GetType()) && valTok.Type != tokenizer.TokenInt {
 				p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected integer for field default value.", p.filename, valTok.Line+1, valTok.Column+1))
 				p.skipToToken("]")
 				return optLocs, nil
@@ -5528,7 +5908,15 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if isIntegerType(field.GetType()) {
 				maxVal := intDefaultMaxValue(field.GetType(), negative)
 				n, err := strconv.ParseUint(valTok.Value, 0, 64)
+				// "0x"/"0X" with no hex digits: tokenizer already emitted error;
+				// C++ ParseInteger returns 0 for this case, so skip range check.
+				if isBareHexPrefix(valTok.Value) {
+					n, err = 0, nil
+				}
 				if err != nil || n > maxVal {
+					if octalErr := invalidOctalError(p.filename, valTok); octalErr != "" {
+						p.errors = append(p.errors, octalErr)
+					}
 					p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Integer out of range.", p.filename, valTok.Line+1, valTok.Column+1))
 				}
 			}
@@ -5540,16 +5928,12 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_DOUBLE ||
 				field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT {
 				lower := strings.ToLower(defVal)
-				if lower == "inf" || lower == "-inf" || lower == "nan" || lower == "-nan" || lower == "infinity" || lower == "-infinity" {
+				if lower == "inf" || lower == "-inf" || lower == "nan" || lower == "-nan" {
 					defVal = lower
-					if defVal == "infinity" {
-						defVal = "inf"
-					} else if defVal == "-infinity" {
-						defVal = "-inf"
-					} else if defVal == "-nan" {
+					if defVal == "-nan" {
 						defVal = "nan"
 					}
-				} else if v, err := strconv.ParseFloat(defVal, 64); err == nil {
+				} else if v, err := strconv.ParseFloat(defVal, 64); err == nil || (errors.Is(err, strconv.ErrRange) && (math.IsInf(v, 0) || math.IsNaN(v))) {
 					if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_FLOAT {
 						defVal = simpleFtoa(float32(v))
 					} else {
@@ -5851,7 +6235,13 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		} else {
 			// Unexpected token inside option brackets (e.g., ";" instead of "," or "]")
 			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected \"]\".", p.filename, next.Line+1, next.Column+1))
-			// Return early — leave the unexpected token for the caller's error recovery
+			// Skip to "]" to recover, matching C++ parser behavior
+			for p.tok.Peek().Type != tokenizer.TokenEOF && p.tok.Peek().Value != "]" && p.tok.Peek().Value != ";" && p.tok.Peek().Value != "}" {
+				p.tok.Next()
+			}
+			if p.tok.Peek().Value == "]" {
+				p.tok.Next() // consume "]"
+			}
 			return nil, nil
 		}
 	}
@@ -5990,6 +6380,13 @@ func isUnsignedType(t descriptorpb.FieldDescriptorProto_Type) bool {
 
 // simpleDtoa matches C++ protoc's SimpleDtoa: %.15g with round-trip check.
 func simpleDtoa(v float64) string {
+	if math.IsInf(v, 1) {
+		return "inf"
+	} else if math.IsInf(v, -1) {
+		return "-inf"
+	} else if math.IsNaN(v) {
+		return "nan"
+	}
 	s := strconv.FormatFloat(v, 'g', 15, 64)
 	if v2, err := strconv.ParseFloat(s, 64); err != nil || v2 != v {
 		s = strconv.FormatFloat(v, 'g', 17, 64)
@@ -5999,9 +6396,23 @@ func simpleDtoa(v float64) string {
 
 // simpleFtoa matches C++ protoc's SimpleFtoa: cast to float32, %.6g with round-trip check.
 func simpleFtoa(v float32) string {
-	s := strconv.FormatFloat(float64(v), 'g', 6, 64)
+	v64 := float64(v)
+	if math.IsInf(v64, 1) {
+		return "inf"
+	} else if math.IsInf(v64, -1) {
+		return "-inf"
+	} else if math.IsNaN(v64) {
+		return "nan"
+	}
+	// For subnormal float32 values, C's strtof doesn't reliably round-trip
+	// the 6-digit representation, so C++ protoc always uses 9 digits.
+	bits := math.Float32bits(v)
+	if bits&0x7F800000 == 0 {
+		return strconv.FormatFloat(v64, 'g', 9, 64)
+	}
+	s := strconv.FormatFloat(v64, 'g', 6, 64)
 	if v2, err := strconv.ParseFloat(s, 32); err != nil || float32(v2) != v {
-		s = strconv.FormatFloat(float64(v), 'g', 9, 64)
+		s = strconv.FormatFloat(v64, 'g', 9, 64)
 	}
 	return s
 }
@@ -6218,11 +6629,15 @@ func (p *parser) attachComments(locIdx int, firstTokenIdx int) {
 		loc.LeadingDetachedComments = append(loc.LeadingDetachedComments, d)
 	}
 
-	// Trailing comment: PrevTrailing of the NEXT token (after the terminator)
+	// Trailing comment: PrevTrailing of the NEXT token (after the terminator).
+	// C++ protoc's TryConsumeEndOfDeclaration("}", nullptr) drops trailing
+	// comments of closing braces, so we skip them here too.
 	nextIdx := p.tok.CurrentIndex()
-	nextCd := p.tok.CommentsAt(nextIdx)
-	if nextCd.PrevTrailing != "" {
-		loc.TrailingComments = proto.String(nextCd.PrevTrailing)
+	if nextIdx > 0 && p.tok.PeekAt(-1).Value != "}" {
+		nextCd := p.tok.CommentsAt(nextIdx)
+		if nextCd.PrevTrailing != "" {
+			loc.TrailingComments = proto.String(nextCd.PrevTrailing)
+		}
 	}
 }
 
@@ -6375,7 +6790,7 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 			origName := ext.GetExtendee()
 			resolved, shadow := resolveTypeName(origName, prefix, types)
 			ext.Extendee = proto.String(resolved)
-			if _, ok := types[resolved]; !ok {
+			if tp, ok := types[resolved]; !ok {
 				path := []int32{7, int32(extIdx), 2}
 				if line, col, ok := findSCISpanStart(fd, path); ok {
 					if shadow != "" {
@@ -6383,6 +6798,11 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 					} else {
 						errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
 					}
+				}
+			} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+				path := []int32{7, int32(extIdx), 2}
+				if line, col, ok := findSCISpanStart(fd, path); ok {
+					errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not a message type.", filename, line, col, origName))
 				}
 			}
 		}
@@ -6534,7 +6954,7 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 				origName := ext.GetExtendee()
 				resolved, shadow := resolveTypeName(origName, msgPrefix, types)
 				ext.Extendee = proto.String(resolved)
-				if _, ok := types[resolved]; !ok {
+				if tp, ok := types[resolved]; !ok {
 					path := append(copyPath(msgPath), 6, int32(extIdx), 2)
 					if line, col, ok := findSCISpanStart(fd, path); ok {
 						if shadow != "" {
@@ -6542,6 +6962,11 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 						} else {
 							*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
 						}
+					}
+				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
+					path := append(copyPath(msgPath), 6, int32(extIdx), 2)
+					if line, col, ok := findSCISpanStart(fd, path); ok {
+						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not a message type.", filename, line, col, origName))
 					}
 				}
 			}
@@ -6590,16 +7015,17 @@ func resolveTypeName(name string, scope string, types map[string]descriptorpb.Fi
 		firstCandidate := s + "." + firstPart
 		if tp, ok := types[firstCandidate]; ok {
 			if firstDot >= 0 {
-				// Compound name: first part found, check if aggregate (message)
+				// Compound name: first part found at this scope.
+				// C++ protoc commits to the innermost match regardless of type.
+				fullCandidate := s + "." + name
 				if tp == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
-					fullCandidate := s + "." + name
 					if _, ok := types[fullCandidate]; ok {
 						return fullCandidate, ""
 					}
-					// Shadowing: first part found but full compound doesn't exist
-					return "." + name, fullCandidate
 				}
-				// Non-aggregate (enum): skip, continue searching outer scopes
+				// Shadowing: first part found but full compound doesn't exist
+				// (or first part is non-aggregate like an enum)
+				return "." + name, fullCandidate
 			} else {
 				// Simple name: found
 				return firstCandidate, ""
@@ -6634,8 +7060,9 @@ func shadowErrorMsg(origName, shadowCandidate string) string {
 
 // CheckUnresolvedTypes checks for unresolved type references in fd,
 // using only the given availableFiles for imported types.
+// allParsed contains all parsed files (including non-imported) for "seems to be defined" hints.
 // Returns error strings like: filename:line:col: "TypeName" is not defined.
-func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles map[string]*descriptorpb.FileDescriptorProto) []string {
+func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles map[string]*descriptorpb.FileDescriptorProto, allParsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	pkg := fd.GetPackage()
 	prefix := ""
 	if pkg != "" {
@@ -6659,11 +7086,34 @@ func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles m
 		}
 	}
 
+	// Build global type maps from all parsed files for "seems to be defined" hints
+	var allTypes map[string]descriptorpb.FieldDescriptorProto_Type
+	var typeToFile map[string]string
+	if allParsed != nil {
+		allTypes = map[string]descriptorpb.FieldDescriptorProto_Type{}
+		typeToFile = map[string]string{}
+		for fname, pfd := range allParsed {
+			ppkg := pfd.GetPackage()
+			ppfx := ""
+			if ppkg != "" {
+				ppfx = "." + ppkg
+			}
+			for _, msg := range pfd.GetMessageType() {
+				collectTypesWithFile(msg, ppfx, allTypes, typeToFile, fname)
+			}
+			for _, e := range pfd.GetEnumType() {
+				fqn := ppfx + "." + e.GetName()
+				allTypes[fqn] = descriptorpb.FieldDescriptorProto_TYPE_ENUM
+				typeToFile[fqn] = fname
+			}
+		}
+	}
+
 	var errors []string
 	filename := fd.GetName()
 
 	for msgIdx, msg := range fd.GetMessageType() {
-		checkMsgUnresolved(msg, prefix, types, filename, fd, []int32{4, int32(msgIdx)}, &errors)
+		checkMsgUnresolved(msg, prefix, types, allTypes, typeToFile, filename, fd, []int32{4, int32(msgIdx)}, &errors)
 	}
 
 	for svcIdx, svc := range fd.GetService() {
@@ -6678,7 +7128,7 @@ func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles m
 						if shadow != "" {
 							errors = append(errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
 						} else {
-							errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+							errors = append(errors, undefinedTypeError(origName, methodPrefix, allTypes, typeToFile, filename, line, col))
 						}
 					}
 				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
@@ -6697,7 +7147,7 @@ func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles m
 						if shadow != "" {
 							errors = append(errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
 						} else {
-							errors = append(errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+							errors = append(errors, undefinedTypeError(origName, methodPrefix, allTypes, typeToFile, filename, line, col))
 						}
 					}
 				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
@@ -6713,7 +7163,41 @@ func CheckUnresolvedTypes(fd *descriptorpb.FileDescriptorProto, availableFiles m
 	return errors
 }
 
-func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, filename string, fd *descriptorpb.FileDescriptorProto, msgPath []int32, errors *[]string) {
+// collectTypesWithFile collects types from a message and records the filename.
+func collectTypesWithFile(msg *descriptorpb.DescriptorProto, prefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, typeToFile map[string]string, filename string) {
+	fullName := prefix + "." + msg.GetName()
+	types[fullName] = descriptorpb.FieldDescriptorProto_TYPE_MESSAGE
+	typeToFile[fullName] = filename
+	for _, e := range msg.GetEnumType() {
+		fqn := fullName + "." + e.GetName()
+		types[fqn] = descriptorpb.FieldDescriptorProto_TYPE_ENUM
+		typeToFile[fqn] = filename
+	}
+	for _, nested := range msg.GetNestedType() {
+		collectTypesWithFile(nested, fullName, types, typeToFile, filename)
+	}
+}
+
+// undefinedTypeError produces either "seems to be defined in" or "is not defined" error.
+func undefinedTypeError(origName, scope string, allTypes map[string]descriptorpb.FieldDescriptorProto_Type, typeToFile map[string]string, filename string, line, col int) string {
+	if allTypes != nil {
+		resolved, _ := resolveTypeName(origName, scope, allTypes)
+		if _, ok := allTypes[resolved]; ok {
+			if defFile, ok := typeToFile[resolved]; ok && defFile != filename {
+				displayName := resolved
+				if strings.HasPrefix(displayName, ".") {
+					displayName = displayName[1:]
+				}
+				return fmt.Sprintf("%s:%d:%d: \"%s\" seems to be defined in \"%s\", which is not "+
+					"imported by \"%s\".  To use it here, please "+
+					"add the necessary import.", filename, line, col, displayName, defFile, filename)
+			}
+		}
+	}
+	return fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName)
+}
+
+func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, allTypes map[string]descriptorpb.FieldDescriptorProto_Type, typeToFile map[string]string, filename string, fd *descriptorpb.FileDescriptorProto, msgPath []int32, errors *[]string) {
 	msgPrefix := parentPrefix + "." + msg.GetName()
 
 	if msg.GetOptions().GetMapEntry() {
@@ -6730,7 +7214,7 @@ func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, 
 					if shadow != "" {
 						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
 					} else {
-						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not defined.", filename, line, col, origName))
+						*errors = append(*errors, undefinedTypeError(origName, msgPrefix, allTypes, typeToFile, filename, line, col))
 					}
 				}
 			}
@@ -6739,7 +7223,7 @@ func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, 
 
 	for i, nested := range msg.GetNestedType() {
 		nestedPath := append(copyPath(msgPath), 3, int32(i))
-		checkMsgUnresolved(nested, msgPrefix, types, filename, fd, nestedPath, errors)
+		checkMsgUnresolved(nested, msgPrefix, types, allTypes, typeToFile, filename, fd, nestedPath, errors)
 	}
 }
 

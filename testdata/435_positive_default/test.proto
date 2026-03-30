@@ -1,0 +1,8 @@
+// Test: positive sign (+) in field default value.
+// C++ protoc produces: "Expected integer for field default value."
+// Go protoc-go produces different error message(s).
+syntax = "proto2";
+package posdefault;
+message Msg {
+  optional int32 x = 1 [default = +42];
+}

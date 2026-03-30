@@ -1,0 +1,7 @@
+edition = "2023";
+
+package mapencoding;
+
+message Container {
+  map<string, int32> values = 1 [features.message_encoding = DELIMITED];
+}

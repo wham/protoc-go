@@ -1,0 +1,18 @@
+syntax = "proto2";
+
+package mtdboolcase;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.MethodOptions {
+  optional bool mtd_flag = 50001;
+}
+
+message Request {}
+message Response {}
+
+service SearchService {
+  rpc Search(Request) returns (Response) {
+    option (mtd_flag) = True;
+  }
+}

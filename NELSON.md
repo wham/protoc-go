@@ -50,2657 +50,2330 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 
 ## Notes
 
-### Run 1 — Reserved fields (FAILED: 5/5 profiles)
-- **Test:** `07_reserved` — proto3 message with `reserved 2, 15, 9 to 11;` and `reserved "email", "phone";`
-- **Bug:** Parser line 214 skips `reserved` via `skipStatement()`. No `ReservedRange` or `ReservedName` populated in descriptor. C++ protoc includes them. Descriptor binary size differs (108 vs 76 bytes). Also 26 vs 13 SourceCodeInfo locations.
-- **Root cause:** `parser.go:214` treats `reserved` same as `option` and `extensions` — all skipped.
-
-### Run 2 — Streaming methods (FAILED: 5/5 profiles)
-- **Test:** `08_streaming` — service with server-streaming, client-streaming, and bidi-streaming methods
-- **Bug:** Parser lines 593-595 and 618-620 consume the `stream` keyword but never set `ClientStreaming` or `ServerStreaming` on the `MethodDescriptorProto`. C++ protoc sets these boolean fields. Result: missing streaming flags, fewer source code info locations (29 vs 33).
-- **Root cause:** `parser.go` method construction (line 658-662) builds the method without `ClientStreaming`/`ServerStreaming` fields.
-
-### Run 3 — File-level options (FAILED: 5/5 profiles)
-- **Test:** `09_file_options` — proto3 file with `option java_package`, `option java_outer_classname`, `option go_package`, `option optimize_for`, `option cc_enable_arenas`
-- **Bug:** `parseFileOption()` at line 867-868 just calls `skipStatement()`, discarding all file-level options. C++ protoc populates `FileOptions` in the descriptor. Result: missing options object, 19 vs 9 SourceCodeInfo locations.
-- **Root cause:** `parser.go:867-868` — `parseFileOption` is a no-op stub that skips the entire statement.
-
-### Run 4 — Field options (FAILED: 5/5 profiles)
-- **Test:** `10_field_options` — proto3 message with `[deprecated = true]`, `[json_name = "userId"]`, `[packed = true]` on fields
-- **Bug:** `skipBracketedOptions()` at line 400 discards all field options. C++ protoc populates `FieldOptions` (deprecated, json_name, packed) in the descriptor. Result: missing options, 25 vs 18 SourceCodeInfo locations.
-- **Root cause:** `parser.go:399-401` — field options inside `[...]` are consumed but never stored on the `FieldDescriptorProto`.
-
-### Run 5 — Import public (FAILED: 5/5 profiles)
-- **Test:** `11_import_public` — three proto files: `base.proto` (defines Timestamp), `reexport.proto` (import public "base.proto", defines Wrapper using Timestamp), `main.proto` (imports reexport.proto, uses Timestamp transitively)
-- **Bugs found (multiple):**
-  1. `parseImport()` at lines 136-140 reads `public`/`weak` keyword but never sets `PublicDependency` or `WeakDependency` on FileDescriptorProto
-  2. Cross-file type resolution broken: message types from imports resolve as TYPE_DOUBLE instead of TYPE_MESSAGE (Timestamp and Wrapper fields)
-  3. SourceCodeInfo location counts differ (e.g., 11 vs 9 for reexport.proto, 18 vs 17 for main.proto)
-  4. Descriptor set binary sizes differ (372 vs 331 bytes for descriptor_set, 902 vs 827 for full)
-- **Root cause:** `parser.go:132-154` — `parseImport` discards the `public`/`weak` modifier. Type resolution in the descriptor pool fails to correctly resolve cross-file message references.
-
-### Run 6 — Proto2 required/optional labels (FAILED: 5/5 profiles)
-- **Test:** `12_proto2_required` — proto2 message with `required string`, `optional string`, `optional int32` with `[default = 25]`, `repeated string`
-- **Bug:** `parseField()` at lines 363-371 only checks for `repeated` keyword. `required` and explicit `optional` are not recognized as labels. The parser treats `required` as a type name (message reference), then fails parsing: `expected "=", got "name"`. Go protoc-go crashes on valid proto2 input.
-- **Root cause:** `parser.go:363-371` — parseField switch only handles `repeated`, defaults to `LABEL_OPTIONAL`. No handling of `required` or explicit `optional` keyword. Proto2 is fundamentally broken.
-
-### Run 7 — Proto3 explicit optional (FAILED: 5/5 profiles)
-- **Test:** `13_proto3_optional` — proto3 message with `optional string nickname = 2;` and `optional int32 age = 3;`
-- **Bug:** Parser sets LABEL_OPTIONAL but never sets `proto3_optional = true` on FieldDescriptorProto. Also doesn't create synthetic oneofs (`_nickname`, `_age`) or set `oneof_index` on the fields. C++ protoc creates these. Also had to update `protoc-gen-dump` to advertise `FEATURE_PROTO3_OPTIONAL` so C++ protoc doesn't reject the request.
-- **Root cause:** `parser.go:375-378` handles the `optional` keyword by setting label only. No `Proto3Optional` flag, no synthetic oneof creation. The descriptor pool also doesn't synthesize oneofs for proto3 optional fields.
-
-### Run 8 — Extension ranges (FAILED: 5/5 profiles)
-- **Test:** `14_extension_range` — proto2 message with `extensions 100 to 199;` and `extensions 1000 to max;`
-- **Bug:** Parser line 238 skips `extensions` via `skipStatement()`. No `ExtensionRange` populated in DescriptorProto. C++ protoc includes them. SourceCodeInfo locations differ (30 vs 22).
-- **Root cause:** `parser.go:238` — `extensions` is grouped with `option` in a skip case. Extension ranges are never parsed or stored.
-
-### Run 9 — Enum options / allow_alias (FAILED: 5/5 profiles)
-- **Test:** `15_enum_options` — proto3 enum with `option allow_alias = true;` and two values sharing number 1 (STARTED=1, RUNNING=1)
-- **Bug:** `parseEnum()` at line 583-587 skips both `option` and `reserved` statements inside enums via `skipStatement()`. The `EnumOptions.allow_alias` field is never populated. C++ protoc includes it. SourceCodeInfo locations differ (26 vs 24) — the option statement's locations are missing.
-- **Root cause:** `parser.go:583-587` — enum-level `option` is treated same as `reserved` and both are discarded by `skipStatement()`.
-
-### Run 10 — Comments in SourceCodeInfo (FAILED: 4/5 profiles)
-- **Test:** `16_comments` — proto3 file with leading comments on syntax, package, message, fields, plus a trailing comment and a leading detached comment
-- **Bug:** Tokenizer `skipWhitespaceAndComments()` at lines 67-98 completely discards all comments. No comment text is ever captured. C++ protoc populates `leading_comments`, `trailing_comments`, and `leading_detached_comments` fields on SourceCodeInfo.Location entries. Binary CodeGeneratorRequest payloads differ (summaries match but binaries don't because comment strings are missing).
-- **Root cause:** `tokenizer.go:67-98` — comments are consumed and thrown away during tokenization. The parser has no access to comment text to attach to SourceCodeInfo locations.
-
-### Run 11 — Enum value options (FAILED: 5/5 profiles)
-- **Test:** `17_enum_value_options` — proto3 enum with `PRIORITY_LOW = 1 [deprecated = true];`
-- **Bug:** `skipBracketedOptions()` at line 631-633 discards enum value options. C++ protoc populates `EnumValueOptions.deprecated` on the `EnumValueDescriptorProto`. Go produces 17 SourceCodeInfo locations vs C++ protoc's 19.
-- **Root cause:** `parser.go:631-633` — enum value options inside `[...]` are consumed but never stored on the `EnumValueDescriptorProto`.
-
-### Run 12 — Message options (FAILED: 5/5 profiles)
-- **Test:** `18_message_options` — proto3 messages with `option deprecated = true;` and `option deprecated = false;`
-- **Bug:** `parseMessage()` at line 250-253 skips message-level `option` via `skipStatement()`. C++ protoc populates `MessageOptions.deprecated` in the `DescriptorProto`. Go produces 23 SourceCodeInfo locations vs C++ protoc's 27 — the option statement locations are missing.
-- **Root cause:** `parser.go:250-253` — message-level `option` is discarded by `skipStatement()`. No `MessageOptions` are ever populated.
-
-### Run 13 — Service and method options (FAILED: 5/5 profiles)
-- **Test:** `19_service_options` — proto3 service with `option deprecated = true;` on the service, and a method with `option deprecated = true;` inside its body
-- **Bug:** `parseService()` at line 869-873 skips service-level `option` via `skipStatement()`. `parseMethod()` at lines 957-970 skips method body content with depth tracking — options inside `{ ... }` are discarded. C++ protoc populates `ServiceOptions.deprecated` and `MethodOptions.deprecated`. Go produces 25 SourceCodeInfo locations vs C++ protoc's 29.
-- **Root cause:** `parser.go:869-873` — service-level `option` is discarded by `skipStatement()`. `parser.go:957-970` — method body is consumed by brace-depth tracking without parsing option statements.
-
-### Run 14 — Negative enum values (FAILED: 4/5 profiles)
-- **Test:** `20_negative_enum` — proto3 enum with `TEMPERATURE_COLD = -1;` and `TEMPERATURE_FREEZING = -2;`
-- **Bug:** `parseEnum()` at lines 669-672 consumes the `-` token separately but doesn't record its position. The source code info span for the enum value number (path `[5,0,2,N,2]`) starts at the digit column, not the `-` column. C++ protoc includes the `-` sign in the number span. Binary payloads differ by 1 column offset for each negative value.
-- **Root cause:** `parser.go:669-672` — the minus token is consumed via `p.tok.Next()` but its `Column` is not saved. Lines 769-770 use `valNumTok.Line, valNumTok.Column` which misses the `-` prefix by 1 column.
-
-### Run 15 — Enum reserved ranges/names (FAILED: 5/5 profiles)
-- **Test:** `21_enum_reserved` — proto3 enum with `reserved 2, 3;`, `reserved 10 to 20;`, and `reserved "DELETED", "ARCHIVED";`
-- **Bug:** `parseEnum()` at line 652-656 skips `reserved` via `skipStatement()`. No `EnumDescriptorProto.reserved_range` or `EnumDescriptorProto.reserved_name` populated. C++ protoc includes them. Descriptor set size differs (162 vs 124 bytes). SourceCodeInfo locations differ (28 vs 14).
-- **Root cause:** `parser.go:652-656` — `reserved` inside enum is discarded by `skipStatement()`. Reserved ranges and reserved names are never parsed or stored.
-
-### Run 16 — Fully qualified type names (FAILED: 5/5 profiles)
-- **Test:** `22_fqn_type` — proto3 file with `message Inner` and `message Outer` referencing `.fqn.Inner` (leading dot = absolute path)
-- **Bug:** `parseField()` at lines 537-550 reads the first token as the type. When type starts with `.`, `typeTok.Value` is `"."`. The loop at line 545 checks if next token is `.` but it's an identifier (`fqn`), so loop exits. `typeName` is just `"."`. Then `ExpectIdent()` consumes `fqn` as the field name. Then `Expect("=")` gets `.` instead of `=` → parse error.
-- **Root cause:** `parser.go:537-550` — parseField doesn't handle leading `.` in type names. The tokenizer emits `.` as a separate TokenSymbol, but the parser only handles `.` *between* identifier parts (line 545), not at the start. Fully qualified type references (`.package.Type`) are a valid proto syntax that the Go parser cannot parse at all.
-
-### Known gaps still unexplored (attack surface for future runs):
-- **File-level options** (`option java_package`, `option go_package`, etc.) — TESTED in Run 3 (09_file_options), confirmed broken
-- **Field options** (`deprecated = true`, `json_name`, `packed`, `jstype`) — TESTED in Run 4 (10_field_options), confirmed broken
-- **Message options** — TESTED in Run 12 (18_message_options), confirmed broken (skipped at line 250)
-- **Enum options** (`allow_alias`) — TESTED in Run 9 (15_enum_options), confirmed broken (skipped at line 583)
-- **Extensions / extension ranges** — TESTED in Run 8 (14_extension_range), confirmed broken (parser skips `extensions` keyword)
-- **Proto2 required/optional labels** — TESTED in Run 6 (12_proto2_required), confirmed broken (parser crashes on `required` keyword)
-- **Proto2 groups** — not implemented at all
-- **Proto2 default values** — not implemented (also exposed in Run 6 but parser crashes before reaching default parsing)
-- **Comments in SourceCodeInfo** (leading/trailing) — TESTED in Run 10 (16_comments), confirmed broken (tokenizer discards all comments)
-- **Service/method options** — TESTED in Run 13 (19_service_options), confirmed broken (service option skipped, method body options skipped)
-- **Enum value options** — TESTED in Run 11 (17_enum_value_options), confirmed broken (skipBracketedOptions discards them)
-- **`optional` keyword in proto3** (proto3 explicit optional) — TESTED in Run 7 (13_proto3_optional), confirmed broken (no proto3_optional flag, no synthetic oneofs)
-- **`import public`** — TESTED in Run 5 (11_import_public), confirmed broken (PublicDependency not set + type resolution broken)
-- **Streaming methods** — TESTED in Run 2 (08_streaming), confirmed broken
-- **Negative enum values** source code info (the `-` token position) — TESTED in Run 14 (20_negative_enum), confirmed broken (span starts at digit, not `-`)
-- **Multiple files in same testdata dir** (import resolution across files) — TESTED in Run 5 (works but exposes type resolution bugs)
-- **Oneof options** — not tested (oneof-level options likely skipped)
-- **Fully qualified type names** (`.package.Type`) — TESTED in Run 16 (22_fqn_type), confirmed broken (parser can't handle leading `.` in type names)
-- **`extend` blocks** (proto2) — not handled in top-level parser (falls to default case, error)
-- **Enum reserved ranges** — TESTED in Run 15 (21_enum_reserved), confirmed broken (skipStatement'd at line 652)
-
-### Run 17 — Empty statements at file level (FAILED: 5/5 profiles)
-- **Test:** `23_empty_statement` — proto3 file with standalone `;` (empty statements) between declarations
-- **Bug:** Top-level parser switch at line 42-82 has no case for `";"`. The `;` token falls to the `default` case at line 80, which returns `unexpected token ";"`. C++ protoc treats standalone `;` as valid empty statements per the protobuf language spec (`emptyStatement = ";"`).
-- **Root cause:** `parser.go:42-82` — file-level parser switch only handles `syntax`, `package`, `import`, `message`, `enum`, `service`, `option`. No handling for empty statements. Same issue likely exists inside message bodies (line 211-273) and enum bodies.
-
-### Run 18 — Empty statements inside message/enum/service bodies (FAILED: 5/5 profiles)
-- **Test:** `24_empty_stmt_body` — proto3 file with `;` inside message body, enum body, and service body
-- **Bug:** Message body parser (lines 214-277) has no `case ";"`. The `;` falls to the `default` case at line 261, which calls `parseField()`. `parseField` tries to interpret `;` as a type name and fails. C++ protoc allows empty statements inside all body types per the language spec (`emptyStatement = ";"`).
-- **Root cause:** `parser.go:214-277` — message body switch handles `message`, `enum`, `oneof`, `map`, `reserved`, `option`, `extensions` but not `";"`. Same issue in enum body and service body parsers. File-level fix (Run 17, line 80-82) was not applied to inner body parsers.
-
-### Run 19 — Message reserved "to max" (FAILED: 5/5 profiles)
-- **Test:** `25_reserved_max` — proto3 message with `reserved 100 to max;`
-- **Bug:** `parseMessageReserved()` at lines 340-353 handles `to` keyword but always calls `ExpectInt()` for the end value. Unlike `parseExtensionRange()` (line 408) which checks for `max`, the reserved range parser does not. When `max` (an identifier token) is encountered, `ExpectInt()` fails with "expected integer, got 'max'". C++ protoc accepts `reserved N to max;` and sets end to 536870912 (exclusive sentinel = 2^29).
-- **Root cause:** `parser.go:340-353` — `parseMessageReserved` is missing the `if p.tok.Peek().Value == "max"` check that exists in `parseExtensionRange` at lines 408-415. The `max` keyword is only handled for extension ranges, not for message reserved ranges.
-
-### Run 20 — String escape sequences (FAILED: 5/5 profiles)
-- **Test:** `26_string_escape` — proto3 file with `option java_package = "com.example\ttest";` and `option go_package = "example.com/escape\ntest";`
-- **Bug:** `readString()` at tokenizer.go:259-264 handles backslash escapes by stripping `\` and writing the literal next byte. So `\t` becomes literal `t`, `\n` becomes literal `n`. C++ protoc interprets escape sequences: `\t` → tab (0x09), `\n` → newline (0x0A). Binary CodeGeneratorRequest payloads differ because the option string values contain different bytes.
-- **Root cause:** `tokenizer.go:259-264` — the escape handler does `sb.WriteByte(t.input[t.pos])` after consuming `\`, which writes the raw character instead of interpreting it as an escape code. Missing interpretation for `\n`, `\t`, `\r`, `\a`, `\b`, `\f`, `\v`, `\xNN`, `\NNN` (octal).
-
-### Run 21 — Extend blocks (FAILED: 5/5 profiles)
-- **Test:** `27_extend` — proto2 file with `message Extendable { extensions 100 to 200; }` and `extend Extendable { optional string nickname = 100; }`
-- **Bug:** File-level parser switch at lines 42-85 has no case for `"extend"`. The `extend` token falls to the `default` case at line 83, which returns `unexpected token "extend"`. C++ protoc handles extend blocks and populates `FileDescriptorProto.extension`.
-- **Root cause:** `parser.go:42-85` — file-level parser switch only handles `syntax`, `package`, `import`, `message`, `enum`, `service`, `option`, `";"`. No handling for `extend` blocks. The `extend` keyword is valid at file level (for defining extensions to messages) and inside message bodies (for nested extensions).
-
-### Run 22 — Proto2 groups (FAILED: 5/5 profiles)
-- **Test:** `28_proto2_group` — proto2 message with `repeated group Result = 1 { ... }` containing required/optional fields
-- **Bug:** `parseField()` at lines 621-669 reads `group` as a type name (not a builtin, treated as message reference), then reads `Result` as the field name, `=` and `1` as the field number. Then `Expect(";")` at line 669 gets `{` instead, producing error: `expected ";", got "{"`. C++ protoc handles groups by creating both a nested DescriptorProto (for the group type) and a field (with TYPE_GROUP wire type).
-- **Root cause:** `parser.go:591-710` — `parseField` has no `group` keyword handling. Groups require special parsing: they have a name (which becomes a nested message), a field number, and a message body delimited by `{ }`. The parser only handles regular field syntax (type, name, `=`, number, `;`).
-
-### Run 23 — Negative default value SourceCodeInfo span (FAILED: 4/5 profiles)
-- **Test:** `29_negative_default` — proto2 message with `optional int32 min_temp = 1 [default = -40];` and `optional int32 max_temp = 2 [default = 100];`
-- **Bug:** `parseFieldOptions()` at line 1781-1784 consumes the `-` token for negative defaults but doesn't record its position. The source code info span for path `[7]` (default_value) starts at the digit column (42) instead of the minus column (41). C++ protoc span: `[5, 41, 44]`. Go span: `[5, 42, 44]`. Positive defaults are unaffected (row 18 matches: `[6, 41, 44]`).
-- **Root cause:** `parser.go:1781-1784` — the minus token is consumed via `p.tok.Next()` but its column position is discarded. Line 1846-1847 uses `valTok.Column` (the number after minus) as the span start. Should save minus token position and use it as `startCol` when `negative == true`.
-
-### Known gaps still unexplored (updated):
-- **Empty statements inside oneof bodies** — likely also broken (same missing `;` case in parseOneof)
-- **Oneof options** — not tested (oneof-level options likely skipped at line 1345-1349)
-- **`extend` inside message bodies** — likely also not handled (same issue as file-level)
-- **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work; also negative float defaults likely have same span bug
-- **String concatenation** (adjacent string literals `"abc" "def"`) — TESTED in Run 25 (31_string_concat), confirmed broken (parser reads one token, expects `;`)
-- **Map field with enum value type** — `map<string, SomeEnum>` might resolve to TYPE_MESSAGE instead of TYPE_ENUM in the synthetic entry
-- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
-- **Type shadowing** — same nested type name in different parent messages
-- **Weak imports** (`import weak "..."`) — TESTED in Run 24 (30_weak_import), confirmed broken (`WeakDependency` not populated, source code info missing)
-- **Extension range options** (`extensions 100 to 199 [(my_option) = "foo"];`) — not handled
-- **`group` inside oneof** — proto2 allows `oneof { group ... }`, same issue as regular groups
-- **Proto2 groups** — TESTED in Run 22 (28_proto2_group), confirmed broken (parser has no group keyword handling)
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
-- **Proto2 string default values with escape sequences** — span computation uses decoded string length + 2 for quotes, but doesn't account for multi-byte escape sequences in source (e.g., `\t` is 2 chars in source but 1 byte decoded)
-
-### Run 24 — Weak imports (FAILED: 5/5 profiles)
-- **Test:** `30_weak_import` — proto3 file with `import weak "base.proto";` referencing a base.proto with a Timestamp message
-- **Bug:** `parseImport()` at lines 162-164 consumes the `weak` keyword but never sets `WeakDependency` on `FileDescriptorProto`. C++ protoc populates `weak_dependency` (field 11) with the dependency index. Also missing source code info for the weak keyword path `[11, N]`. Result: 15 vs 14 SourceCodeInfo locations, descriptor set 221 vs 219 bytes.
-- **Root cause:** `parser.go:162-164` — `isWeak` is never tracked. After the `if isPublic` block (lines 182-187), there's no equivalent `if isWeak` block to set `fd.WeakDependency` or add source code info for path `[11, weakIdx]`.
-
-### Run 25 — String concatenation (FAILED: 5/5 profiles)
-- **Test:** `31_string_concat` — proto3 file with `option java_package = "com.example" ".concat";` and `option go_package = "example.com/" "concat/test";` (adjacent string literals)
-- **Bug:** `parseFileOption()` at line 1651 reads ONE value token via `p.tok.Next()`, then line 1654 expects `;`. When the value is split across adjacent string literals (`"abc" "def"`), the parser reads `"abc"` and then fails with `expected ";", got ".concat"`. C++ protoc concatenates adjacent string literals into a single value per the protobuf language spec.
-- **Root cause:** `parser.go:1651` — value reading uses a single `p.tok.Next()` call. No loop to check if the next token is also a string and concatenate. The tokenizer's `ExpectString()` also reads only one token. C++ protoc's parser uses `ConsumeString()` which loops over adjacent string tokens. This affects all contexts where string values are read: option values, import paths (though imports use single strings), default values, etc.
-
-### Run 26 — Unhandled file option java_string_check_utf8 (FAILED: 5/5 profiles)
-- **Test:** `32_unhandled_file_option` — proto3 file with `option java_string_check_utf8 = true;`
-- **Bug:** `parseFileOption()` switch at lines 1676-1740 doesn't have a case for `java_string_check_utf8` (FileOptions field 27). The `default` case at line 1737-1739 does `return nil`, silently discarding the option. C++ protoc populates `FileOptions.java_string_check_utf8 = true`. Descriptor set size differs (92 vs 89 bytes). SourceCodeInfo locations differ (11 vs 9) — the option statement locations at paths `[8]` and `[8, 27]` are missing because `return nil` exits before the source code info code at lines 1742-1753.
-- **Root cause:** `parser.go:1676-1740` — `parseFileOption` switch handles 16 standard options but is missing `java_string_check_utf8` (field 27). Any unrecognized option name hits the `default` case and is silently dropped. Other potentially missing standard options could also trigger this same pattern.
-
-### Run 27 — Extend inside message body (FAILED: 5/5 profiles)
-- **Test:** `33_nested_extend` — proto2 file with `message Container { extend Base { optional string tag = 100; } }`
-- **Bug:** Message body parser switch (lines 228-304) has no `case "extend":`. The `extend` keyword falls to the `default` case, is treated as a field type name by `parseField`. `Base` is treated as the field name, then `Expect("=")` gets `{` instead → parse error: `expected "=", got "{"`. C++ protoc handles nested extend blocks and populates `DescriptorProto.extension` and `FileDescriptorProto.extension` correctly.
-- **Root cause:** `parser.go:228-304` — message body switch handles `message`, `enum`, `oneof`, `map`, `reserved`, `option`, `extensions`, `";"` but not `extend`. Nested extend blocks require dedicated parsing: consume `extend ExtendedType { ... }`, parse fields inside, and store them on the containing message's `extension` field.
-
-### Run 28 — String default value with escape sequences (FAILED: 4/5 profiles)
-- **Test:** `34_string_default_escape` — proto2 message with `optional string greeting = 1 [default = "hello\tworld"];` and `optional string farewell = 2 [default = "good\nbye"];`
-- **Bug:** `parseFieldOptions()` at line 1878-1881 computes the default value's SourceCodeInfo span end as `valTok.Column + len(valTok.Value) + 2`. For strings with escape sequences, `len(valTok.Value)` counts the *decoded* bytes (e.g., `\t` → 1 byte), but the source text is longer (e.g., `\t` is 2 characters in source). So the span end column is off by 1 for each escape sequence in the string. C++ protoc computes the span from actual source positions, so it correctly covers the full source string including escape sequences.
-- **Root cause:** `parser.go:1878-1881` — `valEnd = valTok.Column + len(valTok.Value) + 2` doesn't account for the difference between decoded string length and source string length. Source `"hello\tworld"` is 14 chars, but decoded is 11 chars + 2 quotes = 13, off by 1.
-
-### Known gaps still unexplored (updated):
-- **Empty statements inside oneof bodies** — likely also broken (same missing `;` case in parseOneof)
-- **Oneof options** — not tested (oneof-level options likely skipped at line 1485-1489)
-- **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
-- **Map field with enum value type** — `map<string, SomeEnum>` might resolve to TYPE_MESSAGE instead of TYPE_ENUM in the synthetic entry (but resolveMessageFields may fix it)
-- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
-- **Other missing file options** — `java_generate_equals_and_hash` (20, deprecated), any other standard options not in the switch
-- **Missing message/enum/service/method options** — similar pattern: only a few built-in options are in each switch
-- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
-- **`extend` inside oneof** — proto2 allows group/extend inside oneof, same issues
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145` — span computation even more wrong (4 or 5 source chars → 1 decoded byte)
-- **String default with multiple escapes** — each escape adds 1 char discrepancy, accumulating error
-
-### Run 29 — Edition syntax (FAILED: 5/5 profiles)
-- **Test:** `35_edition` — file with `edition = "2023";` instead of `syntax = "proto3";`
-- **Bug:** File-level parser switch at lines 42-88 has no case for `"edition"`. The `edition` token falls to the `default` case at line 88, which returns `unexpected token "edition"`. C++ protoc v29.3 fully supports editions (`edition = "2023"`) and produces valid FileDescriptorProto with `edition` field (field 14) and `FeatureSet` entries.
-- **Root cause:** `parser.go:42-88` — file-level parser switch only handles `syntax`, `package`, `import`, `message`, `enum`, `service`, `option`, `extend`, `";"`. No handling for `edition` keyword. Editions require: parsing `edition = "2023";`, setting `fd.Edition` field, and resolving feature defaults for the edition. Go protoc-go has zero edition support.
-- **Also:** Updated `protoc-gen-dump` to advertise `FEATURE_SUPPORTS_EDITIONS` with `minimum_edition = EDITION_PROTO2` and `maximum_edition = EDITION_2023` so C++ protoc sends edition files to the dump plugin.
-
-### Run 30 — Method idempotency_level option (FAILED: 5/5 profiles)
-- **Test:** `36_idempotency_level` — proto3 service with two methods using `option idempotency_level = NO_SIDE_EFFECTS;` and `option idempotency_level = IDEMPOTENT;`
-- **Bug:** `parseMethodOption()` at lines 1421-1427 only handles `deprecated` in its switch. The `default` case at line 1425-1426 does `return nil`, silently discarding `idempotency_level` (field 34 of MethodOptions). C++ protoc populates `MethodOptions.idempotency_level` with the enum value. Go produces 33 SourceCodeInfo locations vs C++ protoc's 37 — the 4 missing locations are for the two option statements (2 locations each: option container path + specific field path).
-- **Root cause:** `parser.go:1421-1427` — `parseMethodOption` switch only handles `deprecated`. `idempotency_level` (and any other method option) hits the `default` case and is silently dropped. Same pattern as `parseMessageOption` (only handles `deprecated`), `parseServiceOption` (only handles `deprecated`).
-
-### Run 31 — Oneof options (FAILED: 5/5 profiles)
-- **Test:** `37_oneof_options` — proto3 message with `oneof payload { option deprecated = true; ... }` (without importing descriptor.proto)
-- **Bug:** `parseOneof()` at lines 1607-1611 skips oneof-level `option` via `skipStatement()`. Go silently accepts the option and produces a valid descriptor (without the option populated). C++ protoc correctly rejects it with `Option "deprecated" unknown. Ensure that your proto definition file imports the proto which defines the option.` because `OneofOptions.deprecated` requires importing `descriptor.proto`.
-- **Root cause:** `parser.go:1607-1611` — oneof-level `option` is silently discarded by `skipStatement()`. No validation is performed. Two bugs: (1) options are never stored on `OneofDescriptorProto.Options`, and (2) unknown options are not rejected. C++ protoc validates that the option name maps to a known field in the relevant options message.
-
-### Run 32 — Float literal starting with dot (FAILED: 5/5 profiles)
-- **Test:** `38_float_literal_dot` — proto2 message with `optional double ratio = 1 [default = .5];` and `optional float threshold = 2 [default = .25];`
-- **Bug:** Tokenizer dispatch at `tokenizer.go:68` only starts `readNumber()` when `ch >= '0' && ch <= '9'`. A `.` character falls through to line 72-74 and is emitted as `TokenSymbol(".")`. The subsequent digits (e.g., `5`) are then read as a separate `TokenInt("5")`. So `.5` becomes two tokens instead of one `TokenFloat(".5")`. In `parseFieldOptions`, the default value `valTok` is `"."`, then when looking for `]` or `,`, it sees `5` → error: `expected ";", got "]"`. C++ protoc's tokenizer handles `.N` as a valid float literal per the protobuf grammar (`floatLit = "." decimals [ exponent ]`).
-- **Root cause:** `tokenizer.go:68` — the character dispatch only considers `'0'-'9'` as number starters. The `.` case (which starts a float literal like `.5`, `.25`, `.001`) is not handled. The tokenizer needs to check if `.` is followed by a digit and call `readNumber()` in that case.
-
-### Known gaps still unexplored (updated):
-- **Empty statements inside oneof bodies** — C++ protoc also rejects these, so NOT a valid test (tested and discarded in Run 29)
-- **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
-- **Map field with enum value type** — tested in Run 29 prep, passes (type resolution works correctly)
-- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
-- **Other missing file options** — `java_generate_equals_and_hash` (20, deprecated), any other standard options not in the switch
-- **Missing message options** — `message_set_wire_format` (field 1), `no_standard_descriptor_accessor` (field 2), `map_entry` (field 7) — only `deprecated` handled
-- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
-- **`extend` inside oneof** — proto2 allows group/extend inside oneof, same issues
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145` — span computation even more wrong
-- **String default with multiple escapes** — each escape adds 1 char discrepancy, accumulating error
-- **Edition features** — `edition = "2023"` with feature overrides on fields/messages/enums
-- **Enum options beyond allow_alias** — `deprecated` on enum (field 3 of EnumOptions) — check if handled
-- **Field option `unverified_lazy`** (field 15), `debug_redact` (field 16) — not in parseFieldOptions switch
-- **Option validation** — Go silently accepts ANY option name without validation (tested in Run 31). Try completely bogus option names on messages/enums/fields/services/methods — Go will accept, C++ will reject
-- **Float literals starting with `.`** — TESTED in Run 32 (38_float_literal_dot), confirmed broken (tokenizer can't handle `.5` as float)
-- **`inf`/`nan` as default values** — TESTED in Run 33 (39_inf_nan_default), confirmed broken (Go normalizes to `+Inf`/`-Inf`/`NaN`, C++ stores `inf`/`-inf`/`nan`)
-- **Exponent-only float** (`1e5`) — tokenizer handles `e`/`E` inside readNumber, should work but untested
-
-### Run 33 — inf/nan default value normalization (FAILED: 5/5 profiles)
-- **Test:** `39_inf_nan_default` — proto2 message with `optional double pos_inf = 1 [default = inf];`, `[default = -inf]`, `[default = nan]`, plus float variants
-- **Bug:** `parseFieldOptions()` at lines 1942-1948 normalizes float/double defaults via `strconv.ParseFloat` + `strconv.FormatFloat`. For `inf`, Go produces `"+Inf"` (with leading `+` and capital `I`). For `-inf`, Go produces `"-Inf"` (capital `I`). For `nan`, Go produces `"NaN"` (capital `N` and `N`). C++ protoc stores these as `"inf"`, `"-inf"`, `"nan"` (all lowercase, no `+` prefix).
-- **Root cause:** `parser.go:1942-1948` — `strconv.FormatFloat(v, 'g', -1, 64)` uses Go's default formatting for special float values: `+Inf`, `-Inf`, `NaN`. These don't match C++ protoc's `SimpleDtoa`/`SimpleFtoa` output which produces `inf`, `-inf`, `nan`. The normalization should special-case infinity and NaN to match C++ output.
-
-### Run 34 — Map field options discarded (FAILED: 5/5 profiles)
-- **Test:** `40_map_field_options` — proto3 message with `map<string, string> metadata = 1 [deprecated = true];` and `map<int32, string> labels = 2;`
-- **Bug:** `parseMapField()` at line 1696-1698 uses `skipBracketedOptions()` to discard map field options, while `parseField()` at line 793-796 uses `parseFieldOptions()` to parse and store them. C++ protoc stores `FieldOptions.deprecated = true` on the map field. Go silently discards it. Result: 15 vs 13 SourceCodeInfo locations (missing options container and deprecated spans), descriptor set 283 vs 279 bytes (missing FieldOptions on the map field).
-- **Root cause:** `parser.go:1696-1698` — `parseMapField` calls `p.skipBracketedOptions()` instead of `p.parseFieldOptions(field, fieldPath)`. The same options parsing logic used for regular fields should be used for map fields, but the map field code path has a completely separate (broken) handling.
-
-### Run 35 — Proto3 explicit default values (FAILED: 5/5 profiles)
-- **Test:** `41_proto3_default` — proto3 message with `int32 max_retries = 1 [default = 3];` and `string prefix = 2 [default = "test"];`
-- **Bug:** Go protoc-go silently accepts `[default = ...]` on proto3 fields and stores the default value in the descriptor. C++ protoc rejects it with error: "Explicit default values are not allowed in proto3." The Go parser has zero proto3-specific validation — it never checks whether default values, required labels, or other proto2-only features are used inappropriately in proto3 files.
-- **Root cause:** No validation layer exists in the Go implementation. C++ protoc validates proto3 constraints in `descriptor.cc` (the descriptor pool), but the Go `descriptor/pool.go` is an empty stub. The parser at `parseFieldOptions` (line 1942-1962) stores default values regardless of syntax version.
-
-### Run 36 — Proto3 enum first value != 0 (FAILED: 5/5 profiles)
-- **Test:** `42_proto3_enum_zero` — proto3 enum `Priority` with first value `HIGH = 1` (not 0), followed by `MEDIUM = 2` and `LOW = 3`, used in a message field
-- **Bug:** Go protoc-go accepts the file and produces a valid descriptor (exit 0). C++ protoc rejects it with error: `test.proto:6:10: The first enum value must be zero for open enums.` (exit 1). The test harness detects exit code mismatch (C++ exit=1, Go exit=0).
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates proto3 constraints in `descriptor.cc` — specifically that the first enum value must be 0 for open enums (proto3 enums are open by default). The Go `descriptor/pool.go` is an empty stub with no validation. The parser accepts any enum value numbers without checking proto3 rules.
-
-### Run 37 — Proto3 required fields (FAILED: 5/5 profiles)
-- **Test:** `43_proto3_required` — proto3 message with `required string name = 1;` and `required int32 id = 2;`
-- **Bug:** Go protoc-go silently accepts `required` in proto3 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Required fields are not allowed in proto3.` and `test.proto:7:12: Required fields are not allowed in proto3.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates proto3 constraints in `descriptor.cc` — `required` labels are prohibited in proto3 syntax. The Go `descriptor/pool.go` is an empty stub. The parser at `parseField` (line 730-734) accepts `required` regardless of syntax version.
-
-### Run 38 — Reserved field number range 19000–19999 (FAILED: 5/5 profiles)
-- **Test:** `44_reserved_field_number` — proto3 message with `string internal = 19000;` (field number in reserved range)
-- **Bug:** Go protoc-go silently accepts field number 19000 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto: Field numbers 19000 through 19999 are reserved for the protocol buffer library implementation.` (exit 1). The test harness detects exit code mismatch (C++ exit=1, Go exit=0).
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field numbers 19000–19999 are reserved for the protobuf library implementation (used internally for extensions in descriptor.proto). The Go `descriptor/pool.go` is an empty stub with no field number validation. The parser accepts any int32 field number without checking reserved ranges.
-
-### Known gaps still unexplored (updated):
-- **Map field options source code info** — even if options are stored, the location ordering may differ from C++ protoc (map fields emit type/name/number in different positions)
-- **Proto2 default values** — proto2 fields now parse, but `[default = ...]` for enum-typed fields may not work
-- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
-- **Missing message options** — `message_set_wire_format` (field 1), `no_standard_descriptor_accessor` (field 2), `map_entry` (field 7) — only `deprecated` handled
-- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145` — span computation even more wrong
-- **String default with multiple escapes** — each escape adds 1 char discrepancy, accumulating error
-- **Edition features** — `edition = "2023"` with feature overrides on fields/messages/enums
-- **Field option `unverified_lazy`** (field 15), `debug_redact` (field 16) — not in parseFieldOptions switch
-- **Option validation** — Go silently accepts ANY option name without validation
-- **Exponent-only float** (`1e5`) — tokenizer handles `e`/`E` inside readNumber, should work but untested
-- **Oneof field options** — fields inside oneof parsed via `parseField`, so options should work, but untested
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];` — parser doesn't handle options after ranges
-- **Proto3 validation gaps** — proto3 with `required` label TESTED in Run 37, reserved field numbers TESTED in Run 38. Proto3 with groups — likely also accepted by Go but rejected by C++.
-- **Type name source code info with spaces** — `Outer . Inner` (spaces around dots) — Go computes span from concatenated string length, C++ uses actual token positions
-- **Duplicate field numbers** — TESTED in Run 39 (45_duplicate_field_number), confirmed broken (Go accepts, C++ rejects)
-- **Field number 0** — Go likely accepts, C++ rejects (field numbers must be positive)
-- **Field number > 2^29-1** — TESTED in Run 41 (47_field_number_max), confirmed broken (Go accepts, C++ rejects)
-
-### Run 39 — Duplicate field numbers (FAILED: 5/5 profiles)
-- **Test:** `45_duplicate_field_number` — proto3 message with two fields both using field number 1 (`string name = 1;` and `int32 id = 1;`)
-- **Bug:** Go protoc-go silently accepts duplicate field numbers and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:14: Field number 1 has already been used in "dupfield.User" by field "name".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that each field number is unique within a message. The Go `descriptor/pool.go` is an empty stub with no duplicate field number checking. The parser stores all fields regardless of number conflicts.
-
-### Run 40 — Field number zero (FAILED: 5/5 profiles)
-- **Test:** `46_field_number_zero` — proto3 message with `string name = 0;` (field number 0)
-- **Bug:** Go protoc-go silently accepts field number 0 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:17: Field numbers must be positive integers.` and `Suggested field numbers for zerof.Config: 2` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field numbers must be positive (>= 1). The Go `descriptor/pool.go` is an empty stub with no field number range validation. The parser accepts any integer as a field number without checking validity.
-
-### Run 41 — Field number exceeds max (FAILED: 5/5 profiles)
-- **Test:** `47_field_number_max` — proto3 message with `string name = 536870912;` (field number 2^29, exceeds max of 536870911)
-- **Bug:** Go protoc-go silently accepts field number 536870912 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:17: Field numbers cannot be greater than 536870911.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field numbers must be <= 536870911 (2^29-1). The Go `descriptor/pool.go` is an empty stub with no field number upper bound validation. The parser accepts any integer as a field number without range checking.
-
-### Run 42 — Duplicate enum value numbers without allow_alias (FAILED: 5/5 profiles)
-- **Test:** `48_duplicate_enum_number` — proto3 enum with `ACTIVE = 1` and `ENABLED = 1` (same number, no `allow_alias`)
-- **Bug:** Go protoc-go silently accepts duplicate enum value numbers and produces a valid descriptor (exit 0). C++ protoc rejects with: `"dupenum.ENABLED" uses the same enum value as "dupenum.ACTIVE". If this is intended, set 'option allow_alias = true;' to the enum definition.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enum values sharing the same number require `option allow_alias = true`. The Go `descriptor/pool.go` is an empty stub with no duplicate enum value checking. The parser stores all enum values regardless of number conflicts.
-
-### Run 43 — Duplicate message names (FAILED: 5/5 profiles)
-- **Test:** `49_duplicate_message_name` — proto3 file with two `message User` declarations (different fields)
-- **Bug:** Go protoc-go silently accepts duplicate message names and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:9:9: "User" is already defined in "dupname".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that each message name is unique within a package/scope. The Go `descriptor/pool.go` is an empty stub with no duplicate name checking. The parser stores all message declarations regardless of name conflicts.
-
-### Known gaps still unexplored (updated):
-- **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects with "Group syntax is not supported in proto3."
-- **Map field options source code info** — even if options are stored, the location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
-- **Missing message options** — `message_set_wire_format` (field 1), `no_standard_descriptor_accessor` (field 2), `map_entry` (field 7)
-- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145` — span computation even more wrong
-- **Edition features** — `edition = "2023"` with feature overrides
-- **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
-- **Option validation** — Go silently accepts ANY option name without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Duplicate enum value numbers** — TESTED in Run 42 (48_duplicate_enum_number), confirmed broken (no allow_alias validation)
-- **Duplicate message/enum names** — TESTED in Run 43 (49_duplicate_message_name), confirmed broken (no duplicate name checking)
-- **Self-referencing message** — `message Foo { Foo child = 1; }` — should work but type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Duplicate enum names** — same as message names, Go likely accepts duplicate enum declarations
-- **Duplicate field names** — TESTED (both C++ and Go reject identically — NOT a gap)
-- **Proto2 fields without explicit labels** — TESTED in Run 44 (50_proto2_no_label), confirmed broken (Go accepts, C++ rejects)
-- **Map fields inside oneofs** — C++ rejects, Go likely accepts (no validation)
-- **Self-import / circular import** — cycle detection at importer level, may differ
-- **Proto file with no syntax statement** — C++ defaults to proto2 with warning, Go defaults to empty syntax
-
-### Run 44 — Proto2 fields without explicit labels (FAILED: 5/5 profiles)
-- **Test:** `50_proto2_no_label` — proto2 message with `string name = 1;` and `int32 count = 2;` (no `required`/`optional`/`repeated` label)
-- **Bug:** Go protoc-go silently accepts fields without labels in proto2 and defaults to `LABEL_OPTIONAL` (exit 0). C++ protoc rejects with: `Expected "required", "optional", or "repeated".` for each field (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:729-751` — `parseField` label switch defaults to `LABEL_OPTIONAL` when no label keyword is found, regardless of syntax version. No proto2 validation requires explicit labels. C++ protoc's parser requires explicit labels in proto2 (`ParseMessageField` checks for label keywords and errors if missing).
-
-### Run 45 — Map fields inside oneofs (FAILED: 5/5 profiles)
-- **Test:** `51_map_in_oneof` — proto3 message with `oneof payload { string text = 1; map<string, string> metadata = 2; }`
-- **Bug:** Go protoc-go silently accepts map fields inside oneofs and produces a valid descriptor (exit 0). C++ protoc rejects with an error about map fields not being allowed in oneofs (exit 1). The `parseOneof` function at line 1624 doesn't check for `"map"` keyword — it falls through to `parseField` which treats `map` as a message type reference name and somehow parses the rest.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that map fields are not allowed inside oneofs. The Go `descriptor/pool.go` is an empty stub with no such validation. The parser doesn't distinguish map fields from regular fields inside oneof bodies.
-
-### Known gaps still unexplored (updated):
-- **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
-- **Missing message options** — `message_set_wire_format`, `no_standard_descriptor_accessor`, `map_entry`
-- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]`
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
-- **Edition features** — `edition = "2023"` with feature overrides
-- **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
-- **Option validation** — Go silently accepts ANY option name without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Duplicate enum names** — Go likely accepts duplicate enum declarations
-- **Self-import / circular import** — cycle detection may differ
-- **Proto file with no syntax statement** — C++ defaults to proto2 with warning, Go may differ
-- **Map fields inside oneofs** — TESTED in Run 45 (51_map_in_oneof), confirmed broken (Go accepts, C++ rejects)
-- **Duplicate service method names** — TESTED locally, Go now validates (cli.go:922-926), both reject identically — NOT a gap
-
-### Run 46 — Labeled fields inside oneofs (FAILED: 5/5 profiles)
-- **Test:** `52_oneof_label` — proto3 message with `oneof payload { repeated string tags = 1; int32 count = 2; }` (repeated label on field inside oneof)
-- **Bug:** Go protoc-go silently accepts labeled fields inside oneofs and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:5: Fields in oneofs must not have labels (required / optional / repeated).` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parseOneof()` at line 1636 calls `parseField()` which accepts all labels (required/optional/repeated) without checking if the field is inside a oneof. No validation exists in `compiler/cli/cli.go` for this constraint. C++ protoc validates in `descriptor.cc` that fields within oneofs cannot have explicit labels.
-
-### Run 47 — No syntax statement (FAILED: 5/5 profiles)
-- **Test:** `53_no_syntax` — file with no `syntax` statement, just `package nosyntax;` and a message with unlabeled fields (`string name = 1;`)
-- **Bug:** Go protoc-go silently accepts the file and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:4:3: Expected "required", "optional", or "repeated".` for each unlabeled field (exit 1). C++ treats files without a syntax statement as proto2, which requires explicit labels on all fields.
-- **Root cause:** `parser.go` — when no `syntax` statement is present, `p.syntax` is `""` (empty string). The proto2 label validation at line 762 (`if p.syntax == "proto2"`) doesn't fire because `"" != "proto2"`. Go treats no-syntax files as proto3-like (no labels required), while C++ correctly defaults to proto2 semantics. The parser should default `p.syntax = "proto2"` when no syntax statement is encountered.
-
-### Known gaps still unexplored (updated):
-- **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
-- **Missing message options** — `message_set_wire_format`, `no_standard_descriptor_accessor`, `map_entry`
-- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]`
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
-- **Edition features** — `edition = "2023"` with feature overrides
-- **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
-- **Option validation** — Go silently accepts ANY option name without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Self-import / circular import** — cycle detection may differ
-- **No syntax statement** — TESTED in Run 47 (53_no_syntax), confirmed broken (Go accepts, C++ rejects)
-- **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts
-- **Reserved field name conflicts** — TESTED in Run 48 (54_reserved_name_conflict), confirmed broken (Go accepts, C++ rejects)
-- **Extension number out of range** — extension using number outside declared range — C++ validates, Go likely doesn't
-- **Reserved field number conflicts** — TESTED in Run 49 (55_reserved_number_conflict), confirmed broken (Go accepts, C++ rejects)
-- **Proto3 with groups** — `repeated group Foo = 1 { }` in proto3 — Go likely accepts, C++ rejects
-
-### Run 48 — Reserved field name conflicts (FAILED: 5/5 profiles)
-- **Test:** `54_reserved_name_conflict` — proto3 message with `reserved "email", "phone";` and a field `string email = 2;` that uses a reserved name
-- **Bug:** Go protoc-go silently accepts a field whose name is declared as reserved and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:10: Field name "email" is reserved.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field names don't conflict with reserved names declared in the same message. The Go `descriptor/pool.go` is an empty stub with no reserved name checking. The parser stores both the reserved names and the conflicting field without any cross-validation.
-
-### Run 49 — Reserved field number conflicts (FAILED: 5/5 profiles)
-- **Test:** `55_reserved_number_conflict` — proto3 message with `reserved 3, 5 to 10;` and a field `int32 count = 3;` that uses a reserved number
-- **Bug:** Go protoc-go silently accepts a field whose number is declared as reserved and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Field "count" uses reserved number 3.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that field numbers don't conflict with reserved ranges declared in the same message. The Go `descriptor/pool.go` is an empty stub with no reserved number checking. The parser stores both the reserved ranges and the conflicting field without any cross-validation.
-
-### Run 50 — Map field with invalid key type (FAILED: 5/5 profiles)
-- **Test:** `56_map_invalid_key` — proto3 message with `map<double, string> scores = 1;` (double as map key type)
-- **Bug:** Go protoc-go silently accepts `double` as a map key type and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:3: Key in map fields cannot be float/double, bytes or message types.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1672-1676` — `parseMapField` checks if the key type is in `builtinTypes` (which includes all 15 scalar types including `double`, `float`, and `bytes`), but never validates that the key type is actually allowed for map fields. C++ protoc validates in `descriptor.cc` that map keys can only be integral types (int32/int64/uint32/uint64/sint32/sint64/fixed32/fixed64/sfixed32/sfixed64), bool, or string — NOT double, float, or bytes. The Go parser accepts any builtin type as a map key without checking the restriction.
-
-### Run 51 — Enum value scope conflict missing note (FAILED: 5/5 profiles)
-- **Test:** `57_enum_scope_conflict` — proto3 file with two enums `Color` and `Priority` both defining `UNKNOWN = 0;` in the same package scope
-- **Bug:** Go protoc-go correctly detects the conflict and errors with `"UNKNOWN" is already defined in "enumscope".` (exit 1). However, C++ protoc emits TWO error lines: the same message PLUS a second line: `Note that enum values use C++ scoping rules, meaning that enum values are siblings of their type, not children of it. Therefore, "UNKNOWN" must be unique within "enumscope", not just within "Priority".` Go is missing this explanatory note. The test harness detects error message mismatch.
-- **Root cause:** `compiler/cli/cli.go` — the duplicate symbol validation emits only one error line. C++ protoc's `descriptor.cc` emits an additional explanatory note about C++ scoping rules for enum values. The Go implementation is missing this second diagnostic message.
-
-### Run 52 — Empty enum (FAILED: 5/5 profiles)
-- **Test:** `58_empty_enum` — proto3 file with `enum Status {}` (no enum values)
-- **Bug:** Go protoc-go silently accepts an empty enum and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:6: Enums must contain at least one value.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enums must have at least one value. The Go `descriptor/pool.go` is an empty stub with no enum value count validation. The parser accepts empty enum bodies without checking.
-
-### Run 53 — Proto3 with groups (FAILED: 5/5 profiles)
-- **Test:** `59_proto3_group` — proto3 message with `repeated group Result = 1 { string url = 1; string title = 2; }`
-- **Bug:** Go protoc-go silently accepts groups in proto3 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Groups are not supported in proto3 syntax.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that groups are not allowed in proto3. The Go parser has group parsing support (`isGroupField` + `parseGroupField`) but never checks the syntax version. The `parseGroupField` function works identically for proto2 and proto3. The Go `descriptor/pool.go` is an empty stub with no proto3 constraint validation.
-
-### Run 54 — Empty oneof (FAILED: 5/5 profiles)
-- **Test:** `60_empty_oneof` — proto3 message with `oneof payload {}` (empty oneof body, no fields)
-- **Bug:** Go protoc-go silently accepts an empty oneof and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:3: Expected type name.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parseOneof()` — the oneof body parsing loop terminates cleanly when `}` is immediately encountered. No validation checks that at least one field exists inside the oneof. C++ protoc's parser expects at least one type name token inside a oneof body. The Go `descriptor/pool.go` is an empty stub with no oneof validation.
-
-### Known gaps still unexplored (updated):
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
-- **Missing message options** — `message_set_wire_format`, `no_standard_descriptor_accessor`, `map_entry`
-- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]`
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
-- **Edition features** — `edition = "2023"` with feature overrides
-- **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
-- **Option validation** — Go silently accepts ANY option name without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Self-import / circular import** — cycle detection may differ
-- **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts
-- **Extension number out of range** — extension using number outside declared range — C++ validates, Go likely doesn't
-- **Map key type `bytes`** — same issue as double, `map<bytes, string>` accepted by Go, rejected by C++
-- **Map key type `float`** — same issue
-- **Duplicate field names across message and enum** — enum value `FOO` + field `FOO` in same scope may conflict differently
-- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **Empty oneof** — TESTED in Run 54 (60_empty_oneof), confirmed broken (Go accepts, C++ rejects)
-- **Duplicate syntax statements** — TESTED in Run 55 (61_duplicate_syntax), confirmed broken (Go accepts, C++ rejects)
-- **Duplicate package statements** — `package foo; package bar;` — C++ likely rejects, Go likely accepts
-- **Oneof with optional label** — `optional string name = 1;` inside oneof — C++ rejects, Go likely accepts
-
-### Run 55 — Duplicate syntax statements (FAILED: 5/5 profiles)
-- **Test:** `61_duplicate_syntax` — proto3 file with two `syntax = "proto3";` statements followed by a package and message
-- **Bug:** Go protoc-go silently accepts duplicate syntax statements and produces a valid descriptor (exit 0). C++ protoc rejects the second `syntax` with: `test.proto:2:1: Expected top-level statement (e.g. "message").` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:54-57` — the `case "syntax"` in the file-level parser switch calls `parseSyntax()` every time, which just overwrites `p.syntax` and `fd.Syntax`. No flag tracks whether syntax has already been set. C++ protoc only allows `syntax` as the very first statement in a file — after it's been parsed, the parser no longer accepts it as a valid top-level statement.
-
-### Run 56 — Duplicate package statements (FAILED: 5/5 profiles)
-- **Test:** `62_duplicate_package` — proto3 file with `package dupkg;` followed by `package dupkg2;` then a message
-- **Bug:** Go protoc-go silently accepts duplicate package statements and produces a valid descriptor (exit 0). C++ protoc rejects the second `package` with: `test.proto:5:1: Expected top-level statement (e.g. "message").` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:69-72` — the `case "package"` in the file-level parser switch calls `parsePackage()` every time, which just overwrites `fd.Package` at line 209. No flag tracks whether package has already been set. C++ protoc only allows `package` before any definitions — after it and `syntax` are parsed, the parser no longer accepts them as valid top-level statements. Same pattern as the duplicate syntax bug (Run 55).
-
-### Run 57 — Late syntax statement (FAILED: 5/5 profiles)
-- **Test:** `63_late_syntax` — file with `package latesyntax;` BEFORE `syntax = "proto3";`, followed by a message with unlabeled fields
-- **Bug:** Go protoc-go silently accepts `syntax` after `package` and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:2:1: Expected top-level statement (e.g. "message").` plus `Expected "required", "optional", or "repeated".` for each unlabeled field (exit 1). C++ only allows `syntax` as the very first statement — it defaults to proto2 when syntax isn't first, then `syntax` is not a valid top-level keyword, then unlabeled fields are invalid in proto2.
-- **Root cause:** `parser.go:52-112` — the file-level switch handles `syntax` at any position (line 56-62). The only guard is `if p.syntaxParsed` (line 57), which prevents duplicate syntax but not late syntax. C++ protoc handles `syntax` separately before the main loop — `ParseSyntaxIdentifier` is called once at the start, then the main `ParseTopLevelStatement` loop doesn't include `syntax` as a valid keyword. The Go parser should only allow `syntax`/`edition` as the very first statement.
-
-### Run 58 — Octal integer default values (FAILED: 5/5 profiles)
-- **Test:** `64_octal_default` — proto2 message with `optional int32 mode = 1 [default = 0755];`, `[default = 0644]`, `[default = 0777]`
-- **Bug:** Go protoc-go stores default values as the raw token text: `"0755"`, `"0644"`, `"0777"`. C++ protoc parses octal literals and stores the decimal representation: `"493"`, `"420"`, `"511"`. Binary CodeGeneratorRequest payloads differ (59 vs 40 bytes for the default value strings), and descriptor set sizes differ (122 vs 119 bytes).
-- **Root cause:** `parser.go:2008-2028` — `case "default"` stores `valTok.Value` (the raw token text) directly as `field.DefaultValue`. C++ protoc parses the integer literal (respecting `0x` hex and `0` octal prefixes) and formats it as a decimal string via `SimpleItoa`. The Go parser should use `strconv.ParseInt(valTok.Value, 0, 64)` to parse the integer and then `strconv.FormatInt` to produce the decimal string. Same bug would affect hex default values like `[default = 0x1F]` → Go stores `"0x1F"`, C++ stores `"31"`.
-- **Also tried:** late import (import after message definition) — both C++ and Go accept it, NOT a gap.
-
-### Known gaps still unexplored (updated):
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
-- **Missing message options** — `message_set_wire_format`, `no_standard_descriptor_accessor`, `map_entry`
-- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]`
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
-- **Edition features** — `edition = "2023"` with feature overrides
-- **Field option `unverified_lazy`/`debug_redact`** — not in parseFieldOptions switch
-- **Option validation** — Go silently accepts ANY option name without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Self-import / circular import** — cycle detection may differ
-- **Import after definitions** — TESTED, both accept it — NOT a gap
-- **Map key type `bytes`/`float`** — accepted by Go, rejected by C++
-- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **Proto2 enum default values** — `[default = SOME_ENUM_VALUE]` — does it resolve correctly?
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug as negative integers
-- **Hex default values** — `[default = 0x1F]` — same bug as octal defaults (raw text vs decimal)
-- **Octal default values** — TESTED in Run 58 (64_octal_default), confirmed broken (raw text vs decimal)
-
-### Run 59 — String concatenation in default values (FAILED: 5/5 profiles)
-- **Test:** `65_string_concat_default` — proto2 message with `optional string greeting = 1 [default = "hello" " world"];` and `optional string farewell = 2 [default = "goodbye"];`
-- **Bug:** `parseFieldOptions()` at line 2001 reads `valTok = p.tok.Next()` — a single token `"hello"`. The next token `" world"` is not consumed/concatenated. The parser then expects `;` or `,` or `]` but sees `" world"`, causing error: `expected ";", got "]"` (cascading parse failure). C++ protoc concatenates adjacent string literals into a single value per the protobuf language spec.
-- **Root cause:** `parser.go:2001` — `parseFieldOptions` reads only one token for the option value. The string concatenation fix from commit 6fd286e was only applied to `parseFileOption` (file-level options), NOT to `parseFieldOptions` (field-level options). Same bug exists for import paths (though imports typically use single strings), and enum value options. The fix pattern — `for p.tok.Peek().Type == tokenizer.TokenString { ... }` — needs to be applied everywhere string values are read.
-- **Also tried:** map entry name with digits (`items2get`) — BOTH compilers produce `Items2getEntry`, NOT a gap (C++ toCamelCase matches Go).
-
-### Run 60 — Message option no_standard_descriptor_accessor (FAILED: 5/5 profiles)
-- **Test:** `66_message_option_accessor` — proto3 message with `option no_standard_descriptor_accessor = true;`
-- **Bug:** `parseMessageOption()` switch at lines 748-753 only handles `deprecated` (field 3). The `default` case at line 752-753 does `return nil`, silently discarding `no_standard_descriptor_accessor` (field 2 of MessageOptions). But at line 743-745, `msg.Options` is set to `&descriptorpb.MessageOptions{}` BEFORE the switch — so the message gets an empty non-nil MessageOptions. C++ protoc stores `MessageOptions{no_standard_descriptor_accessor: true}`. Binary descriptor set: 86 bytes (C++) vs 84 bytes (Go). SourceCodeInfo locations: 15 (C++) vs 13 (Go) — missing the option statement locations.
-- **Root cause:** `parser.go:748-753` — `parseMessageOption` switch only handles `deprecated`. Standard options `message_set_wire_format` (field 1), `no_standard_descriptor_accessor` (field 2), and `map_entry` (field 7) all hit the `default` case and are silently dropped. Additionally, `msg.Options` is unconditionally initialized to an empty MessageOptions before the switch, leaving a spurious empty options object even when the option value is discarded.
-
-### Run 61 — Duplicate oneof names (FAILED: 5/5 profiles)
-- **Test:** `67_duplicate_oneof` — proto3 message with two `oneof payload { ... }` blocks (same name, different fields)
-- **Bug:** Both C++ and Go reject the duplicate oneof, but the error message format differs. C++ protoc: `test.proto: "payload" is already defined in "duponeof.Request".` (no line/column). Go protoc-go: `test.proto:9:9: "payload" is already defined in "duponeof.Request".` (with line:column). The test harness detects error message mismatch.
-- **Root cause:** Go's duplicate name detection (likely in `compiler/cli/cli.go`) includes line and column numbers in the error, while C++ protoc's `descriptor.cc` omits position info for duplicate symbol errors. The error text itself matches, but the position prefix format differs.
-
-### Run 62 — Type name source code info with spaces around dots (FAILED: 4/5 profiles)
-- **Test:** `68_type_name_spaces` — proto3 message with `spacetype .  Inner ref = 1;` (spaces around dots in type reference)
-- **Bug:** `parseField()` at line 875 computes `typeNameEnd = typeStartCol + len(field.GetTypeName())`. For `spacetype .  Inner`, `field.GetTypeName()` is `"spacetype.Inner"` (15 chars), but the actual source text spans more columns due to spaces around the dot (20 chars). C++ protoc records the span from the first token's start to the last token's end, correctly covering the wider range. Go computes end as `typeStartCol + 15 = 17`, C++ computes end as `20`. Binary diff: byte `0x14` (20) in C++ vs `0x11` (17) in Go at the type_name span.
-- **Root cause:** `parser.go:875` — `typeNameEnd` is computed from `len(field.GetTypeName())` which is the concatenated identifier string (no spaces), not the actual source text span. The parser consumes `.` and subsequent identifier tokens in the loop at lines 819-823 but doesn't track the position of the last consumed token for span computation. Fix: save the last token's end position (e.g., `part.Column + len(part.Value)`) and use it as `typeNameEnd`.
-
-### Run 63 — Self-import / circular import (FAILED: 5/5 profiles)
-- **Test:** `69_self_import` — proto3 file with `import "test.proto";` importing itself
-- **Bug:** Go protoc-go silently accepts the self-import and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:3:1: File recursively imports itself: test.proto -> test.proto` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parseRecursive()` in `compiler/cli/cli.go:326-355` checks if a file is already in the `parsed` map (line 327) and returns nil if so. For self-import, the file adds itself to `parsed` at line 344 before processing dependencies at line 347. When the self-import dependency is encountered, it's already in `parsed`, so it returns nil — no error. C++ protoc's `Importer` tracks "currently being imported" files separately from "already imported" files, detecting cycles in the import chain.
-
-### Run 64 — Circular import (two files) (FAILED: 5/5 profiles)
-- **Test:** `70_circular_import` — two proto3 files: `a.proto` imports `b.proto`, `b.proto` imports `a.proto` (mutual circular import)
-- **Bug:** Both C++ and Go detect the cycle and reject with exit code 1, but error messages differ significantly. C++ protoc produces 5 error lines (cycle detection + "not found or had errors" + unresolved types for both files). Go protoc-go produces only 1 error line (just the cycle detection for `b.proto`). C++ reports the cycle on `a.proto:5:1`, Go reports it on `b.proto:5:1`. C++ continues to report cascading errors (unresolved imports/types), Go stops after the first cycle error.
-- **Root cause:** `compiler/cli/cli.go:326-355` — `parseRecursive` detects the cycle correctly but returns a single error and stops. C++ protoc's import resolution continues processing after cycle detection, generating additional error messages for unresolved imports and undefined types. The Go implementation short-circuits on the first error rather than continuing to collect all errors.
-
-### Run 65 — Float default value normalization (FAILED: 5/5 profiles)
-- **Test:** `71_float_precision` — proto2 message with `optional double ratio = 1 [default = 1e10];`, `[default = 1e-6]`, `[default = 0.333333333333333]`
-- **Bug:** Go's `strconv.FormatFloat(v, 'g', -1, 64)` formats `1e10` as `"1e+10"` (scientific notation with `+` sign, 5 chars). C++ protoc's `SimpleDtoa` formats it as `"10000000000"` (fully expanded decimal, 11 chars). Binary CodeGeneratorRequest payloads differ because the default_value strings have different representations.
-- **Root cause:** `parser.go:2048-2049` — `strconv.FormatFloat(v, 'g', -1, 64)` uses Go's default '%g' formatting which differs from C++ `SimpleDtoa`. Go's `'g'` format uses scientific notation for large exponents (e.g., `1e+10`), while C++ `SimpleDtoa` uses `DoubleToBuffer` which expands to full decimal notation for values that fit within 15 significant digits. The fix would need to replicate C++ `SimpleDtoa` behavior, which avoids scientific notation when the expanded form has fewer than ~15 digits.
-- **Also tried:** Hex default values (`[default = 0x1F]`) — passes now (already fixed in commit f6c5378). Diamond imports (A→B,C→D) — passes (file ordering matches). Deeply nested messages (6 levels) — passes. Enum default values (`[default = HIGH]`) — passes. Map key type `bytes` — passes (already fixed in commit 8c68c03).
-
-### Run 66 — Proto3 extension ranges (FAILED: 5/5 profiles)
-- **Test:** `72_proto3_extensions` — proto3 message with `extensions 100 to 200;` (extension ranges not allowed in proto3)
-- **Bug:** Go protoc-go silently accepts extension ranges in proto3 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:14: Extension ranges are not allowed in proto3.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `collectProto3MessageErrors()` in `compiler/cli/cli.go:1152-1165` validates groups, required fields, default values, and enum zero values, but does NOT check for extension ranges. C++ protoc validates in `descriptor.cc` that extension ranges are prohibited in proto3. The Go parser at `parseExtensionRange` (line 522) accepts extension ranges regardless of syntax version, and no post-parse validation catches this.
-
-### Run 67 — Proto3 extend blocks (FAILED: 5/5 profiles)
-- **Test:** `73_proto3_extend` — proto3 file with `extend Extendable { string tag = 100; }` where Extendable is defined in a proto2 import
-- **Bug:** Go protoc-go silently accepts extend blocks in proto3 files and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:8: Extensions in proto3 are only allowed for defining options.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `validateProto3()` in `compiler/cli/cli.go:1046-1061` checks messages and enums for proto3 constraints but never checks `fd.GetExtension()` for file-level extend blocks. C++ protoc validates in `descriptor.cc` that extensions in proto3 files are only allowed for defining options (custom options that extend `google.protobuf.*Options`). The Go parser handles `extend` blocks syntactically but no post-parse validation catches proto3 extend usage.
-
-### Run 68 — Missing file option php_generic_services (FAILED: 5/5 profiles)
-- **Test:** `74_php_generic_services` — proto3 file with `option php_generic_services = true;` and a service with one RPC method
-- **Bug:** `parseFileOption()` switch at lines 1886-1949 doesn't have a case for `php_generic_services` (field 42 of FileOptions). The `default` case at line 1950-1952 does `return nil`, silently discarding the option. C++ protoc populates `FileOptions.php_generic_services = true`. Binary descriptor sizes differ (68 vs 40 bytes for plugin). SourceCodeInfo locations also differ — missing the option statement locations at paths `[8]` and `[8, 42]`.
-- **Root cause:** `parser.go:1886-1949` — `parseFileOption` switch handles 17 standard options but is missing `php_generic_services` (field 42). The default case silently drops any unrecognized option. Same pattern as Run 26 (`java_string_check_utf8`). Other potentially missing standard options: `java_generate_equals_and_hash` (field 20, deprecated).
-
-### Run 69 — Message option message_set_wire_format (FAILED: 5/5 profiles)
-- **Test:** `75_message_set_wire_format` — proto2 message with `option message_set_wire_format = true;` and `extensions 4 to max;`
-- **Bug:** `parseMessageOption()` switch at lines 754-762 only handles `deprecated` (field 3) and `no_standard_descriptor_accessor` (field 2). The `default` case at line 761-762 does `return nil`, silently discarding `message_set_wire_format` (field 1 of MessageOptions). C++ protoc stores `MessageOptions{message_set_wire_format: true}`. Go produces 16 SourceCodeInfo locations vs C++ protoc's 18 — missing the option statement locations.
-- **Root cause:** `parser.go:754-762` — `parseMessageOption` switch is missing `message_set_wire_format` (field 1) and `map_entry` (field 7). Same pattern as all other missing option bugs.
-
-### Run 70 — Field option debug_redact (FAILED: 5/5 profiles)
-- **Test:** `76_field_debug_redact` — proto3 message with `string email = 2 [debug_redact = true];`
-- **Bug:** `parseFieldOptions()` switch at lines 2028-2108 has no case for `debug_redact` (field 16 of FieldOptions). The option value token is consumed but not stored on `FieldOptions`. C++ protoc populates `FieldOptions.debug_redact = true`. Descriptor set size differs (112 vs 107 bytes). SourceCodeInfo locations differ (19 vs 18) — missing the option-specific location at path `[fieldPath, 8, 16]`.
-- **Root cause:** `parser.go:2028-2108` — `parseFieldOptions` switch handles `default`, `json_name`, `deprecated`, `packed`, `lazy`, `jstype`, `ctype` but is missing `debug_redact` (field 16) and `unverified_lazy` (field 15). Unknown option names fall through without matching any case, silently dropped without error.
-
-### Run 71 — Duplicate file-level options (FAILED: 5/5 profiles)
-- **Test:** `77_duplicate_file_option` — proto3 file with `option java_package = "com.example.first";` followed by `option java_package = "com.example.second";`
-- **Bug:** Go protoc-go silently accepts the duplicate option and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:8: Option "java_package" was already set.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1894-1895` — `parseFileOption` unconditionally sets `fd.Options.JavaPackage = proto.String(valTok.Value)` without checking if the field was already set. No duplicate option tracking exists. C++ protoc tracks which options have been set and rejects duplicates. Same bug applies to ALL file-level options (go_package, optimize_for, etc.), all message options, all field options, etc.
-
-### Run 72 — Proto3 optional + real oneof ordering (FAILED: 5/5 profiles)
-- **Test:** `78_oneof_ordering` — proto3 message with `optional string name = 1;` (synthetic oneof) BEFORE `oneof payload { string text = 2; int32 number = 3; }` (real oneof), plus `optional int32 age = 4;` (another synthetic oneof)
-- **Bug:** Go places `OneofDecl` entries in declaration order: `[_name, payload, _age]`. C++ protoc places real oneofs first, then synthetic oneofs: `[payload, _name, _age]`. This causes `OneofIndex` values on all fields to differ: Go sets `name.OneofIndex=0, text/number.OneofIndex=1, age.OneofIndex=2`. C++ sets `text/number.OneofIndex=0, name.OneofIndex=1, age.OneofIndex=2`. Binary descriptors differ accordingly.
-- **Root cause:** `parser.go:389-396` — when a proto3 optional field is encountered, the synthetic oneof is immediately appended to `msg.OneofDecl` and `oneofIdx` is incremented. C++ protoc's `DescriptorBuilder` processes all real oneofs first, then creates synthetic oneofs for proto3_optional fields at the end. The Go parser should defer synthetic oneof creation until after all real oneofs are processed, or reorder `OneofDecl` entries before emitting the descriptor.
-- **Also tried:** `json_name` trailing underscore (`field_name_` → both produce `fieldName`) — NOT a gap.
-
-### Run 73 — Duplicate message-level options (FAILED: 5/5 profiles)
-- **Test:** `79_duplicate_message_option` — proto3 message with `option deprecated = true;` followed by `option deprecated = false;`
-- **Bug:** Go protoc-go silently accepts duplicate message options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:10: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:772-784` — `parseMessageOption` unconditionally sets `msg.Options.Deprecated` without checking if it was already set. No duplicate option tracking exists. Same pattern as duplicate file-level options (Run 71). Applies to all message options (`deprecated`, `no_standard_descriptor_accessor`, `message_set_wire_format`).
-
-### Known gaps still unexplored (updated):
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
-- **Missing message options** — `map_entry` (field 7) — `message_set_wire_format` TESTED in Run 69
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
-- **Edition features** — `edition = "2023"` with feature overrides
-- **Field option `unverified_lazy`** (field 15) — TESTED, already fixed (added to switch)
-- **Option validation** — Go silently accepts ANY option name without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **String concatenation in service/method/enum option values** — same single-token bug as field defaults
-- **Missing service options** — only `deprecated` handled
-- **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
-- **Type name spaces in map value types** — `map<string, pkg . Msg>` — same span bug
-- **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
-- **Duplicate file-level options** — TESTED in Run 71 (77_duplicate_file_option), confirmed broken
-- **Duplicate message options** — TESTED in Run 73 (79_duplicate_message_option), confirmed broken
-- **Duplicate field/enum/service options** — same pattern, Go likely overwrites all
-- **Duplicate `option optimize_for`** — same issue
-- **Synthetic oneof ordering** — TESTED in Run 72 (78_oneof_ordering), confirmed broken
-- **Synthetic oneof source code info paths** — the SourceCodeInfo paths for synthetic oneofs may also differ due to index mismatch
-- **Proto3 optional inside nested messages** — same ordering bug would apply recursively
-
-### Run 74 — Duplicate field-level options (FAILED: 5/5 profiles)
-- **Test:** `80_duplicate_field_option` — proto3 message with `string phone = 3 [deprecated = true, deprecated = false];` (same option specified twice in bracket list)
-- **Bug:** Go protoc-go silently accepts duplicate field options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:40: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go` — `parseFieldOptions` processes each option in the `[...]` list without checking if it was already set. Same pattern as duplicate file-level options (Run 71) and duplicate message options (Run 73). No duplicate option tracking exists for any option level. Applies to all field options (`deprecated`, `packed`, `json_name`, `lazy`, `jstype`, `ctype`, `debug_redact`).
-
-### Run 75 — Duplicate enum-level options (FAILED: 5/5 profiles)
-- **Test:** `81_duplicate_enum_option` — proto3 enum with `option deprecated = true;` followed by `option deprecated = false;`
-- **Bug:** Go protoc-go silently accepts duplicate enum options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:10: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1238` — `parseEnumOption` has no duplicate option tracking. Unlike `parseFileOption` (which has `seenFileOptions`) and `parseMessageOption` (which receives a `seenOptions` map), `parseEnumOption` unconditionally sets the option value without checking if it was already set. Same pattern applies to `parseServiceOption` and `parseMethodOption` — neither has duplicate tracking.
-
-### Run 76 — Duplicate service options (FAILED: 5/5 profiles)
-- **Test:** `82_duplicate_service_option` — proto3 service with `option deprecated = true;` followed by `option deprecated = false;`
-- **Bug:** Go protoc-go silently accepts duplicate service options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:10:10: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1475-1481` — `parseServiceOption` unconditionally sets `svc.Options.Deprecated` without checking if it was already set. No duplicate option tracking exists (no `seenOptions` map passed in). Same pattern as duplicate file-level options (Run 71), duplicate message options (Run 73), duplicate field options (Run 74), and duplicate enum options (Run 75).
-
-### Run 77 — Duplicate method options (FAILED: 5/5 profiles)
-- **Test:** `83_duplicate_method_option` — proto3 service with a method containing `option deprecated = true;` followed by `option deprecated = false;`
-- **Bug:** Go protoc-go silently accepts duplicate method options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:16:12: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1503-1550` — `parseMethodOption` unconditionally sets `method.Options.Deprecated` without checking if it was already set. No duplicate option tracking exists (no `seenOptions` map passed in). Same pattern as duplicate file-level options (Run 71), duplicate message options (Run 73), duplicate field options (Run 74), duplicate enum options (Run 75), and duplicate service options (Run 76).
-
-### Run 78 — Duplicate enum value options (FAILED: 5/5 profiles)
-- **Test:** `84_duplicate_enum_value_option` — proto3 enum with `HIGH = 1 [deprecated = true, deprecated = false];` (same option twice in bracket list)
-- **Bug:** Go protoc-go silently accepts duplicate enum value options and overwrites the value, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:32: Option "deprecated" was already set.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1136-1173` — enum value option parsing loop has no duplicate tracking. Unlike `parseFieldOptions` (which has `seenFieldOpts` map at line 2053), `parseMessageOption` (which receives `seenOptions`), and all other option parsers, the enum value option loop at line 1136 processes each option without checking if it was already set. The switch at line 1153-1157 unconditionally sets `enumValOpts.Deprecated` on each iteration. Same pattern as all other duplicate option bugs (Runs 71-77), but this one is at the enum value level (inside `[...]` brackets on enum value declarations).
-
-### Run 79 — Invalid syntax value (FAILED: 5/5 profiles)
-- **Test:** `85_invalid_syntax` — file with `syntax = "proto4";` (unrecognized syntax identifier)
-- **Bug:** Go protoc-go silently accepts `"proto4"` as a syntax value and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:1:10: Unrecognized syntax identifier "proto4".  This parser only recognizes "proto2" and "proto3".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:151-178` — `parseSyntax` stores whatever string is provided as the syntax value without validating it. Line 167: `if valTok.Value != "proto2"` sets `fd.Syntax`. Line 170: `p.syntax = valTok.Value` stores it for later. No check that the value is `"proto2"` or `"proto3"`. Since `p.syntax` is `"proto4"`, proto2 validation (`p.syntax == "proto2"`) doesn't fire and proto3 validation (`fd.GetSyntax() != "proto3"`) skips it. The parser treats `"proto4"` like proto3 (no label requirements) without any error.
-
-### Known gaps still unexplored (updated):
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
-- **Missing message options** — `map_entry` (field 7) — only `deprecated`, `no_standard_descriptor_accessor`, `message_set_wire_format` handled
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
-- **Edition features** — `edition = "2023"` with feature overrides
-- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation (default returns nil)
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them (or vice versa)
-- **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
-- **Extension number out of range** — extension using number outside declared range
-- **Proto3 optional inside nested messages** — synthetic oneof ordering bug would apply recursively
-- **Duplicate idempotency_level** — `option idempotency_level = IDEMPOTENT; option idempotency_level = NO_SIDE_EFFECTS;` — same pattern
-- **Duplicate map field options** — `map<string,string> m = 1 [deprecated = true, deprecated = false];` — likely same bug
-- **Invalid syntax value** — TESTED in Run 79 (85_invalid_syntax), confirmed broken (no validation of syntax string)
-- **Invalid edition value** — `edition = "2025";` or `edition = "9999";` — Go has editionMap check but C++ might differ on unrecognized editions
-- **Boolean option with integer value** — TESTED in Run 80 (86_bool_option_int), confirmed broken (Go accepts, C++ rejects)
-
-### Run 80 — Boolean option with integer value (FAILED: 5/5 profiles)
-- **Test:** `86_bool_option_int` — proto3 file with `option java_multiple_files = 1;` (integer instead of boolean literal)
-- **Bug:** Go protoc-go silently accepts integer `1` for boolean option `java_multiple_files` and stores `false` (since `"1" != "true"`), producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:30: Value must be identifier for boolean option "google.protobuf.FileOptions.java_multiple_files".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1962` — `fd.Options.JavaMultipleFiles = proto.Bool(valTok.Value == "true")` accepts any token value and does a string comparison. No validation that the token is actually a boolean identifier (`true`/`false`). Integer tokens, string tokens, or any other token type are silently accepted and treated as `false`. C++ protoc's option parser validates that boolean options receive identifier tokens with value `true` or `false`. Same bug applies to ALL boolean file options (`cc_generic_services`, `java_generic_services`, `py_generic_services`, `deprecated`, `cc_enable_arenas`, `java_string_check_utf8`, etc.) and boolean message/field/enum/service/method options.
-
-### Run 81 — Extension number out of range (FAILED: 5/5 profiles)
-- **Test:** `87_extension_out_of_range` — proto2 file with `message Base { extensions 100 to 200; }` and `extend Base { optional string nickname = 300; }` (field number 300 outside declared range 100-200)
-- **Bug:** Go protoc-go silently accepts the extension with field number 300 and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:11:30: "extrange.Base" does not declare 300 as an extension number.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that extension field numbers must fall within a declared `extensions` range of the extended message. The Go `descriptor/pool.go` is an empty stub with no extension range validation. The parser stores extension fields without checking if their numbers are within the declared extension ranges of the target message.
-
-### Run 82 — Proto2 oneof fields unparseable (FAILED: 5/5 profiles)
-- **Test:** `88_oneof_default` — proto2 message with `oneof payload { string name = 1 [default = "hello"]; int32 count = 2; }`
-- **Bug:** Go protoc-go rejects valid proto2 oneof fields with: `Expected "required", "optional", or "repeated".` (exit 1). C++ protoc accepts the file and produces a valid descriptor (exit 0). Proto2 oneof fields must NOT have labels, but the Go parser requires labels for all proto2 fields — creating a dead-end where `parseOneof` rejects labels (line 1751-1753) but `parseField` requires them (line 762).
-- **Root cause:** `parser.go:756-762` — `parseField` checks `if p.syntax == "proto2"` and requires explicit labels. But oneof fields in proto2 are an exception — they must NOT have labels. When `parseOneof` calls `parseField` (line 1756), the field has no label, so `parseField` errors. The fix should skip the proto2 label requirement when parsing inside a oneof. Secondary bug: if the label issue is fixed, C++ protoc still accepts `[default = "hello"]` on oneof fields, but Go would need to handle it correctly too.
-
-### Run 83 — Duplicate imports (FAILED: 5/5 profiles)
-- **Test:** `89_duplicate_import` — proto3 file with `import "base.proto";` listed twice, referencing a base.proto with a Timestamp message
-- **Bug:** Go protoc-go silently accepts duplicate imports and stores `"base.proto"` twice in `fd.Dependency`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:1: Import "base.proto" was listed twice.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:275-276` — `parseImport` unconditionally appends `pathTok.Value` to `fd.Dependency` without checking if the import path already exists in the dependency list. No deduplication or duplicate detection. C++ protoc tracks imported files and rejects duplicates in `descriptor.cc`. Same issue applies to `import public` and `import weak` — importing the same file twice with different modifiers would also be silently accepted.
-
-### Run 84 — String literal for boolean option (FAILED: 5/5 profiles)
-- **Test:** `90_string_bool_option` — proto3 file with `option java_multiple_files = "true";` (string literal `"true"` instead of identifier `true`)
-- **Bug:** Go protoc-go silently accepts a string literal for a boolean option and correctly sets `java_multiple_files = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:30: Value must be identifier for boolean option "google.protobuf.FileOptions.java_multiple_files".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1962-1966` — `validateBool` checks `valTok.Value != "true" && valTok.Value != "false"` but does NOT check `valTok.Type`. A TokenString with Value `"true"` (decoded content without quotes) passes the check. C++ protoc's parser uses `ConsumeIdentifier` for boolean values, which rejects string literal tokens. Same bug applies to ALL boolean options at every level (file, message, field, enum, service, method) — any quoted `"true"` or `"false"` would be accepted by Go but rejected by C++.
-
-### Run 85 — String literal for enum option (FAILED: 5/5 profiles)
-- **Test:** `91_string_enum_option` — proto3 file with `option optimize_for = "SPEED";` (string literal `"SPEED"` instead of identifier `SPEED`)
-- **Bug:** Go protoc-go silently accepts a string literal for the enum option `optimize_for` and correctly sets `OptimizeFor = SPEED`, producing a valid descriptor (exit 0). C++ protoc rejects with an error about expecting an identifier for enum-type options (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1987-1998` — the `optimize_for` case does `switch valTok.Value` which checks the decoded string content. A TokenString `"SPEED"` has `valTok.Value = "SPEED"` (decoded without quotes), so it matches the `case "SPEED"`. No check on `valTok.Type` to ensure it's an identifier token. C++ protoc uses `ConsumeIdentifier` for enum-typed options, rejecting string literal tokens. Same category as Run 84 (string for boolean), but here it affects enum-typed options.
-
-### Known gaps still unexplored (updated):
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
-- **Missing message options** — `map_entry` (field 7) — only `deprecated`, `no_standard_descriptor_accessor`, `message_set_wire_format` handled
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
-- **Edition features** — `edition = "2023"` with feature overrides
-- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **Error message format consistency** — many C++ protoc errors omit line:col but Go includes them
-- **Type name spaces in method input/output** — `rpc Foo(pkg . Req) returns (pkg . Resp)` — same span bug
-- **Proto3 optional inside nested messages** — synthetic oneof ordering bug would apply recursively
-- **Duplicate idempotency_level** — same duplicate option pattern
-- **Duplicate map field options** — likely same bug
-- **Invalid edition value** — `edition = "2025"` — Go has editionMap check but C++ might differ
-- **Proto2 oneof fields** — TESTED in Run 82 (88_oneof_default), confirmed broken
-- **Duplicate imports** — TESTED in Run 83 (89_duplicate_import), confirmed broken
-- **String literal for boolean option** — TESTED in Run 84 (90_string_bool_option), confirmed broken
-- **String literal for enum option** — TESTED in Run 85 (91_string_enum_option), confirmed broken
-- **String literal for integer option** — `option optimize_for = "1";` or numeric options with string values
-- **Integer value for enum option** — `option optimize_for = 1;` — Go may accept, C++ rejects
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-
-### Run 86 — JSON name conflict (FAILED: 5/5 profiles)
-- **Test:** `92_json_name_conflict` — proto3 message with `string foo_bar = 1;` and `string fooBar = 2;` (both generate JSON name `"fooBar"`)
-- **Bug:** Go protoc-go silently accepts the conflicting JSON names and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:10: The default JSON name of field "fooBar" ("fooBar") conflicts with the default JSON name of field "foo_bar".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that auto-generated JSON field names (`ToJsonName`) are unique within a message. The Go `descriptor/pool.go` is an empty stub with no JSON name conflict validation. The parser stores both fields with the same `json_name` without any cross-field uniqueness check.
-
-### Run 87 — Integer value for string option (FAILED: 5/5 profiles)
-- **Test:** `93_int_string_option` — proto3 file with `option java_package = 42;` (integer literal instead of quoted string)
-- **Bug:** Go protoc-go silently accepts integer `42` for string option `java_package` and stores `java_package = "42"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:23: Value must be quoted string for string option "google.protobuf.FileOptions.java_package".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1972-1973` — `fd.Options.JavaPackage = proto.String(valTok.Value)` accepts any token type and converts its Value to a string. No validation that `valTok.Type == tokenizer.TokenString`. C++ protoc's `ConsumeString()` requires a string literal token. Same bug applies to ALL string-typed file options (`java_outer_classname`, `go_package`, `php_namespace`, `php_class_prefix`, `php_metadata_namespace`, `ruby_package`, `objc_class_prefix`, `csharp_namespace`, `swift_prefix`) — none validate that the value token is a string literal.
-
-### Run 88 — Integer value for string field option json_name (FAILED: 5/5 profiles)
-- **Test:** `94_int_json_name` — proto3 message with `string name = 1 [json_name = 42];` (integer literal instead of quoted string for json_name)
-- **Bug:** Go protoc-go silently accepts integer `42` for string field option `json_name` and stores `json_name = "42"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:32: Expected string for JSON name.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2214` — `field.JsonName = proto.String(valTok.Value)` accepts any token type and converts its Value to a string. No validation that `valTok.Type == tokenizer.TokenString`. C++ protoc's parser uses `ConsumeString()` for json_name, which requires a string literal token. Same category as Run 87 (integer for file-level string option), but at the field option level.
-
-### Known gaps still unexplored (updated):
-- **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];` — same issue
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
-- **Missing message options** — `map_entry` (field 7)
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
-- **Edition features** — `edition = "2023"` with feature overrides
-- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **Integer value for enum option** — `option optimize_for = 1;` — Go rejects (type check added), NOT a gap
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Integer for string option** — TESTED in Run 87 (93_int_string_option), confirmed broken
-- **Identifier for string option** — `option java_package = foo;` — same bug, identifier instead of string
-- **Integer for string field option** — TESTED in Run 88 (94_int_json_name), confirmed broken
-- **Identifier for json_name** — `[json_name = foo]` — same pattern, identifier instead of string
-- **Identifier for string option** — TESTED locally, Go now rejects identically to C++ — NOT a gap
-
-### Run 89 — Overlapping extension ranges (FAILED: 5/5 profiles)
-- **Test:** `95_extension_range_overlap` — proto2 message with `extensions 100 to 200;` and `extensions 150 to 300;` (overlapping ranges)
-- **Bug:** Go protoc-go silently accepts overlapping extension ranges and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:14: Extension range 150 to 300 overlaps with already-defined range 100 to 200.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that extension ranges within a message must not overlap. The Go `descriptor/pool.go` is an empty stub with no extension range overlap checking. The parser stores all extension ranges without any cross-range validation.
-
-### Known gaps still unexplored (updated):
-- **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];`
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Type shadowing** — same nested type name in different parent messages
-- **Missing message options** — `map_entry` (field 7)
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
-- **Edition features** — `edition = "2023"` with feature overrides
-- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Overlapping reserved ranges** — `reserved 1 to 10; reserved 5 to 15;` — same overlap validation gap
-- **Extension range overlap with field numbers** — `int32 x = 100;` with `extensions 100 to 200;` — C++ validates, Go likely doesn't
-- **Reserved range overlap with extension range** — reserved and extensions in same message overlapping
-
-### Run 90 — Extension range overlaps with field number (FAILED: 5/5 profiles)
-- **Test:** `96_extension_field_conflict` — proto2 message with `optional int32 value = 100;` AND `extensions 100 to 200;` (field number falls within extension range)
-- **Bug:** Go protoc-go silently accepts a field whose number falls within a declared extension range and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:14: Extension range 100 to 200 includes field "value" (100).` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that no field number may overlap with a declared extension range within the same message. The Go `descriptor/pool.go` is an empty stub with no extension range vs field number validation. The parser stores both the field and the extension range without any cross-validation.
-
-### Run 91 — Overlapping reserved ranges (FAILED: 5/5 profiles)
-- **Test:** `97_reserved_range_overlap` — proto3 message with `reserved 1 to 10;` and `reserved 5 to 15;` (overlapping reserved ranges)
-- **Bug:** Go protoc-go silently accepts overlapping reserved ranges and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Reserved range 5 to 15 overlaps with already-defined range 1 to 10.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that reserved ranges within a message must not overlap. The Go `descriptor/pool.go` is an empty stub with no reserved range overlap checking. The parser stores all reserved ranges without any cross-range validation. Same pattern as extension range overlap (Run 89).
-
-### Known gaps still unexplored (updated):
-- **Reserved range overlap with field numbers** — field number within a reserved range (different from reserved name conflict, Run 48)
-- **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];`
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Type shadowing** — same nested type name in different parent messages
-- **Missing message options** — `map_entry` (field 7)
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
-- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Overlapping reserved ranges** — TESTED in Run 91 (97_reserved_range_overlap), confirmed broken
-- **Overlapping enum reserved ranges** — TESTED in Run 92 (98_enum_reserved_overlap), confirmed broken
-
-### Run 92 — Overlapping enum reserved ranges (FAILED: 5/5 profiles)
-- **Test:** `98_enum_reserved_overlap` — proto3 enum with `reserved 20 to 30;` and `reserved 25 to 40;` (overlapping reserved ranges inside an enum)
-- **Bug:** Go protoc-go silently accepts overlapping enum reserved ranges and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:10:12: Reserved range 25 to 40 overlaps with already-defined range 20 to 30.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enum reserved ranges must not overlap, same as message reserved ranges. The Go `descriptor/pool.go` is an empty stub with no enum reserved range overlap checking. The parser stores all enum reserved ranges without any cross-range validation. Same pattern as message reserved range overlap (Run 91).
-
-### Run 93 — Enum value number within reserved range (FAILED: 5/5 profiles)
-- **Test:** `99_enum_reserved_value_conflict` — proto3 enum with `reserved 5 to 10;` and `MEDIUM = 7;` (enum value number 7 falls within reserved range 5-10)
-- **Bug:** Go protoc-go silently accepts an enum value whose number is in a reserved range and produces a valid descriptor (exit 0). C++ protoc rejects with an error about enum value using a reserved number (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enum value numbers must not fall within declared reserved ranges. The Go `descriptor/pool.go` is an empty stub with no enum reserved range vs enum value validation. The parser stores both the reserved ranges and the conflicting enum value without any cross-validation. Same pattern as message reserved number conflicts (Run 49).
-
-### Known gaps still unexplored (updated):
-- **Reserved range overlap with field numbers** — field number within a reserved range
-- **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];`
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Type shadowing** — same nested type name in different parent messages
-- **Missing message options** — `map_entry` (field 7)
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
-- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Enum reserved value conflict** — TESTED in Run 93 (99_enum_reserved_value_conflict), confirmed broken
-- **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
-- **Enum reserved name conflict** — TESTED in Run 94 (100_enum_reserved_name_conflict), confirmed broken
-
-### Run 94 — Enum reserved name conflict (FAILED: 5/5 profiles)
-- **Test:** `100_enum_reserved_name_conflict` — proto3 enum with `reserved "DELETED", "ARCHIVED";` and `DELETED = 3;` (enum value name matches reserved name)
-- **Bug:** Go protoc-go silently accepts an enum value whose name is in the reserved name list and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:9:3: Enum value "DELETED" is reserved.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enum value names must not match any reserved name declared in the same enum. The Go `descriptor/pool.go` is an empty stub with no enum reserved name vs enum value name validation. The parser stores both the reserved names and the conflicting enum value without any cross-validation. Same pattern as message reserved name conflicts (Run 48) and enum reserved value number conflicts (Run 93).
-
-### Run 95 — Explicit map_entry option (FAILED: 5/5 profiles)
-- **Test:** `101_map_entry_explicit` — proto3 message with `option map_entry = true;` explicitly set on a user-defined message (with key/value fields)
-- **Bug:** Go protoc-go silently discards the `map_entry` option (default case in `parseMessageOption` returns nil) and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:10: map_entry should not be set explicitly. Use map<KeyType, ValueType> instead.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:789-800` — `parseMessageOption` switch handles `deprecated` (field 3), `no_standard_descriptor_accessor` (field 2), and `message_set_wire_format` (field 1) but NOT `map_entry` (field 7). The `default` case at line 800 does `return nil`, silently discarding the option. Even if `map_entry` were added to the switch, C++ protoc explicitly rejects it in `descriptor.cc` validation — `map_entry` can only be set by the compiler on synthetic map entry messages, not by users. The Go implementation lacks both: (1) the option storage, and (2) the validation that rejects explicit usage.
-
-### Known gaps still unexplored (updated):
-- **JSON name conflict with explicit json_name** — `string a = 1 [json_name = "x"]; string b = 2 [json_name = "x"];`
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Type shadowing** — same nested type name in different parent messages
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145`
-- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Enum value name collision with message name** — `message FOO` + enum value `FOO` in same scope
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
-- **Explicit map_entry option** — TESTED in Run 95 (101_map_entry_explicit), confirmed broken
-- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
-- **Negative field numbers** — `string name = -1;` — C++ rejects, Go may accept
-- **Map field with message key type** — `map<MyMsg, string>` — C++ rejects, Go likely accepts
-
-### Run 96 — Enum value name collides with message name (FAILED: 5/5 profiles)
-- **Test:** `102_enum_msg_name_conflict` — proto3 file with `message Foo { ... }` and `enum Bar { Foo = 0; }` (enum value name "Foo" collides with message name "Foo" at package scope)
-- **Bug:** Both C++ and Go detect the duplicate name and reject with exit code 1. Both emit: `test.proto:10:3: "Foo" is already defined in "enumconflict".` However, C++ protoc also emits a second explanatory line: `test.proto:10:3: Note that enum values use C++ scoping rules, meaning that enum values are siblings of their type, not children of it.  Therefore, "Foo" must be unique within "enumconflict", not just within "Bar".` Go is missing this explanatory note. The test harness detects error message mismatch.
-- **Root cause:** Go's duplicate symbol validation (likely in `compiler/cli/cli.go`) emits only the base error. C++ protoc's `descriptor.cc` emits an additional note about C++ scoping rules for enum values when an enum value name conflicts with another symbol. Same issue as Run 61 (duplicate oneof names) — Go error output is missing supplementary diagnostic messages that C++ includes.
-
-### Run 97 — Reserved range overlaps with extension range (FAILED: 5/5 profiles)
-- **Test:** `103_reserved_extension_overlap` — proto2 message with `reserved 100 to 200;` and `extensions 150 to 300;` (reserved range overlaps with extension range)
-- **Bug:** Go protoc-go silently accepts the overlap and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:14: Extension range 150 to 300 overlaps with reserved range 100 to 200.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No cross-validation between reserved ranges and extension ranges in Go implementation. C++ protoc validates in `descriptor.cc` that extension ranges must not overlap with reserved ranges within the same message. The Go `compiler/cli/cli.go` validates reserved-reserved overlaps (line 1478) and extension-extension overlaps (line 1654), but never checks reserved vs extension cross-overlap. The parser stores both ranges without any cross-range validation.
-
-### Run 98 — Enum value number overflow (FAILED: 5/5 profiles)
-- **Test:** `104_enum_value_overflow` — proto3 enum with `TOO_BIG = 2147483648;` (exceeds int32 max of 2147483647)
-- **Bug:** Go protoc-go silently accepts the out-of-range enum value and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:13: Integer out of range.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1208` — `num, _ := strconv.ParseInt(valNumTok.Value, 0, 32)` silently ignores the `ErrRange` error. When `ParseInt` overflows int32, it returns the clamped value (2147483647) with an error, but the error is discarded via `_`. The enum value is stored as 2147483647 instead of being rejected. C++ protoc's tokenizer validates integer range during parsing and errors immediately. The fix: check the error from `strconv.ParseInt` and return an error if it fails. Same issue does NOT affect field numbers (line 892-895) because field number parsing properly checks the error.
-
-### Run 99 — Reserved range number overflow (FAILED: 5/5 profiles)
-- **Test:** `105_reserved_number_overflow` — proto3 message with `reserved 2147483648;` (exceeds int32 max of 2147483647)
-- **Bug:** Go protoc-go silently accepts the out-of-range reserved number and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Integer out of range.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:483` — `startNum, _ := strconv.ParseInt(numTok.Value, 0, 32)` silently ignores the `ErrRange` error. When `ParseInt` overflows int32, it returns the clamped value (2147483647) with an error, but the error is discarded via `_`. Same issue at line 503 for reserved range end values, lines 559/583 for extension range start/end values, and line 1855 for map field numbers. All use `_, _ := strconv.ParseInt(..., 0, 32)` pattern where the error is silently discarded.
-
-### Run 100 — Map field number overflow (FAILED: 5/5 profiles)
-- **Test:** `106_map_field_number_overflow` — proto3 message with `map<string, string> metadata = 2147483648;` (field number exceeds int32 max)
-- **Bug:** Go protoc-go parses the overflowed integer (silently truncated to 2147483647 at line 1873 via `num, _ := strconv.ParseInt(numTok.Value, 0, 32)`), then the downstream field number validation catches 2147483647 > 536870911 and reports: `Field numbers cannot be greater than 536870911.` plus a suggestion line. C++ protoc catches it earlier at parse time as `Integer out of range.` (exit 1 from both, but different error messages). The test harness detects error message mismatch.
-- **Root cause:** `parser.go:1873` — `num, _ := strconv.ParseInt(numTok.Value, 0, 32)` silently discards the overflow error. The value is truncated to max int32 (2147483647), then a different validation catches an unrelated constraint (field number > max allowed). C++ protoc's tokenizer validates integer range during parsing and errors immediately with "Integer out of range." The fix: check the error from `strconv.ParseInt` and return an integer overflow error before field number validation runs.
-
-### Run 101 — Explicit json_name conflict says "default" instead of "custom" (FAILED: 5/5 profiles)
-- **Test:** `107_json_name_explicit` — proto3 message with `string first_name = 1 [json_name = "name"];` and `string last_name = 2 [json_name = "name"];` (both fields explicitly set the same json_name)
-- **Bug:** Both C++ and Go detect the JSON name conflict and reject with exit code 1, but the error message wording differs. C++ protoc: `The custom JSON name of field "last_name" ("name") conflicts with the custom JSON name of field "first_name".` Go protoc-go: `The default JSON name of field "last_name" ("name") conflicts with the default JSON name of field "first_name".` Go uses "default" instead of "custom" because it doesn't distinguish between auto-generated and explicitly set json_names.
-- **Root cause:** Go's JSON name conflict validation (likely in `compiler/cli/cli.go`) always uses "default JSON name" in the error message. C++ protoc's `descriptor.cc` checks whether the json_name was explicitly set by the user (`has_json_name()`) and uses "custom JSON name" when it was, "default JSON name" when it's auto-generated. The Go implementation lacks `has_json_name()` tracking — it doesn't know if json_name was set by the user or auto-generated.
-
-### Known gaps still unexplored (updated):
-- **JSON name conflict with explicit json_name** — TESTED in Run 101 (107_json_name_explicit), confirmed broken (error message says "default" instead of "custom")
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Type shadowing** — same nested type name in different parent messages
-- **Hex/octal escape in strings** — `\x48\x65` or `\110\145` — tokenizer now handles these (fixed)
-- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
-- **Extension range options** — `extensions 100 to 199 [(verification) = UNVERIFIED];`
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Enum value name collision with message name** — TESTED in Run 96, confirmed error message difference
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
-- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
-- **Negative field numbers** — `string name = -1;` — C++ rejects, Go may accept
-- **Negative enum value overflow** — `FOO = -2147483649;` — same silent truncation bug
-- **Extension range start/end overflow** — overflow checks now added (fixed)
-- **Enum reserved range overflow** — overflow checks now added (fixed)
-- **`stream` as a type name in RPC** — TESTED in Run 102 (108_stream_type_name), confirmed broken (different error messages)
-
-### Run 102 — Message named "stream" used as RPC type (FAILED: 5/5 profiles)
-- **Test:** `108_stream_type_name` — proto3 file with `message stream { ... }` and `rpc Process(stream) returns (stream);` where `stream` is used as a type name, not the streaming keyword
-- **Bug:** Both C++ and Go reject the file (both treat `stream` as the streaming keyword when it appears after `(` in an RPC declaration), but with different error messages. C++ protoc: `test.proto:10:21: Expected type name.` Go protoc-go: `test.proto:line 10:23: expected ")", got "returns"`. C++ correctly identifies the missing type name after the `stream` keyword. Go has a cascading parse error: it consumes `)` as the type name, then fails expecting another `)`.
-- **Root cause:** `parser.go:1639-1642` — when `stream` is followed by `)`, the Go parser still consumes `stream` as the keyword. Then `p.tok.Next()` at line 1643 gets `)` as `inputTok` (setting `inputType = ")"`). Then `p.tok.Expect(")")` at line 1659 sees `returns` instead of `)` → error at column 23. C++ protoc also consumes `stream` as the keyword, but immediately detects the missing type name at column 21 (the `)` position) before trying to consume the closing paren. The error messages differ in both content and column position.
-
-### Run 103 — Map field with enum key type (FAILED: 5/5 profiles)
-- **Test:** `109_map_enum_key` — proto3 file with `map<Priority, string> task_names = 2;` where `Priority` is an enum defined in the same file
-- **Bug:** `parseMapField()` at line 1840-1842 checks if the key type is in `builtinTypes`. Since `Priority` is not a builtin type, Go rejects with `"invalid map key type: Priority"` at parse time. C++ protoc also rejects (enum keys are not valid per the protobuf spec), but with a different error message: `"Key in map fields cannot be enum types."` at validation time. Both exit 1, but stderr differs.
-- **Root cause:** `parser.go:1840-1842` — Go rejects non-builtin key types at parse time with a generic error. C++ protoc accepts the type during parsing, resolves it during linking, then validates in `descriptor.cc` with a specific error mentioning "enum types". The error message format also differs: Go has no line:column prefix (`test.proto:invalid map key type: Priority`), C++ has line:column (`test.proto:14:3: Key in map fields cannot be enum types.`). Additionally, Go's approach of rejecting non-builtins at parse time is overly restrictive — if protobuf ever allowed enum keys, Go would need parser changes while C++ would only need a validation change.
-
-### Run 104 — Extension range options (FAILED: 5/5 profiles)
-- **Test:** `110_extension_range_options` — proto2 message with `extensions 100 to 199 [verification = UNVERIFIED];` (extension range with options)
-- **Bug:** Go protoc-go rejects the `[` token after the range with: `expected ";", got "["` (exit 1). C++ protoc accepts it and produces a valid descriptor with `ExtensionRangeOptions` containing `verification = UNVERIFIED` (exit 0). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:623-630` — after parsing extension range numbers, the parser checks for `,` (another range) or breaks to expect `;`. There is no handling for `[` to parse `ExtensionRangeOptions`. C++ protoc's parser checks for `[` after ranges and calls `ParseExtensionRangeOptions` to read key-value options into the `ExtensionRange.options` field. The Go parser needs to add `[...]` option parsing between the range loop exit (line 628) and the `;` expectation (line 630).
-
-### Known gaps still unexplored (updated):
-- **Option validation** — Go silently accepts ANY option name on service/method/enum without validation
-- **Self-referencing message** — type resolution may differ
-- **Package conflict** — two files with different packages imported together
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
-- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
-- **Negative field numbers** — `string name = -1;` — C++ rejects, Go may accept
-- **Negative enum value overflow** — `FOO = -2147483649;` — may be fixed now (int64 parsing)
-- **Proto2 default values** — `[default = ...]` for enum-typed fields may not work
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **Missing message options** — `map_entry` (field 7)
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **Integer value for enum option** — `option optimize_for = 1;`
-- **Duplicate `import public`** — same file imported via `import` and `import public`
-- **Map field with message key type** — `map<MyMsg, string>` — Go rejects at parse time, C++ at validation with different error
-- **message_set_wire_format + extensions to max** — Go uses INT32_MAX (2147483647), C++ uses 536870912 for `max` sentinel
-- **Extension range options** — TESTED in Run 104 (110_extension_range_options), confirmed broken (Go rejects `[...]` after ranges)
-
-### Run 105 — Enum used as RPC input type (FAILED: 5/5 profiles)
-- **Test:** `111_enum_rpc_type` — proto3 file with `enum Status { ... }`, `message Response { ... }`, and `rpc GetStatus(Status) returns (Response);` where the RPC input type is an enum instead of a message
-- **Bug:** Go protoc-go silently accepts an enum as an RPC input type and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:16:17: "Status" is not a message type.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that RPC method input and output types must be message types, not enums. The Go `descriptor/pool.go` is an empty stub with no method type validation. The parser stores the type name string without checking whether it resolves to a message or an enum.
-
-### Run 106 — Negative field numbers (FAILED: 5/5 profiles)
-- **Test:** `112_negative_field_number` — proto3 message with `string name = -1;` (negative field number)
-- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:6:17: Expected field number.` Go protoc-go: `test.proto:line 6:17: expected integer, got "-"`. C++ treats the `-` as an unexpected token and reports "Expected field number." Go's `ExpectInt()` at line 892 fails because `-` is not an integer token.
-- **Root cause:** `parser.go:892` — `ExpectInt()` encounters `-` (a symbol token) and produces a generic "expected integer" error. C++ protoc's parser produces a domain-specific "Expected field number" error. Both correctly reject negative field numbers, but the error message format and content differ. The test harness detects error message mismatch.
-
-### Run 107 — `map` as a message type name (FAILED: 5/5 profiles)
-- **Test:** `113_map_as_type` — proto3 file with `message map { ... }` and `message Container { map data = 1; }` where `map` is used as a type name (not the map field keyword)
-- **Bug:** Go parser's message body switch at line 372 has `case "map":` which unconditionally calls `parseMapField()`. `parseMapField` expects `<` after `map`, so `map data = 1;` fails with `expected "<", got "data"`. C++ protoc only treats `map` as the map keyword when followed by `<`; otherwise it treats `map` as a type name (message reference). C++ produces a valid descriptor (exit 0), Go rejects (exit 1).
-- **Root cause:** `parser.go:372` — `case "map":` doesn't check if the next token is `<` before committing to map field parsing. C++ protoc's parser peeks at the token after `map` and only enters map parsing if it's `<`. When `map` is followed by an identifier (field name), C++ treats it as a regular field with `map` as the type name. The Go parser should check `p.tok.PeekAt(1).Value == "<"` (similar to how `isGroupField` checks for `group` at line 401) and fall through to `parseField` if `<` doesn't follow.
-
-### Run 108 — Integer default value on string field (FAILED: 5/5 profiles)
-- **Test:** `114_int_default_string` — proto2 message with `optional string name = 1 [default = 42];` (integer literal instead of string literal for string field default)
-- **Bug:** Go protoc-go silently accepts integer `42` as a default value for a string field and stores `default_value = "42"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:39: Expected string for field default value.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2332-2362` — `case "default"` stores `valTok.Value` as the default value without validating that the token type matches the field type. For string/bytes fields, the value must be a string literal (`TokenString`). For integer fields, it must be an integer literal. For float fields, a float literal. C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeString` for string fields, `ConsumeSignedInteger` for integer fields, etc. The Go parser has zero default value type validation — any token type is accepted for any field type.
-
-### Known gaps still unexplored (updated):
-- **RPC type referencing non-existent message** — C++ rejects, Go likely accepts (no type resolution validation)
-- **Overlapping enum reserved names** — `reserved "A", "B"; reserved "B", "C";` — duplicate reserved names
-- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
-- **Package conflict** — two files with different packages imported together
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **Map field with message key type** — `map<MyMsg, string>` — Go rejects at parse time, C++ at validation with different error
-- **`option` as type name** — `message option { } message Foo { option x = 1; }` — Go treats `option` as keyword, same pattern
-- **`reserved` as type name** — same pattern, Go switch matches keyword before checking context
-- **`extensions` as type name** — same pattern
-- **String default for integer field** — `optional int32 x = 1 [default = "42"];` — Go likely accepts, C++ rejects
-- **Boolean default for string field** — `optional string x = 1 [default = true];` — Go likely accepts, C++ rejects
-- **Float default for integer field** — `optional int32 x = 1 [default = 1.5];` — Go likely accepts, C++ rejects
-- **Default value type validation** — all type mismatches between default value token type and field type
-
-### Run 109 — String default value on integer field (FAILED: 5/5 profiles)
-- **Test:** `115_string_default_int` — proto2 message with `optional int32 count = 1 [default = "42"];` (string literal instead of integer for int32 field default)
-- **Bug:** Go protoc-go silently accepts a string literal `"42"` as a default value for an int32 field and stores `default_value = "42"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:39: Expected integer for field default value.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go` — `case "default"` stores `valTok.Value` as the default value without validating that the token type matches the field type. For int32/int64/uint32/uint64/sint32/sint64/fixed32/fixed64/sfixed32/sfixed64 fields, the value must be an integer literal (`TokenInt`). C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeSignedInteger` for integer fields. The Go parser has zero default value type validation — any token type is accepted for any field type. Same category as Run 108 (integer for string field), but reversed direction.
-
-### Known gaps still unexplored (updated):
-- **Boolean default for string field** — `optional string x = 1 [default = true];` — Go likely accepts, C++ rejects
-- **Float default for integer field** — `optional int32 x = 1 [default = 1.5];` — Go likely accepts, C++ rejects
-- **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
-- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
-- **Package conflict** — two files with different packages imported together
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **`option` as type name** — Go switch matches keyword before checking context
-- **`reserved` as type name** — same pattern
-- **`extensions` as type name** — same pattern
-- **RPC type referencing non-existent message** — C++ rejects, Go likely accepts
-
-### Run 110 — Float default value on integer field (FAILED: 5/5 profiles)
-- **Test:** `116_float_default_int` — proto2 message with `optional int32 threshold = 1 [default = 1.5];` and `optional int64 big_value = 2 [default = 3.14];` (float literals instead of integers for integer field defaults)
-- **Bug:** Go protoc-go silently accepts float literals `1.5` and `3.14` as default values for int32/int64 fields and stores `default_value = "1.5"` / `"3.14"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:43: Expected integer for field default value.` and `test.proto:7:43: Expected integer for field default value.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go` — `case "default"` stores `valTok.Value` as the default value without validating that the token type matches the field type. For integer fields (int32/int64/uint32/uint64/etc.), the value must be an integer literal (`TokenInt`), not a float literal (`TokenFloat`). C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeSignedInteger` for integer fields which rejects float tokens. The Go parser has zero default value type validation — any token type is accepted for any field type. Same category as Runs 108 (integer for string) and 109 (string for integer).
-
-### Known gaps still unexplored (updated):
-- **Boolean default for string field** — `optional string x = 1 [default = true];` — Go likely accepts, C++ rejects
-- **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
-- **Oneof inside oneof** — nested oneof — C++ rejects, Go may accept
-- **Package conflict** — two files with different packages imported together
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **`option` as type name** — Go switch matches keyword before checking context
-- **`reserved` as type name** — same pattern
-- **`extensions` as type name** — same pattern
-- **RPC type referencing non-existent message** — C++ rejects, Go likely accepts
-- **Float default for integer field** — TESTED in Run 110 (116_float_default_int), confirmed broken
-- **Boolean default for string field** — TESTED locally, Go now rejects identically to C++ — NOT a gap
-
-### Run 111 — Nested oneof (FAILED: 5/5 profiles)
-- **Test:** `117_nested_oneof` — proto3 message with `oneof outer { string text = 2; oneof inner { int32 count = 3; bool flag = 4; } }` (oneof nested inside another oneof)
-- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:9:17: Missing field number.` Go protoc-go: `test.proto:line 9:17: expected "=", got "{"`. C++ treats `inner` as a field name and expects a `=` + field number. Go's `parseField` treats `oneof` as a type name, `inner` as the field name, and then expects `=` but gets `{`. The error messages differ in both content and format.
-- **Root cause:** `parseOneof()` body parsing loop falls through to `parseField()` for any non-`option`/`";"` token. When `oneof` appears inside a oneof body, `parseField` treats `oneof` as a type name (message reference) and `inner` as the field name. C++ protoc's parser handles `oneof` differently — it recognizes `inner` as a potential field name but then expects `=` and a field number, producing "Missing field number." Both reject correctly, but error messages differ.
-
-### Run 112 — Multiline string literal (FAILED: 5/5 profiles)
-- **Test:** `118_multiline_string` — proto3 file with `option java_package = "hello\nworld";` where the string contains a literal newline character (not `\n` escape, but an actual line break between `hello` and `world`)
-- **Bug:** Go protoc-go silently accepts the multiline string and produces a valid descriptor with `java_package = "hello\nworld"` (exit 0). C++ protoc rejects with: `test.proto:5:29: Multiline strings are not allowed. Did you miss a "?.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `tokenizer.go:261` — `readString()` loop condition is `t.input[t.pos] != quote`. It only stops at the matching quote character or end of input. There is no check for `\n` (newline). C++ protoc's `Tokenizer::ConsumeString()` in `tokenizer.cc` stops at `\n` and reports "Multiline strings are not allowed." The Go tokenizer needs to add `&& t.input[t.pos] != '\n'` to the loop condition (or check inside the loop and return an error).
-
-### Run 113 — Undefined RPC type (FAILED: 5/5 profiles)
-- **Test:** `119_undefined_rpc_type` — proto3 file with `rpc Process(NonExistent) returns (Response);` where `NonExistent` is never defined as a message
-- **Bug:** Go protoc-go silently accepts a reference to an undefined message type and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:10:15: "NonExistent" is not defined.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that all type references (including RPC input/output types) resolve to defined types. The Go `descriptor/pool.go` is an empty stub with no undefined type validation. The parser stores the type name string without checking whether it resolves to any defined type. Same category as Run 105 (enum as RPC type) — Go performs zero type resolution validation for RPC methods.
-
-### Run 114 — Required label on extension fields (FAILED: 5/5 profiles)
-- **Test:** `120_required_extension` — proto2 file with `extend Base { required string nickname = 100; }` (required label on extension field)
-- **Bug:** Go protoc-go silently accepts `required` on extension fields and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:10:12: The extension reqext.nickname cannot be required.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that extension fields cannot have `required` label — only `optional` or `repeated` are allowed. The Go `descriptor/pool.go` is an empty stub with no extension label validation. The `parseExtend` function calls `parseField` which accepts all labels without checking the extension context.
-
-### Run 115 — Duplicate extension field numbers (FAILED: 5/5 profiles)
-- **Test:** `121_duplicate_extension_number` — proto2 file with two `extend Base` blocks both defining extensions with field number 100
-- **Bug:** Go protoc-go silently accepts duplicate extension field numbers and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:15:26: Extension number 100 has already been used in "extdup.Base" by extension "extdup.name".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that extension field numbers must be unique across all extend blocks targeting the same message. The Go `descriptor/pool.go` is an empty stub with no duplicate extension number validation. The parser stores all extension fields without checking for number conflicts across extend blocks.
-
-### Run 116 — Map field inside extend block (FAILED: 5/5 profiles)
-- **Test:** `122_map_in_extend` — proto2 file with `message Base { extensions 100 to 200; }` and `extend Base { map<string, string> metadata = 100; }` (map field inside an extend block)
-- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:11:6: Map fields are not allowed to be extensions.` Go protoc-go: `test.proto:11:6: Expected identifier.` C++ parses the map field syntactically (via `ParseMessageField` which handles `map<...>`), then rejects it during validation. Go's `parseExtend` calls `parseField` which doesn't handle `map<...>` syntax — it reads `map` as a type name, then `<` is not a valid field name identifier.
-- **Root cause:** `parser.go:840-865` — `parseExtend` only calls `parseField()`, which doesn't handle `map<K,V>` syntax. Map fields are handled separately via `parseMapField()` which is only called from `parseMessage`'s `case "map":` switch. C++ protoc's `ParseExtend` calls `ParseMessageField` which handles all field syntaxes including maps. The error message content and context differ: C++ gives a domain-specific validation error, Go gives a generic parse error.
-
-### Known gaps still unexplored (updated):
-- **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
-- **Package conflict** — two files with different packages imported together
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **`option` as type name** — Go switch matches keyword before checking context
-- **`reserved` as type name** — same pattern
-- **`extensions` as type name** — same pattern
-- **Undefined field type** — `message Foo { NonExistent x = 1; }` — Go may or may not handle (has resolveMessageFieldsWithErrors)
-- **Extension with default value** — `extend Base { optional string tag = 100 [default = "hello"]; }` — may differ
-- **`oneof` inside extend block** — C++ rejects differently than Go
-- **Extension field name conflict with base message fields** — C++ validates, Go likely doesn't
-- **Map in extend** — TESTED in Run 116 (122_map_in_extend), confirmed broken (different error messages)
-- **Group inside extend** — `extend Base { group Foo = 100 { ... } }` — Go might handle differently
-- **Bool default on integer field** — TESTED in Run 117 (123_bool_default_int), confirmed broken (Go accepts, C++ rejects)
-
-### Run 117 — Boolean default value on integer field (FAILED: 5/5 profiles)
-- **Test:** `123_bool_default_int` — proto2 message with `optional int32 enabled = 1 [default = true];` and `optional int64 flags = 2 [default = false];` (boolean identifiers instead of integer literals for integer field defaults)
-- **Bug:** Go protoc-go silently accepts boolean identifiers `true`/`false` as default values for integer fields and stores `default_value = "true"` / `"false"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:41: Expected integer for field default value.` and `test.proto:7:39: Expected integer for field default value.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go` — `case "default"` stores `valTok.Value` as the default value without validating that the token type matches the field type. For integer fields (int32/int64/uint32/uint64/etc.), the value must be an integer literal (`TokenInt`), not a boolean identifier. C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeSignedInteger` for integer fields which rejects non-integer tokens. Same category as Runs 108-110 (default value type validation).
-
-### Run 118 — String literal for bool default value (FAILED: 5/5 profiles)
-- **Test:** `124_string_default_bool` — proto2 message with `optional bool verbose = 1 [default = "true"];` and `optional bool debug = 2 [default = "false"];` (string literals instead of identifiers for bool field defaults)
-- **Bug:** Go protoc-go silently accepts string literals `"true"`/`"false"` as default values for bool fields and stores `default_value = "true"` / `"false"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Expected "true" or "false".` and `test.proto:7:38: Expected "true" or "false".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2431-2474` — `case "default"` validates string/bytes fields (require TokenString) and integer fields (reject TokenString/TokenFloat/TokenIdent), but has NO validation for bool fields. Bool fields accept any token type — a TokenString with decoded value `"true"` passes through and is stored as `default_value = "true"`. C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeIdentifier` for bool fields which only accepts identifier tokens (`true`/`false`), not string literal tokens. Same category as Runs 108-110, 117 (default value type validation).
-
-### Known gaps still unexplored (updated):
-- **String literal for float default** — `optional float ratio = 1 [default = "1.5"];` — Go likely accepts, C++ rejects
-- **Enum default for wrong enum type** — `optional OtherEnum x = 1 [default = WRONG_VALUE];` — C++ validates enum membership
-- **Oneof inside oneof** — nested oneof — C++ rejects differently than Go (tested Run 111, error messages differ)
-- **Package conflict** — two files with different packages imported together
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **`option` as type name** — Go switch matches keyword before checking context
-- **`reserved` as type name** — same pattern
-- **`extensions` as type name** — same pattern
-- **RPC type referencing non-existent message** — TESTED in Run 113 (119_undefined_rpc_type), confirmed broken
-- **Missing message options** — `map_entry` (field 7)
-- **Extension range options** — TESTED in Run 104 (110_extension_range_options), confirmed broken
-
-### Run 119 — String literal for float default value (FAILED: 5/5 profiles)
-- **Test:** `125_string_default_float` — proto2 message with `optional float ratio = 1 [default = "1.5"];` and `optional double scale = 2 [default = "3.14"];` (string literals instead of float literals for float/double field defaults)
-- **Bug:** Go protoc-go silently accepts string literals `"1.5"`/`"3.14"` as default values for float/double fields and stores `default_value = "1.5"` / `"3.14"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Expected number for field default value.` and `test.proto:7:41: Expected number for field default value.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go` — `case "default"` stores `valTok.Value` as the default value without validating that the token type matches the field type. For float/double fields, the value must be a numeric literal (`TokenInt` or `TokenFloat`) or special identifiers (`inf`, `nan`), not a string literal (`TokenString`). C++ protoc's `ParseDefaultAssignment` dispatches based on field type, calling `ConsumeNumber` for float fields which rejects string literal tokens. Same category as Runs 108-110, 117-118 (default value type validation).
-
-### Run 120 — Enum default value with nonexistent enum member (FAILED: 5/5 profiles)
-- **Test:** `126_enum_default_invalid` — proto2 message with `optional Priority level = 1 [default = NONEXISTENT];` where `NONEXISTENT` is not a member of the `Priority` enum
-- **Bug:** Go protoc-go silently accepts a default value that names a nonexistent enum member and stores `default_value = "NONEXISTENT"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:12:42: Enum type "enumdefault.Priority" has no value named "NONEXISTENT".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` during linking that enum default values must name a valid member of the field's enum type. The Go `descriptor/pool.go` is an empty stub with no enum default value validation. The parser stores the raw identifier string as `default_value` without checking if it resolves to a valid enum value in the enum type.
-
-### Known gaps still unexplored (updated):
-- **Enum default for wrong enum type** — TESTED in Run 120 (126_enum_default_invalid), confirmed broken (no enum value validation)
-- **Package conflict** — two files with different packages imported together
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **`option` as type name** — Go switch matches keyword before checking context
-- **`reserved` as type name** — same pattern
-- **`extensions` as type name** — same pattern
-- **Missing message options** — `map_entry` (field 7)
-- **String literal for float default** — TESTED in Run 119 (125_string_default_float), confirmed broken
-- **Syntax string concatenation** — TESTED in Run 121 (127_syntax_concat), confirmed broken (Go rejects, C++ accepts)
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Import path string concatenation** — `import "base" ".proto";` — same single-token bug
-- **Package name string concatenation** — probably not valid since package uses identifier not string
-
-### Run 121 — Syntax string concatenation (FAILED: 5/5 profiles)
-- **Test:** `127_syntax_concat` — file with `syntax = "proto" "3";` (adjacent string literals for syntax value)
-- **Bug:** Go protoc-go reads only the first string token `"proto"` as the syntax value, then expects `;` but gets the second string token `"3"`. Error: `test.proto:1:18: Expected ";".` (exit 1). C++ protoc concatenates adjacent string literals per the protobuf language spec, producing `"proto3"`, and successfully parses the file (exit 0). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:249` — `p.tok.ExpectString()` reads a single string token. No loop to check for and concatenate subsequent adjacent string tokens. C++ protoc's `ConsumeString()` loops over adjacent string literals and concatenates them. Same root cause as Run 25 (file option string concatenation) and Run 59 (field default string concatenation) — the string concatenation pattern is missing throughout the parser. This specific instance affects the syntax declaration, which is critical for determining how the rest of the file is parsed.
-
-### Run 122 — Import path string concatenation (FAILED: 5/5 profiles)
-- **Test:** `128_import_concat` — proto3 file with `import "base" ".proto";` (adjacent string literals for import path)
-- **Bug:** `parseImport()` at line 368 uses `p.tok.ExpectString()` which reads a single string token `"base"`. Then line 372 expects `;` but gets the second string token `".proto"`. Error: Go rejects the file (exit 1). C++ protoc concatenates adjacent string literals per the protobuf language spec, producing `"base.proto"`, and successfully parses the file (exit 0). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:368` — `p.tok.ExpectString()` reads a single string token. No loop to check for and concatenate subsequent adjacent string tokens. C++ protoc's `ConsumeString()` loops over adjacent string literals and concatenates them. Same root cause as Run 25 (file option string concatenation), Run 59 (field default string concatenation), and Run 121 (syntax string concatenation) — the string concatenation pattern is missing throughout the parser. This instance affects import path resolution, breaking multi-part import declarations.
-
-### Run 123 — Packed option on non-repeated field (FAILED: 5/5 profiles)
-- **Test:** `129_packed_nonrepeated` — proto3 message with `int32 count = 1 [packed = true];` (packed on a non-repeated field)
-- **Bug:** Go protoc-go silently accepts `[packed = true]` on a non-repeated field and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:3: [packed = true] can only be specified for repeated primitive fields.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` via `is_packable()` which requires `is_repeated()` to be true and the field to be a numeric primitive type. The Go parser stores `FieldOptions.Packed = true` without checking whether the field is repeated or a packable type. Same validation gap pattern as all other missing descriptor pool validations.
-
-### Run 124 — Packed option on repeated string/bytes (FAILED: 5/5 profiles)
-- **Test:** `130_packed_string` — proto3 message with `repeated string tags = 1 [packed = true];` and `repeated bytes data = 2 [packed = true];` (packed on non-numeric repeated fields)
-- **Bug:** Both C++ and Go reject the file with the same error message `[packed = true] can only be specified for repeated primitive fields.`, but the column numbers differ. C++ protoc reports column 12 (pointing to the field name token). Go protoc-go reports column 3 (pointing to the start of the `repeated` keyword). Both exit 1, but stderr differs due to column positions.
-- **Root cause:** Go's packed validation (likely in `compiler/cli/cli.go`) reports the error position as the start of the field declaration (column 3, at `repeated`). C++ protoc's `descriptor.cc` reports the error position as the field name column (column 12). The validation logic correctly identifies non-packable types, but the error location metadata points to a different token. The `repeated int32 ids = 3 [packed = true]` field is correctly accepted by both since int32 is a packable type.
-
-### Known gaps still unexplored (updated):
-- **Package conflict** — two files with different packages imported together
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **`option` as type name** — Go switch matches keyword before checking context
-- **`reserved` as type name** — same pattern
-- **`extensions` as type name** — same pattern
-- **Missing message options** — `map_entry` (field 7)
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Oneof field with packed option** — same validation gap
-- **`lazy` option on non-message field** — TESTED in Run 125 (131_lazy_nonmessage), confirmed broken (Go accepts, C++ rejects)
-- **Error column positions** — many Go validation errors report wrong column (start of line vs specific token)
-
-### Run 125 — Lazy option on non-message field (FAILED: 5/5 profiles)
-- **Test:** `131_lazy_nonmessage` — proto3 message with `string name = 1 [lazy = true];` (lazy on a string field)
-- **Bug:** Go protoc-go silently accepts `[lazy = true]` on a non-message field and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:3: [lazy = true] can only be specified for submessage fields.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that `lazy` and `unverified_lazy` can only be specified for singular embedded message fields (not repeated, not scalar types). The Go parser stores `FieldOptions.Lazy = true` without checking whether the field type is a message. Same validation gap pattern as all other missing descriptor pool validations.
-
-### Run 126 — Extending undefined message type (FAILED: 5/5 profiles)
-- **Test:** `132_extend_undefined` — proto2 file with `extend NonExistent { optional string tag = 100; }` where `NonExistent` is never defined as a message
-- **Bug:** Both C++ and Go reject the file (exit 1), but with completely different error messages. C++ protoc: `test.proto:9:8: "NonExistent" is not defined.` — catches the undefined type at the `extend` declaration. Go protoc-go: `test.proto:10:25: "NonExistent" does not declare 100 as an extension number.` — doesn't check if the extendee exists, but a downstream extension range validation produces a different error. Error messages differ in content, line number, and column.
-- **Root cause:** `CheckUnresolvedTypes` in `parser.go:3080-3148` checks message field types (line 3107-3108) and RPC input/output types (lines 3111-3144), but does NOT check extendee types in `fd.GetExtension()`. The extendee name `NonExistent` is never validated as a defined type. Instead, the extension range validation in `cli.go` fires later because `NonExistent` (as an undefined type) has no declared extension ranges, producing a semantically different error. C++ protoc catches the undefined type first during linking in `descriptor.cc`.
-
-### Run 127 — jstype on non-int64 field (FAILED: 5/5 profiles)
-- **Test:** `133_jstype_nonint64` — proto3 message with `int32 count = 1 [jstype = JS_STRING];` and `string name = 2 [jstype = JS_NUMBER];` (jstype on non-int64 fields)
-- **Bug:** Go protoc-go silently accepts `jstype` on non-int64 fields and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:3: jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.` (exit 1 for each field). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2529-2540` — `case "jstype"` stores the jstype option on `FieldOptions` without checking the field's type. No validation in `compiler/cli/cli.go` either. C++ protoc validates in `descriptor.cc` that `jstype` can only be used on 64-bit integral fields (int64/uint64/sint64/fixed64/sfixed64). Same gap applies to `ctype` — Go likely accepts `ctype = CORD` on non-string fields without validation.
-
-### Known gaps still unexplored (updated):
-- **Package conflict** — two files with different packages imported together
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **`option` as type name** — Go switch matches keyword before checking context
-- **`reserved` as type name** — same pattern
-- **`extensions` as type name** — same pattern
-- **Missing message options** — `map_entry` (field 7)
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Oneof field with packed option** — same validation gap
-- **Error column positions** — many Go validation errors report wrong column (start of line vs specific token)
-- **Undefined extension field type** — `extend Base { optional NonExistent foo = 100; }` — checkMsgUnresolved doesn't check extension field types
-- **Negative enum value overflow** — `FOO = -2147483649;` — silent truncation of absolute value
-- **Minimum int32 enum value** — `FOO = -2147483648;` — ParseInt overflow on absolute value even though -2^31 is valid
-- **ctype on non-string field** — `int32 x = 1 [ctype = CORD];` — tested, NOT a gap (C++ also accepts)
-- **jstype on non-int64 field** — TESTED in Run 127 (133_jstype_nonint64), confirmed broken
-- **Undefined extension field type** — TESTED in Run 128 (134_ext_field_undefined), confirmed broken (Go accepts, C++ rejects)
-
-### Run 128 — Undefined extension field type (FAILED: 5/5 profiles)
-- **Test:** `134_ext_field_undefined` — proto2 file with `message Base { extensions 100 to 200; }` and `extend Base { optional NonExistent payload = 100; }` where `NonExistent` is never defined as a message or enum
-- **Bug:** Go protoc-go silently accepts an extension field with an undefined type and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:11:12: "NonExistent" is not defined.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2919-2925` — `resolveAndSetTypes` resolves extension field types via `resolveTypeName` and looks them up in the `types` map. If the type is found, it sets `ext.Type`. But if the type is NOT found, it silently continues — no error is appended. Compare to the extendee check at lines 2912-2917 which DOES report errors for undefined extendees, and `checkMsgUnresolved` at lines 3173-3183 which reports errors for undefined message field types. The extension field type validation is simply missing — the `if tp, ok := types[resolved]; ok` check at line 2922 has no corresponding `else` branch to report the undefined type.
-
-### Run 130 — Unicode escape sequences (FAILED: 5/5 profiles)
-- **Test:** `136_unicode_escape` — proto3 file with `option java_package = "\u0048ello";` where `\u0048` is a Unicode escape for 'H' (U+0048)
-- **Bug:** Go tokenizer's `readString()` at lines 278-325 has no handling for `\u` (4-digit Unicode escape) or `\U` (8-digit Unicode escape). The `\u` falls to the `default` case at line 323, which writes literal `u`. Subsequent `0048ello` is read as normal characters. Result: Go produces `java_package = "u0048ello"` (10 chars), C++ protoc produces `java_package = "Hello"` (5 chars, since `\u0048` → 'H'). Binary descriptor payloads differ.
-- **Root cause:** `tokenizer.go:278-325` — the escape sequence switch handles `n`, `t`, `r`, `a`, `b`, `f`, `v`, `\\`, `'`, `"`, `?`, `x`/`X` (hex), `0-7` (octal), but NOT `u` (Unicode 4-digit) or `U` (Unicode 8-digit). C++ protoc's `ConsumeStringAppend` in `tokenizer.cc` handles `\u` by reading 4 hex digits and converting to a UTF-8 encoded codepoint, and `\U` by reading 8 hex digits. The fix: add `case 'u':` and `case 'U':` branches that read 4/8 hex digits, convert to a Unicode codepoint, and encode as UTF-8.
-
-### Run 129 — Hex escape reads too many digits (FAILED: 5/5 profiles)
-- **Test:** `135_hex_escape_digits` — proto3 file with `option java_package = "com.example.\x4Eelson";` where `\x4E` is a hex escape followed by `e` (also a hex digit) and `lson`
-- **Bug:** Go tokenizer's `readString()` hex escape handler at lines 301-310 reads ALL hex digits greedily (unlimited loop: `for t.pos < len(t.input) && isHexDigit(t.input[t.pos])`). C++ protoc's `ConsumeStringAppend` reads at most 2 hex digits. For `\x4Eelson`: Go reads `4Ee` (3 hex digits) → `byte(0x4Ee) = byte(0xEE)`, leaving `lson`. C++ reads `4E` (2 hex digits) → `byte(0x4E) = 'N'`, leaving `elson`. String values differ: Go produces `"com.example.\xEElson"` (invalid UTF-8), C++ produces `"com.example.Nelson"`. Binary descriptor sizes differ (101 vs 100 bytes for descriptor_set). Plugin profiles fail because Go's invalid UTF-8 causes JSON marshaling error in protoc-gen-dump.
-- **Root cause:** `tokenizer.go:305-307` — the hex escape loop reads hex digits without a 2-digit limit. C++ protoc uses `TryConsumeOne` twice (max 2 digits). The fix: add a counter to limit hex digit consumption to 2, matching C++ behavior. This affects any string containing `\xHH` followed by additional hex-digit characters (0-9, a-f, A-F).
-
-### Run 131 — Numeric package name (FAILED: 5/5 profiles)
-- **Test:** `137_numeric_package` — proto3 file with `package 123;` (integer literal instead of identifier for package name)
-- **Bug:** Go protoc-go silently accepts a numeric package name and produces a valid descriptor with `package = "123"` (exit 0). C++ protoc rejects with: `test.proto:3:9: Expected identifier.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:332` — `nameTok := p.tok.Next()` reads the next token without any type check. An integer token `TokenInt("123")` is accepted as the package name. C++ protoc's `ParsePackage` calls `ConsumeIdentifier` which requires `TYPE_IDENTIFIER`, rejecting integer tokens. The Go parser should use `p.tok.ExpectIdent()` instead of `p.tok.Next()` to validate the package name is an identifier.
-
-### Run 132 — Empty extend block (FAILED: 5/5 profiles)
-- **Test:** `138_empty_extend` — proto2 file with `message Base { extensions 100 to 200; }` and `extend Base { }` (empty extend block, no fields inside)
-- **Bug:** Go protoc-go silently accepts an empty extend block and produces a valid descriptor (exit 0). C++ protoc rejects with an error expecting at least one field inside the extend block (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:864` — `parseExtend` uses a `for p.tok.Peek().Value != "}"` loop which exits immediately when the extend block is empty. C++ protoc's `ParseExtend` in `parser.cc` uses a `do { ... } while (...)` loop that requires at least one field to be parsed. The Go parser should either check that at least one field was parsed inside the extend block, or use a do-while pattern.
-
-### Known gaps still unexplored (updated):
-- **Package name with leading dot** — `package .foo;` — C++ may reject, Go may accept
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **`option` as type name** — Go switch matches keyword before checking context
-- **`reserved` as type name** — same pattern
-- **`extensions` as type name** — same pattern
-- **Missing message options** — `map_entry` (field 7)
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Error column positions** — many Go validation errors report wrong column
-- **String literal as package name** — `package "foo";` — Go likely accepts, C++ rejects (same missing type check)
-- **Numeric message/enum/service name** — `message 123 {}` — Go uses ExpectIdent, probably rejects
-- **Integer syntax value** — `syntax = 3;` — Go's parseSyntax uses ExpectString, probably rejects
-- **Empty extend block** — TESTED in Run 132 (138_empty_extend), confirmed broken (Go accepts, C++ rejects)
-- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
-
-### Run 133 — Group inside extend block (FAILED: 5/5 profiles)
-- **Test:** `139_group_in_extend` — proto2 file with `message Base { extensions 100 to 200; }` and `extend Base { optional group MyGroup = 100 { optional string name = 1; } }`
-- **Bug:** Go protoc-go rejects the file with: `group_extend.proto:9:32: Expected ";".` (exit 1). C++ protoc accepts it and produces a valid descriptor with a TYPE_GROUP extension field and a nested DescriptorProto for `MyGroup` (exit 0). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:840-865` — `parseExtend` calls `parseField()` for each field inside the extend block. `parseField` reads `optional` as label, then `group` as the type name (treated as a message reference, not the group keyword), then `MyGroup` as the field name, then `=` and `100`, then expects `;` but gets `{`. The `isGroupField` check (which handles the `group` keyword) only exists in the message body's `default` case (line 522), not in `parseExtend`. C++ protoc's `ParseExtend` calls `ParseMessageField` which handles both regular fields and group fields. The fix: add group detection in `parseExtend` similar to the message body parser.
-
-### Known gaps still unexplored (updated):
-- **Package name with leading dot** — `package .foo;` — C++ may reject, Go may accept
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **`option` as type name** — Go switch matches keyword before checking context (but C++ also matches)
-- **Missing message options** — `map_entry` (field 7)
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Error column positions** — many Go validation errors report wrong column
-- **String literal as package name** — `package "foo";` — Go rejects (fixed: type check added at line 333)
-- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
-- **Group inside nested extend** — `message Foo { extend Base { optional group G = 100 { } } }` — same issue
-- **Labeled map field (optional/repeated)** — both reject but different error messages
-- **`service` as a message name** — valid in C++, should work in Go too (not a keyword in message body switch)
-- **Nested group in oneof** — TESTED in Run 134 (140_group_in_oneof), confirmed broken (Go rejects, C++ accepts)
-
-### Run 134 — Group inside oneof (FAILED: 5/5 profiles)
-- **Test:** `140_group_in_oneof` — proto2 message with `oneof choice { group MyGroup = 1 { optional string name = 1; } string text = 2; }` (group field inside a oneof body)
-- **Bug:** Go protoc-go rejects the file with: `test.proto:7:23: Expected ";".` (exit 1). C++ protoc accepts it and produces a valid descriptor with a TYPE_GROUP field inside the oneof and a nested DescriptorProto for `MyGroup` (exit 0). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2154-2179` — `parseOneof` body loop calls `parseField()` for each field. When `group` appears, `parseField` reads `group` as a type name (message reference), `MyGroup` as the field name, `=` and `1` as field number, then expects `;` but gets `{`. The `isGroupField` check (which handles the `group` keyword) only exists in the message body parser's `default` case, not in `parseOneof`. C++ protoc's `ParseMessageField` handles group fields in all contexts (message body, oneof, extend). The Go parser needs group detection in `parseOneof` similar to the message body parser.
-
-### Run 135 — Default value on repeated field (FAILED: 5/5 profiles)
-- **Test:** `141_repeated_default` — proto2 message with `repeated int32 values = 1 [default = 42];` and `repeated string names = 2 [default = "hello"];` (default values on repeated fields)
-- **Bug:** Go protoc-go silently accepts `[default = ...]` on repeated fields and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Repeated fields can't have default values.` and `test.proto:7:40: Repeated fields can't have default values.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that repeated fields cannot have default values. The Go `descriptor/pool.go` is an empty stub with no default-on-repeated validation. The parser stores `default_value` on the field regardless of label. Same validation gap pattern as all other missing descriptor pool validations.
-
-### Run 136 — Negative enum reserved ranges (FAILED: 5/5 profiles)
-- **Test:** `142_negative_enum_reserved` — proto2 enum with `reserved -20 to -15;` and `reserved -5;` (negative numbers in enum reserved ranges)
-- **Bug:** Go protoc-go rejects the file with: `test.proto:10:12: Expected integer.` (exit 1). C++ protoc accepts it and produces a valid descriptor with negative `EnumReservedRange` entries (exit 0). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1843` — `parseEnumReserved` calls `p.tok.ExpectInt()` which strictly requires `TokenInt`. A `-` token is `TokenSymbol`, so `ExpectInt()` fails immediately. C++ protoc's enum reserved range parser checks for a leading `-` token before consuming the integer, allowing negative reserved ranges. The fix: check for `-` before calling `ExpectInt()`, negate the parsed value when `-` is present. Same pattern as enum value parsing (which already handles `-` at line 1688-1690). This affects both single negative numbers (`reserved -5;`) and negative ranges (`reserved -20 to -15;`).
-
-### Run 137 — Default value on message-typed field (FAILED: 5/5 profiles)
-- **Test:** `143_message_default` — proto2 message with `optional Inner child = 1 [default = "test"];` where `Inner` is a message type
-- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:10:39: Messages can't have default values.` Go protoc-go: `test.proto:10:39: Expected number.` C++ correctly identifies that message-typed fields cannot have default values. Go doesn't recognize the field as message-typed at parse time and produces a generic type mismatch error ("Expected number" because unresolved named types fall through to the numeric default parsing path).
-- **Root cause:** `parser.go` — `case "default"` in `parseFieldOptions` doesn't have special handling for message-typed fields. When the field type is an unresolved reference (a named type like `Inner`), the parser doesn't know if it's a message or enum. C++ protoc's `ParseDefaultAssignment` in `parser.cc` handles this by checking if the type is a message reference and immediately rejecting with "Messages can't have default values." The Go parser falls through to a generic number parsing path, producing the wrong diagnostic.
-
-### Run 138 — Negative default on unsigned integer fields (FAILED: 5/5 profiles)
-- **Test:** `144_negative_unsigned_default` — proto2 message with `optional uint32 value = 1 [default = -5];` and `optional uint64 large = 2 [default = -100];` (negative defaults on unsigned integer fields)
-- **Bug:** Go protoc-go silently accepts negative default values on unsigned integer fields and stores `default_value = "-5"` / `"-100"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:41: Unsigned field can't have negative default value.` and `test.proto:7:41: Unsigned field can't have negative default value.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2803-2805` — when `negative == true`, the parser prepends `"-"` to `defVal` regardless of the field's type. No check for unsigned types (uint32/uint64/fixed32/fixed64). C++ protoc's `ParseDefaultAssignment` in `parser.cc` calls `ConsumeUnsignedInteger` for unsigned fields, which rejects negative values. The Go parser should check if the field type is unsigned and reject negative defaults for those types.
-
-### Known gaps still unexplored (updated):
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **Missing message options** — `map_entry` (field 7)
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Error column positions** — many Go validation errors report wrong column
-- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
-- **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages (field numbers are positive), but may produce different error messages
-- **Negative extension range start** — `extensions -1 to 10;` — C++ rejects, Go may also reject but with different error
-- **Default on message field** — TESTED in Run 137 (143_message_default), confirmed broken (different error messages)
-- **Negative unsigned default** — TESTED in Run 138 (144_negative_unsigned_default), confirmed broken (Go accepts, C++ rejects)
-- **Default value overflow** — TESTED in Run 139 (145_default_overflow), confirmed broken (Go accepts, C++ rejects)
-
-### Run 139 — Default value overflow on integer field (FAILED: 5/5 profiles)
-- **Test:** `145_default_overflow` — proto2 message with `optional int32 small = 1 [default = 99999999999];` (value exceeds int32 range)
-- **Bug:** Go protoc-go silently accepts the overflowed default value and stores `default_value = "99999999999"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:39: Integer out of range.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2807-2834` — `case "default"` stores `valTok.Value` as the default value string without validating that the integer value fits within the field's type range. For `int32`, values must be within [-2147483648, 2147483647]. The raw string `"99999999999"` is stored directly as `default_value`. C++ protoc's `ParseDefaultAssignment` calls `ConsumeSignedInteger` which validates range. The Go parser should parse the integer and check range based on the field type (int32/int64/uint32/uint64/etc.).
-
-### Run 140 — Integer default value on bool field (FAILED: 5/5 profiles)
-- **Test:** `146_int_default_bool` — proto2 message with `optional bool verbose = 1 [default = 1];` and `optional bool debug = 2 [default = 0];` (integer literals instead of identifiers for bool field defaults)
-- **Bug:** Go protoc-go silently accepts integer literals `1`/`0` as default values for bool fields and stores `default_value = "1"` / `"0"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Expected "true" or "false".` and `test.proto:7:38: Expected "true" or "false".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2782-2788` — bool field default validation only rejects `TokenString` tokens. Integer tokens (`TokenInt`) with value `1` or `0` pass through all validation checks and are stored as `default_value`. C++ protoc's `ParseDefaultAssignment` uses `ConsumeIdentifier` for bool fields, which only accepts identifier tokens `true`/`false`, rejecting integer and float tokens. Same category as Runs 108-110, 117-119 (default value type validation). The fix: add `|| valTok.Type == tokenizer.TokenInt || valTok.Type == tokenizer.TokenFloat` to the bool field validation check.
-
-### Run 141 — Float default value on bool field (FAILED: 5/5 profiles)
-- **Test:** `147_float_default_bool` — proto2 message with `optional bool verbose = 1 [default = 1.0];` and `optional bool debug = 2 [default = 0.0];` (float literals instead of identifiers for bool field defaults)
-- **Bug:** Go protoc-go silently accepts float literals `1.0`/`0.0` as default values for bool fields and stores `default_value = "1"` / `"0"`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:40: Expected "true" or "false".` and `test.proto:7:38: Expected "true" or "false".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2783-2788` — bool field default validation at line 2784 checks `valTok.Type == tokenizer.TokenString || valTok.Type == tokenizer.TokenInt` but does NOT check `valTok.Type == tokenizer.TokenFloat`. A float token `1.0` passes through the bool validation and is stored as `default_value`. C++ protoc's `ParseDefaultAssignment` uses `ConsumeIdentifier` for bool fields, which only accepts identifier tokens `true`/`false`, rejecting float tokens. Same category as Run 140 (integer default on bool). The fix: add `|| valTok.Type == tokenizer.TokenFloat` to line 2784.
-
-### Run 142 — Integer default value on enum field (FAILED: 5/5 profiles)
-- **Test:** `148_int_default_enum` — proto2 message with `optional Priority level = 1 [default = 0];` and `optional Priority urgency = 2 [default = 2];` (integer literals instead of enum value names for enum field defaults)
-- **Bug:** Go protoc-go tries to look up the integer as an enum value name, producing: `Enum type "intenumd.Priority" has no value named "0".` C++ protoc catches it earlier: `Default value for an enum field must be an identifier.` Both reject (exit 1), but error messages differ. C++ validates the token type (must be identifier), Go validates the value name (tries to find "0" in enum members).
-- **Root cause:** `parser.go:2763-2770` — when `field.Type == nil` (unresolved named type), the code accepts any token value and stores it. After type resolution, the enum validation in `cli.go` checks if the value name exists in the enum type. But it doesn't check if the token was an integer vs identifier. C++ protoc's `ParseDefaultAssignment` dispatches based on field type at parse time and calls `ConsumeIdentifier` for enum fields, rejecting integer tokens immediately. The fix: after type resolution reveals the field is an enum type, check that the default value token was an identifier, not an integer literal.
-
-### Run 143 — Labeled map fields (FAILED: 5/5 profiles)
-- **Test:** `149_labeled_map` — proto3 message with `repeated map<string, string> tags = 1;` (label on a map field)
-- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:6:15: Field labels (required/optional/repeated) are not allowed on map fields.` Go protoc-go: `test.proto:6:15: Expected identifier.` C++ recognizes `map<` after the label, parses the map field, then rejects the label with a domain-specific error. Go's message body switch sees `repeated` as the first token (not `map`), falls to the default case, calls `parseField`, which reads `map` as a type name (message reference), then expects a field name identifier but gets `<`.
-- **Root cause:** `parser.go:372` — `case "map":` only fires when `map` is the first token in the message body. When a label like `repeated` precedes it, the `default` case calls `parseField`. `parseField` reads `map` as a type name, then `ExpectIdent()` fails on `<`. C++ protoc's `ParseMessageField` reads the label first, then checks for `map<` as a type, handling both labeled and unlabeled map fields. The Go parser needs to check for `map<` inside `parseField` after consuming a label.
-
-### Known gaps still unexplored (updated):
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **Missing message options** — `map_entry` (field 7)
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Error column positions** — many Go validation errors report wrong column
-- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
-- **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
-- **Negative extension range start** — `extensions -1 to 10;` — C++ rejects, Go may also reject differently
-- **Labeled map fields** — TESTED in Run 143 (149_labeled_map), confirmed broken (Go gives "Expected identifier", C++ gives domain-specific label error)
-- **`optional map<...>` in proto3** — same issue, `optional` label + map<... gets wrong error
-- **`required map<...>` in proto2** — same issue
-- **Group name validation** — TESTED in Run 144 (150_group_lowercase), confirmed broken (Go accepts lowercase, C++ rejects)
-
-### Run 144 — Group name must start with uppercase (FAILED: 5/5 profiles)
-- **Test:** `150_group_lowercase` — proto2 message with `optional group result = 1 { ... }` (group name starts with lowercase letter)
-- **Bug:** Go protoc-go accepts the lowercase group name and produces a downstream error: `"result" is already defined in "grouplower.SearchResponse".` (because lowercased field name matches group type name). C++ protoc immediately rejects with: `test.proto:6:18: Group names must start with a capital letter.` (exit 1). The error messages are completely different.
-- **Root cause:** `parser.go` — `parseGroupField` reads the group name via `ExpectIdent()` but never validates that the first character is uppercase. C++ protoc's `ParseMessageField` in `parser.cc` checks `LookingAtType(io::Tokenizer::TYPE_START)` which verifies the name starts with an uppercase letter. The Go parser should check `unicode.IsUpper(rune(groupName[0]))` after reading the group name and error if it's lowercase.
-
-### Run 145 — Invalid content in method body (FAILED: 5/5 profiles)
-- **Test:** `151_method_body_invalid` — proto3 service with `rpc Search(Request) returns (Response) { string invalid_field = 1; }` (field declaration inside method body)
-- **Bug:** Go protoc-go silently accepts a field declaration inside a method body via `skipStatement()` and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:15:5: Expected "option".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2265-2269` — the method body parsing loop checks for `option` keyword, and for anything else calls `skipStatement()` which silently consumes tokens until `;` or `}`. This means any arbitrary content inside a method body (field declarations, nested messages, random tokens) is silently eaten. C++ protoc's `ParseMethodBlock` only accepts `option` statements and empty statements (`;`), rejecting anything else with "Expected \"option\".". The Go parser should validate that non-`option` tokens in method bodies are either `;` (empty statements) or report an error.
-
-### Known gaps still unexplored (updated):
-- **Duplicate `import public`** — same file imported as both `import` and `import public`
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **Missing message options** — `map_entry` (field 7)
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Error column positions** — many Go validation errors report wrong column
-- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
-- **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
-- **Group name starting with digit** — `optional group 123foo = 1 {}` — same missing validation
-- **Group name all lowercase in extend** — same issue in `parseGroupFieldInExtend`
-- **Group name all lowercase in oneof** — same issue in `parseGroupFieldInOneof`
-- **Invalid content in service body** — `service Foo { string x = 1; }` — Go likely skipStatements, C++ rejects
-- **Invalid content in enum body** — `enum Foo { string x = 1; }` — Go likely skipStatements, C++ rejects
-
-### Run 146 — Reversed reserved range (FAILED: 5/5 profiles)
-- **Test:** `152_reversed_reserved_range` — proto3 message with `reserved 10 to 5;` (start > end in reserved range)
-- **Bug:** Go protoc-go silently accepts a reversed reserved range and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:12: Reserved range end number must be greater than start number.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that reserved range end numbers must be >= start numbers. The Go `descriptor/pool.go` is an empty stub with no range ordering validation. The parser stores the reversed range without any sanity checks.
-
-### Run 147 — Reversed extension range (FAILED: 5/5 profiles)
-- **Test:** `153_reversed_extension_range` — proto2 message with `extensions 200 to 100;` (start > end in extension range)
-- **Bug:** Go protoc-go silently accepts a reversed extension range and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:14: Extension range end number must be greater than start number.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that extension range end numbers must be > start numbers. The Go `descriptor/pool.go` is an empty stub with no range ordering validation. The parser stores the reversed extension range without any sanity checks. Same pattern as reversed reserved ranges (Run 146).
-
-### Run 148 — Reversed enum reserved range (FAILED: 5/5 profiles)
-- **Test:** `154_reversed_enum_reserved` — proto3 enum with `reserved 20 to 10;` (start > end in enum reserved range)
-- **Bug:** Go protoc-go silently accepts a reversed enum reserved range and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:8:12: Reserved range end number must be greater than start number.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that enum reserved range end numbers must be >= start numbers. The Go `descriptor/pool.go` is an empty stub with no enum reserved range ordering validation. The parser stores the reversed range without any sanity checks. Same pattern as reversed message reserved ranges (Run 146) and reversed extension ranges (Run 147).
-
-### Known gaps still unexplored (updated):
-- **Reversed enum reserved range** — TESTED in Run 148 (154_reversed_enum_reserved), confirmed broken (Go accepts, C++ rejects)
-- **Invalid content in service body** — `service Foo { string x = 1; }` — Go treats as rpc, C++ rejects differently
-- **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **Missing message options** — `map_entry` (field 7)
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Error column positions** — many Go validation errors report wrong column
-- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
-- **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
-- **UTF-8 BOM** — TESTED in Run 149 (155_bom), confirmed broken (Go rejects BOM bytes, C++ skips them)
-- **Deprecated file option `java_generate_equals_and_hash`** — TESTED in Run 150 (156_deprecated_file_option), confirmed broken (Go rejects, C++ accepts)
-
-### Run 149 — UTF-8 BOM (Byte Order Mark) (FAILED: 5/5 profiles)
-- **Test:** `155_bom` — proto3 file with UTF-8 BOM (`\xEF\xBB\xBF`) prepended before `syntax = "proto3";`
-- **Bug:** Go protoc-go rejects the file with: `test.proto:line 1:1: unexpected token "ï"` (exit 1). C++ protoc silently skips the BOM and parses the file normally, producing a valid descriptor (exit 0). The test harness detects exit code mismatch.
-- **Root cause:** `tokenizer.go` — the tokenizer has no BOM handling. The 3-byte UTF-8 BOM (`EF BB BF`) is decoded by Go's string handling as `ï` (U+00EF) + `»` (U+00BB) + `¿` (U+00BF). The first byte `ï` is not a valid identifier start character, so it falls to the default case in the tokenizer dispatch and is emitted as an unexpected symbol token. C++ protoc's `Tokenizer::Next()` in `tokenizer.cc` explicitly checks for and skips the UTF-8 BOM at the beginning of a file. The fix: check for the BOM bytes at `pos == 0` in `NewTokenizer` or at the start of `Next()`, and skip past them if present.
-
-### Run 150 — Deprecated file option java_generate_equals_and_hash (FAILED: 5/5 profiles)
-- **Test:** `156_deprecated_file_option` — proto3 file with `option java_generate_equals_and_hash = true;`
-- **Bug:** `parseFileOption()` switch at lines 2584-2704 doesn't have a case for `java_generate_equals_and_hash` (FileOptions field 20, deprecated). The `default` case at line 2702-2703 returns an error: `Option "java_generate_equals_and_hash" unknown`. C++ protoc v29.3 accepts this deprecated option and stores `FileOptions.java_generate_equals_and_hash = true` in the descriptor (exit 0). Go exits 1.
-- **Root cause:** `parser.go:2584-2704` — `parseFileOption` switch handles 18 standard options but is missing the deprecated `java_generate_equals_and_hash` (field 20). The Go proto library's `descriptorpb.FileOptions` struct has the field (`JavaGenerateEqualsAndHash *bool`), so it CAN be stored — the parser just doesn't parse it. C++ protoc's parser handles all FileOptions fields including deprecated ones for backwards compatibility.
-
-### Run 151 — Empty statement in method body (FAILED: 5/5 profiles)
-- **Test:** `157_method_empty_stmt` — proto3 service with `rpc Search(Request) returns (Response) { ; }` (empty statement `;` inside method body)
-- **Bug:** Go protoc-go rejects the file with: `test.proto:15:5: Expected "option".` (exit 1). C++ protoc accepts the empty statement inside the method body and produces a valid descriptor (exit 0). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2271-2280` — the method body parsing loop checks for `"option"` keyword, but has no handling for `";"` (empty statements). The `else` branch at line 2276-2278 rejects anything that isn't `option` with "Expected \"option\".". The service body parser (line 2005-2007) correctly handles `;` by consuming it and continuing, but the method body parser does not. C++ protoc's `ParseMethodBlock` accepts both `option` statements and empty statements (`;`) per the protobuf language spec. The fix: add `if p.tok.Peek().Value == ";" { p.tok.Next(); continue }` before the `option` check in the method body loop.
-
-### Run 152 — Unknown message option silently accepted (FAILED: 5/5 profiles)
-- **Test:** `158_unknown_msg_option` — proto3 message with `option foobar = true;` (completely unknown option name, not a standard MessageOptions field)
-- **Bug:** Go protoc-go silently accepts the unknown message option and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:10: Option "foobar" unknown. Ensure that your proto definition file imports the proto which defines the option.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1193-1194` — `parseMessageOption` switch handles `deprecated` (field 3), `no_standard_descriptor_accessor` (field 2), `message_set_wire_format` (field 1), and `map_entry` (field 7, rejected). The `default` case at line 1193-1194 does `return nil`, silently accepting any unknown option name. C++ protoc stores all options as `UninterpretedOption` during parsing, then during linking in `descriptor.cc`, resolves each option name against the relevant options message fields. Unknown names are rejected. Go's parser should return an error for unknown option names: `return fmt.Errorf(... "Option \"%s\" unknown. ...")`. Same bug exists in `parseEnumOption` (line 1809), `parseServiceOption` (line 2067), and `parseMethodOption` (line 2134) — all silently drop unknown option names.
-
-### Run 153 — Unknown field option silently accepted (FAILED: 5/5 profiles)
-- **Test:** `159_unknown_field_option` — proto3 message with `string name = 1 [foobar = true];` (completely unknown option name, not a standard FieldOptions field)
-- **Bug:** Go protoc-go silently accepts the unknown field option and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:20: Option "foobar" unknown. Ensure that your proto definition file imports the proto which defines the option.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2801-2938` — `parseFieldOptions` switch handles `default`, `json_name`, `deprecated`, `packed`, `lazy`, `jstype`, `ctype`, `debug_redact`, `unverified_lazy` but has NO `default` case. Unknown option names silently fall through the switch without any action or error. C++ protoc stores all options as `UninterpretedOption` during parsing, then during linking validates them. Go's parser should add a `default:` case that returns an error for unknown option names. Same pattern as `parseMessageOption` (Run 152), `parseEnumOption`, `parseServiceOption`, `parseMethodOption` — all silently drop unknown option names.
-
-### Known gaps still unexplored (updated):
-- **Unknown enum/method options** — same `return nil` default case (lines 1809, 2134)
-- **Invalid content in service body** — `service Foo { string x = 1; }` — Go treats as rpc, C++ rejects differently
-- **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Error column positions** — many Go validation errors report wrong column
-- **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
-- **Custom option syntax** — `option (custom_opt) = "foo";` — Go can't parse parenthesized option names
-- **Unknown service options** — TESTED in Run 155 (161_unknown_service_option), confirmed broken (Go accepts, C++ rejects)
-
-### Run 154 — Unknown enum value option silently accepted (FAILED: 5/5 profiles)
-- **Test:** `160_unknown_enum_value_option` — proto3 enum with `HIGH = 1 [foobar = true];` (completely unknown option name, not a standard EnumValueOptions field)
-- **Bug:** Go protoc-go silently accepts the unknown enum value option and produces a valid descriptor (exit 0). C++ protoc rejects with an error about unknown option "foobar" (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1679-1683` — enum value option parsing switch only handles `deprecated` (field 1). Unknown option names fall through the switch without any error — `fieldNum` stays 0, so no source code info is added, but no error is returned either. The option value is consumed and silently dropped. C++ protoc stores all options as `UninterpretedOption` during parsing, then during linking validates them against the `EnumValueOptions` message. Same bug pattern as `parseMessageOption` (Run 152), `parseFieldOptions` (Run 153), `parseEnumOption`, `parseServiceOption`, and `parseMethodOption` — all silently drop unknown option names.
-
-### Run 155 — Unknown service option silently accepted (FAILED: 5/5 profiles)
-- **Test:** `161_unknown_service_option` — proto3 service with `option foobar = true;` (completely unknown option name, not a standard ServiceOptions field)
-- **Bug:** Go protoc-go silently accepts the unknown service option and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:14:10: Option "foobar" unknown. Ensure that your proto definition file imports the proto which defines the option.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2069-2070` — `parseServiceOption` switch only handles `deprecated` (field 33). The `default` case at line 2069-2070 does `return nil`, silently accepting any unknown option name. C++ protoc stores all options as `UninterpretedOption` during parsing, then during linking validates them against the `ServiceOptions` message. Same bug pattern as `parseMessageOption` (Run 152), `parseFieldOptions` (Run 153), `parseEnumOption`, and `parseMethodOption`.
-
-### Run 156 — Unknown method option silently accepted (FAILED: 5/5 profiles)
-- **Test:** `162_unknown_method_option` — proto3 service with `option foobar = true;` inside a method body (completely unknown option name, not a standard MethodOptions field)
-- **Bug:** Go protoc-go silently accepts the unknown method option and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:15:12: Option "foobar" unknown. Ensure that your proto definition file imports the proto which defines the option.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2136-2137` — `parseMethodOption` switch handles `deprecated` (field 33) and `idempotency_level` (field 34). The `default` case at line 2136-2137 does `return nil`, silently accepting any unknown option name. C++ protoc stores all options as `UninterpretedOption` during parsing, then during linking validates them against the `MethodOptions` message. Same bug pattern as `parseMessageOption` (Run 152), `parseFieldOptions` (Run 153), `parseEnumOption` (Run 154), and `parseServiceOption` (Run 155).
-
-### Run 157 — Unknown enum option silently accepted (FAILED: 5/5 profiles)
-- **Test:** `163_unknown_enum_option` — proto3 enum with `option foobar = true;` (completely unknown option name, not a standard EnumOptions field)
-- **Bug:** Go protoc-go silently accepts the unknown enum option and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:10: Option "foobar" unknown. Ensure that your proto definition file imports the proto which defines the option.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1811-1812` — `parseEnumOption` switch handles `allow_alias` (field 2) and `deprecated` (field 3). The `default` case at line 1812 does `return nil`, silently accepting any unknown option name. C++ protoc stores all options as `UninterpretedOption` during parsing, then during linking validates them against the `EnumOptions` message. Same bug pattern as `parseMessageOption` (Run 152), `parseFieldOptions` (Run 153), `parseEnumValueOption` (Run 154), `parseServiceOption` (Run 155), and `parseMethodOption` (Run 156).
-
-### Known gaps still unexplored (updated):
-- **Invalid content in service body** — `service Foo { string x = 1; }` — Go treats as rpc, C++ rejects differently
-- **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Error column positions** — many Go validation errors report wrong column
-- **Negative message reserved ranges** — `reserved -5 to -1;` in a message — C++ rejects negative reserved in messages
-- **Custom option syntax** — TESTED in Run 158 (164_custom_option), confirmed broken (Go can't parse parenthesized option names)
-- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
-- **Unknown enum option** — TESTED in Run 157 (163_unknown_enum_option), confirmed broken (Go accepts, C++ rejects)
-
-### Run 158 — Custom option syntax with parenthesized name (FAILED: 5/5 profiles)
-- **Test:** `164_custom_option` — proto3 file with `option (undefined_opt) = "hello";`
-- **Bug:** `parseFileOption()` at line 2540 reads the next token as the option name. When the option uses custom syntax `(name)`, the `(` token is read as the name. Then `p.tok.Expect("=")` at line 2549 finds `undefined_opt` instead of `=` → parse error: `Expected "="`. C++ protoc correctly parses parenthesized custom option names and gives a proper error: `Option "(undefined_opt)" unknown.`
-- **Root cause:** `parser.go:2540` — `nameTok := p.tok.Next()` reads a single token. Custom option names use `(qualified.name)` syntax which requires consuming `(`, identifier(s), `)` as a compound option name. The Go parser has no support for this syntax at all — not in file options, message options, field options, enum options, service options, or method options. This is a fundamental gap in option name parsing.
-
-### Run 159 — Negative message reserved ranges (FAILED: 5/5 profiles)
-- **Test:** `165_negative_msg_reserved` — proto3 message with `reserved -5 to -1;` and `reserved -10;` (negative numbers in message reserved ranges)
-- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages and different error counts. C++ protoc produces 2 errors: `test.proto:6:12: Expected field name or number range.` and `test.proto:7:12: Expected field name or number range.` (one per reserved statement). Go protoc-go produces 1 error: `test.proto:6:12: Expected integer.` (stops after first error). Error messages differ in content ("Expected field name or number range" vs "Expected integer") and Go only reports the first error.
-- **Root cause:** `parser.go` — `parseMessageReserved` calls `p.tok.ExpectInt()` which strictly requires `TokenInt`. A `-` token is `TokenSymbol`, so `ExpectInt()` fails with a generic "Expected integer" error. C++ protoc's `ParseReserved` in `parser.cc` has special handling for reserved ranges — it checks for string tokens (reserved names) OR number tokens (reserved numbers/ranges) and gives the domain-specific error "Expected field name or number range" when neither is found. Additionally, C++ continues parsing after the first error and reports errors for all problematic reserved statements, while Go stops at the first error.
-
-### Known gaps still unexplored (updated):
-- **Invalid content in service body** — `service Foo { string x = 1; }` — Go treats as rpc, C++ rejects differently
-- **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ from C++ protoc
-- **String concatenation in enum/service/method option values** — same single-token bug as field defaults
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Error column positions** — many Go validation errors report wrong column
-- **Custom option syntax** — TESTED in Run 158 (164_custom_option), confirmed broken
-- **Empty nested extend block** — `message Foo { extend Base { } }` — same issue in `parseNestedExtend`
-- **Negative message reserved ranges** — TESTED in Run 159 (165_negative_msg_reserved), confirmed broken (different error messages)
-- **Invalid content in method body** — arbitrary non-option content — TESTED in Run 145 (151_method_body_invalid)
-- **Package with dots** — `package foo.bar.baz;` — should work, likely not a gap
-- **Empty message** — `message Foo {}` — should work, likely not a gap
-- **Deeply nested messages (5+ levels)** — source code info path correctness at depth
-
-### Run 160 — Invalid content in service body (FAILED: 5/5 profiles)
-- **Test:** `166_invalid_service_body` — proto3 service with `message Nested {}` inside the service body (invalid — only rpc, option, and ; are valid in service bodies)
-- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:10:3: Expected "rpc".` Go protoc-go: `test.proto:line 10:3: expected 'rpc', got "message"`. Three differences: (1) Go has an extra `line ` prefix before the line number, (2) Go uses `expected 'rpc'` (lowercase, single quotes) vs C++'s `Expected "rpc"` (capitalized, double quotes), (3) Go appends `, got "message"` while C++ doesn't show the actual token.
-- **Root cause:** `parser.go:2162-2165` — `parseMethod` uses `fmt.Errorf("line %d:%d: expected 'rpc', got %q", ...)` which has (a) an extraneous `line ` prefix that becomes `test.proto:line X:Y:` after filename wrapping at `cli.go:479`, and (b) a different message format than C++ protoc's `Consume("rpc")` which simply produces `Expected "rpc".`.
-
-### Run 161 — Invalid escape sequence in string literal (FAILED: 5/5 profiles)
-- **Test:** `167_invalid_escape` — proto3 file with `option java_package = "com.example\etest";` where `\e` is not a valid protobuf escape sequence
-- **Bug:** Go protoc-go silently accepts the invalid escape `\e` and produces a valid descriptor with `java_package = "com.exampleetest"` (exit 0). C++ protoc rejects with: `test.proto:4:36: Invalid escape sequence in string literal.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `tokenizer.go:354-355` — the `default` case in the escape sequence switch does `sb.WriteByte(ch)`, which silently strips the `\` and writes the literal character. For `\e`, it produces `e`. C++ protoc's `ConsumeStringAppend` in `tokenizer.cc` records an error via `AddError("Invalid escape sequence in string literal.")` in the default case, which causes the file to be rejected. The Go tokenizer should add an error to `t.Errors` for any unrecognized escape character (anything not in `n`, `t`, `r`, `a`, `b`, `f`, `v`, `\\`, `'`, `"`, `?`, `x`/`X`, `u`, `U`, `0-7`). Same bug applies to ANY invalid escape character: `\c`, `\d`, `\e`, `\g`, `\h`, `\i`, `\j`, `\k`, `\l`, `\m`, `\o`, `\p`, `\q`, `\s`, `\w`, `\y`, `\z`, and uppercase variants.
-
-### Run 162 — Hex escape with no digits (FAILED: 5/5 profiles)
-- **Test:** `168_hex_escape_no_digits` — proto3 file with `option java_package = "com.example.\xtest";` where `\x` is followed by `t` (not a hex digit)
-- **Bug:** Go tokenizer's hex escape handler at lines 308-317 reads 0 hex digits after `\x`, produces val=0 (null byte), and silently continues. C++ protoc rejects with: `test.proto:5:38: Expected hex digits for escape sequence.` (exit 1). Go produces a valid descriptor with `java_package` containing a null byte (exit 0).
-- **Root cause:** `tokenizer.go:310-316` — the hex escape loop `for i := 0; i < 2 && isHexDigit(...)` runs 0 times when no hex digits follow `\x`, resulting in `val = byte(0)`. No error is added. C++ protoc requires at least one hex digit after `\x` and adds an error when none are found. The fix: after the loop, check if 0 digits were read and add a `TokenError` if so.
-
-### Run 163 — Unterminated block comment (FAILED: 5/5 profiles)
-- **Test:** `169_unterminated_block_comment` — proto3 file with `/* This block comment is never closed` at the end (no closing `*/`)
-- **Bug:** Go protoc-go silently accepts the unterminated block comment and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:11:1: End-of-file inside block comment.` and `test.proto:10:1:   Comment started here.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `tokenizer.go:242-255` — `readBlockCommentText()` reads until `*/` or end of input. When end of input is reached, it silently returns whatever was read — no error is added to `t.Errors`. C++ protoc's `Tokenizer::ConsumeBlockComment()` in `tokenizer.cc` calls `AddError("End-of-file inside block comment.")` when the input ends without `*/`, causing the parse to fail. The Go tokenizer needs to check if the loop exited without finding `*/` and add a `TokenError`.
-
-### Run 164 — Duplicate reserved names (FAILED: 5/5 profiles)
-- **Test:** `170_duplicate_reserved_name` — proto3 message with `reserved "name", "name";` (same name listed twice in reserved names)
-- **Bug:** Go protoc-go silently accepts duplicate reserved names and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:9: Field name "name" is reserved multiple times.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that each reserved name appears at most once within a message. The Go `descriptor/pool.go` is an empty stub with no duplicate reserved name checking. The parser stores all reserved names without checking for duplicates. Same pattern applies to duplicate reserved names across multiple `reserved` statements in the same message.
-
-### Run 165 — Duplicate enum reserved names (FAILED: 5/5 profiles)
-- **Test:** `171_duplicate_enum_reserved_name` — proto3 enum with `reserved "DELETED", "DELETED";` (same name listed twice in enum reserved names)
-- **Bug:** Go protoc-go silently accepts duplicate enum reserved names and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:5:6: Enum value "DELETED" is reserved multiple times.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation layer in Go implementation. C++ protoc validates in `descriptor.cc` that each enum reserved name appears at most once within an enum. The Go `descriptor/pool.go` is an empty stub with no duplicate enum reserved name checking. The parser stores all enum reserved names without checking for duplicates. Same pattern as duplicate message reserved names (Run 164).
-
-### Run 166 — Unterminated string literal at EOF (FAILED: 5/5 profiles)
-- **Test:** `172_unterminated_string` — proto3 file ending with `option java_package = "hello` (no closing quote, no `;`, no newline at EOF)
-- **Bug:** Go protoc-go's tokenizer silently accepts the unterminated string — creates a TokenString("hello") with no error. The parser then gets this string token, stores `java_package = "hello"`, and expects `;` but gets EOF → single error: `Expected ";"`. C++ protoc's tokenizer detects the unterminated string and emits TWO errors: `Unexpected end of string.` AND `Expected ";"`. Go is missing the "Unexpected end of string." diagnostic entirely.
-- **Root cause:** `tokenizer.go:288` — `readString()` loop condition is `for t.pos < len(t.input) && t.input[t.pos] != quote`. When `t.pos >= len(t.input)` (EOF reached without finding the closing quote), the loop exits silently. No error is added to `t.Errors`. C++ protoc's `Tokenizer::ConsumeString()` in `tokenizer.cc` checks for `\0` (null/EOF) and calls `AddError("Unexpected end of string.")` before returning. The Go tokenizer needs to check `if t.pos >= len(t.input)` after the loop and add an error for the unterminated string.
-
-### Run 167 — Unicode escape with insufficient hex digits (FAILED: 5/5 profiles)
-- **Test:** `173_unicode_escape_short` — proto3 file with `option java_package = "com.\u00test";` where `\u` has only 2 hex digits instead of the required 4
-- **Bug:** Go tokenizer's `readUnicodeHex(4)` at line 338 reads UP TO 4 hex digits but doesn't verify it actually read 4. When fewer hex digits are available (e.g., `\u00` followed by non-hex `t`), it silently reads 2 digits and produces code point 0x00, then `test` is treated as regular characters. C++ protoc (v29.3) requires exactly 4 hex digits and rejects with: `Expected four hex digits for \u escape sequence.` (exit 1). Go produces a valid descriptor (exit 0).
-- **Root cause:** `tokenizer.go:582-588` — `readUnicodeHex(n)` loop condition `for i := 0; i < n && t.pos < len(t.input) && isHexDigit(t.input[t.pos])` stops early when a non-hex character is encountered. No validation checks `i == n` after the loop to ensure all required digits were read. Same bug affects `\U` escapes (which require 8 hex digits). Fix: after the loop, check if `i < n` and add a `TokenError` if so.
-
-### Run 168 — Tab indentation column counting (FAILED: 4/5 profiles)
-- **Test:** `174_tab_indent` — proto3 message with tab-indented fields (`\t` before `string name = 1;` etc.)
-- **Bug:** Go tokenizer `advance()` at line 476-486 treats `\t` (tab) as a single column increment (`col++`), same as any other non-`\n` character. C++ protoc expands tabs to the next tab stop (every 8 columns), so column 0 + tab = column 8. Result: all column numbers on tab-indented lines differ. E.g., for `\tstring name = 1;`, C++ reports span `[4, 8, 24]` but Go reports `[4, 1, 17]`.
-- **Root cause:** `tokenizer.go:476-486` — `advance()` function only has special handling for `\n` (newline). Tab characters are treated as 1-column-wide characters. C++ protoc's tokenizer (`io/tokenizer.cc`) expands tabs to the next multiple-of-8 column position, producing larger column offsets. All source code info spans on any tab-indented line will have wrong column values.
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail (binary differs in source code info spans).
-
-### Run 169 — Reserved name string concatenation (FAILED: 5/5 profiles)
-- **Test:** `175_reserved_string_concat` — proto3 message with `reserved "dele" "ted", "remo" "ved";` (adjacent string literals in reserved names)
-- **Bug:** `parseMessageReserved()` at line 582 uses `p.tok.ExpectString()` which reads a single string token `"dele"`. Then line 593 checks for `,` but sees `"ted"` (another string token) → break. Line 599 `p.tok.Expect(";")` fails with `Expected ";"` because next token is `"ted"`. C++ protoc concatenates adjacent string literals per the protobuf language spec, producing `"deleted"` and `"removed"`, and accepts the file (exit 0).
-- **Root cause:** `parser.go:582` — `ExpectString()` reads a single string token. No loop to check for and concatenate subsequent adjacent string tokens. C++ protoc's `ConsumeString()` loops over adjacent string literals and concatenates them. Same root cause as Run 25 (file option string concatenation), Run 59 (field default string concatenation), Run 121 (syntax), Run 122 (import path). This instance affects reserved name declarations. Same bug likely exists in `parseEnumReserved` for enum reserved names.
-
-### Known gaps still unexplored (updated):
-- **Duplicate reserved names across statements** — `reserved "a"; reserved "a";` — same bug, different syntax
-- **Invalid content in enum body** — `enum Foo { string x = 1; }` — both may reject but differently
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Error column positions** — many Go validation errors report wrong column
-- **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes (likely also broken)
-- **Invalid escape in import path** — `import "test\eproto";` — same bug affects all string literals
-- **Invalid escape in default value** — `[default = "hel\elo"]` — same bug
-- **Unterminated line comment at EOF** — `// comment with no newline` — may or may not differ
-- **`\r` only line endings** — C++ treats `\r` as line break, Go doesn't (column counting would differ)
-- **Duplicate enum reserved numbers** — `reserved 1, 1;` inside enum — Go likely accepts, C++ rejects
-- **Unterminated single-quoted string** — same bug with `'hello` (single quote variant)
-- **String concatenation in enum reserved names** — `reserved "DEL" "ETED";` inside enum — same bug as message reserved names
-- **Reserved name string concatenation** — TESTED in Run 169 (175_reserved_string_concat), confirmed broken (Go rejects, C++ accepts)
-
-### Run 170 — Bytes default value escape representation (FAILED: 5/5 profiles)
-- **Test:** `176_bytes_default_escape` — proto2 message with `optional bytes data = 1 [default = "\x00\xff\x42"];` plus empty and text defaults
-- **Bug:** Go protoc-go stores the decoded raw bytes as the `default_value` field: actual bytes `\x00\xff\x42` (3 bytes). C++ protoc stores the C-style escape representation: `\000\377B` (9 ASCII chars). The `default_value` field in `FieldDescriptorProto` is a string, and C++ uses C-style escaping for non-printable bytes (`\NNN` octal for non-ASCII, printable ASCII as-is). Go stores the binary-decoded bytes directly. This causes descriptor set size differences (130 vs 124 bytes) and binary CodeGeneratorRequest mismatches across all profiles.
-- **Root cause:** `parser.go` — when a `bytes` field default value is parsed, the string is decoded by the tokenizer (handling `\x` escapes correctly) and stored as raw bytes. But C++ protoc's `FieldDescriptorProto::set_default_value()` stores a C-escaped string representation of the bytes, not the raw bytes. The Go parser should re-encode the decoded bytes using C-style escaping: printable ASCII chars as-is, non-printable bytes as `\NNN` (3-digit octal). The function `CEscape` in C++ protobuf (`stubs/strutil.cc`) handles this conversion.
-- **Tried and discarded:** Duplicate enum reserved numbers (`reserved 1, 1;`) — both C++ and Go reject identically, already validated. Enum reserved string concatenation — fixed in recent Go parser changes. Hash comments — C++ v29.3 also rejects. CR-only line endings — both produce identical output. Single-quoted strings — both handle correctly. `+` prefix on defaults — both reject. json_name edge cases (double underscores, uppercase) — both produce identical output. Keyword field names (`to`, `max`, `stream`, `returns`, etc.) — both handle correctly.
-
-### Known gaps still unexplored (updated):
-- **Bytes default C-escape for other escape sequences** — `\t`, `\n`, `\r` in bytes defaults may also differ (stored as decoded byte vs `\t`/`\n`/`\r`)
-- **String default value on bytes field** — C++ may treat differently than Go
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Error column positions** — many Go validation errors report wrong column
-- **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
-- **Unterminated line comment at EOF** — `// comment with no newline` — may or may not differ
-- **Duplicate enum reserved numbers** — TESTED, both reject identically — NOT a gap
-- **String concatenation in enum reserved names** — TESTED, fixed in recent changes — NOT a gap
-- **Empty statements inside oneof bodies** — TESTED in Run 171 (177_oneof_empty_stmt), confirmed broken (Go gives wrong error)
-
-### Run 171 — Empty statement inside oneof body (FAILED: 5/5 profiles)
-- **Test:** `177_oneof_empty_stmt` — proto3 message with `oneof choice { ; string name = 1; int32 id = 2; }` (empty statement `;` inside oneof body)
-- **Bug:** Both C++ and Go reject the file (`;` inside oneof is not valid per the proto3 grammar), but they produce different error messages. C++ protoc: `test.proto:7:5: Expected type name.` (error at the `;` token position). Go protoc-go: `test.proto:8:12: Missing field number.` (error at a different line and column because Go's parseOneof calls parseField which consumes `;` as a type name, then `string` as a field name, then fails when `name` is not `=`).
-- **Root cause:** `parser.go:2362-2398` — `parseOneof` loop has no `case ";"` for empty statements. The `;` token falls through all the `if` checks (option, map, labels, group) and reaches the else branch which calls `parseField`. `parseField` interprets `;` as a message type name (sets `TypeName = ";"`) and `string` as the field name, then expects `=` but finds `name` → "Missing field number" error at the wrong position. C++ protoc's oneof parser recognizes `;` is not a valid type name and immediately reports "Expected type name" at the correct position.
-
-### Run 172 — Comments on map fields not attached (FAILED: 4/5 profiles)
-- **Test:** `178_map_field_comment` — proto3 message with a leading comment on a `map<string, string>` field: `// Key-value labels for the configuration.\nmap<string, string> labels = 2;`
-- **Bug:** `parseMapField()` at lines 2418-2570 never calls `attachComments()`. Regular fields in `parseField()` call `attachComments(fieldLocIdx, firstIdx)` at line 1344, attaching leading/trailing/detached comments to the field's SCI location. Map fields skip this entirely. C++ protoc attaches comments to map field declarations just like any other field. Result: descriptor_set_src 424 vs 381 bytes (43 bytes difference = the comment text). Binary CodeGeneratorRequest also differs for plugin profiles.
-- **Root cause:** `parser.go:2418-2570` — `parseMapField` function is missing two things: (1) it doesn't save `p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the field declaration SCI location. The fix: add `firstIdx := p.tok.CurrentIndex()` at the start, save the SCI location index after `p.addLocationSpan(fieldPath, ...)` at line 2559, and call `p.attachComments(locIdx, firstIdx)` after it.
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 173 — Comments on oneof declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `179_oneof_comment` — proto3 message with a leading comment on a `oneof payload { ... }` declaration: `// The payload can be text or a number.\noneof payload { string text = 2; int32 number = 3; }`
-- **Bug:** `parseOneof()` at lines 2338-2416 never calls `attachComments()`. Regular fields in `parseField()` call `attachComments(fieldLocIdx, firstIdx)` at line 1344, and map fields were recently fixed (Run 172). Oneof declarations skip comment attachment entirely. C++ protoc attaches comments to oneof declarations just like any other entity. Binary CodeGeneratorRequest differs because the leading comment text is missing from the oneof's SCI location.
-- **Root cause:** `parser.go:2338-2416` — `parseOneof` function is missing two things: (1) it doesn't save `p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(oneofLocIdx, firstIdx)` after setting the oneof declaration span at line 2409. The fix: add `firstIdx := p.tok.CurrentIndex()` before line 2339, and call `p.attachComments(oneofLocIdx, firstIdx)` after line 2409.
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 174 — Comments on service declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `180_service_comment` — proto3 file with a leading comment on a `service SearchService { ... }` declaration: `// The search service handles all search queries.\nservice SearchService { rpc Search(Request) returns (Response); }`
-- **Bug:** `parseService()` at lines 2017-2064 never calls `attachComments()`. C++ protoc attaches comments to service declarations just like any other entity. Binary descriptor sizes differ (492 vs 442 bytes for descriptor_set_src/full) because the leading comment text is missing from the service's SCI location.
-- **Root cause:** `parser.go:2017-2064` — `parseService` function creates `svcLocIdx` via `addLocationPlaceholder` at line 2033, but never calls `p.attachComments(svcLocIdx, firstIdx)` after setting the span at line 2062. Same bug pattern as map fields (Run 172) and oneof declarations (Run 173). The fix: save `firstIdx := p.tok.CurrentIndex()` at the start, and call `p.attachComments(svcLocIdx, firstIdx)` after line 2062.
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 175 — Comments on enum declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `181_enum_comment` — proto3 file with a leading comment on an `enum Status { ... }` declaration: `// The status of a task in the system.\nenum Status { UNKNOWN = 0; ACTIVE = 1; INACTIVE = 2; }`
-- **Bug:** `parseEnum()` at lines 1600-1700 never calls `attachComments()`. It creates `enumLocIdx` via `addLocationPlaceholder` at line 1616, but never calls `p.attachComments(enumLocIdx, firstIdx)` after setting the enum declaration span. C++ protoc attaches comments to enum declarations just like any other entity. Binary descriptor sizes differ because the leading comment text is missing from the enum's SCI location.
-- **Root cause:** `parser.go:1600-1700` — `parseEnum` function is missing two things: (1) it doesn't save `p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(enumLocIdx, firstIdx)` after the enum declaration span is set. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), and service declarations (Run 174). The fix: add `firstIdx := p.tok.CurrentIndex()` at the start, and call `p.attachComments(enumLocIdx, firstIdx)` after the enum span is finalized.
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 176 — Comments on method declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `182_method_comment` — proto3 service with a leading comment on an `rpc Search(Request) returns (Response);` declaration: `// Performs a search query against the index.\nrpc Search(Request) returns (Response);`
-- **Bug:** `parseMethod()` at lines 2192-2340 never calls `attachComments()`. It creates `methodLocIdx` via `addLocationPlaceholder` at line 2291, but never calls `p.attachComments(methodLocIdx, firstIdx)` after setting the method declaration span at line 2338. C++ protoc attaches comments to method declarations just like any other entity. Binary CodeGeneratorRequest differs because the leading comment text is missing from the method's SCI location.
-- **Root cause:** `parser.go:2192-2340` — `parseMethod` function is missing two things: (1) it doesn't save `p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(methodLocIdx, firstIdx)` after the method declaration span is set. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), and enum declarations (Run 175). The fix: add `firstIdx := p.tok.CurrentIndex()` at the start, and call `p.attachComments(methodLocIdx, firstIdx)` after line 2338.
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 177 — Comments on enum value declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `183_enum_value_comment` — proto3 enum with leading comments on each enum value: `// The default unknown priority.\nUNKNOWN = 0;`, `// High priority tasks are handled first.\nHIGH = 1;`, `// Low priority tasks are handled last.\nLOW = 2;`
-- **Bug:** `parseEnum()` enum value parsing loop (lines 1625-1786) never calls `attachComments()` for individual enum values. It creates SCI locations for enum values at line 1763, but never attaches leading/trailing/detached comments to them. C++ protoc attaches comments to enum value declarations just like any other entity. Binary CodeGeneratorRequest differs because the leading comment texts are missing from the enum value SCI locations.
-- **Root cause:** `parser.go:1625-1786` — the enum value parsing loop is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start of each enum value iteration (needed for comment attachment), and (2) it never calls `p.attachComments(valueLocIdx, firstIdx)` after adding the enum value's SCI location at line 1763. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), and method declarations (Run 176). The fix: add `firstIdx := p.tok.CurrentIndex()` at the top of the enum value loop iteration, save the SCI location index after `p.addLocationSpan(valuePath, ...)` at line 1763, and call `p.attachComments(locIdx, firstIdx)` after it.
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 178 — Comments on import declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `184_import_comment` — proto3 file with `// Imports the base types for timestamps.\nimport "base.proto";` (leading comment on an import declaration)
-- **Bug:** `parseImport()` at lines 365-422 never calls `attachComments()`. It creates a SCI location at line 406 via `p.addLocationSpan([]int32{3, depIdx}, ...)` but never attaches leading/trailing/detached comments to it. C++ protoc attaches comments to import declarations just like any other entity. Binary CodeGeneratorRequest differs because the leading comment text is missing from the import's SCI location.
-- **Root cause:** `parser.go:365-422` — `parseImport` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the import's SCI location at line 406. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), and enum value declarations (Run 177).
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 179 — Comments on reserved declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `185_reserved_comment` — proto3 message with a leading comment on a `reserved 5, 10 to 20;` statement: `// These field numbers are reserved for legacy fields.\nreserved 5, 10 to 20;`
-- **Bug:** `parseMessageReserved()` at lines 576-712 never calls `attachComments()`. It creates SCI locations for individual reserved ranges (path `[4, 0, 9, idx]`) and the container (path `[4, 0, 9]`), but never attaches leading/trailing/detached comments to any of them. C++ protoc attaches comments to reserved statement declarations just like any other entity. Binary descriptor sizes differ (418 vs 363 bytes for descriptor_set_src) because the leading comment text is missing from the reserved statement's SCI location.
-- **Root cause:** `parser.go:576-712` — `parseMessageReserved` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the statement-level SCI location. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), enum value declarations (Run 177), and import declarations (Run 178).
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 180 — Comments on extension range declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `186_extension_range_comment` — proto2 message with a leading comment on an `extensions 100 to 199;` statement: `// These extension ranges are reserved for third-party plugins.\nextensions 100 to 199;`
-- **Bug:** `parseExtensionRange()` at lines 717-900+ never calls `attachComments()`. It creates SCI locations for individual extension ranges and the container, but never attaches leading/trailing/detached comments to any of them. C++ protoc attaches comments to extension range declarations just like any other entity. Binary descriptor sizes differ because the leading comment text is missing from the extension range statement's SCI location.
-- **Root cause:** `parser.go:717+` — `parseExtensionRange` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the statement-level SCI location. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), enum value declarations (Run 177), import declarations (Run 178), and reserved declarations (Run 179).
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 181 — Comments on enum reserved declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `187_enum_reserved_comment` — proto3 enum with a leading comment on a `reserved 10 to 20;` statement: `// These values are reserved for future use.\nreserved 10 to 20;`
-- **Bug:** `parseEnumReserved()` at lines 1867+ never calls `attachComments()`. It creates SCI locations for individual enum reserved ranges and the container, but never attaches leading/trailing/detached comments to any of them. C++ protoc attaches comments to enum reserved declarations just like any other entity. Binary descriptor sizes differ because the leading comment text is missing from the enum reserved statement's SCI location.
-- **Root cause:** `parser.go:1867+` — `parseEnumReserved` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the statement-level SCI location. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), enum value declarations (Run 177), import declarations (Run 178), reserved declarations (Run 179), and extension range declarations (Run 180).
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 182 — Comments on file option declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `188_file_option_comment` — proto3 file with a leading comment on `option java_package = "com.example.test";`: `// This option configures the Java package name.`
-- **Bug:** `parseFileOption()` at lines 2598-2821 never calls `attachComments()`. It creates SCI locations at paths `[8]` and `[8, fieldNum]` (lines 2811-2818), but never attaches leading/trailing/detached comments to them. C++ protoc attaches comments to option statement declarations just like any other entity. Binary descriptor sizes differ because the leading comment text is missing from the option's SCI location.
-- **Root cause:** `parser.go:2598-2821` — `parseFileOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (the function consumes `option` at line 2599 via `p.tok.Next()` but doesn't save the pre-consumption index), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations at lines 2811-2818. Same bug pattern as map fields (Run 172), oneof declarations (Run 173), service declarations (Run 174), enum declarations (Run 175), method declarations (Run 176), enum value declarations (Run 177), import declarations (Run 178), reserved declarations (Run 179), extension range declarations (Run 180), and enum reserved declarations (Run 181).
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 183 — Comments on message option declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `189_message_option_comment` — proto3 message with a leading comment on `option deprecated = true;`: `// This message is deprecated and should not be used.`
-- **Bug:** `parseMessageOption()` at lines 1181-1240 never calls `attachComments()`. It creates SCI locations at paths `[msgPath, 7]` and `[msgPath, 7, fieldNum]` (lines 1230-1238), but never attaches leading/trailing/detached comments to them. C++ protoc attaches comments to message option declarations just like any other entity. Binary descriptor sizes differ because the leading comment text is missing from the option's SCI location.
-- **Root cause:** `parser.go:1181-1240` — `parseMessageOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations at lines 1230-1238. Same bug pattern as file option declarations (Run 182), enum declarations (Run 175), service declarations (Run 174), etc.
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 184 — Comments on enum option declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `190_enum_option_comment` — proto3 enum with `option allow_alias = true;` preceded by a leading comment: `// Allow multiple enum values to share the same number.`
-- **Bug:** `parseEnumOption()` at lines 1812-1870 never calls `attachComments()`. It creates SCI locations at paths `[enumPath, 3]` and `[enumPath, 3, fieldNum]`, but never attaches leading/trailing/detached comments to them. C++ protoc attaches comments to enum option declarations just like any other entity. Binary descriptor sizes differ (488 vs 432 bytes for descriptor_set_src) because the leading comment text is missing from the enum option's SCI location.
-- **Root cause:** `parser.go:1812-1870` — `parseEnumOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations. Same bug pattern as file option declarations (Run 182), message option declarations (Run 183), etc.
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 185 — Comments on service option declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `191_service_option_comment` — proto3 service with a leading comment on `option deprecated = true;`: `// This service is deprecated and should not be used.`
-- **Bug:** `parseServiceOption()` at lines 2089-2140 never calls `attachComments()`. It creates SCI locations at paths `[svcPath, 3]` and `[svcPath, 3, fieldNum]`, but never attaches leading/trailing/detached comments to them. C++ protoc attaches comments to service option declarations just like any other entity. Binary descriptor sizes differ because the leading comment text is missing from the service option's SCI location.
-- **Root cause:** `parser.go:2089-2140` — `parseServiceOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations. Same bug pattern as file option declarations (Run 182), message option declarations (Run 183), and enum option declarations (Run 184).
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 186 — Comments on method option declarations not attached (FAILED: 4/5 profiles)
-- **Test:** `192_method_option_comment` — proto3 service with a leading comment on `option deprecated = true;` inside a method body: `// This option marks the method as deprecated.`
-- **Bug:** `parseMethodOption()` at lines 2144-2208 never calls `attachComments()`. It creates SCI locations at lines 2199-2206 (paths `[methodPath, 4]` and `[methodPath, 4, fieldNum]`), but never attaches leading/trailing/detached comments to them. C++ protoc attaches comments to method option declarations just like any other entity. Binary CodeGeneratorRequest differs because the leading comment text is missing from the method option's SCI location.
-- **Root cause:** `parser.go:2144-2208` — `parseMethodOption` function is missing two things: (1) it doesn't save `firstIdx := p.tok.CurrentIndex()` at the start (needed as `firstIdx` for comment attachment), and (2) it never calls `p.attachComments(locIdx, firstIdx)` after adding the SCI locations at lines 2199-2206. Same bug pattern as file option declarations (Run 182), message option declarations (Run 183), enum option declarations (Run 184), and service option declarations (Run 185).
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 187 — Multiline block comment formatting (FAILED: 4/5 profiles)
-- **Test:** `193_block_comment` — proto3 message with a Javadoc-style multiline block comment on a field: `/*\n   * The name of the\n   * configuration entry.\n   */\nstring name = 2;`
-- **Bug:** Go's `readBlockCommentText()` returns raw content between `/*` and `*/`: `"\n   * The name of the\n   * configuration entry.\n   "`. C++ protoc strips leading ` * ` prefixes from each line (via `StripLeadingWhitespaceAndStarFromBlockComment()`), producing: `"\n The name of the\n configuration entry.\n"`. Binary CodeGeneratorRequest differs because the `leading_comments` field has different text content.
-- **Root cause:** `tokenizer.go:247-267` — `readBlockCommentText` returns the raw text between `/*` and `*/` without any post-processing. C++ protoc's tokenizer calls `StripLeadingWhitespaceAndStarFromBlockComment()` which strips the leading ` * ` (space-star-optional-space) from each line of a multiline block comment. This produces cleaner comment text matching Javadoc/JSDoc conventions. The Go tokenizer needs to implement the same stripping logic after reading the raw block comment content.
-- **Profiles:** `descriptor_set` passes (no source info). `descriptor_set_src`, `descriptor_set_full`, `plugin`, `plugin_param` all fail.
-
-### Run 188 — Negative zero integer default (FAILED: 5/5 profiles)
-- **Test:** `194_negative_zero_default` — proto2 message with `optional int32 offset = 1 [default = -0];` and `optional int32 positive = 2 [default = 42];`
-- **Bug:** Go stores `default_value = "-0"` while C++ stores `default_value = "0"`. C++ parses `-0` as integer 0, then formats via `StrCat(0)` → `"0"`. Go concatenates strings: `"-" + "0"` → `"-0"`, then `normalizeIntDefault("-0")` returns `"-0"` because `len("0") < 2` triggers early return before any parsing. Binary CodeGeneratorRequest sizes differ (712 vs 710 bytes).
-- **Root cause:** `parser.go:2954-2956` — for integer defaults, `defVal` is formed by string concatenation (`"-" + valTok.Value`), then `normalizeIntDefault` is called. But `normalizeIntDefault` at line 3201 has `if len(v) < 2 || v[0] != '0'` which returns early for single-digit values. The value `"0"` has length 1, so it returns `"-0"` without converting through integer representation. Fix: after forming `defVal` for integer types, parse through integer and re-format, or special-case `-0` → `"0"`.
-
-### Known gaps still unexplored (updated):
-- **String default value on bytes field** — C++ may treat differently than Go
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ
-- **Enum default from wrong enum** — `optional EnumA x = 1 [default = ENUM_B_VALUE];` — C++ validates membership
-- **Error column positions** — many Go validation errors report wrong column
-- **`\U` with insufficient hex digits** — same pattern for 8-digit Unicode escapes
-- **Comments on group field declarations** — `parseGroupField`/`parseGroupFieldInOneof`/`parseGroupFieldInExtend` may miss comments
-- **Comments on nested extend field declarations** — fields inside nested extend may miss comments
-- **Comments on oneof fields** — individual fields within oneof parsed via `parseField` which has `attachComments`, but verify
-- **Comments on field option declarations** — e.g., comment on `[deprecated = true]` inside `[...]` bracket list
-- **Block comment trailing newline** — single-line block comments match, but edge cases with `/* */` (empty block comment) may differ
-- **Block comment without leading `*`** — multiline `/* line1\nline2 */` without `*` prefix — C++ stripping behavior may differ
-- **Multiline block comment on other entities** — same bug affects comments on messages, enums, services, etc. (not just fields)
-
-### Run 189 — Enum value debug_redact option (FAILED: 5/5 profiles)
-- **Test:** `195_enum_val_debug_redact` — proto3 enum with `SECRET = 1 [debug_redact = true];`
-- **Bug:** Enum value option parsing switch at line 1714 only handles `deprecated`. The `debug_redact` option (field 3 of `EnumValueOptions`) hits the `default` case and returns error: `Option "debug_redact" unknown.` C++ protoc accepts it and populates `EnumValueOptions.debug_redact = true` in the descriptor.
-- **Root cause:** `parser.go:1714-1719` — enum value option switch only has `case "deprecated":`. Missing `case "debug_redact":` to handle `EnumValueOptions.debug_redact` (field 3). Other potentially missing enum value options: `features` (field 2, editions-only).
-
-### Run 190 — Enum option deprecated_legacy_json_field_conflicts (FAILED: 5/5 profiles)
-- **Test:** `196_enum_deprecated_legacy_json` — proto3 enum with `option deprecated_legacy_json_field_conflicts = true;`
-- **Bug:** `parseEnumOption()` switch at lines 1847-1855 only handles `allow_alias` (field 2) and `deprecated` (field 3). The `deprecated_legacy_json_field_conflicts` option (field 6 of `EnumOptions`) hits the `default` case and returns error: `Option "deprecated_legacy_json_field_conflicts" unknown.` C++ protoc v29.3 accepts it and populates `EnumOptions.deprecated_legacy_json_field_conflicts = true`.
-- **Root cause:** `parser.go:1847-1855` — `parseEnumOption` switch is missing `deprecated_legacy_json_field_conflicts` (field 6). Same pattern as all other missing option bugs. Also potentially missing: `deprecated_legacy_json_field_conflicts` on `MessageOptions` (field 11).
-
-### Run 191 — Message option deprecated_legacy_json_field_conflicts (FAILED: 5/5 profiles)
-- **Test:** `197_msg_deprecated_legacy_json` — proto3 message with `option deprecated_legacy_json_field_conflicts = true;`
-- **Bug:** `parseMessageOption()` switch at lines 1213-1227 handles `deprecated` (3), `no_standard_descriptor_accessor` (2), `message_set_wire_format` (1), and rejects `map_entry` (7). The `deprecated_legacy_json_field_conflicts` option (field 11 of `MessageOptions`) hits the `default` case and returns error: `Option "deprecated_legacy_json_field_conflicts" unknown.` C++ protoc v29.3 accepts it and populates `MessageOptions.deprecated_legacy_json_field_conflicts = true`.
-- **Root cause:** `parser.go:1213-1227` — `parseMessageOption` switch is missing `deprecated_legacy_json_field_conflicts` (field 11). The Go protobuf library's `descriptorpb.MessageOptions` struct has the `DeprecatedLegacyJsonFieldConflicts` field, so it CAN be stored — the parser just doesn't parse it. Same pattern as the enum option variant (Run 190).
-
-### Run 192 — Invalid ctype enum value silently accepted (FAILED: 5/5 profiles)
-- **Test:** `198_invalid_ctype` — proto3 message with `string name = 1 [ctype = INVALID_VALUE];` (nonexistent CType enum value)
-- **Bug:** Go protoc-go silently accepts the invalid ctype value and produces a valid descriptor with an empty non-nil `FieldOptions{}` (exit 0). C++ protoc rejects with: `test.proto:6:28: Enum type "google.protobuf.FieldOptions.CType" has no value named "INVALID_VALUE" for option "google.protobuf.FieldOptions.ctype".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:3029-3041` — `case "ctype":` inner switch has `case "STRING":`, `case "CORD":`, `case "STRING_PIECE":` but NO `default:` case. When `INVALID_VALUE` doesn't match any case, it falls through silently. `field.Options = &descriptorpb.FieldOptions{}` is set (non-nil) but `Ctype` is never assigned. C++ protoc stores the option as an UninterpretedOption during parsing, then during linking resolves it against the `CType` enum type and rejects invalid values. Same bug affects `jstype` inner switch (no default case for invalid values like `JS_INVALID`) and any other enum-typed option with a fixed set of values in the switch.
-
-### Run 193 — Editions dotted file option (features.field_presence) (FAILED: 5/5 profiles)
-- **Test:** `199_editions_features` — edition 2023 file with `option features.field_presence = IMPLICIT;`
-- **Bug:** `parseFileOption()` at line 2655 does `p.tok.Expect("=")` immediately after reading the option name token `features`. But the next token is `.` (part of the dotted name `features.field_presence`), not `=`. Go errors with: `test.proto:5:16: Expected "=".` C++ protoc handles dotted option names (sub-message access) by reading the full dotted path before expecting `=`.
-- **Root cause:** `parser.go:2615-2660` — `parseFileOption` reads a single token for the option name and immediately expects `=`. No handling for dotted names like `features.field_presence` where `features` is a message-typed option and `.field_presence` accesses a sub-field. C++ protoc parses the full dotted path as part of the option name resolution. This affects all sub-message option access patterns, not just `features`.
-
-### Run 194 — Trailing comma in field options (FAILED: 5/5 profiles)
-- **Test:** `200_trailing_comma_options` — proto3 message with `int32 count = 2 [deprecated = true,];` (trailing comma after the last option in the bracket list)
-- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:7:38: Expected identifier.` (correctly identifies the trailing comma as an error since `]` follows instead of another option name). Go protoc-go: `test.proto:7:38: Option "]" unknown. Ensure that your proto definition file imports the proto which defines the option.` (reads `]` as an option name token, then treats it as an unknown option). The test harness detects error message mismatch.
-- **Root cause:** `parser.go` — `parseFieldOptions` loop: after consuming `,`, it continues the loop and reads the next token as an option name. When a trailing comma precedes `]`, the `]` token is consumed as `optNameTok.Value = "]"`. This falls through the option name switch and hits the unknown option error. C++ protoc's parser checks for `]` after consuming `,` and produces "Expected identifier" because it expects another option name after a comma, not the closing bracket. The Go parser should check if the token after `,` is `]` and either error with "Expected identifier" or allow trailing commas.
-
-### Run 195 — Empty import path (FAILED: 5/5 profiles)
-- **Test:** `201_empty_import` — proto3 file with `import "";` (empty string import path)
-- **Bug:** Both C++ and Go reject the file, but with different error messages. C++ protoc: two lines — `: File not found.` and `test.proto:3:1: Import "" was not found or had errors.` Go protoc-go: one line — `file not found: `. C++ reports the import location with line/column and the import path in the message; Go reports a generic "file not found" without location info.
-- **Root cause:** Go importer error handling returns a bare "file not found" message without including the import path or the source location. C++ protoc reports two errors: one from the file system layer (`: File not found.`) and one from the parser/importer layer with full source location context.
-
-### Run 196 — FieldOptions.weak missing (FAILED: 5/5 profiles)
-- **Test:** `202_weak_field_option` — proto3 message with `Dep ref = 2 [weak = true];`
-- **Bug:** `parseFieldOptions()` switch at lines 3060-3132 doesn't have a case for `weak` (FieldOptions field 10). The `default` case at line 3131 returns `Option "weak" unknown.` error. C++ protoc accepts `[weak = true]` and populates `FieldOptions.weak = true` in the descriptor. Go rejects valid input that C++ accepts.
-- **Root cause:** `parser.go:3060-3132` — field options switch handles `deprecated`, `json_name`, `packed`, `lazy`, `jstype`, `ctype`, `debug_redact`, `unverified_lazy`, `default` but not `weak`. The `weak` option (FieldOptions field 10) is a standard protobuf field option that Go's parser doesn't recognize.
-
-### Run 197 — FieldOptions.retention (FAILED: 5/5 profiles)
-- **Test:** `203_retention_option` — proto3 message with `[retention = RETENTION_SOURCE]` and `[retention = RETENTION_RUNTIME]` on fields
-- **Bug:** `parseFieldOptions()` switch at lines 2986-3137 doesn't have a case for `retention` (FieldOptions field 17). The `default` case at line 3136-3137 returns `Option "retention" unknown.` error. C++ protoc accepts `[retention = ...]` and populates `FieldOptions.retention` in the descriptor. Go rejects valid input that C++ accepts.
-- **Root cause:** `parser.go:2986-3137` — field options switch handles `deprecated`, `json_name`, `packed`, `lazy`, `jstype`, `ctype`, `debug_redact`, `unverified_lazy`, `weak`, `default` but not `retention`. The `retention` option (FieldOptions field 17, type `OptionRetention` enum) is a standard protobuf field option that Go's parser doesn't recognize.
-
-### Run 198 — Trailing comma in enum value options (FAILED: 5/5 profiles)
-- **Test:** `204_enum_val_trailing_comma` — proto3 enum with `HIGH = 1 [deprecated = true,];` (trailing comma after last option in bracket list)
-- **Bug:** Both C++ and Go reject the file (exit 1), but with different error messages. C++ protoc: `test.proto:7:31: Expected identifier.` (expects another option name after the comma). Go protoc-go: `test.proto:7:32: Expected "=".` (reads `]` as the next option name token, then tries to consume `=` but gets `;`). Column also differs (31 vs 32).
-- **Root cause:** Same pattern as Run 194 (trailing comma in field options). After consuming `,`, the enum value option loop continues and reads the next token as an option name. `]` is consumed as `optNameTok.Value = "]"`, then `p.tok.Expect("=")` at line 1705 gets `;` → error. C++ protoc expects an identifier (option name) after `,` and reports "Expected identifier" at the `,` or `]` position. Go doesn't check for `]` after `,` and produces a misleading error at the wrong position.
-
-### Run 199 — Invalid optimize_for error message mismatch (FAILED: 5/5 profiles)
-- **Test:** `205_invalid_optimize_for` — proto3 file with `option optimize_for = UNKNOWN;` (invalid enum value for optimize_for)
-- **Bug:** Both C++ and Go reject the file (exit 1), but with completely different error messages. C++ protoc: `test.proto:5:23: Enum type "google.protobuf.FileOptions.OptimizeMode" has no value named "UNKNOWN" for option "google.protobuf.FileOptions.optimize_for".` Go protoc-go: `test.proto:line 5:23: unknown optimize_for value "UNKNOWN"`. Three differences: (1) Go has spurious "line " prefix before line number, (2) completely different message text, (3) Go message lacks trailing period.
-- **Root cause:** `parser.go:2751` — the error format string is `"line %d:%d: unknown optimize_for value %q"`. The `"line "` prefix is wrong (should be just `"%d:%d:"`). The message text doesn't match C++ protoc's format which says `Enum type "..." has no value named "..." for option "...".`. Same bug exists at `parser.go:2203` for `idempotency_level`.
-
-### Known gaps still unexplored (updated):
-- **Invalid idempotency_level error** — same `"line %d:%d:"` format bug at parser.go:2203
-- **Trailing comma in map field options** — same trailing comma issue
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ
-- **Error column positions** — many Go validation errors report wrong column
-- **Block comment edge cases** — empty block comment `/* */`, multiline without `*` prefix
-- **Dotted option names on message/field/enum/service options** — same bug as file options, `features.X` pattern
-- **Editions features on fields** — `string name = 1 [features.field_presence = EXPLICIT];` likely also broken
-- **Editions features on messages/enums/services** — `option features.X = Y;` inside bodies
-- **FieldOptions.retention** (field 17) — TESTED in Run 197 (203_retention_option), confirmed broken
-- **FieldOptions.targets** (field 19) — likely also missing from parser switch
-
-### Run 200 — String literal for message-level boolean option (FAILED: 5/5 profiles)
-- **Test:** `206_string_bool_msg_option` — proto3 message with `option deprecated = "true";` (string literal `"true"` instead of identifier `true` for message-level boolean option)
-- **Bug:** Go protoc-go silently accepts a string literal for the boolean message option `deprecated` and correctly sets `deprecated = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:23: Value must be identifier for boolean option "google.protobuf.MessageOptions.deprecated".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1215` — `msg.Options.Deprecated = proto.Bool(valTok.Value == "true")` accepts any token type and does a string comparison. No validation that `valTok.Type == tokenizer.TokenIdent`. A TokenString with decoded value `"true"` passes because `valTok.Value` is `"true"` (decoded content without quotes). C++ protoc uses `ConsumeIdentifier` for boolean values, rejecting string literal tokens. The `validateBool` function exists for FILE-level options (line 2697-2699) but is NOT used for MESSAGE, ENUM, SERVICE, METHOD, or ENUM VALUE boolean options — all of those directly do `proto.Bool(valTok.Value == "true")` without type checking. Same category as Run 84 (file-level string for bool), but at message option level.
-
-### Run 201 — String literal for field-level boolean option (FAILED: 5/5 profiles)
-- **Test:** `207_string_bool_field_option` — proto3 message with `string email = 2 [deprecated = "true"];` (string literal `"true"` instead of identifier `true` for field-level boolean option)
-- **Bug:** Go protoc-go silently accepts a string literal for the boolean field option `deprecated` and correctly sets `deprecated = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:34: Value must be identifier for boolean option "google.protobuf.FieldOptions.deprecated".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:3105` — `field.Options.Deprecated = proto.Bool(valTok.Value == "true")` accepts any token type and does a string comparison. No validation that `valTok.Type == tokenizer.TokenIdent`. A TokenString with decoded value `"true"` passes because `valTok.Value` is `"true"` (decoded content without quotes). C++ protoc uses `ConsumeIdentifier` for boolean values, rejecting string literal tokens. The `validateBool` function exists for FILE-level options (line 2697-2699) but is NOT used for FIELD, MESSAGE, ENUM, SERVICE, METHOD, or ENUM VALUE boolean options — all do `proto.Bool(valTok.Value == "true")` without type checking. Same category as Run 84 (file-level string for bool) and Run 200 (message-level string for bool), but at field option level.
-
-### Run 202 — String literal for enum value boolean option (FAILED: 5/5 profiles)
-- **Test:** `208_string_bool_enum_val_option` — proto3 enum with `HIGH = 1 [deprecated = "true"];` (string literal `"true"` instead of identifier `true` for enum value boolean option)
-- **Bug:** Go protoc-go silently accepts a string literal for the boolean enum value option `deprecated` and correctly sets `deprecated = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:26: Value must be identifier for boolean option "google.protobuf.EnumValueOptions.deprecated".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1738` — `enumValOpts.Deprecated = proto.Bool(optValTok.Value == "true")` accepts any token type and does a string comparison. No validation that `optValTok.Type == tokenizer.TokenIdent`. A TokenString with decoded value `"true"` passes because `optValTok.Value` is `"true"` (decoded content without quotes). C++ protoc uses `ConsumeIdentifier` for boolean values, rejecting string literal tokens. The `validateBool` function exists for FILE-level options (line 2716-2718) but is NOT used for ENUM VALUE, MESSAGE, FIELD, ENUM, SERVICE, or METHOD boolean options — all do `proto.Bool(valTok.Value == "true")` without type checking. Same category as Run 84 (file-level), Run 200 (message-level), Run 201 (field-level), but at enum value option level.
-
-### Run 203 — String literal for service-level boolean option (FAILED: 5/5 profiles)
-- **Test:** `209_string_bool_service_option` — proto3 service with `option deprecated = "true";` (string literal `"true"` instead of identifier `true` for service-level boolean option)
-- **Bug:** Go protoc-go silently accepts a string literal for the boolean service option `deprecated` and correctly sets `deprecated = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:14:23: Value must be identifier for boolean option "google.protobuf.ServiceOptions.deprecated".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:2161` — `svc.Options.Deprecated = proto.Bool(valTok.Value == "true")` accepts any token type and does a string comparison. No validation that `valTok.Type == tokenizer.TokenIdent`. A TokenString with decoded value `"true"` passes because `valTok.Value` is `"true"` (decoded content without quotes). C++ protoc uses `ConsumeIdentifier` for boolean values, rejecting string literal tokens. The `validateBool` function exists for FILE-level options (line 2722) but is NOT used for SERVICE, MESSAGE, FIELD, ENUM, METHOD, or ENUM VALUE boolean options — all do `proto.Bool(valTok.Value == "true")` without type checking. Same category as Run 84 (file-level), Run 200 (message-level), Run 201 (field-level), Run 202 (enum value-level), but at service option level.
-
-### Run 204 — String literal for method-level boolean option (FAILED: 5/5 profiles)
-- **Test:** `210_string_bool_method_option` — proto3 service with `option deprecated = "true";` inside a method body (string literal `"true"` instead of identifier `true` for method-level boolean option)
-- **Bug:** Go protoc-go silently accepts a string literal for the boolean method option `deprecated` and correctly sets `deprecated = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:15:25: Value must be identifier for boolean option "google.protobuf.MethodOptions.deprecated".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go` — `parseMethodOption` sets `method.Options.Deprecated = proto.Bool(valTok.Value == "true")` accepting any token type. No validation that `valTok.Type == tokenizer.TokenIdent`. A TokenString with decoded value `"true"` passes because `valTok.Value` is `"true"` (decoded content without quotes). C++ protoc uses `ConsumeIdentifier` for boolean values, rejecting string literal tokens. The `validateBool` function exists for FILE-level options but is NOT used for METHOD, SERVICE, MESSAGE, FIELD, ENUM, or ENUM VALUE boolean options — all do `proto.Bool(valTok.Value == "true")` without type checking. Same category as Run 84 (file-level), Run 200 (message-level), Run 201 (field-level), Run 202 (enum value-level), Run 203 (service-level), but at method option level.
-
-### Run 205 — String literal for enum-level boolean option (FAILED: 5/5 profiles)
-- **Test:** `211_string_bool_enum_option` — proto3 enum with `option deprecated = "true";` (string literal `"true"` instead of identifier `true` for enum-level boolean option)
-- **Bug:** Go protoc-go silently accepts a string literal for the boolean enum option `deprecated` and correctly sets `deprecated = true`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:6:23: Value must be identifier for boolean option "google.protobuf.EnumOptions.deprecated".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:1884` — `e.Options.Deprecated = proto.Bool(valTok.Value == "true")` accepts any token type and does a string comparison. No validation that `valTok.Type == tokenizer.TokenIdent`. A TokenString with decoded value `"true"` passes because `valTok.Value` is `"true"` (decoded content without quotes). C++ protoc uses `ConsumeIdentifier` for boolean values, rejecting string literal tokens. The `validateBool` function exists for FILE-level options but is NOT used for ENUM, MESSAGE, FIELD, ENUM VALUE, SERVICE, or METHOD boolean options — all do `proto.Bool(valTok.Value == "true")` without type checking. Same category as Run 84 (file-level), Run 200 (message-level), Run 201 (field-level), Run 202 (enum value-level), Run 203 (service-level), Run 204 (method-level), but at enum option level. This completes the full set of all option levels.
-
-### Run 206 — String literal for jstype enum field option (FAILED: 5/5 profiles)
-- **Test:** `212_string_jstype` — proto3 message with `int64 big_value = 2 [jstype = "JS_STRING"];` (string literal `"JS_STRING"` instead of identifier `JS_STRING` for enum-typed field option)
-- **Bug:** Go protoc-go silently accepts a string literal for the enum-valued field option `jstype` and correctly sets `jstype = JS_STRING`, producing a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:7:33: Value must be identifier for enum-valued option "google.protobuf.FieldOptions.jstype".` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:3150` — `switch valTok.Value` matches the decoded string content without checking `valTok.Type`. A TokenString `"JS_STRING"` has `valTok.Value = "JS_STRING"` (decoded without quotes), so it matches `case "JS_STRING":`. No validation that `valTok.Type == tokenizer.TokenIdent`. C++ protoc uses `ConsumeIdentifier` for enum-typed options, rejecting string literal tokens. Same bug affects `ctype` (line 3164) — `[ctype = "CORD"]` would also be accepted by Go, rejected by C++. Same category as Run 85 (string for optimize_for file option), but at field option level for enum-typed options.
-
-### Run 207 — String literal for idempotency_level method option (FAILED: 5/5 profiles)
-- **Test:** `213_string_idempotency_level` — proto3 service method with `option idempotency_level = "NO_SIDE_EFFECTS";` (string literal instead of identifier for enum-typed method option)
-- **Bug:** Go protoc-go silently accepts a string literal for the enum-valued method option `idempotency_level` and sets it correctly (exit 0). C++ protoc rejects with: `test.proto:15:32: Value must be identifier for enum-valued option "google.protobuf.MethodOptions.idempotency_level".` (exit 1).
-- **Root cause:** `parser.go:2233-2244` — `case "idempotency_level"` does `switch valTok.Value` without checking `valTok.Type`. A TokenString `"NO_SIDE_EFFECTS"` has decoded `valTok.Value = "NO_SIDE_EFFECTS"`, matching the case. No `valTok.Type == tokenizer.TokenIdent` guard. C++ uses `ConsumeIdentifier`. Same category as Runs 85, 206.
-
-### Run 208 — String literal for retention enum field option (FAILED: 5/5 profiles)
-- **Test:** `214_string_retention` — proto3 message with `int32 value = 2 [retention = "RETENTION_SOURCE"];` (string literal instead of identifier for enum-typed field option)
-- **Bug:** Go protoc-go silently accepts a string literal for the enum-valued field option `retention` and sets it correctly (exit 0). C++ protoc rejects with: `test.proto:7:32: Value must be identifier for enum-valued option "google.protobuf.FieldOptions.retention".` (exit 1).
-- **Root cause:** `parser.go:3207-3220` — `case "retention"` does `switch valTok.Value` without checking `valTok.Type`. A TokenString `"RETENTION_SOURCE"` has decoded `valTok.Value = "RETENTION_SOURCE"`, matching the case. No `valTok.Type == tokenizer.TokenIdent` guard. C++ uses `ConsumeIdentifier`. Same category as Runs 85, 206, 207.
-
-### Run 209 — FieldOptions.targets missing from parser (FAILED: 5/5 profiles)
-- **Test:** `215_field_targets_option` — proto3 message with `string name = 1 [targets = TARGET_TYPE_FIELD];` (built-in FieldOptions.targets field 19)
-- **Bug:** Go protoc-go rejects with: `test.proto:6:20: Option "targets" unknown.` (exit 1). C++ protoc accepts the option, strips it (RETENTION_SOURCE), and produces a valid descriptor (exit 0). The test harness detects exit code mismatch.
-- **Root cause:** `parser.go:3224` — `parseFieldOptions` switch handles 12 field options (default, json_name, deprecated, packed, lazy, jstype, ctype, debug_redact, unverified_lazy, weak, retention) but NOT `targets` (field 19). The `default:` case returns "Option unknown" error. C++ protoc accepts `targets` as a known FieldOptions field (repeated OptionTargetType), stores it, and then strips it from plugin output due to `retention = RETENTION_SOURCE`. The Go parser needs a new `case "targets":` that parses the OptionTargetType enum value and stores it on FieldOptions.Targets.
-
-### Known gaps still unexplored (updated):
-- **String literal for ctype** — `[ctype = "CORD"]` — FIXED (TokenIdent guard added at line 3167)
-- **String literal for allow_alias** — `option allow_alias = "true";` — FIXED (TokenIdent guard at line 1881)
-- **Trailing comma in map field options** — same trailing comma issue
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ
-- **Error column positions** — many Go validation errors report wrong column
-- **Dotted option names on message/field/enum/service options** — same bug as file options, `features.X` pattern
-- **FieldOptions.feature_support** (field 49) — likely missing from parser switch
-- **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
-- **Empty method body `{ }`** — tested, NOT a gap (C++ also creates empty MethodOptions)
-
-### Run 210 — Unknown CLI flag silently ignored (FAILED: 1/1 CLI test)
-- **Test:** CLI test `unknown_flag` — invokes both compilers with `--unknown_flag=test`
-- **Bug:** Go's `parseArgs()` at line 682-685 silently ignores any flag starting with `-` that doesn't match a known pattern (`continue` in a catch-all). C++ protoc rejects unknown flags with `Unknown flag: --unknown_flag` (exit 1). Go never sees the unknown flag, falls through to `Missing output directives.` (exit 1). Same exit code but different stderr.
-- **Root cause:** `cli.go:682-685` — `if strings.HasPrefix(arg, "-") { continue }` silently drops all unrecognized flags instead of erroring. C++ protoc's `CommandLineInterface::ParseArguments` errors on any flag not in its known set.
-
-### Run 211 — Custom (parenthesized) option in message body (FAILED: 5/5 profiles)
-- **Test:** `216_custom_msg_option` — proto3 message with `option (my_custom_opt) = "value";` inside message body
-- **Bug:** `parseMessageOption()` at line 1188 does `nameTok := p.tok.Next()` which reads `(` as the option name. No handling for parenthesized custom option names (unlike `parseFileOption` which has `if optName == "(" { ... }`). Then `p.tok.Expect("=")` reads `my_custom_opt` instead of `=` → error: `Expected "=".` at column 11. C++ protoc properly parses the full `(my_custom_opt)` name and produces: `Option "(my_custom_opt)" unknown. Ensure that your proto definition file imports the proto which defines the option.`
-- **Root cause:** `parser.go:1188` — `parseMessageOption` reads only a single token for the option name. It lacks the `if optName == "(" { ... }` block that `parseFileOption` (line ~2685) has for handling parenthesized custom option names. Same bug exists in `parseServiceOption`, `parseMethodOption`, and `parseEnumOption` — none of them handle `(custom_name)` syntax.
-
-### Run 212 — Custom (parenthesized) option in field brackets (FAILED: 5/5 profiles)
-- **Test:** `217_custom_field_option` — proto3 field with `string name = 1 [(my_custom_opt) = "hello"];`
-- **Bug:** `parseFieldOptions()` at line 3058 does `optNameTok := p.tok.Next()` which reads `(` as the option name. Then the `default` switch case at line 3314 produces error: `Option "(" unknown.`. C++ protoc properly parses the full `(my_custom_opt)` name and produces: `Option "(my_custom_opt)" unknown.` Both reject the proto, but error messages differ (Go says `"("`, C++ says `"(my_custom_opt)"`).
-- **Root cause:** `parser.go:3058` — `parseFieldOptions` reads only a single token for the option name. No handling for parenthesized custom option syntax. Same bug as Run 211 (message level) but in a different code path (field option brackets vs message option body).
-
-### Run 213 — Custom (parenthesized) option in enum value brackets (FAILED: 5/5 profiles)
-- **Test:** `218_custom_enum_val_option` — proto3 enum value with `PRIORITY_HIGH = 1 [(my_custom_opt) = "important"];`
-- **Bug:** Enum value option parser at line 1727-1729 reads `optNameTok := p.tok.Next()` which reads `(` as the option name. No check for `optName == "("` to handle parenthesized custom option syntax. Then `Expect("=")` at line 1736 reads `my_custom_opt` instead of `=` → error: `Expected "=".` at column 23. C++ protoc parses the full `(my_custom_opt)` name and produces: `Option "(my_custom_opt)" unknown. Ensure that your proto definition file imports the proto which defines the option.` Both reject, but different error messages and column numbers.
-- **Root cause:** `parser.go:1727-1729` — enum value option parsing lacks the `if optName == "(" { ... }` block that other option parsers (parseFileOption, parseMessageOption, parseEnumOption, parseServiceOption, parseFieldOptions) now have. The enum value option code path is a separate inline loop inside `parseEnum()`, not a standalone function, so it was missed when parenthesized option handling was added to the other parsers.
-
-### Run 214 — Dotted option name on message option in editions (FAILED: 5/5 profiles)
-- **Test:** `219_msg_features_option` — edition 2023 message with `option features.json_format = ALLOW;` inside message body
-- **Bug:** `parseMessageOption()` at line 1187-1207 reads `features` as a single option name token, then calls `Expect("=")` which encounters `.` instead of `=` → error: `test.proto:6:18: Expected "=".` C++ protoc parses the full dotted path `features.json_format` and accepts the option, producing a valid descriptor (exit 0). Go fails with exit 1.
-- **Root cause:** `parser.go:1187-1207` — `parseMessageOption` reads only a single token for the option name and has no handling for dotted names like `features.json_format`. The file-level option parser (`parseFileOption`) has the dotted name handling at line 2756 (`if optName == "features" && p.tok.Peek().Value == "." { ... }`), but `parseMessageOption` lacks it. Same bug likely affects `parseEnumOption`, `parseServiceOption`, and `parseMethodOption` — none of them handle dotted option names.
-
-### Run 215 — Dotted option name on enum option in editions (FAILED: 5/5 profiles)
-- **Test:** `220_enum_features_option` — edition 2023 enum with `option features.enum_type = CLOSED;` inside enum body
-- **Bug:** `parseEnumOption()` at line 1966-1967 reads `features` as a single option name token, then calls `Expect("=")` which encounters `.` instead of `=` → error: `Expected "=".` C++ protoc parses the full dotted path `features.enum_type` and accepts the option, producing a valid descriptor (exit 0). Go fails with exit 1.
-- **Root cause:** `parser.go:1966-1967` — `parseEnumOption` reads only a single token for the option name. No handling for dotted names like `features.enum_type`. Same bug as Run 214 (message level) but in `parseEnumOption` code path. Also affects `parseServiceOption` and `parseMethodOption`.
-
-### Run 216 — Dotted option name on service option in editions (FAILED: 5/5 profiles)
-- **Test:** `221_svc_features_option` — edition 2023 service with `option features.json_format = ALLOW;` inside service body
-- **Bug:** `parseServiceOption()` at line 2346-2348 reads `features` as a single option name token, then calls `Expect("=")` which encounters `.` instead of `=` → error: `Expected "=".` C++ protoc parses the full dotted path `features.json_format` and accepts the option, producing a valid descriptor (exit 0). Go fails with exit 1.
-- **Root cause:** `parser.go:2346-2348` — `parseServiceOption` reads only a single token for the option name. No handling for dotted names like `features.json_format`. Same bug as Runs 214-215 (message/enum level) but in `parseServiceOption` code path. Also affects `parseMethodOption`.
-
-### Known gaps still unexplored (updated):
-- **Dotted option names on method options** — TESTED in Run 217 (222_method_features_option), confirmed broken (expects `=` at `.`)
-- **Dotted option names on field options** — `features.field_presence` in editions inside `[...]`
-- **Trailing comma in map field options** — same trailing comma issue
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ
-- **Error column positions** — many Go validation errors report wrong column
-- **FieldOptions.feature_support** (field 49) — likely missing from parser switch
-- **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
-
-### Run 217 — Dotted option name on method option in editions (FAILED: 5/5 profiles)
-- **Test:** `222_method_features_option` — edition 2023 service method with `option features.json_format = ALLOW;` inside method body `{ }`
-- **Bug:** `parseMethodOption()` at line 2494 reads `features` as a single option name token, then calls `Expect("=")` at line 2514 which encounters `.` instead of `=` → error: `test.proto:15:20: Expected "=".` C++ protoc parses the full dotted path `features.json_format` and rejects it at a higher level: `Option google.protobuf.FeatureSet.json_format cannot be set on an entity of type 'method'.` Both reject, but different error messages.
-- **Root cause:** `parser.go:2494` — `parseMethodOption` reads only a single token for the option name. No handling for dotted names like `features.json_format`. Same bug as Runs 214-216 (message/enum/service level) but in `parseMethodOption` code path. Completes the set of all option-level dotted name bugs.
-
-### Run 218 — Dotted option name on field options in editions (FAILED: 5/5 profiles)
-- **Test:** `223_field_features_option` — edition 2023 message with `string name = 1 [features.field_presence = EXPLICIT];` (dotted option name inside field option brackets)
-- **Bug:** `parseFieldOptions()` at line 3058 reads `features` as a single option name token. The switch `default` case at line 3314 returns: `Option "features" unknown. Ensure that your proto definition file imports the proto which defines the option.` C++ protoc parses the full dotted path `features.field_presence` and accepts the option, producing a valid descriptor (exit 0). Go fails with exit 1.
-- **Root cause:** `parser.go:3058` — `parseFieldOptions` reads only a single token for the option name via `optNameTok := p.tok.Next()`. No handling for dotted names like `features.field_presence`. The file-level option parser (`parseFileOption`) has dotted name handling at line 2756, but `parseFieldOptions` lacks it. Same bug as Runs 214-217 (message/enum/service/method level) but in the field option brackets code path. This completes the full set of all option-level dotted name bugs — file, message, field, enum, service, and method option parsers all fail to handle dotted names.
-
-### Run 219 — Dotted option names on enum value options (FAILED: 5/5 profiles)
-- **Test:** `224_enum_val_features` — edition 2023 enum with `PRIORITY_HIGH = 1 [features.enum_type = CLOSED];` (dotted option name on enum value)
-- **Bug:** Enum value option inline loop at lines 1805-1864 reads option name as a single token (`optNameTok := p.tok.Next()` at line 1806). No handling for dotted names like `features.X`. When it reads `features`, then `Expect("=")` at line 1837 encounters `.` → error: `Expected "=".`. C++ protoc parses the full dotted path and gives a semantic error: `Option google.protobuf.FeatureSet.enum_type cannot be set on an entity of type 'enum entry'.` Both exit 1 but with completely different error messages.
-- **Root cause:** `parser.go:1806-1808` — enum value option inline loop reads only a single token for the option name. Unlike `parseFieldOptions` (line 3423), `parseFileOption` (line 2756), `parseMessageOption`, `parseEnumOption`, `parseServiceOption`, and `parseMethodOption` which all now handle `features.X` dotted names, the enum value option loop lacks this handling. This is the last remaining option scope without dotted name support.
-
-### Known gaps still unexplored (updated):
-- **Trailing comma in map field options** — same trailing comma issue
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ
-- **Error column positions** — many Go validation errors report wrong column
-- **FieldOptions.feature_support** (field 49) — likely missing from parser switch
-- **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
-- **Custom option in service body** — `option (my_opt) = "x";` — same missing parenthesized name handling
-- **Custom option in method body** — same bug
-- **Custom option in enum body** — same bug
-- **Custom option on enum values** — same bug in inline loop
-
-### Run 220 — Oneof option (FAILED: 5/5 profiles)
-- **Test:** `225_oneof_option` — proto3 message with `oneof choice { option features.field_presence = IMPLICIT; string name = 1; int32 count = 2; }`
-- **Bug:** `parseOneof()` at lines 2914-2917 unconditionally rejects ANY `option` keyword inside a oneof body. It consumes `option`, peeks at the next token, and returns an error: `Option "features" unknown. Ensure that your proto definition file imports the proto which defines the option.` C++ protoc parses the oneof option and rejects it at a higher semantic level: `Features are only valid under editions.` Both exit 1, but different error messages.
-- **Root cause:** `parser.go:2914-2917` — `parseOneof` has a hard-coded rejection of all options inside oneofs. It doesn't attempt to parse the option at all — just errors immediately. C++ protoc parses the option into OneofOptions, then validates it semantically. The error message format differs completely. This also means Go would reject valid oneof options in editions syntax where C++ protoc would accept them (e.g., `option features.field_presence = IMPLICIT;` in an editions file).
-
-### Run 221 — Map field with undefined value type (FAILED: 5/5 profiles)
-- **Test:** `226_map_undefined_value` — proto3 message with `map<string, NonExistent> items = 2;` where `NonExistent` is not defined anywhere
-- **Bug:** C++ protoc correctly rejects with `test.proto: "NonExistent" is not defined.` Go protoc-go silently accepts it and produces a descriptor with the unresolved type name. `resolveMessageFieldsWithErrorsPath` does iterate over synthetic map entry messages, but `findSCISpanStart` fails to find an SCI location for the synthetic entry's value field type name (path `[4, 0, 3, entryIdx, 2, 1, 6]`), so no error is appended. `checkMsgUnresolved` explicitly skips map entry messages (`if msg.GetOptions().GetMapEntry() { return }`).
-- **Root cause:** Two-part failure: (1) `parser.go:4659` — `checkMsgUnresolved` skips map entries entirely. (2) `resolveMessageFieldsWithErrorsPath` finds the unresolved type but can't report the error because no SCI location exists for synthetic entry fields. The net effect: undefined types in map values are silently accepted.
-
-### Known gaps still unexplored (updated):
-- **Oneof options in editions** — Go rejects all oneof options; C++ accepts valid ones in editions
-- **Trailing comma in map field options** — same trailing comma issue
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ
-- **Error column positions** — many Go validation errors report wrong column
-- **FieldOptions.feature_support** (field 49) — likely missing from parser switch
-- **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
-- **Custom option in service body** — `option (my_opt) = "x";` — same missing parenthesized name handling
-- **Custom option in method body** — same bug
-- **Custom option in enum body** — same bug
-- **Custom option on enum values** — same bug in inline loop
-- **Map field with undefined key type** — `map<NonExistent, string>` — same issue, key type unresolved
-- **Undefined type in extension field** — `extend Foo { optional NonExistent bar = 100; }` — may also silently accept
-
-### Run 222 — Oneof features in editions (FAILED: 5/5 profiles)
-- **Test:** `227_oneof_features_editions` — edition 2023 file with `option features.utf8_validation = NONE;` inside a oneof body
-- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `OneofOptions.Features.Utf8Validation = NONE`. C++ protoc rejects with: `test.proto: Option google.protobuf.FeatureSet.utf8_validation cannot be set on an entity of type 'oneof'.` (exit 1). Different exit codes across all 5 profiles.
-- **Root cause:** `parser.go:2968-3084` — `parseOneofOption` handles all `features.X` dotted names and blindly sets the corresponding field on `OneofOptions.Features` without validating that the feature is applicable to the oneof entity type. C++ protoc validates feature targets (each feature has a `targets` annotation in `descriptor.proto` specifying which entity types it applies to). `utf8_validation` targets `TARGET_TYPE_FILE` and `TARGET_TYPE_FIELD`, NOT `TARGET_TYPE_ONEOF`. Go has no feature target validation anywhere — the same bug likely applies to all option scopes (message, enum, service, method, field, enum value) where features are accepted without checking target applicability.
-
-### Known gaps still unexplored (updated):
-- **Feature target validation on all scopes** — Go accepts features on any entity regardless of target restrictions; same bug as oneof but for message, enum, service, method, field, enum value
-- **Trailing comma in map field options** — same trailing comma issue
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ
-- **Error column positions** — many Go validation errors report wrong column
-- **FieldOptions.feature_support** (field 49) — likely missing from parser switch
-- **FieldOptions.edition_defaults** (field 20) — likely missing from parser switch
-- **Custom option in service body** — `option (my_opt) = "x";` — same missing parenthesized name handling
-- **Custom option in method body** — same bug
-- **Custom option in enum body** — same bug
-- **Custom option on enum values** — same bug in inline loop
-- **Map field with undefined key type** — `map<NonExistent, string>` — same issue, key type unresolved
-- **Undefined type in extension field** — `extend Foo { optional NonExistent bar = 100; }` — may also silently accept
-
-### Run 223 — Feature target validation on message scope (FAILED: 5/5 profiles)
-- **Test:** `228_msg_features_target` — edition 2023 file with `option features.enum_type = CLOSED;` inside a message body
-- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `MessageOptions.Features.EnumType = CLOSED`. C++ protoc rejects with: `test.proto: Option google.protobuf.FeatureSet.enum_type cannot be set on an entity of type 'message'.` (exit 1). Different exit codes across all 5 profiles.
-- **Root cause:** `parser.go:1181-1240` — `parseMessageOption` handles all `features.X` dotted names and blindly sets the corresponding field on `MessageOptions.Features` without validating feature target applicability. `enum_type` targets `TARGET_TYPE_FILE` and `TARGET_TYPE_ENUM`, NOT `TARGET_TYPE_MESSAGE`. Same category as Run 222 (oneof features), confirming the feature target validation gap extends to all entity scopes.
-
-### Run 224 — Feature target validation on enum scope (FAILED: 5/5 profiles)
-- **Test:** `229_enum_features_target` — edition 2023 file with `option features.field_presence = IMPLICIT;` inside an enum body
-- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `EnumOptions.Features.FieldPresence = IMPLICIT`. C++ protoc rejects with: `test.proto: Option google.protobuf.FeatureSet.field_presence cannot be set on an entity of type 'enum'.` (exit 1). Different exit codes across all 5 profiles.
-- **Root cause:** `parser.go:2122-2128` — `parseEnumOption` handles all `features.X` dotted names and blindly sets the corresponding field on `EnumOptions.Features` without validating feature target applicability. `field_presence` targets `TARGET_TYPE_FILE`, `TARGET_TYPE_FIELD`, and `TARGET_TYPE_ONEOF`, NOT `TARGET_TYPE_ENUM`. Same category as Runs 222-223 (oneof/message features), confirming the feature target validation gap extends to enum scope too.
-
-### Run 225 — Feature target validation on field scope (FAILED: 5/5 profiles)
-- **Test:** `230_field_features_target` — edition 2023 file with `string name = 1 [features.enum_type = CLOSED];` (applying `enum_type` feature to a field)
-- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `FieldOptions.Features.EnumType = CLOSED`. C++ protoc rejects with: `test.proto: Option google.protobuf.FeatureSet.enum_type cannot be set on an entity of type 'field'.` (exit 1). Different exit codes across all 5 profiles.
-- **Root cause:** `parser.go` — `parseFieldOptions` handles all `features.X` dotted names and blindly sets the corresponding field on `FieldOptions.Features` without validating feature target applicability. `enum_type` targets `TARGET_TYPE_FILE` and `TARGET_TYPE_ENUM`, NOT `TARGET_TYPE_FIELD`. Same category as Runs 222-224 (oneof/message/enum features), confirming the feature target validation gap extends to field scope too.
-
-### Known gaps still unexplored (updated):
-- **Feature target validation on remaining scopes** — service, method, enum value all likely accept features on wrong targets
-- **Trailing comma in map field options** — same trailing comma issue
-- **Type shadowing** — same nested type name in different parent messages
-- **Map field options source code info** — location ordering may differ
-- **Error column positions** — many Go validation errors report wrong column
-
-### Run 226 — Reserved identifier in proto3 (FAILED: 5/5 profiles)
-- **Test:** `231_reserved_ident` — proto3 message with `reserved foo;` (bare identifier instead of string literal in reserved declaration)
-- **Bug:** `parseMessageReserved()` at line 628-631 checks if the first token is `TokenString` (name reservation) or `TokenInt` (range reservation). When it's an identifier like `foo`, it falls to the integer branch, fails the `TokenInt` check, and emits: `Expected field name or number range.` C++ protoc recognizes the identifier and gives a more specific error: `Reserved names must be string literals. (Only editions supports identifiers.)`
-- **Root cause:** `parser.go:628-631` — `parseMessageReserved` doesn't check for `TokenIdent` between the string and integer branches. C++ protoc detects identifiers and explains that only editions syntax supports reserved identifiers (not string literals). Go's error message is generic and misleading.
-
-### Run 227 — Enum reserved with identifier name (FAILED: 5/5 profiles)
-- **Test:** `232_enum_reserved_ident` — proto3 enum with `reserved DELETED;` (bare identifier instead of string literal in enum reserved declaration)
-- **Bug:** `parseEnumReserved()` at line 2239 checks if the next token is `TokenString`. When it's an identifier like `DELETED`, it falls to the `else` branch (line 2279) which tries integer/range parsing. `ExpectInt()` at line 2291 fails because `DELETED` is an identifier, not an integer. Go error: `test.proto:8:12: Expected integer.` C++ protoc error: `test.proto:8:12: Reserved names must be string literals. (Only editions supports identifiers.)` Both reject (exit 1), but error messages differ completely.
-- **Root cause:** `parser.go:2239` — `parseEnumReserved` checks for `TokenString` (name reservation) or falls through to integer (range reservation). When a `TokenIdent` appears, it doesn't check for it between the two branches. C++ protoc detects identifiers and gives a specific error about requiring string literals (with an editions hint). Go's error is generic and misleading. Same pattern as Run 226 (message reserved identifier) but in the enum reserved code path.
-
-### Run 228 — Oneof field_presence feature target (FAILED: 5/5 profiles)
-- **Test:** `233_oneof_field_presence` — edition 2023 file with `option features.field_presence = IMPLICIT;` inside a oneof body
-- **Bug:** `collectOneofFeatureErrors()` at cli.go:1690 has a WRONG comment: "field_presence targets ONEOF, so it's allowed — skip it". In reality, `field_presence` targets only FILE and FIELD (not ONEOF). C++ protoc rejects with: "Option google.protobuf.FeatureSet.field_presence cannot be set on an entity of type `oneof`." Go accepts the file successfully. C++ `cpp_ok.txt` = false, Go `go_ok.txt` = true.
-- **Root cause:** `compiler/cli/cli.go:1690` — incorrect comment and missing validation. The `field_presence` check is intentionally skipped based on a wrong assumption about its target types. All other features (enum_type, repeated_field_encoding, utf8_validation, message_encoding, json_format) are correctly validated for oneof, but field_presence is the one that slipped through.
-
-### Run 229 — MessageSet with regular field (FAILED: 5/5 profiles)
-- **Test:** `234_message_set_with_field` — proto2 message with `option message_set_wire_format = true;`, `extensions 100 to max;`, AND `optional string name = 1;` (a regular field)
-- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with both the extension range and the field. C++ protoc rejects with: `test.proto:8:19: MessageSets cannot have fields, only extensions.` (exit 1). Different exit codes across all 5 profiles.
-- **Root cause:** Go has no validation in `cli.go` or `pool.go` that checks MessageSet constraints. C++ protoc validates in `descriptor.cc` that messages with `message_set_wire_format = true` must not have regular fields — only extensions are allowed. Go's validation layer (`cli.go`) doesn't have any `message_set_wire_format`-specific checks.
-
-### Run 230 — MessageSet in proto3 (FAILED: 5/5 profiles)
-- **Test:** `235_message_set_proto3` — proto3 message with `option message_set_wire_format = true;`
-- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `message_set_wire_format = true` on a proto3 message. C++ protoc rejects with: `test.proto:8:9: MessageSet is not supported in proto3.` (exit 1). Different exit codes across all 5 profiles.
-- **Root cause:** Go has no validation that checks whether `message_set_wire_format` is used in proto3 syntax. C++ protoc validates in `descriptor.cc` that MessageSet is only allowed in proto2. Go's validation layer (`cli.go`) has no proto3-specific MessageSet check at all.
-
-### Run 231 — Extension range with declaration option (FAILED: 4/5 profiles)
-- **Test:** `236_ext_range_declaration` — proto2 message with `extensions 100 to 200 [declaration = { number: 100 full_name: ".extdecl.my_ext" type: ".extdecl.MyType" }];`
-- **Bug:** `parseExtensionRange()` at lines 877-878 unconditionally adds an SCI location for path `[4, 0, 5, 0, 3]` (ExtensionRange.options) even when the only option present is `declaration = { ... }`, which Go skips via depth-tracking without populating any options on the descriptor. C++ protoc does NOT emit an SCI location for the options path in this case. Result: Go emits 17 SCI locations vs C++ protoc's 16. Descriptor set binary sizes also differ (294 vs 279 bytes).
-- **Root cause:** `parser.go:877-878` — the SCI loop `for i := startCount; i < *rangeIdx; i++` always adds a location for `optsPath` (field 3 = options) regardless of whether any options were actually parsed and stored. The `declaration = { ... }` aggregate value is skipped by depth tracking (lines 853-860) without adding to `parsedOpts` or setting any options on ExtensionRange, but the SCI location is still emitted. C++ protoc only emits SCI for options that are populated in the descriptor.
-
-### Run 232 — json_name on extension fields (FAILED: 5/5 profiles)
-- **Test:** `237_ext_json_name` — proto2 file with `extend Base { optional string nickname = 100 [json_name = "customNick"]; }` (json_name on an extension field)
-- **Bug:** Go protoc-go silently accepts `json_name` on an extension field and produces a valid descriptor (exit 0). C++ protoc rejects with: `test.proto:11:35: option json_name is not allowed on extension fields.` (exit 1). The test harness detects exit code mismatch.
-- **Root cause:** No validation in Go implementation that checks whether `json_name` is used on extension fields. C++ protoc validates in `descriptor.cc` that `json_name` is not allowed on extension fields. The Go parser stores `json_name` on any field via `parseFieldOptions` without checking if the field is an extension. The `cli.go` validation layer has no extension-specific json_name check.
-
-### Run 233 — Validation error accumulation (FAILED: 5/5 profiles)
-- **Test:** `238_multi_error` — proto3 message with `string name = 1; string name = 2; int32 count = 1;` (duplicate name "name" AND duplicate field number 1)
-- **Bug:** Go reports only 1 error: `"name" is already defined in "multierr.Config".` C++ protoc reports 2 errors: the duplicate name AND `Field number 1 has already been used in "multierr.Config" by field "name".` Go short-circuits after the first validation category that finds errors.
-- **Root cause:** `cli.go:204-370` — each validation function (`validateDuplicateNames`, `validateDuplicateFieldNumbers`, etc.) is called sequentially with early return: `if errs := validateX(...); len(errs) > 0 { return fmt.Errorf(...) }`. When `validateDuplicateNames` (line 209) finds errors, it returns immediately. `validateDuplicateFieldNumbers` (line 229) never runs. C++ protoc's `descriptor.cc` collects all validation errors across all checks before reporting them. The Go implementation should accumulate errors across all validation passes instead of returning on first failure.
-
-### Known gaps still unexplored (updated):
-- **Validation error accumulation** — TESTED in Run 233 (238_multi_error), confirmed broken (Go returns on first validation category; C++ accumulates all)
-- **Feature target validation on method/enum value scope** — may now be validated (service was fixed)
-- **Trailing comma in field options** — `[deprecated = true,]` — different error messages
-- **Type shadowing** — same nested type name in different parent messages
-- **Error column positions in validation errors** — Go often differs from C++
-- **MessageSet without extensions** — `message_set_wire_format = true` but no `extensions` range (valid in proto2)
-- **MessageSet with nested messages** — `message_set_wire_format = true` with nested message types (valid)
-- **Extension range declaration content** — Go skips `declaration = {...}` entirely; C++ populates ExtensionRangeOptions.declaration
-- **packed on extension fields** — `extend Base { repeated int32 ids = 101 [packed = true]; }` — may produce different results
-- **Extension field with default in proto3** — `extend Base { string tag = 100 [default = "x"]; }` in proto3 — double validation failure
-- **Multiple errors from different validation passes** — many combinations possible (e.g., reserved+duplicate, proto3+extension, etc.)
-
-### Run 234 — unverified_lazy on non-message field (FAILED: 5/5 profiles)
-- **Test:** `239_unverified_lazy_non_msg` — proto3 message with `int32 count = 1 [unverified_lazy = true];`
-- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with `FieldOptions.unverified_lazy = true` on an int32 field. C++ protoc rejects with: `test.proto:6:3: [lazy = true] can only be specified for submessage fields.` (exit 1). Different exit codes across all 5 profiles.
-- **Root cause:** `cli.go:727-776` — `validateLazyNonMessage` only checks `field.GetOptions().GetLazy()` but does NOT check `field.GetOptions().GetUnverifiedLazy()`. C++ protoc validates both `lazy` and `unverified_lazy` with the same constraint: they can only be specified for submessage fields. Go's validation function misses the `unverified_lazy` case entirely.
-
-### Run 235 — json_format feature incorrectly rejected on enum (FAILED: 5/5 profiles)
-- **Test:** `240_enum_json_format_feature` — edition 2023 file with `option features.json_format = ALLOW;` inside an enum body
-- **Bug:** Go protoc-go rejects the file (exit 1) with: `test.proto: Option google.protobuf.FeatureSet.json_format cannot be set on an entity of type 'enum'.` C++ protoc accepts the file (exit 0) and produces a valid descriptor. Different exit codes across all 5 profiles.
-- **Root cause:** `cli.go:1633-1635` — `collectEnumFeatureErrors` incorrectly includes a check for `feat.JsonFormat != nil`, rejecting `json_format` on enums. But `json_format` targets `TARGET_TYPE_FILE`, `TARGET_TYPE_MESSAGE`, AND `TARGET_TYPE_ENUM` — so it IS allowed on enums. The `featureTargets` map at line 1385 correctly lists `"enum": true` for `json_format`, but the validation function at line 1633 contradicts it by rejecting `json_format` on enums. The fix would be to remove the `json_format` check from `collectEnumFeatureErrors`.
-
-### Run 236 — Capitalized bool default identifiers (FAILED: 5/5 profiles)
-- **Test:** `241_capitalized_bool_default` — proto2 message with `optional bool verbose = 1 [default = True];` and `optional bool debug = 2 [default = False];`
-- **Bug:** `parseFieldOptions()` at line 3785-3790 validates bool defaults by rejecting TokenString, TokenInt, TokenFloat, but does NOT check if a TokenIdent value is actually "true" or "false". So `True` (capitalized, valid identifier token) passes through and gets stored as `default_value = "True"`. C++ protoc rejects with `Expected "true" or "false".` — it requires exact lowercase identifiers.
-- **Root cause:** `parser.go:3785-3790` — the bool default validation check only filters by token TYPE (rejects string/int/float tokens) but never validates the token VALUE. Any identifier token passes, including `True`, `False`, `Yes`, `No`, `on`, `off`, etc. C++ protoc's `ConsumeIdentifier()` followed by explicit `value == "true" || value == "false"` check catches this.
-
-### Known gaps still unexplored (updated):
-- **Feature target validation on remaining scopes** — method, enum value
-- **Trailing comma in field options** — `[deprecated = true,]` — different error messages
-- **Type shadowing** — same nested type name in different parent messages
-- **Error column positions** — many Go validation errors report wrong column
-- **`[default = yes]` / `[default = on]` on bool field** — same bug, different identifiers
-- **`[default = TRUE]` on bool field** — all-caps variant, same root cause
-- **MessageSet without extensions** — `message_set_wire_format = true` but no `extensions` range
-- **MessageSet with nested messages** — `message_set_wire_format = true` with nested message types
-- **Extension range declaration content** — Go skips `declaration = {...}` entirely
-- **packed on extension fields** — may produce different results
-- **Multiple errors from different validation passes** — many combinations possible
-- **weak field on non-message type** — `[weak = true]` on int32 — tested Run 235 session, both accept (NOT a gap)
-- **debug_redact on non-string field** — may or may not be validated differently
-- **json_format on enum incorrectly rejected** — TESTED in Run 235 (240_enum_json_format_feature), confirmed broken
-
-### Run 237 — Type shadowing in multi-part type names (FAILED: 5/5 profiles)
-- **Test:** `242_type_shadowing` — proto3 file with `message Outer { message Inner { ... } }`, `message Container { message Outer { ... } Outer.Inner ref = 1; }`
-- **Bug:** Go protoc-go accepts the file (exit 0), resolving `Outer.Inner` to `.shadow.Outer.Inner` (the top-level Outer). C++ protoc rejects with: `"Outer.Inner" is resolved to "shadow.Container.Outer.Inner", which is not defined.` (exit 1). C++ resolves the first component `Outer` in the innermost scope (finding `Container.Outer` which shadows the top-level `Outer`), then fails to find `Inner` inside it.
-- **Root cause:** `parser.go:4667-4691` — `resolveTypeName` concatenates the FULL multi-part name at each scope level: tries `.shadow.Container.Outer.Inner` (not found), then `.shadow.Outer.Inner` (found, returned). C++ protoc uses "leftmost component first" resolution: finds `Outer` in scope `.shadow.Container` → `.shadow.Container.Outer`, then looks for `Inner` in it → not found → error. Go's approach bypasses type shadowing because it skips the intermediate scope that shadows the first component. This affects any multi-part type reference (e.g., `A.B.C`) where the first component is shadowed by a nested type in the current scope.
-
-### Run 238 — allow_alias without actual aliases (FAILED: 5/5 profiles)
-- **Test:** `243_allow_alias_no_dup` — proto3 enum with `option allow_alias = true;` but all values are unique (no actual aliases)
-- **Bug:** Go protoc-go accepts the file (exit 0), producing a valid descriptor with `allow_alias = true`. C++ protoc rejects with: `"Status" declares support for enum aliases but no enum values share field numbers. Please remove the unnecessary 'option allow_alias = true;' declaration.` (exit 1). Different exit codes across all 5 profiles.
-- **Root cause:** `cli.go:1278-1279` — `collectDuplicateEnumValueErrors` returns early when `allow_alias` is true, without checking whether any aliases actually exist. C++ protoc validates that if `allow_alias` is set, at least one duplicate value number must exist. Go has no such validation — it blindly trusts the `allow_alias` flag.
-
-### Run 239 — Proto2 JSON name collision treated as error instead of warning (FAILED: 5/5 profiles)
-- **Test:** `244_proto2_json_warning` — proto2 message with `optional string foo_bar = 1;` and `optional string fooBar = 2;` (JSON name collision)
-- **Bug:** C++ protoc treats proto2 JSON name collisions as **warnings** (prints `warning:` prefix, exits 0, produces output). Go protoc-go treats them as **errors** (no `warning:` prefix, exits 1, produces no output). Two differences: (1) Go's error message lacks the `warning: ` prefix, (2) Go exits 1 instead of 0, blocking output generation.
-- **Root cause:** `cli.go` — `validateJSONNames` (or equivalent) treats JSON name collisions uniformly as errors regardless of syntax version. C++ protoc differentiates: proto3 → error (exit 1), proto2 → warning (exit 0, output still generated). Go has no concept of warnings — all diagnostics are fatal errors.
-
-### Run 240 — Multiline map type SCI span (FAILED: 4/5 profiles)
-- **Test:** `245_multiline_map` — proto3 message with `map<string,\n      int32> values = 1;` where `>` is on a different line from `map<`
-- **Bug:** `parseMapField()` at line 3357-3358 uses `mapTok.Line` as the end line for the type_name SCI span (path `[4,0,2,0,6]`), but it should use `gtTok.Line`. When the `>` is on a different line, Go produces a 3-element span `[5, 2, 12]` (single-line), while C++ correctly produces a 4-element span `[5, 2, 6, 12]` (spanning two lines).
-- **Root cause:** `parser.go:3357-3358` — `p.addLocationSpan(append(copyPath(fieldPath), 6), startLine, startCol, mapTok.Line, typeNameEndCol)` uses `mapTok.Line` (the `map` keyword's line) instead of `gtTok.Line` (the `>` token's line). Since `startLine == mapTok.Line`, `multiSpan` collapses to a 3-element span, losing the end line information.
-
-### Known gaps still unexplored (updated):
-- **Feature target validation on remaining scopes** — method, enum value
-- **Error column positions** — many Go validation errors report wrong column
-- **packed on extension fields** — may produce different results
-- **Multiple errors from different validation passes** — many combinations possible
-- **debug_redact on non-string field** — may or may not be validated differently
-- **Other proto2-only warnings** — C++ protoc may have other proto2-specific warnings that Go treats as errors
-- **Multiline regular field type** — same end-line bug may exist in `parseField` for multiline type references
-- **Multiline extension range** — `extensions 100\n  to 200;` may have similar span issues
-- **Multiline reserved range** — `reserved 100\n  to 200;` may have similar span issues
-
-### Run 241 — Multiline method input/output type SCI spans (FAILED: 4/5 profiles)
-- **Test:** `246_multiline_method_type` — proto3 service with `rpc Search(mlmethod.\n      Request) returns (mlmethod.\n      Response);` where input and output type references span two lines
-- **Bug:** `parseMethod()` at lines 2964-2965 and 2970-2971 uses `inputTok.Line` / `outputTok.Line` as the end line for the type SCI span, instead of `inputEndTok.Line` / `outputEndTok.Line`. When the type reference spans multiple lines, Go produces a 3-element span (single-line) while C++ produces a 4-element span (multi-line). Descriptor set size differs by 2 bytes (449 vs 451) — one missing line number varint per type span.
-- **Root cause:** `parser.go:2964-2965` — `p.addLocationSpan(path, inputTok.Line, inputTok.Column, inputTok.Line, inputEndCol)` should use `inputEndTok.Line` as the 4th argument. Same at line 2970-2971 for the output type. This is the same class of bug as Run 240 (multiline map type) but in method type references.
-
-### Run 242 — --error_format flag not implemented (FAILED: 1/1 CLI test)
-- **Test:** CLI test `error_format` — runs `--error_format=gcc` with no other args
-- **Bug:** C++ protoc accepts `--error_format=gcc` (and `--error_format=msvs`) as a valid flag, then reports `Missing input file.` because no .proto was provided. Go protoc-go rejects the flag itself with `Unknown flag: --error_format` — the flag is documented in Go's `--help` text (cli.go lines 73-74) but never actually parsed from argv.
-- **Root cause:** `cli.go` help text at lines 73-77 documents `--error_format=FORMAT` as a supported flag, but the argument parsing logic never checks for `--error_format`. The flag is silently unrecognized. C++ protoc implements this in `command_line_interface.cc` and uses it to switch between GCC-style (`file:line:col: error`) and MSVS-style (`file(line) : error in column=col:`) error formatting.
-
-### Run 243 — --fatal_warnings CLI flag (FAILED: 1/1 CLI test)
-- **Test:** CLI test `fatal_warnings` — invokes both compilers with `--fatal_warnings` (no proto files)
-- **Bug:** `--fatal_warnings` is documented in Go's help text (cli.go line 76) but not parsed in the argument handler. Go returns `Unknown flag: --fatal_warnings` (exit 1). C++ protoc accepts the flag and returns `Missing input file.` (exit 1). Same exit code, different stderr.
-- **Root cause:** `cli.go` argument parsing loop (lines 508-608) has no `if arg == "--fatal_warnings"` check. The flag falls through to line 597 (`strings.HasPrefix(arg, "-")`) which returns `Unknown flag: --fatal_warnings`. C++ protoc parses this flag in `command_line_interface.cc` and uses it to promote warnings to fatal errors.
-
-### Run 244 — Map entry name collision with user-defined message (FAILED: 5/5 profiles)
-- **Test:** `247_map_entry_conflict` — proto3 message with a user-defined `message TagsEntry { string key = 1; string value = 2; }` AND `map<string, string> tags = 1;` (synthetic `TagsEntry` collides with user-defined one)
-- **Bug:** C++ protoc reports 4 errors: `"key" is already defined`, `"value" is already defined`, `"TagsEntry" is already defined`, and `Expanded map entry type TagsEntry conflicts with an existing nested message type.` Go protoc-go reports only 1 error: `"TagsEntry" is already defined in "mapentry.Container".` Both reject (exit 1), but error messages differ — Go is missing 3 of the 4 diagnostics (the field-level duplicates and the specific map entry conflict message).
-- **Root cause:** Go's duplicate name validation catches `TagsEntry` as a duplicate message name, but doesn't validate the individual fields inside the synthetic map entry (key/value) against the user-defined message's fields, and doesn't produce the domain-specific "Expanded map entry type conflicts" error. C++ protoc validates both the nested message name collision AND the individual field collisions within the entry, plus adds a specific map entry conflict diagnostic.
-
-### Run 245 — --print_free_field_numbers CLI flag (FAILED: 1/1 CLI test)
-- **Test:** CLI test `print_free_field` — `--print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto`
-- **Bug:** `parseArgs()` at lines 492-615 has no case for `--print_free_field_numbers`. The flag falls to the `strings.HasPrefix(arg, "-")` catch-all at line 604, which returns `Unknown flag: --print_free_field_numbers` (exit 1). C++ protoc accepts this flag, parses the proto file, and prints free field numbers to stdout: `basic.Person                        free: 4-INF` (exit 0).
-- **Root cause:** `compiler/cli/cli.go:492-615` — `parseArgs` switch handles `--help`, `--version`, `--proto_path`, `-I`, `--plugin`, `--descriptor_set_out`, `--include_imports`, `--include_source_info`, `--error_format`, `--fatal_warnings`, `--X_out`, `--X_opt`. Missing: `--print_free_field_numbers`, `--deterministic_output`, `--encode`, `--decode`, `--decode_raw`, `--dependency_out`, `--descriptor_set_in`. Any undocumented flags would also be rejected.
-
-### Known gaps still unexplored (updated):
-- **Multiline extension range** — `extensions 100\n  to 200;` may have similar span issues
-- **Multiline reserved range** — `reserved 100\n  to 200;` may have similar span issues
-- **--error_format=msvs** — even if `--error_format` is parsed, MSVS formatting logic is likely not implemented
-- **--print_free_field_numbers** — TESTED in Run 245, confirmed broken (Go rejects flag, C++ accepts and prints field numbers)
-- **--deterministic_output** — TESTED in Run 246 (cli@deterministic_output), confirmed broken (Go says "Unknown flag", C++ says "Missing input file.")
-- **Map entry name collision** — TESTED in Run 244 (247_map_entry_conflict), confirmed broken (Go reports 1 error, C++ reports 4)
-- **--dependency_out** — TESTED in Run 251, confirmed broken (Go treats as plugin, C++ recognizes as built-in flag)
-
-### Run 246 — --deterministic_output CLI flag (FAILED: 1/1 CLI test)
-- **Test:** `cli@deterministic_output` — CLI test with `--deterministic_output` flag (no input file)
-- **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--deterministic_output`. The flag falls to the default unknown flag handler, returning "Unknown flag: --deterministic_output". C++ protoc accepts the flag and reports "Missing input file." (since no .proto file was provided).
-- **Root cause:** `cli.go:510-640` — `parseArgs` switch handles many flags but is missing `--deterministic_output`. The help text (lines 33-34) documents this flag, but it was never added to the parser.
-
-### Run 247 — --retain_options CLI flag (FAILED: 1/1 CLI test)
-- **Test:** `cli@retain_options` — CLI test with `--retain_options` flag (no input file)
-- **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--retain_options`. The flag falls to the default unknown flag handler at line 631-637, returning "Unknown flag: --retain_options". C++ protoc accepts the flag and reports "Missing input file." (since no .proto file was provided).
-- **Root cause:** `cli.go:510-640` — `parseArgs` switch handles many flags but is missing `--retain_options`. The help text (lines 65-70) documents this flag for use with `--descriptor_set_out`, but it was never added to the parser.
-
-### Run 248 — --decode_raw CLI flag (FAILED: 1/1 CLI test)
-- **Test:** `cli@decode_raw` — CLI test with `--decode_raw` flag (no input file)
-- **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--decode_raw`. The flag falls to the default unknown flag handler, returning "Unknown flag: --decode_raw" (exit 1). C++ protoc accepts the flag, reads empty stdin, and exits 0 with no output. Exit code mismatch (C++ 0, Go 1).
-- **Root cause:** `cli.go:510-640` — `parseArgs` switch handles many flags but is missing `--decode_raw`. The help text (line 41) documents this flag for reading arbitrary protocol messages from stdin, but it was never added to the parser. Same pattern as `--deterministic_output` (Run 246) and `--retain_options` (Run 247).
-
-### Run 249 — --descriptor_set_in CLI flag (FAILED: 1/1 CLI test)
-- **Test:** `cli@descriptor_set_in` — CLI test with `--descriptor_set_in=/tmp/descriptors.pb` flag (no input file)
-- **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--descriptor_set_in`. The flag falls to the default unknown flag handler at line 645, returning "Unknown flag: --descriptor_set_in" (exit 1). C++ protoc accepts the flag and reports "Missing input file." (exit 1). Same exit code, different stderr.
-- **Root cause:** `cli.go:510-640` — `parseArgs` switch handles `--descriptor_set_out` but not `--descriptor_set_in`. The help text (lines 46-49) documents `--descriptor_set_in=FILES` for providing pre-built descriptor sets, but it was never added to the parser. Same pattern as other missing CLI flags (Runs 242-248).
-
-### Run 250 — Extension field name conflict with regular field (FAILED: 5/5 profiles)
-- **Test:** `248_ext_name_conflict` — proto2 file with `message Container { optional string tag = 1; extend Target { optional string tag = 100; } }` (regular field and extension field sharing the same name "tag" within Container)
-- **Bug:** Go protoc-go accepts the file (exit 0), producing a descriptor with both the regular field and the extension field. C++ protoc rejects with: `test.proto:13:21: "tag" is already defined in "extconflict.Container".` (exit 1). Different exit codes across all 5 profiles.
-- **Root cause:** `cli.go:2071-2104` — `collectDupNamesInMsg` iterates over `msg.GetOneofDecl()`, `msg.GetField()`, `msg.GetEnumType()`, and `msg.GetNestedType()`, but does NOT iterate over `msg.GetExtension()`. Extension fields defined inside a message (via `extend Foo { ... }`) are registered as children of the containing message in C++ protoc's symbol table. Go's duplicate name check completely ignores extension fields, so any name collision between a regular field/nested type and an extension field goes undetected.
-
-### Run 251 — --dependency_out CLI flag (FAILED: 1/1 CLI test)
-- **Test:** `cli@dependency_out` — CLI test with `--dependency_out=/tmp/deps.txt -I testdata/01_basic_message testdata/01_basic_message/basic.proto`
-- **Bug:** `parseArgs()` in cli.go (lines 510-640) has no case for `--dependency_out`. The `--dependency_out=FILE` flag matches the generic `--X_out=` plugin pattern at line 617, extracting "dependency" as the plugin name. Go tries to run `protoc-gen-dependency` (fails: exec not found). C++ protoc recognizes `--dependency_out` as a built-in flag and says "Missing output directives." (since dependency_out alone is not a code output).
-- **Root cause:** `cli.go:617-619` — the generic `--X_out=` pattern greedily matches `--dependency_out` as a plugin output for a plugin named "dependency". Unlike `--descriptor_set_out` which has explicit handling at line 571, `--dependency_out` has no special case. C++ protoc treats it as a built-in flag that writes Make-rule-format dependency info to a file alongside other outputs.
-
-### Run 252 — --encode CLI flag (FAILED: 1/1 CLI test)
-- **Test:** `cli@encode` — CLI test with `--encode=foo.Message`
-- **Bug:** `parseArgs()` in cli.go has no case for `--encode`. Go produces `Unknown flag: --encode` (exit 1). C++ protoc recognizes `--encode` as a built-in flag for reading text-format input and writing binary output; it says `Missing input file.` (exit 1). Same exit code, different stderr.
-- **Root cause:** `cli.go:510-660` — `parseArgs` switch doesn't handle `--encode` or `--decode`. These flags are mentioned in help text (lines 29, 37) but have no parsing logic. C++ protoc handles `--encode=MESSAGE_TYPE` to read a text-format message from stdin and write binary to stdout.
-
-### Run 253 — Extension range max sentinel order-dependent (FAILED: 5/5 profiles)
-- **Test:** `249_msgset_order` — proto2 message with `extensions 4 to max;` BEFORE `option message_set_wire_format = true;`
-- **Bug:** `parseExtensionRange()` at line 776 checks `msg.GetOptions().GetMessageSetWireFormat()` to decide the `max` sentinel value: `2147483647` (INT32_MAX) for message_set, `536870912` (2^29) otherwise. When the extensions statement is parsed BEFORE the option, `MessageSetWireFormat` is not yet set, so Go uses `536870912`. C++ protoc resolves `max` to `2147483647` regardless of declaration order because it recomputes after all options are processed.
-- **Root cause:** `parser.go:776-780` — the `max` sentinel is computed at parse time based on current option state. C++ protoc's `DescriptorBuilder::BuildExtensionRange` uses the final resolved option state (after all message options are parsed). Go's parser evaluates `max` inline during parsing, making the result depend on source order. Existing test `75_message_set_wire_format` has the option BEFORE the extensions, masking this bug.
-
-### Run 254 — Multiline extend extendee SCI span (FAILED: 4/5 profiles)
-- **Test:** `250_multiline_extend` — proto2 file with `extend Outer.\n  Inner { optional string tag = 100; }` where the extendee type name (`Outer.Inner`) spans two lines
-- **Bug:** `parseExtend()` at line 1058 builds the extendee SCI span as `multiSpan(extNameStartLine, extNameStartCol, extNameStartLine, extNameEndCol)` — using `extNameStartLine` for BOTH start and end line. When the extendee name spans two lines, the end line should be `extNameEndTok.Line` (line 12) not `extNameStartLine` (line 11). C++ protoc produces a 4-element span `[10, 7, 11, 7]` (multiline). Go produces a 3-element span `[10, 7, 7]` (single line, wrong).
-- **Root cause:** `parser.go:1058` — `multiSpan(extNameStartLine, extNameStartCol, extNameStartLine, extNameEndCol)` hardcodes the start line as the end line. Should be `multiSpan(extNameStartLine, extNameStartCol, extNameEndTok.Line, extNameEndCol)` but `extNameEndTok.Line` is never computed — only `extNameEndCol` is extracted at line 1000. Same bug exists at line 1269 (nested extend inside message body). Same bug class as Run 240 (multiline map type SCI) and Run 241 (multiline method type SCI).
-
-### Run 255 — Multiline enum value options SCI span (FAILED: 4/5 profiles)
-- **Test:** `251_multiline_enumval_opt` — proto3 enum with `PRIORITY_LOW = 1 [deprecated\n    = true];` where the enum value options span two lines
-- **Bug:** `parseEnum()` at lines 2121-2122 builds the enum value options container SCI span as `p.addLocationSpan(optPath, optsBracketStartLine, optsBracketStartCol, optsBracketStartLine, optsBracketEndCol+1)` — using `optsBracketStartLine` for BOTH start and end line. When options span two lines (e.g., `[` on line 7, `]` on line 8), the end line should be `closeBracket.Line` but line 2074 only saves `closeBracket.Column` (`optsBracketEndCol`), not the line. C++ protoc produces a 4-element span covering both lines. Go produces a 3-element span with wrong end column (column from line 8 applied to line 7). Binary payloads differ (335 vs 333 bytes).
-- **Root cause:** `parser.go:2074` — `optsBracketEndCol = closeBracket.Column` discards `closeBracket.Line`. Lines 2121-2122 then use `optsBracketStartLine` as both start and end line. Same bug class as Run 240 (multiline map type SCI), Run 241 (multiline method type SCI), and Run 254 (multiline extend extendee SCI). Individual option entries at lines 2125-2126 and 2128-2129 also hardcode `optsBracketStartLine` for both start and end line — same issue.
-
-### Run 256 — Edition 2024 accepted by Go but rejected by C++ (FAILED: 5/5 profiles)
-- **Test:** `252_edition_2024` — file with `edition = "2024";` containing a simple message
-- **Bug:** Go's `editionMap` (line 289) includes `"2024": descriptorpb.Edition_EDITION_2024`, so Go accepts edition 2024 and produces a valid descriptor. C++ protoc 29.3 rejects it with `Edition 2024 is later than the maximum supported edition 2023` (exit 1). Different exit codes: C++ exits 1, Go exits 0.
-- **Root cause:** `parser.go:289-292` — `editionMap` includes edition 2024 from the Go protobuf library's `descriptorpb.Edition_EDITION_2024` enum value, but C++ protoc 29.3 only supports editions up to 2023. Go's parser lacks a maximum supported edition check. C++ protoc validates against `PROTOBUF_MAXIMUM_EDITION` which is set to `EDITION_2023` in libprotoc 29.3. Go should also cap at the maximum supported edition of the C++ protoc it's porting.
-
-### Run 257 — Multiline string concatenation default value SCI span (FAILED: 4/5 profiles)
-- **Test:** `253_multiline_default_concat` — proto2 message with `optional string greeting = 1 [default = "hello "\n      "world"];` where the default value uses string concatenation spanning two lines
-- **Bug:** `parseFieldOptions()` at line 4100-4101 uses `valTok.Line` for BOTH start and end lines in the default_value SCI span (path [7]). When the default value spans two lines via string concatenation, the end line should be the LAST string token's line, not `valTok.Line`. C++ protoc produces a 4-element span covering both lines. Go produces a 3-element span with wrong end column (column from line 2 interpreted as being on line 1). Binary payloads differ for profiles with SCI (descriptor_set_src, descriptor_set_full, plugin, plugin_param).
-- **Root cause:** `parser.go:4100-4101` — `addLoc(append(copyPath(fieldPath), 7), valTok.Line, defStartCol, valTok.Line, valEnd)` hardcodes `valTok.Line` as both start and end line. After string concatenation at lines 3795-3800, `valEnd` is updated to the last string token's end column, but the line is never tracked. Should track `valEndLine` and use it instead. Same bug class as Runs 240, 241, 254, 255 (multiline SCI hardcoding start line as end line). Same bug likely affects `json_name` SCI at lines 4106-4107 and all other field option SCI entries that use `valTok.Line`.
-
-### Run 258 — --notices CLI flag (FAILED: 1/1 CLI test)
-- **Test:** `cli@notices` — CLI test with `--notices` flag (no input file)
-- **Bug:** `parseArgs()` in cli.go has no case for `--notices`. Go returns "Unknown flag: --notices" (exit 1). C++ protoc 29.3 returns "Missing value for flag: --notices" (exit 1) — it recognizes `--notices` as a flag syntax but considers it value-requiring. Same exit code, different stderr messages.
-- **Root cause:** `cli.go:510-660` — `parseArgs` switch doesn't handle `--notices`. C++ protoc 29.3 parses flags more leniently and produces a different error message for unrecognized flags that match the `--xxx` pattern. Go's catch-all at the default case immediately returns "Unknown flag" without the more nuanced "Missing value" error that C++ produces for `--notices`. Same pattern as Runs 242-252 (missing CLI flag handling).
-
-### Run 259 — Group field with options (FAILED: 5/5 profiles)
-- **Test:** `254_group_options` — proto2 message with `repeated group MyGroup = 1 [deprecated = true] { required string name = 1; }`
-- **Bug:** `parseGroupField()` at line 1775 calls `p.tok.Expect("{")` immediately after parsing the field number. When there are field options `[deprecated = true]` between the number and the opening brace, the parser gets `[` instead of `{` and fails with `Expected "{"`. C++ protoc correctly handles `[options]` between the group field number and the group body `{`.
-- **Root cause:** `parser.go:1775` — `parseGroupField` has no option parsing between the field number and the `{`. Regular fields handle options via `parseFieldOptions` at line 1564, but group fields skip this step entirely. The fix would be to add `parseFieldOptions` handling (like regular fields do) between `p.tok.ExpectInt()` and `p.tok.Expect("{")` in the group field parser. Same bug likely exists in `parseGroupFieldInExtend` and `parseGroupFieldInOneof`.
-
-### Known gaps still unexplored (updated):
-- **Group field options in extend blocks** — `parseGroupFieldInExtend` at line 1083 likely has same missing option handling as `parseGroupField`
-- **Group field options in oneof** — `parseGroupFieldInOneof` likely has same bug
-- **Group fields with multiple options** (`[deprecated = true, packed = true]`) — same root cause
-- **Group field with json_name option** — `[json_name = "my_group"]` would also fail
-- **Proto2 default values on group fields** — groups can't have defaults but the error path may differ
-
-### Run 260 — --enable_codegen_trace CLI flag with value (FAILED: 1/1 CLI test)
-- **Test:** `cli@enable_codegen_trace` — CLI test with `--enable_codegen_trace=true` (flag with value, no input file)
-- **Bug:** `parseArgs()` in cli.go has no case for `--enable_codegen_trace`. Go returns "Unknown flag: --enable_codegen_trace" (exit 1). C++ protoc 29.3 recognizes this flag (it's documented in help text at lines 83-85), accepts the value, then says "Missing input file." (exit 1). Same exit code, completely different stderr messages.
-- **Root cause:** `cli.go:510-660` — `parseArgs` switch doesn't handle `--enable_codegen_trace` even though the help text documents it. The flag is a recognized C++ protoc option that enables tracing for codegen plugins. Go's catch-all at line 658-663 for flags with `=` returns "Unknown flag" instead of accepting it. This is a feature gap, not just an error message format issue like Runs 242-258.
-
-### Run 261 — Reserved keyword inside oneof body (FAILED: 5/5 profiles)
-- **Test:** `255_reserved_in_oneof` — proto3 message with `oneof payload { reserved 1; string text = 2; }`
-- **Bug:** Go's `parseOneof()` treats `reserved` as a type name (message reference), then tries to parse `1` as a field name via `ExpectIdent()`, producing error `Expected identifier.`. C++ protoc recognizes `reserved` in oneof context and produces `Expected field name.`. Both reject (exit 1) but different error text: `Expected identifier.` vs `Expected field name.`.
-- **Root cause:** `parser.go` `parseOneof` (line ~3099) has no case for `reserved` keyword. It falls through to field parsing, where `reserved` is treated as a type name. C++ protoc's parser recognizes `reserved` more specifically and produces a context-aware error message. The test harness compares stderr exactly, so different error text = FAIL.
-
-### Run 262 — Extension range start at zero (FAILED: 5/5 profiles)
-- **Test:** `256_ext_range_zero` — proto2 message with `extensions 0 to 10;` where the range starts at field number 0
-- **Bug:** Two issues: (1) Go is missing the validation "Extension numbers must be positive integers." — C++ protoc validates that extension range start > 0, Go does not. (2) After detecting that the range overlaps field "name" (1), C++ suggests "11, 12, 13" (numbers after the extension range end), while Go suggests "2" (next number after field 1, ignoring the extension range entirely). Error output: C++ produces 3 error lines, Go produces 2 lines.
-- **Root cause:** `parser.go` `parseExtensionRange()` at lines 777-778 only validates integer overflow (`> math.MaxInt32` / `< math.MinInt32`), not that start >= 1. C++ protoc's `DescriptorBuilder::ValidateExtensionRange` checks `extension_range->start <= 0` and reports "Extension numbers must be positive integers." Go's suggested field number calculation also ignores extension ranges when computing available field numbers, while C++ accounts for them.
-
-### Run 263 — --error_format=msvs error formatting (FAILED: 1/1 CLI test)
-- **Test:** `cli@error_format_msvs` — CLI test with `--error_format=msvs -I testdata/257_msvs_error --dump_out=/tmp/msvs_test_out testdata/257_msvs_error/test.proto` (file with duplicate field name `x`)
-- **Bug:** Go's `parseArgs()` at line 589-591 accepts `--error_format=msvs` via `continue` but never stores or acts on the format value. All error output remains in gcc format (`file:line:col: message`). C++ protoc applies msvs format: `file(line) : error in column=col: message`. Stderr differs: `testdata/257_msvs_error/test.proto(7) : error in column=9: "x"...` (C++) vs `test.proto:7:9: "x"...` (Go).
-- **Root cause:** `cli.go:589-591` — `--error_format=FORMAT` is parsed and silently ignored. The format value is never stored in any state variable, and all error formatting functions use gcc-style `filename:line:col:` unconditionally. C++ protoc stores the format and switches between `FormatError()` implementations (gcc vs msvs). Additionally, C++ uses the full path from `--proto_path` while Go uses just the base filename.
-
-### Run 265 — Enum-typed custom file option (FAILED: 5/5 profiles)
-- **Test:** `259_custom_enum_option` — proto2 file importing `google/protobuf/descriptor.proto`, defining `enum Severity { LOW=0; MEDIUM=1; HIGH=2; }`, `extend google.protobuf.FileOptions { optional Severity my_severity = 50001; }`, then using `option (my_severity) = HIGH;`
-- **Bug:** Go's `encodeCustomOptionValue()` at the TYPE_ENUM case tries `strconv.ParseInt("HIGH", 0, 32)` which fails, producing error: `error encoding custom option: enum value resolution not yet implemented for: HIGH`. C++ protoc resolves `HIGH` to its enum number (2) and succeeds.
-- **Root cause:** `cli.go` `encodeCustomOptionValue` TYPE_ENUM case at the bottom of the function — it only tries to parse the value as an integer literal. Enum value name-to-number resolution is explicitly not implemented (comment says "For now, try parsing as integer"). C++ protoc's option interpreter resolves enum value names via the DescriptorPool. Any custom option with an enum type that uses a value name (not a raw number) will fail in Go.
-
-### Known gaps still unexplored (updated):
-- **Custom option with bool type** — `extend FileOptions { optional bool my_flag = 50002; }` then `option (my_flag) = true;` — might work or have encoding differences
-- **Custom option with int type** — numeric custom options should work since `strconv.ParseInt` handles integers
-- **Custom option with message type** — aggregate value `option (my_opt) = { key: "value" };` — likely not supported
-- **Multiple custom options on same file** — ordering/interaction might differ
-- **Proto2 `option deprecated` on extension** — `extend Foo { optional string tag = 100 [deprecated = true]; }` — might produce different option SCI
-- **Octal integer field numbers** — `string name = 010;` (octal 8) — both compilers should accept but test not created
-- **Invalid octal `08`** — TESTED in Run 266 (260_invalid_octal), confirmed broken (missing octal-specific error)
-
-### Run 266 — Invalid octal field number `08` (FAILED: 5/5 profiles)
-- **Test:** `260_invalid_octal` — proto3 message with `string value = 08;` (invalid octal digit `8` after leading `0`)
-- **Bug:** C++ protoc's tokenizer validates that integers with a leading `0` contain only valid octal digits (0-7). It reports `"Numbers starting with leading zero must be in octal."` at the offending digit (col 19), PLUS `"Integer out of range."` at the token start (col 18). Go's parser only calls `strconv.ParseInt("08", 0, 64)` which fails generically, producing just `"Integer out of range."` (col 18). C++ has 2 error lines, Go has 1.
-- **Root cause:** `parser.go:1580-1582` — `strconv.ParseInt` with base 0 rejects `08` as invalid syntax, but the parser maps ALL parse failures to the generic `"Integer out of range."` message. C++ protoc's `Tokenizer::ParseInteger` uses `strtoull` which also rejects `08`, but the tokenizer additionally has digit-by-digit validation that reports the specific `"Numbers starting with leading zero must be in octal."` error for non-octal digits after a leading zero. Go lacks this validation step entirely.
-
-### Run 264 — Custom options via extensions (FAILED: 5/5 profiles)
-- **Test:** `258_custom_option` — proto2 file importing `google/protobuf/descriptor.proto`, defining `extend google.protobuf.FileOptions { optional string my_file_option = 50000; }`, then using `option (my_file_option) = "hello";`
-- **Bug:** Go rejects `option (my_file_option) = "hello"` with error: `Option "(my_file_option)" unknown. Ensure that your proto definition file imports the proto which defines the option.` C++ protoc resolves the custom option via the extension to `FileOptions` and succeeds.
-- **Root cause:** Go's custom option resolution cannot discover extensions defined via `extend google.protobuf.FileOptions`. When a parenthesized option name `(my_file_option)` is encountered, Go's validation looks up the name in a fixed list of standard options and fails. C++ protoc uses the `DescriptorPool` to resolve extensions of the target options message, finding the extension field and applying it correctly. The Go implementation lacks extension-based option resolution entirely.
-
-### Run 267 — Multiline negative enum value number SCI span (FAILED: 4/5 profiles)
-- **Test:** `261_multiline_neg_enum` — proto3 enum with `TEMPERATURE_COLD = -\n    1;` where the minus sign and number are on separate lines
-- **Bug:** `parseEnum()` at line 2196 builds the enum value number SCI span as `addLocationSpan(..., valNumTok.Line, numStartCol, valNumTok.Line, ...)` — using `valNumTok.Line` for BOTH start and end line. When the minus sign is on a different line from the number, the start line should be `minusTok.Line`. C++ protoc produces a 4-element span `[6, 21, 7, 5]` (multiline: from `-` on line 6 to `1` on line 7). Go produces a 3-element span `[7, 21, 5]` (single line 7 with wrong start column 21 borrowed from line 6).
-- **Root cause:** `parser.go:2192-2197` — `numStartCol` is correctly set to `minusTok.Column` when negative, but the start line is always `valNumTok.Line`. Should also track `numStartLine` and set it to `minusTok.Line` when `minusTok != nil`. Same bug class as Runs 240, 241, 254, 255, 257 (multiline SCI hardcoding one token's line as both start and end line). The fix from Run 14 (`20_negative_enum`) only corrected the column, not the line.
-
-### Run 268 — Features on proto3 file missing line:col in error (FAILED: 5/5 profiles)
-- **Test:** `262_proto3_features` — proto3 file with `option features.field_presence = EXPLICIT;`
-- **Bug:** Go's `validateFeaturesEditions()` at cli.go:1657-1670 produces `"test.proto: Features are only valid under editions."` — no line/column info. C++ protoc produces `"test.proto:1:1: Features are only valid under editions."` with line:col `1:1`. Both reject (exit 1) but error format differs (missing `:1:1` in Go).
-- **Root cause:** `cli.go:1668` — `fmt.Sprintf("%s: Features are only valid under editions.", name)` uses only the filename. Should include `:1:1:` (or the actual location of the features option) to match C++ protoc's error format. C++ protoc emits the error at the file's first line/column since features are a file-level concern.
-
-### Run 269 — Same-enum duplicate name shows spurious scoping note (FAILED: 5/5 profiles)
-- **Test:** `263_same_enum_dup_name` — proto3 enum with `ACTIVE = 1;` and `ACTIVE = 2;` (duplicate value NAME within the same enum)
-- **Bug:** Go emits 2 error lines: the base `"ACTIVE" is already defined in "sameenumdup".` PLUS `Note that enum values use C++ scoping rules...`. C++ protoc emits only 1 line (the base error, no scoping note). The scoping note is only relevant for CROSS-enum conflicts (explaining why values from different enums collide). For same-enum duplicates, C++ omits the note since the conflict is self-evident.
-- **Root cause:** `cli.go:2196-2200` — the `check()` closure unconditionally appends the scoping note whenever `enumName != ""`. No check is performed to determine whether the conflict is cross-scope (different enums) vs same-scope (same enum). C++ protoc's `descriptor.cc` only emits the note when the conflicting symbol was registered by a DIFFERENT enum. The fix from earlier runs (adding the note for cross-enum conflicts) over-corrected by always showing it.
-
-### Run 270 — Edition 2023 with labels (FAILED: 5/5 profiles)
-- **Test:** `265_edition_label` — edition 2023 file with `optional string name = 1;` and `repeated int32 values = 2;`
-- **Bug:** Go parser accepts `optional` and `repeated` labels in edition 2023 files without error. C++ protoc rejects with: `Label "optional" is not supported in editions. By default, all singular fields have presence unless features.field_presence is set.` Go succeeds and produces a descriptor; C++ fails with an error.
-- **Root cause:** `parser.go` — `parseField` at the label-handling code (around lines 1513-1560) handles `optional`, `required`, `repeated` keywords but never checks `p.syntax == "editions"`. In editions, field labels are not allowed — presence is controlled via `features.field_presence`. The parser needs to emit an error when a label keyword is encountered in edition files. Only 3 places check for `p.syntax == "editions"` (lines 354, 665, 2462) and none are in the field parsing path.
-
-### Run 271 — Edition 2023 with group keyword (FAILED: 5/5 profiles)
-- **Test:** `266_edition_group` — edition 2023 file with `repeated group Result = 1 { string url = 1; string title = 2; }`
-- **Bug:** Go parser accepts `repeated group` in edition 2023 files and produces a descriptor. C++ protoc rejects with: `test.proto:6:12: Group syntax is no longer supported in editions. To get group behavior you can specify features.message_encoding = DELIMITED on a message field.`
-- **Root cause:** `parser.go` — `parseGroupField` and `isGroupField` have no `p.syntax == "editions"` check. The group parsing path (lines 560-575 in message body, `parseGroupField` function) accepts groups unconditionally regardless of syntax. In editions, groups are replaced by `features.message_encoding = DELIMITED` on regular message fields. The parser needs to reject `group` keyword when `p.syntax == "editions"`.
-
-### Run 272 — Negative NaN default value normalization (FAILED: 5/5 profiles)
-- **Test:** `267_neg_nan_default` — proto2 message with `optional double neg_nan = 1 [default = -nan];` and `optional float pos_inf = 2 [default = inf];`
-- **Bug:** Go parser stores default value as `"-nan"` (4 bytes). C++ protoc normalizes it to `"nan"` (3 bytes) because NaN has no sign. Descriptor set sizes differ by 1 byte (92 vs 93, 342 vs 343). Plugin profiles: summary matches but binary differs.
-- **Root cause:** `parser.go:3969-3971` prepends `-` to the default value string. Then at line 4024, `strings.ToLower("-nan")` produces `"-nan"` which doesn't match the `"nan"` case. Falls to `strconv.ParseFloat("-nan", 64)` which returns an error (Go doesn't accept `-nan`). So `defVal` stays as `"-nan"` instead of being normalized to `"nan"`. C++ protoc's `SimpleDtoa` always outputs `"nan"` for any NaN regardless of sign bit.
-
-### Run 273 — Edition 2023 with `required` label error message (FAILED: 5/5 profiles)
-- **Test:** `268_edition_required` — edition 2023 file with `required string name = 1;` and `required int32 id = 2;`
-- **Bug:** Both compilers reject `required` in editions (exit 1), but Go's error message text differs from C++. C++ says: `Label "required" is not supported in editions, use features.field_presence = LEGACY_REQUIRED.` Go says: `Label "required" is not supported in editions. Use features.field_presence to control field presence, and the feature "features.field_presence = LEGACY_REQUIRED" to require that a field is always set.` Different punctuation (comma vs period after "editions"), and Go adds a longer explanation.
-- **Root cause:** The Go error message string for `required` in editions was written verbosely instead of matching C++ protoc's exact wording. C++ protoc uses a terse single-clause message. Go uses a multi-sentence explanation. The test harness compares stderr exactly, so different text = FAIL.
-
-### Run 274 — Aggregate custom option value (FAILED: 5/5 profiles)
-- **Test:** `269_aggregate_option` — proto2 file defining a message `MyOpt` with string+int32 fields, extending `google.protobuf.FileOptions` with `optional MyOpt my_option = 50001`, then using `option (my_option) = { name: "hello" value: 42 };`
-- **Bug:** `parseFileOption()` at line 3492 reads ONE token as the custom option value via `valTok := p.tok.Next()`. When the value is `{` (aggregate/message literal syntax), it reads `{` as the value, then `Expect(";")` at line 3502 gets `name` instead of `;` → parse error: `Expected ";"`. C++ protoc handles aggregate value syntax and parses the entire `{ key: value ... }` block.
-- **Root cause:** `parser.go:3492` — custom option value parsing only supports scalar values (strings, numbers, identifiers). No handling for `{` to begin a message literal block. C++ protoc's `ConsumeFieldValue` supports aggregate values delimited by `{ }` or `< >`. This affects all custom option contexts (file, message, field, enum, enum value, service, method) that accept message-typed extension options.
-
-### Known gaps still unexplored (updated):
-- **Features on proto2 files** — same missing line:col bug
-- **Multiple custom options on same file** — ordering/interaction might differ
-- **Proto2 `option deprecated` on extension** — `extend Foo { optional string tag = 100 [deprecated = true]; }` — might produce different option SCI
-- **Edition 2023 with `extensions`/`extend`** — might have validation differences
-- **Group in oneof inside editions** — same missing rejection
-- **`-infinity` default normalization** — similar issue, Go may produce `-infinity` instead of `-inf`
-- **Empty statements inside oneof** — Go rejects `;` inside oneof (line 3141) but C++ accepts per spec
-- **Edition `optional` label error message** — same class of bug, Go's wording likely differs from C++ for `optional` in editions too
-- **Edition `repeated` label error message** — same class of bug for `repeated` label in editions
-- **Aggregate custom option on message/field/enum/service/method** — same bug as Run 274 but in other option contexts
-- **Aggregate custom option with `< >` delimiters** — TESTED in Run 275 (270_aggregate_angle), confirmed broken (different error messages)
-
-### Run 275 — Aggregate option with angle bracket delimiters (FAILED: 5/5 profiles)
-- **Test:** `270_aggregate_angle` — proto2 file with `option (my_info) = < label: "test" count: 7 >;` using `< >` instead of `{ }` for aggregate value
-- **Bug:** Both compilers reject `< >` delimiters for aggregate option values, but with different error messages. C++ protoc: `test.proto:16:20: Expected option value.` (points at `<` on line 16, col 20). Go protoc-go: `test.proto:17:3: Expected ";"` (points at `label` on line 17, col 3). Go's parser reads `<` as a scalar value token, then fails when it expects `;` but finds the next key token. C++ rejects `<` immediately as not a valid option value.
-- **Root cause:** `parser.go:3506` — custom option value parsing only checks for `{` to start aggregate mode. When `<` is encountered, it falls through to the scalar value path (line 3501: `valTok := p.tok.Next()` reads `<`), then line 3524 `p.tok.Expect(";")` fails because the next token is `label` not `;`. C++ protoc's option value parser doesn't accept `<` either, but its error message is more accurate ("Expected option value") since it validates the token type before consuming it.
-
-### Run 276 — Nested enum inside group body (FAILED: 5/5 profiles)
-- **Test:** `271_group_nested_enum` — proto2 message with `optional group MyGroup = 1 { ... }` containing a nested `enum Status { UNKNOWN = 0; ACTIVE = 1; }` and a field using that enum type
-- **Bug:** `parseGroupField()` at lines 1902-1909 only parses fields inside the group body (calls `parseField` in a loop). It doesn't handle nested messages, enums, oneofs, reserved, options, extension ranges, or any other message-body constructs. When `enum` is encountered, Go treats it as a type name, `Status` as the field name, then expects `=` but finds `{` → parse error: `test.proto:8:17: Missing field number.` C++ protoc handles groups identically to messages (same body grammar).
-- **Root cause:** `parser.go:1902-1909` — group body is parsed with a minimal loop that only calls `parseField()`. Groups in protobuf share the same body grammar as messages (they can contain nested types, enums, oneofs, extensions, reserved, options). The Go parser needs to use the same message-body parsing logic (lines 228-304) for group bodies.
-
-### Known gaps still unexplored (updated):
-- **Nested message inside group body** — same bug as Run 276 (group body only parses fields)
-- **Reserved/extensions/options inside group body** — same root cause
-- **Oneof inside group body** — same root cause
-- **Group inside group** (nested groups) — same root cause
-- **Features on proto2 files** — same missing line:col bug
-- **Multiple custom options on same file** — ordering/interaction might differ
-- **Proto2 `option deprecated` on extension** — SCI differences
-- **Edition 2023 with `extensions`/`extend`** — validation differences
-- **Group in oneof inside editions** — missing rejection
-- **Edition `optional` label error message** — wording likely differs
-- **Aggregate custom option on message/field/enum/service/method** — same bug as Run 274 but in other contexts
-
-### Run 277 — deprecated_legacy_json_field_conflicts not respected (FAILED: 5/5 profiles)
-- **Test:** `272_deprecated_json_compat` — proto3 message with `option deprecated_legacy_json_field_conflicts = true;` and two fields `foo_bar`/`fooBar` with conflicting JSON names
-- **Bug:** Go parser correctly sets `MessageOptions.DeprecatedLegacyJsonFieldConflicts = true` on the descriptor, but `validateJsonNameConflicts()` in cli.go never checks this flag. Go rejects the file with a JSON name conflict error. C++ protoc v29.3 respects the flag and suppresses the conflict, accepting the file successfully.
-- **Root cause:** `cli.go:1572-1637` — `validateJsonNameConflicts` and `collectJsonNameConflictErrors` never read `msg.GetOptions().GetDeprecatedLegacyJsonFieldConflicts()`. The flag is parsed and stored but never consulted during validation. C++ protoc checks this flag in its `ValidateJsonName` logic and skips conflict errors when set.
-
-### Run 278 — Message-level features on proto2 missing line:col (FAILED: 5/5 profiles)
-- **Test:** `273_proto2_msg_features` — proto2 message with `option features.field_presence = EXPLICIT;`
-- **Bug:** Both compilers reject with `"Features are only valid under editions."` but Go omits line:col. C++ protoc: `test.proto:5:9: Features are only valid under editions.` Go: `test.proto: Features are only valid under editions.` Missing `:5:9:` in Go's output.
-- **Root cause:** `cli.go:1702-1704` — `collectFeaturesEditionsInMsg` uses `fmt.Sprintf("%s: Features are only valid under editions.", name)` without any source location. The file-level check at line 1670 was fixed to include `%d:%d:` (after Run 268), but the message/field/enum/service/method/oneof/extension checks (lines 1687-1735) were never updated. C++ protoc always includes line:col from the option's source location. Same fix needed for ALL non-file-level features checks in `validateFeaturesEditions`.
-
-### Run 279 — Packed option on message field reports 0:0 location (FAILED: 5/5 profiles)
-- **Test:** `274_packed_message` — proto3 file with `repeated Inner items = 1 [packed = true];` where `Inner` is a message type
-- **Bug:** Both compilers reject with `[packed = true] can only be specified for repeated primitive fields.` but Go reports `0:0` for the error location. C++ protoc: `test.proto:10:12: [packed = true]...`. Go: `test.proto:0:0: [packed = true]...`. The location is missing because Go's `collectPackedErrors` at line 813 looks up SCI path `[4, msgIdx, 2, fieldIdx, 5]` (field type path), but for message-typed fields, the SCI doesn't have an entry at path element 5 (type) — only at element 6 (type_name). `findLocationByPath` returns (0, 0) when no match is found.
-- **Root cause:** `cli.go:813` — `fieldPath := append(msgPath..., 2, int32(i), 5)` uses path element `5` (FieldDescriptorProto.type), but message-typed fields store their SCI location under path element `6` (FieldDescriptorProto.type_name). The code should use the field's main declaration SCI path `[4, msgIdx, 2, fieldIdx]` instead of the type-specific sub-path, or fall back to path element 6 when path 5 has no match. Same issue exists at lines 823 (extensions) and 800 (file-level extensions) for message-typed extension fields.
-
-### Run 280 — Empty hex literal `0x` error message (FAILED: 5/5 profiles)
-- **Test:** `275_empty_hex` — proto3 message with `string name = 0x;` (hex prefix with no digits)
-- **Bug:** C++ protoc: `test.proto:6:19: "0x" must be followed by hex digits.` (points at column 19, after the `0x` token). Go: `test.proto:6:17: Integer out of range.` (points at column 17, the start of `0x`). Two differences: (1) different error message — C++ specifically identifies the `0x` issue, Go gives a generic "Integer out of range" message; (2) different column — C++ points past the `0x` prefix, Go points at the start.
-- **Root cause:** Go's tokenizer reads `0x` as an integer token (2 characters), then `parseField` at line 1580-1582 calls `strconv.ParseInt("0x", 0, 64)` which fails because there are no hex digits after `0x`. The parser maps ALL parse failures to the generic `"Integer out of range."` message (same generic error as Run 266 for `08`). C++ protoc's `Tokenizer::ParseInteger` has specific validation for `0x` prefix without following hex digits and reports a targeted error message. Go lacks this specific validation entirely.
-
-### Run 281 — Custom field option via extend (FAILED: 5/5 profiles)
-- **Test:** `276_custom_field_ext` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `extend google.protobuf.FieldOptions { optional string label = 50001; }`, then uses `[(label) = "primary"]` on a field
-- **Bug:** Go reports `Option "(label)" unknown. Ensure that your proto definition file imports the proto which defines the option.` and fails with exit code 1. C++ protoc succeeds, resolving the custom field option against the extension defined in the same file and populating the field's `FieldOptions` with the custom extension.
-- **Root cause:** Go's parser has `CustomFileOption` struct (line 72) and a deferred resolution mechanism for file-level custom options (`option (name) = value;`), but NO equivalent deferred resolution for custom options in other contexts (field, message, enum, service, method, enum value). In `parseFieldOptions()` (line 2132-2151), when a parenthesized option name is encountered, it tries to match against known standard options immediately, and falls through to the "unknown" error. C++ protoc defers ALL custom option resolution to after the full file is parsed and the descriptor pool has processed all extensions. The Go parser would need to save non-file custom options as pending and resolve them post-parse against the collected extensions, similar to how `CustomFileOption` works.
-
-### Run 282 — Multiple custom field options SCI path resolution (FAILED: 4/5 profiles)
-- **Test:** `277_multi_custom_field_opt` — proto2 file with two FieldOptions extensions (`label = 50001`, `priority = 50002`), both used on the same field: `[(label) = "primary", (priority) = 5]`
-- **Bug:** `resolveCustomFieldOptions()` in `cli.go` updates SCI path placeholders `[..., 8, 0]` for custom field options by scanning ALL SCI entries and replacing `0` with the current extension's field number. When processing the first option `(label)`, the loop updates ALL placeholder `[..., 8, 0]` entries to `[..., 8, 50001]` — including the placeholder for the SECOND option `(priority)`. When processing `(priority)`, its placeholder has already been changed to `50001`, so `path[last] == 0` no longer matches and the entry never gets updated to `50002`. Result: both SCI entries have field number 50001 in the path, but C++ protoc correctly has 50001 and 50002.
-- **Root cause:** `cli.go:resolveCustomFieldOptions` inner loop at ~line 3637-3645 blindly updates ALL `[..., 8, 0]` entries without correlating which SCI entry belongs to which custom option. The SCI entry for the second custom field option gets its field number overwritten by the first option's resolution pass.
-
-### Run 283 — Capitalized boolean option error message wording (FAILED: 5/5 profiles)
-- **Test:** `278_capitalized_bool_option` — proto3 message with `option deprecated = True;` (capitalized `True` instead of `true`)
-- **Bug:** Both C++ and Go reject the input (exit 1), but the error messages differ. C++ protoc says: `Value must be "true" or "false" for boolean option "google.protobuf.MessageOptions.deprecated".` Go says: `Value must be identifier for boolean option "google.protobuf.MessageOptions.deprecated".` The Go error message is misleading — `True` IS an identifier, the issue is it's not one of the two valid identifiers. C++ protoc's message is more specific.
-- **Root cause:** `parser.go:1418-1421` — `validateMsgBool` error message says "must be identifier" instead of C++ protoc's "must be \"true\" or \"false\"". Same pattern exists for all non-file-level boolean option validators (enum options at line 2458, service options at line 2848, method options, field options, enum value options). The file-level `validateBool` at line 3744 has the same wrong wording.
-
-### Run 284 — Custom message option via extend MessageOptions (FAILED: 5/5 profiles)
-- **Test:** `279_custom_msg_ext` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `extend google.protobuf.MessageOptions { optional string my_msg_label = 50001; }`, then uses `option (my_msg_label) = "primary";` inside a message body
-- **Bug:** Go reports `Option "(my_msg_label)" unknown. Ensure that your proto definition file imports the proto which defines the option.` and fails with exit code 1. C++ protoc succeeds, resolving the custom message option against the extension defined in the same file and encoding it in `MessageOptions` unknown fields.
-- **Root cause:** `parser.go:1374-1382` — `parseMessageOption` handles parenthesized option names but ALWAYS rejects them with an "unknown" error. There is no deferred resolution mechanism for custom message options. Go has `resolveCustomFileOptions` (for `FileOptions` extensions) and `resolveCustomFieldOptions` (for `FieldOptions` extensions) but no equivalent `resolveCustomMessageOptions`. C++ protoc stores all options as `UninterpretedOption` during parsing and resolves them during linking. The Go parser needs a `CustomMessageOption` struct and deferred resolution similar to how `CustomFileOption` and `CustomFieldOption` work. Same bug exists for custom service options, method options, enum options, and enum value options — all parenthesized option names are rejected at parse time without attempting deferred resolution.
-
-### Run 285 — Custom service option via extend ServiceOptions (FAILED: 5/5 profiles)
-- **Test:** `280_custom_svc_ext` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `extend google.protobuf.ServiceOptions { optional string service_label = 50001; }`, then uses `option (service_label) = "primary";` inside a service body
-- **Bug:** Go reports `Option "(service_label)" unknown. Ensure that your proto definition file imports the proto which defines the option.` and fails with exit code 1. C++ protoc succeeds, resolving the custom service option against the extension defined in the same file and encoding it in `ServiceOptions` unknown fields.
-- **Root cause:** `parser.go:2502-2510` (in `parseServiceOption`) — when a parenthesized option name is encountered, Go calls `skipStatement()` then returns an error. There is no deferred resolution mechanism for custom service options. Go has `resolveCustomFileOptions` (for `FileOptions`) and `resolveCustomFieldOptions` (for `FieldOptions`) but no equivalent `resolveCustomServiceOptions`. Same class of bug as Run 281 (custom field option), Run 284 (custom message option). C++ protoc stores all options as `UninterpretedOption` and resolves them during linking. Still untested: custom enum option via extend EnumOptions, custom method option via extend MethodOptions, custom enum value option via extend EnumValueOptions.
-
-### Run 286 — Custom method option via extend MethodOptions (FAILED: 5/5 profiles)
-- **Test:** `281_custom_method_ext` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `extend google.protobuf.MethodOptions { optional string auth_role = 50001; }`, then uses `option (auth_role) = "admin";` inside a method body
-- **Bug:** Go reports `Option "(auth_role)" unknown. Ensure that your proto definition file imports the proto which defines the option.` and fails with exit code 1. C++ protoc succeeds, resolving the custom method option against the extension defined in the same file and encoding it in `MethodOptions` unknown fields.
-- **Root cause:** `parser.go:3130-3138` (in `parseMethodOption`) — when a parenthesized option name is encountered, Go calls `skipStatement()` then returns an error. No deferred resolution for custom method options. Same class of bug as Runs 281 (custom field), 284 (custom message), 285 (custom service). Still untested: custom enum option via extend EnumOptions, custom enum value option via extend EnumValueOptions.
-
-### Run 287 — Custom enum option via extend EnumOptions (FAILED: 5/5 profiles)
-- **Test:** `282_custom_enum_ext` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `extend google.protobuf.EnumOptions { optional string enum_label = 50001; }`, then uses `option (enum_label) = "status_tracker";` inside an enum body
-- **Bug:** Go reports `Option "(enum_label)" unknown. Ensure that your proto definition file imports the proto which defines the option.` and fails with exit code 1. C++ protoc succeeds, resolving the custom enum option against the extension and encoding it in `EnumOptions` unknown fields.
-- **Root cause:** Same class of bug as Runs 281 (custom field), 284 (custom message), 285 (custom service), 286 (custom method). Custom options via extension are not resolved for any option scope. Still untested: custom enum value option via extend EnumValueOptions.
-
-### Run 288 — Custom enum value option via extend EnumValueOptions (FAILED: 5/5 profiles)
-- **Test:** `283_custom_enum_val_ext` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `extend google.protobuf.EnumValueOptions { optional string display_name = 50001; }`, then uses `[(display_name) = "High Priority"]` on enum values
-- **Bug:** Go reports `Option "(display_name)" unknown. Ensure that your proto definition file imports the proto which defines the option.` and fails with exit code 1. C++ protoc succeeds, resolving the custom enum value option against the extension and encoding it in `EnumValueOptions` unknown fields.
-- **Root cause:** Same class of bug as Runs 281-287. Custom options via extension are not resolved for EnumValueOptions. This completes the coverage of all 7 option scopes (FileOptions, FieldOptions, MessageOptions, ServiceOptions, MethodOptions, EnumOptions, EnumValueOptions) — all are broken for custom options defined via extensions.
-
-### Run 289 — Negative sfixed32 custom option value (FAILED: 5/5 profiles)
-- **Test:** `284_custom_sfixed32_neg` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `extend google.protobuf.FieldOptions { optional sfixed32 min_value = 50001; }`, then uses `[(min_value) = -40]` on a field
-- **Bug:** Go reports `error encoding custom option: invalid fixed32 value: -40` and fails with exit code 1. C++ protoc succeeds, correctly encoding the negative sfixed32 value in the FieldOptions unknown fields.
-- **Root cause:** `cli.go:encodeCustomOptionValue` — the `TYPE_FIXED32`/`TYPE_SFIXED32` case uses `strconv.ParseUint(value, 0, 32)` which rejects negative values. For `TYPE_SFIXED32`, the value should be parsed with `strconv.ParseInt` (signed), not `ParseUint` (unsigned). Same bug exists for `TYPE_SFIXED64` — the `TYPE_FIXED64`/`TYPE_SFIXED64` case also uses `ParseUint`. Any custom option with a signed fixed type (`sfixed32`, `sfixed64`) and a negative value will fail encoding in Go but succeed in C++.
-
-### Run 290 — Custom option subfield syntax `(ext).field` (FAILED: 5/5 profiles)
-- **Test:** `285_subfield_option` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message MyOption { optional string name = 1; optional int32 level = 2; }`, extends `google.protobuf.FileOptions` with `optional MyOption my_file_opt = 50001`, then uses `option (my_file_opt).name = "hello";` and `option (my_file_opt).level = 42;` (subfield syntax)
-- **Bug:** Go fails with `test.proto:16:21: Expected "=".` and exit code 1. C++ protoc succeeds, correctly parsing the `(ext).field` syntax and setting individual subfields of the message-type extension option. Go's parser reads `(my_file_opt)` via `parseParenthesizedOptionName`, then immediately expects `=`, but encounters `.` (the subfield accessor).
-- **Root cause:** `parser.go` — after `parseParenthesizedOptionName()` returns, custom option parsing in `parseFileOption` (and all other option scopes) immediately calls `p.tok.Expect("=")`. There is no handling for the `.field` suffix syntax that allows setting individual fields of a message-type extension option. The `(ext).field = value;` syntax is part of the protobuf language spec and is commonly used instead of aggregate syntax `option (ext) = { field: value };`. The fix requires: after `parseParenthesizedOptionName`, check if next token is `.`, consume the subfield name, then expect `=`. The subfield name needs to be stored and used during encoding to set the correct sub-message field.
-
-### Run 291 — Custom oneof option via extend OneofOptions (FAILED: 5/5 profiles)
-- **Test:** `286_custom_oneof_ext` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `extend google.protobuf.OneofOptions { optional string oneof_label = 50001; }`, then uses `option (oneof_label) = "primary";` inside a oneof body
-- **Bug:** Go reports `Option "(oneof_label)" unknown. Ensure that your proto definition file imports the proto which defines the option.` and fails with exit code 1. C++ protoc succeeds, resolving the custom oneof option against the extension and encoding it in `OneofOptions` unknown fields.
-- **Root cause:** `parser.go:3780-3783` — `parseOneofOption` handles parenthesized option names but always rejects them with an "unknown" error after calling `skipStatement()`. There is no deferred resolution mechanism for custom oneof options. This is the 8th option scope (OneofOptions) confirmed broken for custom options defined via extensions, completing coverage beyond the 7 scopes tested in Runs 281-288 (FileOptions, FieldOptions, MessageOptions, ServiceOptions, MethodOptions, EnumOptions, EnumValueOptions).
-
-### Run 292 — Repeated custom option SCI path missing index (FAILED: 4/5 profiles)
-- **Test:** `287_repeated_custom` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `extend google.protobuf.FileOptions { repeated string tags = 50001; }`, then uses `option (tags) = "alpha"; option (tags) = "beta"; option (tags) = "gamma";` (three repeated custom option values)
-- **Bug:** Go emits SCI path `[8, 50001]` for all three repeated option statements. C++ protoc emits indexed paths: `[8, 50001, 0]`, `[8, 50001, 1]`, `[8, 50001, 2]` — tracking the ordinal index of each value within the repeated field. Binary CodeGeneratorRequest payloads differ because the SCI location paths have different lengths (2 elements in Go vs 3 in C++). Summary files match, but binary and JSON outputs differ. Passes only the `descriptor_set` profile (which doesn't include source info).
-- **Root cause:** `cli.go:resolveCustomFileOptions` — when updating the SCI path for a custom option, Go sets `path = []int32{8, ext.GetNumber()}` without appending the index within the repeated field. For non-repeated options this is correct, but for repeated extensions, C++ protoc appends the 0-based index of the value (0, 1, 2, ...) as a third path element. The fix: track a per-extension counter and append it to the SCI path when the extension field is `repeated` (i.e., `ext.GetLabel() == LABEL_REPEATED`).
-
-### Run 293 — Nested message literal in aggregate custom option (FAILED: 5/5 profiles)
-- **Test:** `288_nested_aggregate` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message Inner { optional string label = 1; optional int32 priority = 2; }`, `message MyFileOpt { optional Inner info = 1; optional string tag = 2; }`, extends `google.protobuf.FileOptions` with `optional MyFileOpt my_file_opt = 50001`, then uses `option (my_file_opt) = { info: { label: "primary" priority: 5 } tag: "test" };` (nested message literal in aggregate value)
-- **Bug:** Go fails with `test.proto:26:3: Expected ";"` and exit code 1. C++ protoc succeeds, correctly parsing the nested `{ ... }` block inside the aggregate value and encoding it as a nested message in the extension's protowire bytes. Go produces 106-byte output vs C++ 361 bytes.
-- **Root cause:** `parser.go:4518-4557` — `consumeAggregate` reads key:value pairs but has no handling for nested `{ }` (message-valued sub-fields). When the value is `{`, it stores the literal `{` as the AggregateField value. Then the inner `}` at line 4522 (`p.tok.Peek().Value != "}"`) terminates the loop prematurely. The outer `}` is consumed by `Expect("}")` at the call site (line 4172), and then `Expect(";")` at line 4187 encounters the remaining `}` instead of `;`. The fix: when `valTok.Value == "{"`, recursively call `consumeAggregate()` to parse the nested message literal and store the sub-fields on the AggregateField. The encoding in `encodeAggregateOption` would also need recursive encoding for nested sub-messages.
-
-### Known gaps still unexplored (updated):
-- **Aggregate custom option on non-file scopes** (message, field, enum, service, method) — same nested `{ }` bug likely affects all scopes
-- **Multiple levels of nesting in aggregate** — `{ a: { b: { c: "deep" } } }` — same root cause
-- **Repeated fields in aggregate** — `{ tags: "a" tags: "b" }` — encoding may differ
-- **Aggregate with enum-typed sub-field** — `{ status: ACTIVE }` — enum resolution in nested context
-
-### Run 294 — Angle bracket delimiters in nested aggregate option (FAILED: 5/5 profiles)
-- **Test:** `289_aggregate_angle_nested` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message Inner { optional string label = 1; optional int32 count = 2; }`, `message MyConfig { optional Inner info = 1; optional string tag = 2; }`, extends `google.protobuf.FileOptions` with `optional MyConfig my_config = 50003`, then uses `option (my_config) = { info < label: "test" count: 3 > tag: "hello" };` (angle bracket `< >` delimiters for nested message literal inside curly-brace aggregate)
-- **Bug:** Go fails with `error encoding custom option: field info: unsupported custom option type: TYPE_MESSAGE` and produces 35-byte output vs C++ 83 bytes. C++ protoc succeeds, correctly treating `< >` as equivalent to `{ }` for nested message literals in aggregate values.
-- **Root cause:** `parser.go:4535` — `consumeAggregate` only checks `p.tok.Peek().Value == "{"` for nested message literals. It does not handle `<` as an alternative open delimiter (matched by `>`). When `<` is encountered, it falls to the scalar value branch and stores `<` as the field value. Then subsequent tokens (`label`, `:`, `"test"`, `count`, `:`, `3`, `>`) are misinterpreted as separate key:value pairs. The fix: add `|| p.tok.Peek().Value == "<"` check alongside `{`, and use `>` as the matching close delimiter. C++ protoc's parser treats `<` and `{` interchangeably for message literal delimiters per the text format spec.
-
-### Run 295 — Extension field in aggregate option value (FAILED: 5/5 profiles)
-- **Test:** `290_aggregate_extension_field` — proto2 file with `message Color { extensions 100 to 200; }`, `extend Color { optional string color_name = 100; }`, `message MyFileOpt { optional Color primary = 1; }`, extends `google.protobuf.FileOptions` with `optional MyFileOpt my_file_opt = 50001`, uses `option (my_file_opt) = { primary { r: 255 g: 0 b: 0 [aggext.color_name]: "red" } };` (extension field reference inside aggregate)
-- **Bug:** Go fails with `error encoding custom option: field primary: unknown field "[" in message aggext.Color`. C++ protoc succeeds, correctly parsing `[aggext.color_name]` as an extension field reference inside the message literal.
-- **Root cause:** `parser.go:4519` — `consumeAggregate()` reads the key token as `p.tok.Next()` and uses `keyTok.Value` as the field name. When the key starts with `[` (extension field syntax), `keyTok.Value` is `"["`. The function has no handling for bracketed extension field names (`[qualified.name]`). It should detect `[` as the start of an extension field reference, read tokens until `]`, and use the full `[qualified.name]` as the field key. C++ protoc's text format parser handles this syntax natively since extension fields in message literals use `[FullyQualifiedExtensionName]` as the key.
-
-### Run 296 — Unknown error_format value not rejected (FAILED: 1 CLI test)
-- **Test:** CLI test `error_format_unknown` — `--error_format=unknown` with no other args
-- **Bug:** Go's `parseArgs()` at `cli.go:685-687` stores the error_format value without validation. Any unknown value (not `gcc` or `msvs`) is silently accepted and the Go CLI proceeds to the next validation step, which reports `"Missing input file."`. C++ protoc validates the error_format value immediately and rejects unknown values with `"Unknown error format: unknown"`.
-- **Root cause:** `cli.go:685-687` — `cfg.errorFormat = strings.TrimPrefix(arg, "--error_format=")` stores the value without checking it against the valid set `{"gcc", "msvs"}`. C++ protoc validates the format string right after parsing it and produces a specific error before reaching input file validation.
-
-### Run 297 — String concatenation inside aggregate option value (FAILED: 5/5 profiles)
-- **Test:** `292_aggregate_string_concat` — proto2 file with `option (my_opt) = { label: "hello" "world" };` where adjacent string literals should be concatenated
-- **Bug:** `consumeAggregate()` at parser.go:4580-4596 reads only ONE token as the field value. When the value consists of adjacent string literals (`"hello" "world"`), it reads `"hello"` as the value, then treats `"world"` as the next field name. This consumes the closing `}` as a value token, causing `Expect("}")` at line 4174 to fail with `expected "}", got ";"`. C++ protoc stores aggregate option text as raw tokens and interprets them with the text format parser, which supports string concatenation.
-- **Root cause:** `parser.go:4580-4596` — the scalar value branch in `consumeAggregate` uses a single `p.tok.Next()` call. No loop to check if the next token is also a string and concatenate. Same issue exists in `consumeAggregateAngle`. C++ protoc's text format parser uses `ConsumeString()` which loops over adjacent string tokens.
-
-### Known gaps still unexplored (updated):
-- **String concatenation in consumeAggregateAngle** — same bug as Run 297 but with `< >` delimiters
-- **Angle brackets in nested aggregate on non-file scopes** — same `<>` bug affects message-level, field-level, etc. options
-- **Mixed `{` and `<` delimiters** — `{ info < ... > }` tested here, but `< info { ... } >` at top level likely same issue
-- **Repeated message fields with `<>`** — `{ items < name: "a" > items < name: "b" > }` same root cause
-- **Extension field encoding in aggregate** — even if `consumeAggregate` is fixed to read `[ext.name]` keys, `encodeAggregateOption` would need to resolve the extension field descriptor to encode the value correctly
-- **`Any` type / message set wire format** — very obscure proto2 features, untested
-- **Other CLI flag validation gaps** — there may be more flags that Go silently ignores or accepts invalid values for
-
-### Run 298 — Numeric boolean value in aggregate custom option (FAILED: 5/5 profiles)
-- **Test:** `293_aggregate_bool_numeric` — proto2 file with `message Config { optional bool enabled = 1; optional bool verbose = 2; }`, extends `FileOptions`, uses `option (my_config) = { enabled: 1 verbose: 0 };` (numeric `1`/`0` instead of `true`/`false` for bool fields)
-- **Bug:** `encodeCustomOptionValue` at `cli.go:4405-4411` checks `value == "true"` for TYPE_BOOL. When `value = "1"`, the check fails and it encodes `varint(0)` (false). C++ protoc's text format parser accepts `1` as `true` and `0` as `false` for boolean fields, encoding `varint(1)` for `enabled: 1`. Binary diff: C++ has `0801` (field 1 = true), Go has `0800` (field 1 = false).
-- **Root cause:** `cli.go:4405-4411` — `encodeCustomOptionValue` TYPE_BOOL case only accepts the string `"true"` as truthy. C++ protoc's text format parser (`TextFormat::Parser`) accepts `true`, `True`, `TRUE`, `t`, `T`, `1` as true, and `false`, `False`, `FALSE`, `f`, `F`, `0` as false. The fix: change `value == "true"` to also accept `"1"`, `"True"`, `"TRUE"`, `"t"`, `"T"`.
-
-### Known gaps still unexplored (updated):
-- **Numeric bool in non-aggregate custom options** — `[(my_bool_opt) = 1]` likely same bug
-- **Mixed `{` and `<` at top level** — `< info { ... } >` untested
-- **Repeated message fields with `<>`** — `{ items < name: "a" > items < name: "b" > }` same root cause
-- **Extension field encoding in aggregate** — `[ext.name]` key encoding might differ
-- **`Any` type / message set wire format** — very obscure proto2 features, untested
-- **Other CLI flag validation gaps** — more flags Go silently ignores or accepts invalid values for
-
-### Run 299 — Integer value for non-aggregate bool custom option (FAILED: 5/5 profiles)
-- **Test:** `294_bool_int_value` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `extend google.protobuf.FieldOptions { optional bool my_flag = 50001; }`, then uses `optional int32 threshold = 1 [(my_flag) = 2];` and `optional string label = 2 [(my_flag) = 0];` (integer values for a bool-typed custom field option)
-- **Bug:** Go silently accepts integer values `2` and `0` for bool-typed custom options and produces output (exit 0). C++ protoc rejects with: `Value must be identifier for boolean option "boolintval.my_flag".` (exit 1). C++ protoc requires that boolean option values be identifiers (`true`/`false`), not integer literals.
-- **Root cause:** `encodeCustomOptionValue` at `cli.go:4405-4411` doesn't validate that the value token is an identifier before encoding a bool. It accepts any string and checks `value == "true" || value == "1"`. Missing validation: for `TYPE_BOOL`, when `valueType != tokenizer.TokenIdent`, Go should report `"Value must be identifier for boolean option \"FQN\"."` matching C++ protoc. The fix: add a check before encoding that `valueType == tokenizer.TokenIdent` (and value is `"true"` or `"false"`) for non-aggregate bool custom options.
-
-### Run 300 — Capitalized bool in aggregate custom option (FAILED: 5/5 profiles)
-- **Test:** `295_aggregate_capitalized_bool` — proto2 file with `message Settings { optional bool enabled = 1; optional bool verbose = 2; }`, extends `FileOptions`, uses `option (my_settings) = { enabled: True verbose: False };` (capitalized `True`/`False` in aggregate)
-- **Bug:** `encodeCustomOptionValue` at `cli.go:4415` checks `value == "true" || value == "1"` for TYPE_BOOL. `True` (capitalized) does NOT match either, so Go encodes it as `false` (varint 0). C++ protoc's text format parser accepts `True`, `TRUE`, `true`, `t`, `T`, `1` as truthy. Binary diff: C++ has `0801` (enabled = true), Go has `0800` (enabled = false). Descriptor set sizes differ (144 vs 77 bytes at plugin level).
-- **Root cause:** `cli.go:4415` — `value == "true" || value == "1"` is case-sensitive. C++ protoc's `Tokenizer::ParseBoolean()` in the text format parser does case-insensitive comparison and accepts many variants. The fix: use `strings.EqualFold(value, "true") || value == "1"` or add all accepted variants.
-
-### Run 301 — List syntax in aggregate option value (FAILED: 5/5 profiles)
-- **Test:** `296_aggregate_list` — proto2 file with `message MyFileOpt { repeated int32 values = 1; optional string label = 2; }`, extends `FileOptions`, uses `option (my_file_opt) = { values: [1, 2, 3] label: "test" };` (list syntax `[1, 2, 3]` for repeated field in aggregate)
-- **Bug:** `consumeAggregate()` at parser.go:4558-4607 has no handling for list values delimited by `[...]`. When `[` follows `:`, it falls to the scalar value branch and stores `[` as the AggregateField value. Then `encodeCustomOptionValue` tries to parse `[` as an integer and fails: `invalid integer value: [`. C++ protoc stores the aggregate text and parses it with `TextFormat::Parser`, which supports list syntax `[1, 2, 3]` for repeated fields.
-- **Root cause:** `parser.go:4558-4607` — the value-reading section of `consumeAggregate` checks for `{` (nested message) and `<` (angle bracket message) but not `[` (list of values). When `[` appears, it's treated as a plain scalar token. The fix: detect `[` at the value position, loop reading comma-separated values until `]`, and produce multiple AggregateField entries with the same field name (one per list element). Same issue exists in `consumeAggregateAngle`.
-
-### Run 305 — Aggregate option without colon for scalar fields (FAILED: 5/5 profiles)
-- **Test:** `300_aggregate_no_colon` — proto2 file with `option (my_opt) = { label "test" count 42 };` (no colon between field name and scalar value in aggregate)
-- **Bug:** `consumeAggregate()` at parser.go:4554-4558 makes the `:` separator optional for ALL fields (scalar and message). C++ protoc's text format parser requires `:` for scalar fields (only optional for message-typed fields with `{` or `<`). C++ error: `Expected ":", found ""test""`. Go succeeds and encodes the option. Different exit codes (C++ 1, Go 0).
-- **Root cause:** `parser.go:4554-4558` — `if p.tok.Peek().Value == ":"` makes colon optional unconditionally. C++ protoc stores the aggregate text as `UninterpretedOption.aggregate_value` and uses `TextFormat::Parser` during linking, which requires `:` before scalar values. Go parses the aggregate into structured fields at parse time with optional colon, then encodes directly into proto wire format, bypassing the text format parser's validation.
-
-### Known gaps still unexplored (updated):
-- **Mixed `{` and `<` at top level** — `< info { ... } >` untested
-- **Repeated message fields with `<>`** — `{ items < name: "a" > items < name: "b" > }` same root cause
-- **Extension field encoding in aggregate** — `[ext.name]` key encoding might differ
-- **Aggregate without colon for message fields** — Go might also differ in how it handles message-typed fields without colon (but C++ allows this, so might match)
-- **Aggregate option with duplicate field names** — `{ label: "a" label: "b" }` — Go may overwrite vs append, C++ text format parser appends for repeated fields
-- **`Any` type / message set wire format** — very obscure proto2 features, untested
-- **Other CLI flag validation gaps** — more flags Go silently ignores or accepts invalid values for
-- **Bool option with `FALSE`/`t`/`f` in aggregate** — same bug, other case variants not yet tested
-- **Integer value for bool in other scopes** — same bug likely exists in `resolveCustomMessageOptions`, `resolveCustomServiceOptions`, etc. (all call `encodeCustomOptionValue`)
-- **List syntax in `consumeAggregateAngle`** — same `[...]` bug as Run 301 but with `<>` delimiters
-- **Nested list values** — `values: [[1, 2], [3, 4]]` for repeated message with repeated int fields
-
-### Run 302 — Bool shorthand `t`/`f` in aggregate option (FAILED: 5/5 profiles)
-- **Test:** `297_aggregate_bool_shorthand` — proto2 file with custom option `(my_settings) = { enabled: t  verbose: f };` using single-character bool shorthand
-- **Bug:** `encodeCustomOptionValue()` at line 4415 checks `strings.EqualFold(value, "true") || value == "1"` to determine true. `"t"` doesn't match `"true"` via EqualFold (different lengths), and `"t" != "1"`. So `t` encodes as false (varint 0). C++ protoc's text format parser accepts `t`/`T` as true and `f`/`F`/`0` as false. Same-size descriptors (226 bytes) but different bool values encoded.
-- **Root cause:** `cli.go:4415` — bool parsing doesn't accept C++'s shorthand forms `t`/`T`/`f`/`F`. C++ `Tokenizer::ParseBoolean` recognizes: `true`/`True`/`TRUE`/`t`/`T`/`1` as true; everything else as false.
-
-### Run 303 — Positive sign `+` in custom option value (FAILED: 5/5 profiles)
-- **Test:** `298_positive_sign` — proto2 file with `option (my_count) = +42;` — uses `+` prefix on integer option value
-- **Bug:** Both C++ and Go reject `+42`, but with different error messages and column positions. C++: `test.proto:11:21: Expected option value.` (column 21 = `+` sign). Go: `test.proto:11:22: Expected ";"` (column 22 = `42`). C++ rejects `+` because it's not a valid option value start. Go reads `+` as the value token, then fails because `42` is not `;`.
-- **Root cause:** `parser.go:4155-4170` — custom option value parsing reads one token as value. `+` is consumed as the value, then `Expect(";")` gets `42`. C++ protoc's parser recognizes `+` is invalid at the option value position and reports "Expected option value" pointing at `+`. Go's error is weaker and points at the wrong column.
-
-### Run 304 — Deep subfield path in custom option (FAILED: 5/5 profiles)
-- **Test:** `299_deep_subfield` — proto2 file with `option (my_ext).inner.name = "test";` — two-level deep subfield path on a custom message-type extension option
-- **Bug:** Go fails with `test.proto:19:22: Expected "=".` (column 22 = the second `.`). C++ protoc succeeds, correctly parsing the multi-level path `(my_ext).inner.name` and setting the nested field value.
-- **Root cause:** `parser.go:4143-4150` — after `parseParenthesizedOptionName`, the sub-field reading code only handles ONE level: `if p.tok.Peek().Value == "." { read one subfield }`. The protobuf spec allows `{ "." ident }` (zero or more repetitions) after the parenthesized name. When a second `.` follows the first subfield, `Expect("=")` at line 4152 encounters `.` instead of `=`. Fix would require a loop to read all `.ident` suffixes and store the full path, plus encoding changes to traverse multiple levels of nested messages.
-
-### Run 306 — Angle bracket `<>` aggregate syntax in message custom option (FAILED: 5/5 profiles)
-- **Test:** `301_angle_bracket_option` — proto3 file with `option (my_info) = < name: "hello" >;` on a message-level custom option with message type value
-- **Bug:** `parseMessageOption()` at line 1503 checks for `{` to detect aggregate values but does NOT check for `<`. When the custom option uses `< ... >` angle bracket syntax, Go treats `<` as a regular scalar value token (line 1514: `valTok := p.tok.Next()` consumes `<`). Then `Expect(";")` at line 1532 gets `name` instead → `Expected ";"`. C++ rejects `<` at the aggregate position with `Expected option value.` pointing at the `<` token.
-- **Error diff:** C++: `test.proto:11:22: Expected option value.` Go: `test.proto:11:24: Expected ";".` — different error message text AND different column positions.
-- **Root cause:** `parser.go:1503` — message-level custom option parsing only handles `{` for aggregate syntax, not `<`. The file-level custom option parsing (`parseFileOption` at line 4206) explicitly rejects `<` with `Expected option value.` to match C++, but this rejection was never added to `parseMessageOption`, `parseServiceOption`, `parseMethodOption`, `parseEnumOption`, `parseOneofOption`, or `parseEnumValueOption`.
-- **Scope of bug:** Same issue likely exists in ALL option contexts that support custom options: service, method, enum, enum value, oneof, field. Only `parseFileOption` has the `<` rejection at line 4206.
-
-### Run 307 — Custom service option with sub-field path (FAILED: 5/5 profiles)
-- **Test:** `302_service_subfield_option` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message ServiceConfig { optional string name = 1; optional int32 priority = 2; }`, extends `google.protobuf.ServiceOptions` with `optional ServiceConfig my_svc_config = 50001`, then uses `option (my_svc_config).name = "primary";` inside a service (sub-field path on a message-typed custom service option)
-- **Bug:** Go fails with `test.proto:20:25: Expected "=".` at the `.` token. C++ protoc succeeds, correctly parsing the sub-field path `(my_svc_config).name` and setting the nested field value.
-- **Root cause:** `parser.go:3144-3222` — `parseServiceOption` goes straight from `parseParenthesizedOptionName` to `Expect("=")` with NO sub-field path handling. The file-level `parseFileOption` (line 4197-4203) has a `for p.tok.Peek().Value == "." { ... }` loop to read sub-field paths, but this loop was never added to `parseServiceOption`, `parseMethodOption`, `parseEnumOption`, `parseOneofOption`, or `parseEnumValueOption`. Same bug as Run 304 (file-level deep subfield), but this is a completely different scope — service-level — where even a SINGLE sub-field level is unsupported.
-- **Scope of bug:** Same missing sub-field path handling likely exists in all non-file custom option parsers: `parseMessageOption`, `parseMethodOption`, `parseEnumOption`, `parseEnumValueOption`, `parseOneofOption`.
-
-### Run 308 — Custom method option with sub-field path (FAILED: 5/5 profiles)
-- **Test:** `303_method_subfield_option` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message MethodConfig { optional string name = 1; optional int32 timeout = 2; }`, extends `google.protobuf.MethodOptions` with `optional MethodConfig my_method_config = 50001`, then uses `option (my_method_config).name = "worker";` inside a method body (sub-field path on a message-typed custom method option)
-- **Bug:** Go fails with `test.proto:21:30: Expected "=".` at the `.` token. C++ protoc succeeds, correctly parsing the sub-field path `(my_method_config).name` and setting the nested field value.
-- **Root cause:** `parser.go:3383-3393` — `parseMethodOption` goes straight from `parseParenthesizedOptionName` to `Expect("=")` with NO sub-field path handling. Same bug as Run 307 (service option) but in method scope. The file-level `parseFileOption` has sub-field path handling, but it was never added to `parseMethodOption`. Same missing feature in `parseEnumOption`, `parseEnumValueOption`, `parseOneofOption`, `parseMessageOption`.
-
-### Run 309 — Custom field option with sub-field path (FAILED: 5/5 profiles)
-- **Test:** `304_field_subfield_option` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message FieldConfig { optional string name = 1; optional int32 priority = 2; }`, extends `google.protobuf.FieldOptions` with `optional FieldConfig my_field_config = 50001`, then uses `[(my_field_config).name = "primary"]` and `[(my_field_config).priority = 5]` as field options with sub-field paths
-- **Bug:** Go fails with `test.proto:15:47: Expected "=".` at the `.` token after `(my_field_config)`. C++ protoc succeeds, correctly parsing the sub-field path `(my_field_config).name` and setting the nested field value.
-- **Root cause:** `parser.go:5008-5014` — `parseFieldOptions` custom option handling goes straight from `parseParenthesizedOptionName` to `Expect("=")` with NO sub-field path handling. Same root cause as Run 304 (file-level), Run 307 (service-level), Run 308 (method-level) — the `.subfield` loop exists only in `parseFileOption` (line 4232-4238) and was never ported to `parseFieldOptions`, `parseEnumOption`, `parseEnumValueOption`, `parseOneofOption`, or `parseMessageOption`.
-
-### Run 310 — Custom enum option with sub-field path (FAILED: 5/5 profiles)
-- **Test:** `305_enum_subfield_option` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message EnumConfig { optional string label = 1; optional int32 priority = 2; }`, extends `google.protobuf.EnumOptions` with `optional EnumConfig my_enum_config = 50001`, then uses `option (my_enum_config).label = "status";` inside an enum (sub-field path on a message-typed custom enum option)
-- **Bug:** Go fails with `test.proto:15:26: Expected "=".` at the `.` token after `(my_enum_config)`. C++ protoc succeeds, correctly parsing the sub-field path `(my_enum_config).label` and setting the nested field value.
-- **Root cause:** `parseEnumOption` goes straight from `parseParenthesizedOptionName` to `Expect("=")` with NO sub-field path handling. Same root cause as Run 304 (file-level), Run 307 (service), Run 308 (method), Run 309 (field) — the `.subfield` loop was never added to `parseEnumOption`. Remaining untested scopes: `parseEnumValueOption`, `parseOneofOption`, `parseMessageOption`.
-
-### Run 311 — Custom message option with sub-field path (FAILED: 5/5 profiles)
-- **Test:** `306_msg_subfield_option` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message MessageConfig { optional string label = 1; optional int32 weight = 2; }`, extends `google.protobuf.MessageOptions` with `optional MessageConfig my_msg_config = 50001`, then uses `option (my_msg_config).label = "important";` inside a message (sub-field path on a message-typed custom message option)
-- **Bug:** Go fails with `test.proto:17:25: Expected "=".` at the `.` token after `(my_msg_config)`. C++ protoc succeeds, correctly parsing the sub-field path `(my_msg_config).label` and setting the nested field value.
-- **Root cause:** `parseMessageOption` goes straight from `parseParenthesizedOptionName` to `Expect("=")` with NO sub-field path handling. Same root cause as Runs 307-310 (service, method, field, enum) — the `.subfield` loop exists only in `parseFileOption` and was never added to `parseMessageOption`. Remaining untested scopes: `parseEnumValueOption`, `parseOneofOption`.
-
-### Run 312 — Custom enum value option with sub-field path (FAILED: 5/5 profiles)
-- **Test:** `307_ev_subfield_option` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message EnumValueConfig { optional string label = 1; optional int32 weight = 2; }`, extends `google.protobuf.EnumValueOptions` with `optional EnumValueConfig my_ev_config = 50001`, then uses `PRIORITY_LOW = 1 [(my_ev_config).label = "low"];` and `PRIORITY_HIGH = 2 [(my_ev_config).weight = 10];` (sub-field path on a message-typed custom enum value option)
-- **Bug:** Go fails with `test.proto:18:35: Expected "=".` at the `.` token after `(my_ev_config)`. C++ protoc succeeds, correctly parsing the sub-field path `(my_ev_config).label` and setting the nested field value.
-- **Root cause:** `parser.go:2362` — enum value custom option parsing goes straight from `parseParenthesizedOptionName` to `Expect("=")` with NO sub-field path handling. Same root cause as Runs 304, 307-311 (file, service, method, field, enum, message) — the `.subfield` loop exists only in `parseFileOption` and was never added to the enum value option inline parser. Remaining untested scope: `parseOneofOption`.
-
-### Run 313 — Custom oneof option with sub-field path (FAILED: 5/5 profiles)
-- **Test:** `308_oneof_subfield_option` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message OneofConfig { optional string label = 1; optional int32 priority = 2; }`, extends `google.protobuf.OneofOptions` with `optional OneofConfig my_oneof_config = 50001`, then uses `option (my_oneof_config).label = "primary";` inside a oneof body (sub-field path on a message-typed custom oneof option)
-- **Bug:** Go fails with `test.proto:20:29: Expected "=".` at the `.` token after `(my_oneof_config)`. C++ protoc succeeds, correctly parsing the sub-field path `(my_oneof_config).label` and setting the nested field value.
-- **Root cause:** `parser.go:3942` — `parseOneofOption` goes straight from `parseParenthesizedOptionName` to `Expect("=")` with NO sub-field path handling. Same root cause as Runs 304-312 — the `.subfield` loop exists only in `parseFileOption` and was never added to any other option parser. This completes the series: all non-file option scopes (service, method, field, enum, message, enum value, oneof) are confirmed missing the sub-field path loop.
-
-### Run 314 — Mixed angle bracket and curly brace delimiters in aggregate option (FAILED: 5/5 profiles)
-- **Test:** `309_mixed_delimiters` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message Inner` and `message MyConfig { optional Inner info = 1; optional string tag = 2; }`, extends `google.protobuf.FileOptions` with `optional MyConfig my_config = 50001`, then uses `option (my_config) = < info { label: "test" count: 3 } tag: "hello" >;` (angle bracket `<` at top level with curly brace `{` for nested message)
-- **Bug:** Both C++ and Go reject `<` at the top-level aggregate position with `Expected option value.` at column 22. However, C++ protoc continues parsing after the error and reports a SECOND error: `test.proto:21:56: Expected top-level statement (e.g. "message").` (at the `>` closing token). Go stops after the first error and only reports one error. The test harness detects the mismatch in error output (2 errors vs 1 error).
-- **Root cause:** `parser.go:4327` — `parseFileOption` checks `if valTok.Value == "<"` and returns an error immediately. C++ protoc's error recovery continues past the rejected `<` option value, attempts to parse remaining tokens on the line, encounters `>` at column 56, and reports it as an unexpected top-level token. Go's parser has no error recovery — it returns the first error and stops. This pattern of missing error continuation applies to all parse errors in the Go implementation.
-
-### Run 315 — --decode_raw with stdin data (FAILED: cli@decode_raw_stdin)
-- **Test:** CLI test `decode_raw_stdin` — pipes `"hello"` via stdin to `--decode_raw`
-- **Bug:** C++ protoc attempts to decode stdin as a binary protobuf message, fails, prints `"Failed to parse input."` to stderr, and exits with code 1. Go protoc-go's `--decode_raw` handler at `cli.go:155-157` is a no-op stub (`return nil`) — it ignores stdin entirely and exits with code 0.
-- **Root cause:** `cli.go:155-157` — `if cfg.decodeRaw { return nil }` never reads or decodes stdin. The existing `decode_raw` CLI test (no stdin) passes because both compilers produce no output and exit 0 when stdin is empty. With actual stdin data, the behaviors diverge.
-
-### Run 316 — Duplicate non-repeated field in aggregate option (FAILED: 5/5 profiles)
-- **Test:** `310_aggregate_dup_field` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message MyConfig { optional string label = 1; optional int32 count = 2; }`, extends `google.protobuf.FileOptions` with `optional MyConfig my_config = 50001`, then uses `option (my_config) = { label: "first" label: "second" count: 42 };` (non-repeated field `label` specified twice in aggregate literal)
-- **Bug:** C++ protoc rejects with `test.proto:16:22: Error while parsing option value for "my_config": Non-repeated field "label" is specified multiple times.` (exit 1). Go protoc-go silently accepts the duplicate, encodes both values in wire format, and exits 0.
-- **Root cause:** `parser.go:4694-4820` — `consumeAggregate()` collects all key:value pairs into a `[]AggregateField` slice without checking for duplicate names. `cli.go:5180-5237` — `encodeAggregateOption` iterates over all aggregate fields and encodes each one separately without duplicate checking. C++ protoc's text format parser detects duplicate non-repeated fields and reports an error. Go has no such validation anywhere in the pipeline.
-
-### Run 317 — Duplicate non-repeated custom option at statement level (FAILED: 5/5 profiles)
-- **Test:** `311_dup_custom_option` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `extend google.protobuf.FileOptions { optional string my_label = 50001; }`, then uses two separate option statements: `option (my_label) = "first";` and `option (my_label) = "second";`
-- **Bug:** C++ protoc rejects with `test.proto:12:8: Option "(my_label)" was already set.` (exit 1). Go protoc-go silently accepts both statements, encodes both values into the options wire format, and exits 0.
-- **Root cause:** `parser.go:4313-4415` — custom option parsing returns early before the `seenFileOptions` duplicate check at line 4429. Custom options are appended to `p.customFileOptions` without any duplicate checking. `cli.go:3625-3755` — `resolveCustomFileOptions` iterates all custom options and encodes them with `SetUnknown(append(...))` at line 3753, never checking if a non-repeated extension was already set. C++ protoc's `DescriptorBuilder` detects this during option resolution and reports the error. This is different from Run 316 which tested duplicate fields *inside* an aggregate value — this tests duplicate option *statements* at file level.
-
-### Run 318 — Duplicate enum values in no-package file (FAILED: 5/5 profiles)
-- **Test:** `312_dup_enum_no_pkg` — proto3 file with NO `package` declaration, enum with `HIGH = 1;` and `URGENT = 1;` (same number, no allow_alias)
-- **Bug:** Go error message says `".URGENT" uses the same enum value as ".HIGH"` (with leading dot), while C++ protoc says `"URGENT" uses the same enum value as "HIGH"` (no leading dot). The FQN construction in `collectDuplicateEnumValueErrors` uses `parentScope + "." + val.GetName()` which produces `".NAME"` when `parentScope` is empty (no package).
-- **Root cause:** `cli.go:1628-1629` — `valFqn := parentScope + "." + val.GetName()` and `firstFqn := parentScope + "." + firstName` unconditionally prepend `"."` even when `parentScope` is `""`. Should check for empty scope and use just the name. Same bug likely affects other `validateDuplicate*` functions that build FQNs with empty package scope.
-
-### Run 319 — Duplicate message name error in no-package file (FAILED: 5/5 profiles)
-- **Test:** `313_dup_msg_no_pkg` — proto3 file with NO `package` declaration, two `message Foo` declarations (duplicate message name)
-- **Bug:** Go error message says `"Foo" is already defined in "".` (includes `in ""` with empty scope), while C++ protoc says `"Foo" is already defined.` (omits the `in "SCOPE"` part when scope is empty). Both exit with code 1 — the test harness detects the stderr mismatch.
-- **Root cause:** `cli.go:2322` — `validateDuplicateNames` check function format string is `"%s" is already defined in "%s".` which always includes the scope parameter. When `pkg` is empty (no package declaration), the scope is `""` and the message becomes `in ""`. C++ protoc conditionally omits the `in "SCOPE"` suffix when the scope is empty, producing just `"NAME" is already defined.` Same class of bug as Run 318 (FQN construction with empty package scope). The fix: check if scope is empty and use a different format string without `in "%s"`.
-
-### Run 320 — Angle bracket `<>` aggregate in service custom option (FAILED: 5/5 profiles)
-- **Test:** `314_svc_angle_bracket` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message ServiceConfig { optional string name = 1; optional int32 priority = 2; }`, extends `google.protobuf.ServiceOptions` with `optional ServiceConfig svc_config = 50001`, then uses `option (svc_config) = < name: "hello" priority: 1 >;` inside a service (angle bracket `<` aggregate syntax on a message-typed custom service option)
-- **Bug:** C++ protoc rejects with `test.proto:19:25: Expected option value.` pointing at the `<` token. Go protoc-go rejects with `test.proto:19:27: Expected ";"` pointing at the `name` token after `<`. Different error message text AND different column positions.
-- **Root cause:** `parser.go:3254` — `parseServiceOption` checks for `{` to detect aggregate values but does NOT check for `<`. When `<` is encountered, Go falls to the `else` branch (line 3265), reads `<` as a scalar value token, then `Expect(";")` at line 3283 gets `name` instead of `;`. C++ protoc's parser rejects `<` because it's not a valid option value start (not an int, float, string, or identifier). Same class of bug as Run 306 (message-level angle bracket option) — the `<` rejection was never added to `parseServiceOption`. Remaining untested scopes: method, enum, enum value, oneof, field.
-
-### Run 321 — Angle bracket `<>` aggregate in method custom option (FAILED: 5/5 profiles)
-- **Test:** `315_method_angle_bracket` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message MethodConfig { optional string name = 1; optional int32 timeout = 2; }`, extends `google.protobuf.MethodOptions` with `optional MethodConfig method_config = 50001`, then uses `option (method_config) = < name: "worker" timeout: 30 >;` inside a method body (angle bracket `<` aggregate syntax on a message-typed custom method option)
-- **Bug:** C++ protoc rejects with `test.proto:20:30: Expected option value.` pointing at the `<` token. Go protoc-go rejects with `test.proto:20:32: Expected ";"` pointing at the `name` token after `<`. Different error message text AND different column positions.
-- **Root cause:** `parser.go:3501` — `parseMethodOption` checks for `{` to detect aggregate values but does NOT check for `<`. When `<` is encountered, Go falls to the `else` branch (line 3512), reads `<` as a scalar value token, then `Expect(";")` at line 3530 gets `name` instead of `;`. Same class of bug as Runs 306 (message-level) and 320 (service-level) — the `<` rejection was never added to `parseMethodOption`. Remaining untested scopes: enum, enum value, oneof, field.
-
-### Run 322 — Angle bracket `<>` aggregate in enum custom option (FAILED: 5/5 profiles)
-- **Test:** `316_enum_angle_bracket` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message EnumConfig { optional string label = 1; optional int32 priority = 2; }`, extends `google.protobuf.EnumOptions` with `optional EnumConfig enum_config = 50001`, then uses `option (enum_config) = < label: "status" priority: 1 >;` inside an enum (angle bracket `<` aggregate syntax on a message-typed custom enum option)
-- **Bug:** C++ protoc rejects with `test.proto:17:26: Expected option value.` pointing at the `<` token. Go protoc-go rejects with `test.proto:17:28: Expected ";"` pointing at the `label` token after `<`. Different error message text AND different column positions.
-- **Root cause:** `parser.go:2777` — `parseEnumOption` checks for `{` to detect aggregate values but does NOT check for `<`. When `<` is encountered, Go falls to the `else` branch (line 2786), reads `<` as a scalar value token, then `Expect(";")` at line 2804 gets `label` instead of `;`. Same class of bug as Runs 306 (message-level), 320 (service-level), and 321 (method-level) — the `<` rejection was never added to `parseEnumOption`. Remaining untested scopes: enum value, oneof, field.
-
-### Run 323 — Angle bracket `<>` aggregate in field custom option (FAILED: 5/5 profiles)
-- **Test:** `317_field_angle_bracket` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message FieldConfig { optional string label = 1; optional int32 weight = 2; }`, extends `google.protobuf.FieldOptions` with `optional FieldConfig field_config = 50001`, then uses `[(field_config) = < label: "title" weight: 10 >]` on fields (angle bracket `<` aggregate syntax on a message-typed custom field option)
-- **Bug:** C++ protoc rejects with `test.proto:17:47: Expected option value.` and `test.proto:18:46: Expected option value.` pointing at the `<` tokens. Go protoc-go rejects with `test.proto:17:54: Expected ";"` — different error message text, different column, and only one error instead of two.
-- **Root cause:** `parseFieldOptions` checks for `{` to detect aggregate values but does NOT check for `<`. When `<` is encountered, Go falls through to scalar handling, reads `<` as a value token, then fails. Same class of bug as Runs 306, 320, 321, 322 — the `<` rejection was never added to field option parsing. Remaining untested scopes: enum value, oneof.
-
-### Run 324 — Angle bracket `<>` aggregate in oneof custom option (FAILED: 5/5 profiles)
-- **Test:** `318_oneof_angle_bracket` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message OneofConfig { optional string label = 1; optional int32 priority = 2; }`, extends `google.protobuf.OneofOptions` with `optional OneofConfig oneof_config = 50001`, then uses `option (oneof_config) = < label: "choice" priority: 5 >;` inside a oneof body (angle bracket `<` aggregate syntax on a message-typed custom oneof option)
-- **Bug:** C++ protoc rejects with 5 errors starting with `test.proto:18:29: Expected option value.` pointing at `<`, plus error recovery errors for the remaining oneof fields and closing braces. Go protoc-go rejects with single error `test.proto:18:31: Expected ";"` — different error message text, different column (29 vs 31), and 1 error vs 5 errors.
-- **Root cause:** `parseOneofOption` at line 4008 checks for `{` to detect aggregate values but does NOT check for `<`. When `<` is encountered, Go falls through to scalar handling, reads `<` as the value token, then `Expect(";")` at line 4037 gets `label` instead. Same class of bug as Runs 306, 320-323 — the `<` rejection was never added to oneof option parsing. Remaining untested scope: enum value (inline `[...]` syntax).
-
-### Run 325 — Angle bracket `<>` aggregate in enum value custom option (FAILED: 5/5 profiles)
-- **Test:** `319_ev_angle_bracket` — proto2 file that imports `google/protobuf/descriptor.proto`, defines `message EVConfig { optional string label = 1; optional int32 weight = 2; }`, extends `google.protobuf.EnumValueOptions` with `optional EVConfig ev_config = 50001`, then uses `[(ev_config) = < label: "important" weight: 10 >]` on an enum value (angle bracket `<` aggregate syntax on a message-typed custom enum value option, inline `[...]` syntax)
-- **Bug:** C++ protoc rejects with `test.proto:18:27: Expected option value.` pointing at the `<` token. Go protoc-go rejects with `test.proto:18:29: Expected "]"` — different error message text, different column (27 vs 29), and different error context (`Expected option value` vs `Expected "]"`).
-- **Root cause:** Enum value option parsing (inline `[...]` syntax) checks for `{` to detect aggregate values but does NOT check for `<`. When `<` is encountered, Go reads `<` as a scalar value, then fails when looking for `]` or `,` to close the bracketed options. Same class of bug as Runs 306, 320-324 — the `<` rejection was never added to enum value inline option parsing. This completes coverage of all option scopes for the angle bracket aggregate bug: file (N/A), message (306), service (320), method (321), enum (322), field (323), oneof (324), enum value (325).
-
-### Known gaps still unexplored (updated):
-- **String concatenation in `consumeAggregateAngle`** — tested for `consumeAggregate` (Run 297) but not for angle bracket variant
-- **Repeated message fields with `<>`** — aggregate with repeated sub-message using `<>` syntax
-- **Extension field encoding in aggregate** — Run 295 tested, but nested extension fields untested
-- **Aggregate option with duplicate field names at non-file scopes** — Run 316 only tested file level
-- **List syntax `[...]` in `consumeAggregateAngle`** — untested
-- **Deep nesting of aggregate options** — untested
-- **`Any` type / message set wire format** — untested
-- **Bool option with `FALSE`/`t`/`f` at various non-aggregate scopes** — Run 302 only tested aggregate
-- **Numeric bool in non-aggregate custom options at non-field scopes** — Run 299 tested field scope only
-- **Edition 2023 with `repeated` label** — Run 270 tested `optional`, but `repeated` likely also produces different error
-- **Empty statements inside oneof bodies** — likely broken (missing `;` case)
-- **Oneof options (non-custom)** — standard oneof options likely skipped
-- **`extend` inside message bodies** — likely not handled
-- **Map field with enum value type** — resolution might differ
-- **Type shadowing** — same nested type name in different parent messages
-- **Negative float default span** — `[default = -1.5]` likely has same column offset bug
-- **Proto2 string default values with escape sequences** — span computation bug
-- **Custom option on extension range** — `extensions 100 to 199 [(my_option) = "foo"];`
-
-### Run 326 — Semicolon separator in field options (FAILED: 5/5 profiles)
-- **Test:** `320_semicolon_in_options` — proto3 message with `string name = 1 [deprecated = true; json_name = "n"];` (semicolon instead of comma between options)
-- **Bug:** C++ protoc errors: `test.proto:6:37: Expected "]".` and `test.proto:6:49: Expected field name.` (two errors, column 37 = the `;` position). Go protoc-go errors: `test.proto:6:39: Expected ";"` (one error, different message, column 39 = after `]`). Both compilers reject the proto, but the error messages and column numbers differ.
-- **Root cause:** Go's `parseFieldOptions` at line 5722 breaks out of the options loop when it encounters `;` (not `,` or `]`), then line 5727 treats `;` as the close bracket. Then `parseField` calls `Expect(";")` and gets `json_name` token instead, producing a different error at a different position. C++ protoc stays inside the options loop and directly reports "Expected `]`" at the `;` position.
-
-### Run 327 — `--decode` without value missing hint line (FAILED: 1/1 CLI test)
-- **Test:** CLI test `decode_no_value` — invokes `--decode` flag without a value
-- **Bug:** Go protoc-go outputs only `Missing value for flag: --decode` (1 line). C++ protoc outputs the same line PLUS a second line: `To decode an unknown message, use --decode_raw.` Go is missing this helpful hint line.
-- **Root cause:** `cli.go` `parseArgs` handles `--decode` as a flag needing a value and emits the generic "Missing value for flag" error, but does not add the C++ protoc hint about `--decode_raw`. C++ protoc's `CommandLineInterface::ParseArguments` has special-case logic for `--decode` to append the hint message.
-
-### Run 328 — Bool `TRUE`/`FALSE` (all-caps) in aggregate option (FAILED: 5/5 profiles)
-- **Test:** `321_aggregate_bool_caps` — proto2 file with custom option `(bool_settings) = { active: TRUE  verbose: FALSE };` using all-caps boolean identifiers
-- **Bug:** C++ protoc rejects `TRUE` with error: `Invalid value for boolean field "active". Value: "TRUE".` (exit 1). Go protoc-go silently accepts `TRUE` and encodes it as `false` (varint 0), producing a CodeGeneratorRequest with no error. One compiler errors, the other produces output — definitive mismatch.
-- **Root cause:** `cli.go:5338` — `encodeCustomOptionValue` TYPE_BOOL case checks `value == "true" || value == "True" || value == "t" || value == "1"`. `"TRUE"` matches none of these, so it falls to the else branch and encodes 0 (false) without error. The aggregate parser `consumeAggregate` doesn't validate bool values. C++ protoc's text format parser calls `Tokenizer::ParseBool` which only accepts `true`/`True`/`false`/`False`/`1`/`0` — `TRUE` is none of these, so C++ reports an error. Go needs to validate bool values and reject `TRUE`/`FALSE`/etc.
-
-### Run 329 — Custom option on extension range (FAILED: 5/5 profiles)
-- **Test:** `322_ext_range_custom_opt` — proto2 file with `extend google.protobuf.ExtensionRangeOptions { optional string my_annotation = 50000; }` and `extensions 100 to 199 [(my_annotation) = "annotated"];`
-- **Bug:** Go parser errors: `test.proto:12:27: Expected "=".` C++ protoc succeeds. The `(` token in `[(my_annotation) = ...]` is read as the option name at line 1067, then `Expect("=")` at line 1068 gets `my_annotation` instead, causing parse failure. C++ protoc correctly parses parenthesized custom option names in extension range option brackets.
-- **Root cause:** `parser.go:1066-1068` — `parseExtensionRange` option parsing at line 1067 does `nameTok := p.tok.Next()` which reads a single token. For custom options `(my_annotation)`, the `(` is a separate symbol token. The parser has no handling for parenthesized option names — it only supports bare identifiers like `verification` and `declaration`. Need to check for `(` and consume `identifier )` to reconstruct the custom option name.
+### Run 1 — Any type URL expansion in aggregate options (VICTORY)
+- **Bug**: Go parser can't handle `[type.googleapis.com/pkg.Type]` syntax in aggregate option values (message literals). The `/` character inside `[...]` is not parsed — the Go parser only handles `.`-separated identifiers in extension references, not the Any type URL expansion that uses `/`.
+- **Test**: `332_any_expansion_in_option` — all 9 profiles fail.
+- **Root cause**: `consumeAggregate()` in `parser.go:4909-4925` reads extension names as `ident(.ident)*` but the Any URL syntax uses `domain.tld/package.Type` with a `/` separator.
+- **C++ protoc**: Accepts it fine (libprotoc 33.4). Produces valid descriptor set.
+- **Go protoc-go**: Fails with `Error while parsing option value: Expected ":", found "anyexpand".`
+
+### Run 2 — Line comment at EOF without trailing newline (VICTORY)
+- **Bug**: Go tokenizer always appends `\n` to line comment text (`tokenizer.go:242: return text + "\n"`), even when the file ends without a trailing newline. C++ protoc correctly omits the `\n` when the comment is at EOF without a trailing newline.
+- **Test**: `333_comment_eof_no_newline` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `readLineCommentText()` in `io/tokenizer/tokenizer.go:242` unconditionally returns `text + "\n"`. Should only add `\n` when there was one in the source.
+- **C++ protoc**: `trailing_comments: " eof"` (no trailing newline).
+- **Go protoc-go**: `trailing_comments: " eof\n"` (with trailing newline).
+- **Discrepancy**: Source code info comment text differs by one byte.
+
+### Run 3 — NaN bit pattern differs in custom double option (VICTORY)
+- **Bug**: Go's `strconv.ParseFloat("nan", 64)` returns `0x7FF8000000000001` (Go's canonical NaN), while C++ `std::numeric_limits<double>::quiet_NaN()` returns `0x7FF8000000000000`. These differ by one bit in the mantissa. When encoding a custom `double` option with value `nan`, the wire format bytes differ.
+- **Test**: `334_nan_custom_option` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `encodeCustomOptionValue()` in `cli.go` uses `strconv.ParseFloat(value, 64)` then `math.Float64bits(v)`. Go's NaN bit pattern is `0x7FF8000000000001`, C++ is `0x7FF8000000000000`. One bit difference in the lowest mantissa bit.
+- **C++ protoc**: Encodes NaN as `0x7FF8000000000000` (8 bytes in descriptor).
+- **Go protoc-go**: Encodes NaN as `0x7FF8000000000001` (different 8 bytes in descriptor).
+- **Fix hint**: Use `math.Float64frombits(0x7FF8000000000000)` instead of `strconv.ParseFloat("nan", 64)` to match C++ NaN encoding.
+- **Also found**: `-nan` would fail entirely — Go's `strconv.ParseFloat("-nan", 64)` returns error. Also, subfield custom option parsers (enum/field/message/service/method) double-negate values (parser bakes `-` into Value AND resolver prepends `-` again).
+
+### Run 4 — Field sub-field custom option with negative value (VICTORY)
+- **Bug**: Go parser double-negates field-level sub-field custom options. The parser bakes `-` into `custOpt.Value` at parser.go:5361 (`custOpt.Value = "-" + custOpt.Value`), AND the CLI resolver prepends `-` again at cli.go:4267 (`value = "-" + value` when `opt.Negative` is true). Result: value becomes `--40` instead of `-40`, which fails to parse as an integer.
+- **Test**: `335_field_subfield_neg_option` — all 9 profiles fail.
+- **Root cause**: Inconsistent negation handling. For file options, the parser does NOT bake `-` into the value (uses `valTok.Value` directly at parser.go:4595). For field options, the parser DOES bake it in (line 5361). But the CLI always checks `opt.Negative` and prepends `-` again for sub-field paths, causing double negation.
+- **C++ protoc**: Accepts `[(valid_range).lo = -40]` fine and produces correct descriptor.
+- **Go protoc-go**: Fails with `error encoding custom option: invalid integer value: --40`.
+- **Fix hint**: Either don't bake `-` into Value in the field option parser, OR don't prepend `-` in the CLI resolver. Pick one place for negation.
+- **Scope**: Affects ALL custom option entity types with sub-field paths: file, message, field, enum, enum_value, service, method, oneof. Each has the same pattern in cli.go.
+
+### Run 5 — Negative NaN (`-nan`) as custom double option value (VICTORY)
+- **Bug**: Go's `strconv.ParseFloat("-nan", 64)` returns an error (`invalid syntax`), while C++ protoc accepts `-nan` as a valid double value (it's just NaN with a sign bit). The Go compiler fails to encode the option entirely.
+- **Test**: `336_neg_nan_option` — all 9 profiles fail.
+- **Root cause**: `encodeCustomOptionValue()` in `cli.go` calls `strconv.ParseFloat(value, 64)` with `value = "-nan"` (assembled from `opt.Negative` + `opt.Value`). Go's stdlib rejects `-nan` as invalid syntax.
+- **C++ protoc**: Accepts `-nan` fine, produces valid descriptor with NaN-valued option.
+- **Go protoc-go**: Fails with `error encoding custom option: invalid double value: -nan`.
+- **Fix hint**: Before calling `strconv.ParseFloat`, check if the value (after stripping `-`) is `nan`/`NaN` and handle it specially (NaN has no sign, so `-nan` == `nan`).
+
+### Run 6 — String concatenation missing in field-level custom options (VICTORY)
+- **Bug**: Go parser does NOT handle string concatenation for field-level custom options. When a field has `[(my_opt) = "hello" " " "world"]`, the Go parser only captures `"hello"` and then chokes on `" "` as unexpected.
+- **Test**: `337_field_option_string_concat` — all 9 profiles fail.
+- **Root cause**: `parseFieldOptions()` at parser.go:5355-5363 sets `custOpt.Value = valTok.Value` but never loops to concatenate adjacent string tokens. Compare with file-level custom options (parser.go:1699-1706), enum-level (parser.go:2951-2956), message-level, service-level, method-level, and oneof-level — all of which DO have the string concatenation loop.
+- **C++ protoc**: Accepts string concatenation in field options fine.
+- **Go protoc-go**: Fails with `Expected ";"` because the second string token is unexpected.
+- **Fix hint**: Add this after line 5363: `if valTok.Type == tokenizer.TokenString { for p.tok.Peek().Type == tokenizer.TokenString { next := p.tok.Next(); p.trackEnd(next); custOpt.Value += next.Value } }`
+- **Also missing**: Enum value custom options (parser.go:2574-2582) and extension range custom options (parser.go:1138-1153) also lack string concatenation handling. Those are separate bugs to test in future runs.
+
+### Run 7 — String concatenation missing in enum VALUE custom options (VICTORY)
+- **Bug**: Go parser does NOT handle string concatenation for enum value custom options. When an enum value has `[(ev_label) = "bright" " " "red"]`, the Go parser only captures `"bright"` and chokes on the next string token.
+- **Test**: `338_enum_val_option_string_concat` — all 9 profiles fail.
+- **Root cause**: `parseEnumValue` code at parser.go:2574-2582 sets `custOpt.Value = valTok.Value` but never loops to concatenate adjacent string tokens. Same bug pattern as field-level (Run 6), but in a different code path.
+- **C++ protoc**: Accepts string concatenation in enum value options fine.
+- **Go protoc-go**: Fails with parse error because the second string token is unexpected.
+- **Fix hint**: Add after line 2582: `if valTok.Type == tokenizer.TokenString { for p.tok.Peek().Type == tokenizer.TokenString { next := p.tok.Next(); p.trackEnd(next); custOpt.Value += next.Value } }`
+
+### Run 8 — String concatenation missing in extension range custom options (VICTORY)
+- **Bug**: Go parser does NOT handle string concatenation for extension range custom options. When an extension range has `[(range_label) = "hello" " " "world"]`, the Go parser only captures `"hello"` and chokes on the next string token expecting `]`.
+- **Test**: `339_ext_range_option_string_concat` — all 9 profiles fail.
+- **Root cause**: Extension range custom option parsing at parser.go:1138-1153 sets `custOpt.Value = valTok.Value` but never loops to concatenate adjacent string tokens. Same bug pattern as field-level (Run 6) and enum value-level (Run 7).
+- **C++ protoc**: Accepts string concatenation in extension range options fine, produces valid descriptor.
+- **Go protoc-go**: Fails with `Expected "]"` because the second string token is unexpected.
+- **Fix hint**: Add after line 1153: `if valTok.Type == tokenizer.TokenString { for p.tok.Peek().Type == tokenizer.TokenString { next := p.tok.Next(); p.trackEnd(next); custOpt.Value += next.Value } }`
+
+### Run 9 — Scalar sub-field option validation error message mismatch (VICTORY)
+- **Bug**: Go compiler produces a different error message than C++ protoc when a sub-field path is used on a scalar (non-message) custom option. C++ correctly identifies the problem as "Option is an atomic type, not a message" with line/column info. Go fails with a generic "unknown message type" error without proper location info.
+- **Test**: `340_scalar_subfield_option` — all 9 profiles fail.
+- **Root cause**: In `cli.go`, when resolving sub-field paths, the code looks up `msgFieldMap[currentTypeName]` where `currentTypeName` is derived from `ext.GetTypeName()`. For a scalar type like `int32`, `GetTypeName()` returns empty string, so the lookup fails with "unknown message type" instead of a proper "atomic type, not a message" error.
+- **C++ protoc**: `test.proto:11:8: Option "(my_scalar)" is an atomic type, not a message.`
+- **Go protoc-go**: `test.proto: unknown message type  for extension my_scalar`
+- **Fix hint**: Before attempting sub-field resolution, check if `ext.GetType()` is `TYPE_MESSAGE` or `TYPE_GROUP`. If not, emit an error like `Option "(name)" is an atomic type, not a message.` with proper line/column info from `opt.NameTok`.
+
+### Run 10 — Group-typed custom option uses wrong wire format (VICTORY)
+- **Bug**: Go's `encodeAggregateOption` and `encodeAggregateFields` in `cli.go` always use `protowire.BytesType` (wire type 2, length-delimited) when encoding aggregate option values. For `TYPE_GROUP` fields, protobuf wire format requires `StartGroupType` (wire type 3) + fields + `EndGroupType` (wire type 4) instead of length-delimited encoding.
+- **Test**: `341_group_option_encoding` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `encodeAggregateOption()` at cli.go:5811-5815 always does `protowire.AppendTag(b, fieldNum, protowire.BytesType)` + `protowire.AppendBytes(b, inner)`. Same bug in `encodeAggregateFields()` at cli.go:5896-5900. Neither checks if the field is `TYPE_GROUP`.
+- **C++ protoc**: Produces 257-byte descriptor with correct start/end group wire format.
+- **Go protoc-go**: Produces 255-byte descriptor with incorrect length-delimited wire format. Binary differs.
+- **Fix hint**: In both `encodeAggregateOption` and `encodeAggregateFields`, check if `ext.GetType() == TYPE_GROUP`. If so, use `protowire.AppendTag(b, fieldNum, protowire.StartGroupType)` + inner + `protowire.AppendTag(b, fieldNum, protowire.EndGroupType)` instead of length-delimited encoding. Group encoding: start_tag(3) + fields + end_tag(4). Length-delimited: tag(2) + varint_length + fields.
+- **Also affects**: Nested group fields within aggregate options (encodeAggregateFields has same bug).
+
+### Run 11 — Positive sign `+` in aggregate option values produces wrong error message (VICTORY)
+- **Bug**: Go parser's `consumeAggregate()` doesn't recognize `+` as a sign prefix. When encountering `count: +42`, the Go parser treats `+` as the entire value of `count`, then treats `42` as a new field name, producing a confusing misleading error. C++ protoc recognizes `+` as an attempted positive sign and produces a clear error.
+- **Test**: `342_aggregate_positive_sign` — all 9 profiles fail.
+- **Root cause**: `consumeAggregate()` at parser.go:5058-5065 only checks for `-` sign before values, not `+`. When `+` is encountered, it's consumed as the value token (a symbol), and the actual number `42` is misinterpreted as the next field name.
+- **C++ protoc**: `test.proto:16:20: Error while parsing option value for "my_opts": Expected integer, got: +`
+- **Go protoc-go**: `test.proto:16:20: Error while parsing option value for "my_opts": Expected ":", found "ratio".`
+- **Fix hint**: In `consumeAggregate()` (and `consumeAggregateAngle()`, and list value parsing within both), add `+` handling similar to `-`: `if valTok.Value == "+" { valTok = p.tok.Next(); p.trackEnd(valTok) }` — just skip it since positive sign is a no-op. Then encoding would work. Alternatively, emit the same error as C++ protoc: "Expected integer, got: +".
+- **Also affects**: Same issue exists in `consumeAggregateAngle()` (line 5232-5239) and list value parsing within both functions.
+
+### Run 12 — mergeUnknownExtensions corrupts repeated options when sub-field options present (VICTORY)
+- **Bug**: Go's `mergeUnknownExtensions()` in `cli.go:3459` unconditionally merges ALL BytesType entries with the same field number into a single entry. For **repeated** string/bytes/message custom options, this corrupts the data by concatenating separate repeated entries into one. The merge function is only called when `hasSubFieldCustomOpts` returns true, so the bug only manifests when a file has BOTH sub-field custom options AND repeated custom options.
+- **Test**: `343_repeated_with_subfield` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `mergeUnknownExtensions()` is designed to merge sub-field options (e.g., `option (cfg).name = "x"` + `option (cfg).value = 1` → single merged message). But it cannot distinguish between sub-field merges (correct) and repeated field entries (should NOT be merged). When field 50001 has two BytesType entries for repeated values "alpha" and "beta", it concatenates the raw payload bytes into a single entry "alphabeta".
+- **C++ protoc**: Keeps repeated entries separate in wire format: `tag(50001,2)+len(5)+"alpha" + tag(50001,2)+len(4)+"beta"` = 310 bytes total descriptor.
+- **Go protoc-go**: Merges into single entry: `tag(50001,2)+len(9)+"alphabeta"` = 306 bytes total descriptor. 4-byte difference.
+- **Fix hint**: `mergeUnknownExtensions` needs to know which field numbers correspond to sub-field options (message types needing merge) vs repeated fields (must not merge). Either: (1) pass the set of field numbers that should be merged, or (2) check the extension's field descriptor to see if it's `LABEL_REPEATED` before merging, or (3) only merge when `ext.GetType() == TYPE_MESSAGE` and `ext.GetLabel() != LABEL_REPEATED`.
+
+### Run 13 — Field-level repeated options corrupted by mergeFieldOptionsInMessages (VICTORY)
+- **Bug**: Ralph fixed the file-level merge corruption (Run 12) by adding `mergeableFileFields` parameter to `mergeUnknownExtensions`. But `mergeFieldOptionsInMessages` (line 3445-3458) still passes `nil` for `mergeableFields`, meaning ALL BytesType entries in FieldOptions are merged — including repeated string/bytes options that should stay separate.
+- **Test**: `344_field_repeated_merge` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `mergeFieldOptionsInMessages` at cli.go:3449 calls `mergeUnknownExtensions(field.Options.ProtoReflect(), nil)`. Passing `nil` means `mergeableFields == nil` is true in the condition at line 3522, so ALL BytesType entries are merged. When field_a has sub-field options `[(cfg).name = "primary", (cfg).value = 10]`, `hasSubFieldCustomOpts` returns true, triggering merge for ALL fields in the file — including field_b's repeated `[(field_tags) = "alpha", (field_tags) = "beta"]`.
+- **C++ protoc**: Keeps repeated entries separate: 362-byte descriptor.
+- **Go protoc-go**: Merges repeated entries: 358-byte descriptor. 4-byte difference (same corruption pattern as Run 12).
+- **Fix hint**: Either (1) compute `mergeableFields` for FieldOptions similar to how `subFieldFileOptNums` is computed for FileOptions, and pass it instead of `nil`, or (2) check the extension's label and skip merge for `LABEL_REPEATED` fields, or (3) only merge field numbers that actually have sub-field options on that specific field.
+- **Also affects**: Extension field options (line 3453: `mergeUnknownExtensions(ext.Options.ProtoReflect(), nil)`) have the same bug.
+
+### Run 14 — Message sub-field options not merged by cloneWithMergedExtUnknowns (VICTORY)
+- **Bug**: Go's `cloneWithMergedExtUnknowns` only merges unknown fields in `FileOptions` and `FieldOptions`. It completely ignores `MessageOptions`, `EnumOptions`, `ServiceOptions`, `MethodOptions`, `OneofOptions`, and `EnumValueOptions`. When a message has two sub-field option assignments (`option (msg_cfg).name = "hello"; option (msg_cfg).value = 42;`), C++ protoc merges them into a single wire entry for field 50001, but Go leaves them as two separate entries.
+- **Test**: `345_msg_subfield_merge` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `cloneWithMergedExtUnknowns()` at cli.go:3434 only calls `mergeUnknownExtensions` for `fdCopy.Options` (FileOptions) and delegates to `mergeFieldOptionsInMessages` for FieldOptions. No code merges MessageOptions or any other option type. Additionally, `hasSubFieldCustomOpts()` at cli.go:3416 only checks `CustomFileOptions` and `CustomFieldOptions` — it doesn't check `CustomMessageOptions` or other option types.
+- **C++ protoc**: Produces 233-byte descriptor with merged Config entry in MessageOptions.
+- **Go protoc-go**: Produces 237-byte descriptor with two separate Config entries — 4 bytes larger (extra tag+length overhead).
+- **Fix hint**: (1) Add checks for `CustomMessageOptions`, `CustomEnumOptions`, `CustomServiceOptions`, etc. in `hasSubFieldCustomOpts`. (2) Add merge functions for MessageOptions, EnumOptions, ServiceOptions, MethodOptions, OneofOptions, EnumValueOptions in `cloneWithMergedExtUnknowns` or a new helper. (3) Compute mergeable field sets for each option type (like `subFieldFileOptNums`/`subFieldFieldOptNums`).
+- **Also affects**: Same bug exists for EnumOptions, ServiceOptions, MethodOptions, OneofOptions, EnumValueOptions, ExtensionRangeOptions — any option type with sub-field custom options will not be merged.
+
+### Run 15 — Enum sub-field options not merged by cloneWithMergedExtUnknowns (VICTORY)
+- **Bug**: Go's `cloneWithMergedExtUnknowns` merges unknown extensions in FileOptions, FieldOptions, and MessageOptions — but completely ignores EnumOptions. When an enum has two sub-field option assignments (`option (enum_cfg).label = "tracker"; option (enum_cfg).priority = 10;`), C++ protoc merges them into a single wire entry for field 50001, but Go leaves them as two separate entries.
+- **Test**: `346_enum_subfield_merge` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `cloneWithMergedExtUnknowns()` at cli.go:3440 only merges FileOptions, FieldOptions, and MessageOptions. No code iterates enums to merge EnumOptions. Additionally, `hasSubFieldCustomOpts()` does not check `CustomEnumOptions`, so even if merge code existed, it wouldn't be triggered for files that only have enum sub-field options (it works here because the merge IS triggered — by the fact that sub-field options exist — but the actual enum merge step is missing).
+- **C++ protoc**: Produces 322-byte descriptor with merged EnumMeta entry in EnumOptions.
+- **Go protoc-go**: Produces 326-byte descriptor with two separate EnumMeta entries — 4 bytes larger (extra tag+length overhead).
+- **Fix hint**: (1) Add `hasSubFieldCustomOpts` check for `CustomEnumOptions`. (2) Have `resolveCustomEnumOptions` return a `map[string]map[int32]bool` of sub-field nums (like `resolveCustomMessageOptions` does). (3) Add a `mergeEnumOptionsInMessages` function that recursively walks all enums and calls `mergeUnknownExtensions` on each `EnumOptions`. (4) Call it from `cloneWithMergedExtUnknowns`.
+- **Also affects**: Same bug exists for ServiceOptions, MethodOptions, OneofOptions, EnumValueOptions, ExtensionRangeOptions.
+
+### Run 16 — Service sub-field options not merged by cloneWithMergedExtUnknowns (VICTORY)
+- **Bug**: Go's `cloneWithMergedExtUnknowns` merges unknown extensions in FileOptions, FieldOptions, MessageOptions, and EnumOptions — but completely ignores ServiceOptions. When a service has two sub-field option assignments (`option (svc_cfg).label = "search"; option (svc_cfg).priority = 5;`), C++ protoc merges them into a single wire entry for field 50001, but Go leaves them as two separate entries.
+- **Test**: `347_svc_subfield_merge` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `cloneWithMergedExtUnknowns()` at cli.go:3446 handles FileOptions, FieldOptions, MessageOptions, and EnumOptions but has no code to iterate services and merge ServiceOptions. `hasSubFieldCustomOpts()` also doesn't check `CustomServiceOptions`, but the merge is still triggered because the file has sub-field options that match other checked types (the function returns true for any sub-field opt).
+- **C++ protoc**: Produces merged ServiceMeta entry in ServiceOptions (0xd3 size prefix).
+- **Go protoc-go**: Produces two separate ServiceMeta entries — 4 bytes larger (0xd7 size prefix, extra tag+length overhead).
+- **Fix hint**: (1) Add `CustomServiceOptions` check in `hasSubFieldCustomOpts`. (2) Add `mergeServiceOptions` function that iterates `fd.GetService()` and calls `mergeUnknownExtensions` on each service's Options. (3) Add `mergeableServiceOptFields` parameter to `cloneWithMergedExtUnknowns`. (4) Have `resolveCustomServiceOptions` return sub-field nums map.
+- **Also affects**: Same bug exists for MethodOptions, OneofOptions, EnumValueOptions, ExtensionRangeOptions.
+
+### Run 17 — Method sub-field options not merged by cloneWithMergedExtUnknowns (VICTORY)
+- **Bug**: Go's `cloneWithMergedExtUnknowns` merges unknown extensions in FileOptions, FieldOptions, MessageOptions, EnumOptions, and ServiceOptions — but completely ignores MethodOptions. When a method has two sub-field option assignments (`option (method_cfg).label = "search"; option (method_cfg).priority = 5;`), C++ protoc merges them into a single wire entry for field 50001, but Go leaves them as two separate entries.
+- **Test**: `348_method_subfield_merge` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `cloneWithMergedExtUnknowns()` calls `mergeServiceOptions()` which only merges `ServiceOptions` on each service, but never iterates `svc.GetMethod()` to merge `MethodOptions`. No `mergeMethodOptions` function exists.
+- **C++ protoc**: Produces 397-byte descriptor with merged MethodMeta entry in MethodOptions.
+- **Go protoc-go**: Produces 401-byte descriptor with two separate MethodMeta entries — 4 bytes larger (extra tag+length overhead).
+- **Fix hint**: (1) Add a `mergeMethodOptions` function that iterates `svc.GetMethod()` and calls `mergeUnknownExtensions` on each method's Options. (2) Call it from `mergeServiceOptions` or from `cloneWithMergedExtUnknowns`. (3) Add `mergeableMethodOptFields` parameter. (4) Have `resolveCustomMethodOptions` return sub-field nums map.
+- **Also affects**: Same bug exists for OneofOptions, EnumValueOptions, ExtensionRangeOptions.
+
+### Run 18 — Oneof sub-field options not merged by cloneWithMergedExtUnknowns (VICTORY)
+- **Bug**: Go's `cloneWithMergedExtUnknowns` merges unknown extensions in FileOptions, FieldOptions, MessageOptions, EnumOptions, ServiceOptions, and MethodOptions — but completely ignores OneofOptions. When a oneof has two sub-field option assignments (`option (oneof_cfg).label = "primary"; option (oneof_cfg).priority = 7;`), C++ protoc merges them into a single wire entry for field 50001, but Go leaves them as two separate entries.
+- **Test**: `349_oneof_subfield_merge` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `cloneWithMergedExtUnknowns()` handles FileOptions, FieldOptions, MessageOptions, EnumOptions, ServiceOptions, and MethodOptions but has no code to iterate oneofs within messages and merge OneofOptions. No `mergeOneofOptions` function exists. `hasSubFieldCustomOpts` also doesn't check `CustomOneofOptions`, but the merge is still triggered because the function checks other option types.
+- **C++ protoc**: Produces 358-byte descriptor with merged OneofMeta entry in OneofOptions.
+- **Go protoc-go**: Produces 362-byte descriptor with two separate OneofMeta entries — 4 bytes larger (extra tag+length overhead).
+- **Fix hint**: (1) Add `CustomOneofOptions` check in `hasSubFieldCustomOpts`. (2) Add a `mergeOneofOptionsInMessages` function that recursively iterates messages, then for each message iterates `msg.GetOneofDecl()` and calls `mergeUnknownExtensions` on each oneof's Options. (3) Have `resolveCustomOneofOptions` return sub-field nums map. (4) Add `mergeableOneofOptFields` parameter to `cloneWithMergedExtUnknowns`.
+- **Also affects**: Same bug exists for EnumValueOptions and ExtensionRangeOptions.
+
+### Run 19 — EnumValue sub-field options not merged by cloneWithMergedExtUnknowns (VICTORY)
+- **Bug**: Go's `cloneWithMergedExtUnknowns` merges unknown extensions in FileOptions, FieldOptions, MessageOptions, EnumOptions, ServiceOptions, MethodOptions, and OneofOptions — but completely ignores EnumValueOptions. When an enum value has two sub-field option assignments (`[(val_cfg).label = "low priority", (val_cfg).weight = 1]`), C++ protoc merges them into a single wire entry for field 50001, but Go leaves them as two separate entries.
+- **Test**: `350_enumval_subfield_merge` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `cloneWithMergedExtUnknowns()` at cli.go:3455 handles FileOptions, FieldOptions, MessageOptions, EnumOptions, ServiceOptions, MethodOptions, and OneofOptions but has no code to iterate enum values and merge EnumValueOptions. No `mergeEnumValueOptions` function exists. `hasSubFieldCustomOpts()` also doesn't check `CustomEnumValueOptions`.
+- **C++ protoc**: Produces 348-byte descriptor with merged ValueMeta entries in EnumValueOptions.
+- **Go protoc-go**: Produces 356-byte descriptor with two separate ValueMeta entries per enum value — 8 bytes larger (4 bytes × 2 enum values, extra tag+length overhead).
+- **Fix hint**: (1) Add `CustomEnumValueOptions` check in `hasSubFieldCustomOpts`. (2) Add a `mergeEnumValueOptionsInEnums` function that iterates all enums (top-level + nested in messages), then for each enum iterates `enum.GetValue()` and calls `mergeUnknownExtensions` on each value's Options. (3) Have `resolveCustomEnumValueOptions` return sub-field nums map. (4) Add `mergeableEnumValOptFields` parameter to `cloneWithMergedExtUnknowns`.
+- **Also affects**: Same bug exists for ExtensionRangeOptions.
+
+### Run 20 — ExtensionRange sub-field options fail to parse (VICTORY)
+- **Bug**: Go's parser cannot parse sub-field path syntax in extension range custom options. `extensions 100 to 199 [(range_cfg).label = "primary", (range_cfg).priority = 5]` fails with `Expected "="` at the `.label` sub-field access. The parser doesn't support `(opt).subfield = value` syntax for extension range options — only `(opt) = value` (flat value, no sub-field path).
+- **Test**: `351_extrange_subfield_merge` — all 9 profiles fail.
+- **Root cause**: Extension range option parsing (parser.go around line 1138-1153) handles `(opt_name) = value` syntax but doesn't parse the `.subfield` sub-field path that follows the option name. When it encounters `.label` after `(range_cfg)`, it expects `=` but finds `.`. This is a parser-level bug, not just a merge issue.
+- **C++ protoc**: Accepts sub-field extension range options fine, produces valid descriptor with merged RangeMeta entry.
+- **Go protoc-go**: Fails with `test.proto:26:37: Expected "=".` — can't even parse the sub-field syntax.
+- **Fix hint**: In the extension range option parser, after consuming the parenthesized option name `(range_cfg)`, add sub-field path parsing (consume `.identifier` segments and build `SubFieldPath` array) before expecting `=`. Same pattern used by file-level, field-level, message-level, etc. option parsers.
+- **Also affects**: `hasSubFieldCustomOpts` doesn't check `CustomExtRangeOptions`, and `cloneWithMergedExtUnknowns` has no merge code for ExtensionRangeOptions. Even after the parser is fixed, the merge step will be missing (same pattern as Runs 14-19).
+
+### Run 21 — Custom option unknown fields not sorted by field number (VICTORY)
+- **Bug**: Go's custom option resolution appends encoded unknown fields (extension options) in proto file declaration order, but C++ protoc sorts them by field number. When options are declared in non-ascending field number order (e.g., field 50003 first, then 50001, then 50002), the wire format bytes differ.
+- **Test**: `352_option_order` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: In `resolveCustomFileOptions()` (and all other `resolveCustom*Options` functions), options are processed in declaration order via `for _, opt := range result.CustomFileOptions`. Each option's encoded bytes are appended to unknown fields via `fd.Options.ProtoReflect().SetUnknown(append(fd.Options.ProtoReflect().GetUnknown(), rawBytes...))`. This preserves declaration order. C++ protoc sorts unknown fields by field number during serialization.
+- **C++ protoc**: Encodes unknown fields as field 50001 (varint 42), field 50002 (varint 1), field 50003 (string "hello") — ascending order.
+- **Go protoc-go**: Encodes as field 50003 (string "hello"), field 50001 (varint 42), field 50002 (varint 1) — declaration order.
+- **Fix hint**: After all custom options are resolved for a given options proto, sort the unknown fields by field number. Can parse the raw unknown bytes, group by tag number, sort by tag number, and reassemble. Or sort the options list by resolved field number before encoding. This affects ALL option types (FileOptions, FieldOptions, MessageOptions, EnumOptions, ServiceOptions, MethodOptions, OneofOptions, EnumValueOptions, ExtensionRangeOptions).
+
+### Run 22 — Top-level extension field sub-field options not merged (VICTORY)
+- **Bug**: Go's `cloneWithMergedExtUnknowns` calls `mergeFieldOptionsInMessages(fdCopy.GetMessageType(), ...)` which only processes fields and extensions **inside messages**. It never processes top-level extension declarations (`fdCopy.GetExtension()`). When a top-level extension field has sub-field custom options (e.g., `[(ext_cfg).label = "marker", (ext_cfg).priority = 10]`), the two sub-field entries are not merged into a single wire entry.
+- **Test**: `353_toplevel_ext_field_merge` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `cloneWithMergedExtUnknowns()` at cli.go:3480 calls `mergeFieldOptionsInMessages(fdCopy.GetMessageType(), mergeableFieldOptFields)`. This function iterates `msg.GetField()` and `msg.GetExtension()` for each message, but `fdCopy.GetExtension()` (top-level file-scope extensions) is never iterated. The sorting code (`sortFDOptionsUnknownFields` at line 6434) does correctly handle top-level extensions, so sorting is fine — only merging is missing.
+- **C++ protoc**: Produces 315-byte descriptor with merged ExtFieldCfg entry in the extension field's FieldOptions.
+- **Go protoc-go**: Produces 319-byte descriptor with two separate ExtFieldCfg entries — 4 bytes larger (extra tag+length overhead).
+- **Fix hint**: Add a loop in `cloneWithMergedExtUnknowns` after line 3480 that directly iterates `fdCopy.GetExtension()` and calls `mergeUnknownExtensions(ext.Options.ProtoReflect(), mergeableFieldOptFields)` for each top-level extension field. Example: `for _, ext := range fdCopy.GetExtension() { if ext.Options != nil { mergeUnknownExtensions(ext.Options.ProtoReflect(), mergeableFieldOptFields) } }`.
+
+### Run 23 — Nested extension bare name scope resolution accepts invalid option (VICTORY)
+- **Bug**: Go's `findFileOptionExtension()` has a "bare name match" fallback (step 3) that finds extensions by simple name alone, ignoring the containing message scope. When an extension is defined inside a message (`message Container { extend google.protobuf.FileOptions { ... } }`), C++ protoc requires the qualified name `(Container.nested_opt)` but Go accepts the bare `(nested_opt)`.
+- **Test**: `354_nested_ext_scope` — all 9 profiles fail.
+- **Root cause**: `findFileOptionExtension()` at cli.go:4355 tries bare name match: `if e.field.GetName() == name { return e.field, ... }`. For extensions nested in messages, `e.pkg` is set to `"pkg.Container"` (the message FQN), so step 2 (current package scope) correctly fails (`e.pkg != currentPkg`). But step 3 ignores `e.pkg` entirely and matches by field name alone.
+- **C++ protoc**: `test.proto:15:8: Option "(nested_opt)" unknown.` — requires `(Container.nested_opt)`.
+- **Go protoc-go**: Accepts `(nested_opt)` and produces a valid descriptor with the option encoded.
+- **Fix hint**: Remove or restrict the bare name match (step 3) in `findFileOptionExtension`. It should only match when `e.pkg == ""` (top-level, no package). Or better: implement proper scope-based resolution that walks up from the current scope. The same bug likely affects `findFieldOptionExtension`, `findMessageOptionExtension`, etc.
+
+### Run 24 — Trailing empty statement shifts file-level SCI span end column (VICTORY)
+- **Bug**: Go's source code info for the file-level span (path `[]`) reports the wrong end column when the file ends with a trailing empty statement (`;` after a closing brace `}`). C++ protoc includes the trailing `;` in the file span, but Go does not.
+- **Test**: `355_trailing_empty_stmt` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: When a top-level `};` ends the file, the `;` is an empty statement. C++ protoc's file-level span end column is 2 (past the `;`), but Go's is 1 (at the `}`). The Go parser doesn't advance the file-level end position when consuming trailing empty statements (extra semicolons at top level).
+- **C++ protoc**: File span `[0, 0, 6, 2]` — end column includes the trailing `;`.
+- **Go protoc-go**: File span `[0, 0, 6, 1]` — end column stops at `}`, ignoring the trailing `;`.
+- **Fix hint**: In the parser's top-level loop, when consuming a `;` (empty statement), update the file-level SCI end position to include it. The `trackEnd()` call is likely missing for the `;` token of empty statements.
+
+### Run 25 — Go accepts `infinity` as float/double default value, C++ rejects it (VICTORY)
+- **Bug**: Go's default value normalization for float/double fields uses `strings.ToLower(defVal)` and then checks for `infinity`/`-infinity` (normalizing to `inf`/`-inf`). C++ protoc only recognizes the exact lowercase tokens `nan`, `inf`, and `-inf` as special float identifiers — it does NOT accept `NaN`, `Inf`, `INF`, `infinity`, `Infinity`, or `-infinity`.
+- **Test**: `356_infinity_default` — all 9 profiles fail.
+- **Root cause**: `parseFieldOptions` in parser.go:5594-5603 does `lower := strings.ToLower(defVal)` and checks `lower == "infinity"`, normalizing to `inf`. C++ protoc's tokenizer only recognizes `nan` and `inf` (lowercase exact match) as special float values — anything else (`NaN`, `Inf`, `INF`, `infinity`, `Infinity`) is treated as an unknown identifier and rejected with "Expected number."
+- **C++ protoc**: `test.proto:4:37: Expected number.` — rejects `infinity` as a default value.
+- **Go protoc-go**: Accepts `infinity`, normalizes to `inf`, produces valid descriptor.
+- **Fix hint**: Remove the case-insensitive handling in the default value normalization. Only accept exact lowercase `nan`, `inf`, and `-inf` (matching C++ protoc behavior). Remove the `strings.ToLower` call and the `infinity`/`-infinity` normalization. The check should be: `if defVal == "inf" || defVal == "-inf" || defVal == "nan"` — nothing else.
+- **Also affected**: `NaN`, `Inf`, `INF`, `Infinity`, `-infinity` are all accepted by Go but rejected by C++. These are all the same bug (case-insensitive + full-word matching).
+
+### Run 26 — Float overflow default value produces `+Inf` instead of `inf` (VICTORY)
+- **Bug**: Go's `simpleFtoa` produces `"+Inf"` for positive infinity, while C++ `SimpleFtoa` produces `"inf"`. When a float32 default value overflows (e.g., `3.5e38` exceeds `FLT_MAX` ~3.4028235e38), the value becomes `+Inf` in float32. Go's `strconv.FormatFloat(+Inf, 'g', 6, 64)` returns `"+Inf"` (uppercase, with `+` sign), but C++ `snprintf(buf, "%.6g", INFINITY)` returns `"inf"` (lowercase, no sign).
+- **Test**: `357_float_overflow_default` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `simpleFtoa(float32(3.5e38))` calls `strconv.FormatFloat(math.Inf(1), 'g', 6, 64)` which returns `"+Inf"`. The existing normalization guard (`if lower == "inf" || lower == "-inf"`) only catches literal `inf`/`-inf` text — it doesn't catch numeric values that overflow float32 to infinity. The `simpleFtoa` function doesn't have special handling for infinity/NaN results.
+- **C++ protoc**: 60-byte descriptor with `default_value: "inf"` (3 bytes).
+- **Go protoc-go**: 61-byte descriptor with `default_value: "+Inf"` (4 bytes). 1-byte difference.
+- **Fix hint**: In `simpleFtoa`, check if the result is infinity or NaN before returning: `if math.IsInf(float64(v), 1) { return "inf" }; if math.IsInf(float64(v), -1) { return "-inf" }; if math.IsNaN(float64(v)) { return "nan" }`. Same fix needed in `simpleDtoa` for double overflow (e.g., `1e309` for double). Alternatively, post-process the FormatFloat result to normalize `"+Inf"` → `"inf"`, `"-Inf"` → `"-inf"`, `"NaN"` → `"nan"`.
+- **Also affected**: `simpleDtoa` has the same issue — `FormatFloat(+Inf, 'g', 15, 64)` returns `"+Inf"` not `"inf"`. Double overflow values (e.g., `1e309`) would produce the same discrepancy, but `ParseFloat("1e309", 64)` returns `err = ErrRange` so the normalization branch is skipped entirely (stores raw `"1e309"` instead of `"inf"`).
+
+### Run 27 — Double overflow default value stores raw string instead of "inf" (VICTORY)
+- **Bug**: Go's default value normalization for `double` fields skips normalization when `strconv.ParseFloat` returns `ErrRange`. For `1e309` (exceeds `DBL_MAX` ~1.7976931348623158e308), `ParseFloat("1e309", 64)` returns `(+Inf, ErrRange)`. Since `err != nil`, the `else if` branch at parser.go:5610 is skipped, and the raw string `"1e309"` is stored as-is. C++ protoc's `strtod("1e309")` returns `HUGE_VAL` (Inf) without failing, and `SimpleDtoa(Inf)` returns `"inf"`.
+- **Test**: `358_double_overflow_default` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: parser.go:5610 `else if v, err := strconv.ParseFloat(defVal, 64); err == nil` — when value overflows double, Go returns `err = ErrRange` so the normalization branch is skipped. The special-case checks at line 5605 only catch literal strings `"inf"`, `"-inf"`, `"nan"`, `"-nan"` — not numeric literals that overflow to infinity.
+- **C++ protoc**: 61-byte descriptor with `default_value: "inf"` (3 bytes).
+- **Go protoc-go**: 63-byte descriptor with `default_value: "1e309"` (5 bytes). 2-byte difference.
+- **Fix hint**: When `ParseFloat` returns `ErrRange`, the returned value `v` is still `+Inf` or `-Inf`. Change the condition to: `v, err := strconv.ParseFloat(defVal, 64); if err == nil || (err != nil && (math.IsInf(v, 0)))`. Or: check `math.IsInf(v, 0)` even when `err != nil` and call `simpleDtoa(v)` (which already handles Inf). Same issue exists for float32 overflow beyond `FLT_MAX` with `ParseFloat(defVal, 32)` though that code path uses `ParseFloat(defVal, 64)` + `float32()` cast so it may work differently.
+- **Also affects**: Negative overflow: `default = -1e309` would store `"-1e309"` instead of `"-inf"`.
+
+### Run 28 — Custom bool option accepts "True" (capital T), C++ rejects it (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` for `TYPE_BOOL` accepts case-variant bool values like `"True"`, `"False"`, `"t"`, `"f"` in addition to `"true"`, `"false"`, `"0"`, `"1"`. C++ protoc's option resolver only accepts exact lowercase `"true"` and `"false"` (and integer `0`/`1`). When a custom bool option uses `True` (capital T), Go accepts it and produces a valid descriptor, but C++ rejects it with an error.
+- **Test**: `359_bool_option_case` — all 9 profiles fail.
+- **Root cause**: `encodeCustomOptionValue()` at cli.go:5813-5818 has `case "true", "True", "t", "1":` and `case "false", "False", "f", "0":`. C++ protoc's `OptionInterpreter::SetOption` only accepts `identifier_value == "true"` or `identifier_value == "false"` (exact match, case-sensitive). `"True"` doesn't match either.
+- **C++ protoc**: `test.proto:13:20: Value must be "true" or "false" for boolean option "boolcase.my_flag".`
+- **Go protoc-go**: Accepts `True` and encodes as varint 1 (true). Produces valid descriptor.
+- **Fix hint**: Change the bool case in `encodeCustomOptionValue` to only accept exact `"true"` and `"false"` (and `"0"`, `"1"` for integer literals). Remove `"True"`, `"False"`, `"t"`, `"f"` from the switch cases. Match C++ behavior exactly.
+- **Also affects**: Same bug for `"False"` (capital F), `"t"`, `"f"` — all accepted by Go, rejected by C++. This applies to ALL custom option types (file, message, field, enum, enum value, service, method, oneof, extension range) since they all use `encodeCustomOptionValue`.
+- **Also affects**: Aggregate option bool fields — `encodeAggregateFields` also uses the same switch for bool values.
+
+### Run 29 — Enum shadow in compound type name resolution bypassed by Go (VICTORY)
+- **Bug**: Go's `resolveTypeName` skips enum matches when resolving compound type names (like `Direction.Sub`) and continues searching outer scopes. C++ protoc stops at the first match of the first part — even if it's an enum — and reports a shadow error because the full compound doesn't exist within the enum.
+- **Test**: `360_enum_shadow_scope` — all 9 profiles fail.
+- **Root cause**: `resolveTypeName()` at parser.go:6675 has a comment "Non-aggregate (enum): skip, continue searching outer scopes". When the first part of a compound name (e.g., `Direction` in `Direction.Sub`) matches an enum in the current scope, Go skips it and continues to outer scopes. C++ treats ANY match of the first part as a shadow — it tries the full compound in that scope, fails, and reports: `"Direction.Sub" is resolved to "scopetest.Outer.Container.Direction.Sub", which is not defined. The innermost scope is searched first in name resolution.`
+- **C++ protoc**: `test.proto:23:14: "Direction.Sub" is resolved to "scopetest.Outer.Container.Direction.Sub", which is not defined. The innermost scope is searched first in name resolution. Consider using a leading '.'(i.e., ".Direction.Sub") to start from the outermost scope.`
+- **Go protoc-go**: Silently accepts the reference, resolves to `.scopetest.Outer.Direction.Sub`, and produces a valid descriptor.
+- **Fix hint**: In `resolveTypeName`, when the first part of a compound name matches an enum type, treat it the same as a message match: try the full compound in the current scope, fail (since enums don't have nested types), and return a shadow error. Replace the "skip, continue" logic at line 6675 with: `return "." + name, firstCandidate` (shadow error with the enum's full path).
+- **Also affects**: Any compound type reference where the first part matches an enum in an inner scope. This is a scope resolution correctness bug, not just an edge case.
+
+### Run 30 — Fully-qualified option name with leading dot rejected by Go (VICTORY)
+- **Bug**: Go's `parseParenthesizedOptionName()` doesn't handle a leading `.` in custom option extension names. When an option is declared as `option (.pkg.my_opt) = "value";`, C++ protoc accepts the fully-qualified name (the leading dot forces absolute scope lookup). Go's parser reads `.` as the first `innerTok`, then the loop looks for another `.` separator, but the next token is `pkg` (an identifier), so the loop exits and `Expect(")")` fails because the next token is `pkg`, not `)`.
+- **Test**: `361_fqn_option_name` — all 9 profiles fail.
+- **Root cause**: `parseParenthesizedOptionName()` at parser.go:4902-4920 reads the first token and then loops on `.` separators. When the first token IS `.`, the parser stores `fullName = "(."` and then expects either another `.` or `)`. It doesn't handle the case where `.` is a leading qualifier (meaning the next tokens are `ident(.ident)*`).
+- **C++ protoc**: Accepts `(.fqnopt.my_label)` — produces valid descriptor with the option value.
+- **Go protoc-go**: `test.proto:14:10: Expected ")".` — rejects the syntax.
+- **Fix hint**: In `parseParenthesizedOptionName`, after reading `innerTok`, check if `innerTok.Value == "."`. If so, read the next identifier token and prepend `.` to it: `fullName = "(." + nextTok.Value`. Then continue the loop for `.ident` pairs as normal. This mirrors C++ protoc's handling of fully-qualified extension names.
+- **Also affects**: This bug affects ALL option entity types: file options, message options, field options, enum options, enum value options, service options, method options, oneof options, extension range options — all call `parseParenthesizedOptionName`.
+
+### Run 31 — Custom float option accepts `Inf` (capital I), C++ rejects it (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` for `TYPE_FLOAT` calls `strconv.ParseFloat(value, 32)` which accepts case-insensitive `Inf`, `INF`, `NaN`, etc. C++ protoc only accepts exact lowercase identifiers `inf` and `nan` for float/double option values. When a custom float option uses `Inf` (capital I), Go accepts it and produces a valid descriptor with infinity, but C++ rejects it with "Value must be number for float option".
+- **Test**: `362_float_option_case` — all 9 profiles fail.
+- **Root cause**: `encodeCustomOptionValue()` at cli.go:5847 does `switch strings.ToLower(value)` which normalizes `"Inf"` to `"inf"`. This doesn't match `"nan"` or `"-nan"`, so it falls to the `default` case which calls `strconv.ParseFloat("Inf", 32)`. Go's `strconv.ParseFloat` is case-insensitive for special values (`Inf`, `+Inf`, `-Inf`, `NaN`), so it returns `+Inf` successfully. C++ protoc's option interpreter only recognizes exact lowercase `"inf"` and `"nan"` identifiers; `"Inf"` is treated as an unknown identifier and rejected.
+- **C++ protoc**: `test.proto:13:21: Value must be number for float option "floatcase.my_float".`
+- **Go protoc-go**: Accepts `Inf`, encodes as float32 infinity `0x7F800000`, produces valid descriptor.
+- **Fix hint**: In `encodeCustomOptionValue` for TYPE_FLOAT and TYPE_DOUBLE, after the NaN switch, don't rely on `strconv.ParseFloat` for special values. Instead, check for exact lowercase `"inf"` and `"-inf"` before calling `ParseFloat`, and reject anything else that `ParseFloat` would interpret as infinity/NaN. Or: after `ParseFloat`, check if the result is Inf/NaN and reject it (since those should only be accepted via the explicit identifier checks, not via `ParseFloat` interpretation of case variants).
+- **Also affects**: TYPE_DOUBLE has the same issue (line 5861-5873). Aggregate option fields (`encodeAggregateFields`) likely have the same bug. Values like `NaN`, `INF`, `-Inf`, `+Inf`, `+inf` would all behave differently between Go and C++.
+
+### Run 32 — int32 custom option accepts hex value above INT32_MAX (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` for `TYPE_INT32` (and `TYPE_INT64`, `TYPE_SINT32`, `TYPE_SINT64`) uses `strconv.ParseInt(value, 0, 64)` — note the 64-bit width. This means any hex value that fits in int64 is accepted, regardless of whether it fits in int32. For `0x80000000 = 2147483648` (which exceeds `INT32_MAX = 2147483647`), Go accepts it and encodes as varint. C++ protoc validates the range and rejects it.
+- **Test**: `363_int32_hex_overflow` — all 9 profiles fail (C++ fails, Go succeeds → one-accepts-one-rejects).
+- **Root cause**: `encodeCustomOptionValue()` at cli.go:5854 does `strconv.ParseInt(value, 0, 64)`. For int32, Go should use bit width 32 or validate the result is in int32 range `[-2147483648, 2147483647]`. Currently, Go only catches values outside int64 range, not int32 range.
+- **C++ protoc**: `test.proto:14:22: Value out of range, -2147483648 to 2147483647, for int32 option "hexoverflow.small_val".`
+- **Go protoc-go**: Accepts `0x80000000`, encodes as varint `2147483648`, produces valid descriptor.
+- **Fix hint**: For `TYPE_INT32` and `TYPE_SINT32`, after `ParseInt`, check `if v > math.MaxInt32 || v < math.MinInt32` and return a range error. Similarly, for `TYPE_UINT32`, check `v > math.MaxUint32`. The error message should match C++ format: `"Value out of range, MIN to MAX, for TYPE option \"NAME\"."` with proper line:column info.
+- **Also affects**: Same bug exists for TYPE_SINT32 (same ParseInt call). TYPE_INT64 has the separate issue that `ParseInt(value, 0, 64)` can't handle values > INT64_MAX (like `0xFFFFFFFFFFFFFFFF`) that C++ rejects with a range error too — Go gives a generic parse error instead of a range error with proper format. TYPE_UINT32 similarly lacks range validation. For aggregate option encoding (`encodeAggregateFields`), the same function is called, so the same bug applies there too.
+
+### Run 33 — Form feed character not treated as whitespace (VICTORY)
+- **Bug**: Go tokenizer does NOT treat form feed (`\f`, 0x0C) or vertical tab (`\v`, 0x0B) as whitespace. C++ protoc does. When `\f` appears between tokens in a .proto file, C++ silently skips it as whitespace, but Go emits it as a `TokenSymbol`, causing parse errors.
+- **Test**: `364_formfeed_whitespace` — all 9 profiles fail.
+- **Root cause**: `collectComments()` in `io/tokenizer/tokenizer.go` at lines 120 and 160 only checks for `' '`, `'\t'`, `'\r'` as whitespace characters. The `\f` (form feed) and `\v` (vertical tab) characters are missing. Ironically, `readBlockCommentText()` at line 262 DOES handle `\v` and `\f` — the inconsistency is within the same file.
+- **C++ protoc**: Accepts `\f` between tokens as whitespace, produces valid descriptor (exit 0).
+- **Go protoc-go**: Fails with `Expected top-level statement (e.g. "message").` because `\f` is tokenized as a symbol, not skipped.
+- **Fix hint**: In `collectComments()`, add `'\f'` and `'\v'` to the whitespace checks at lines 120 and 160. E.g., change `currentChar == ' ' || currentChar == '\t' || currentChar == '\r'` to include `|| currentChar == '\f' || currentChar == '\v'`.
+- **Also affects**: `\v` (vertical tab, 0x0B) has the same bug — also not treated as whitespace.
+
+### Run 34 — Message-level int32 custom option missing range validation (VICTORY)
+- **Bug**: Go's `resolveCustomMessageOptions` (and all other `resolveCustom*Options` except `resolveCustomFileOptions`) does NOT call `checkIntRangeOption` to validate that int32/uint32 values fit in 32-bit range. When a message-level int32 custom option is set to `0x80000000` (= 2147483648, exceeds INT32_MAX = 2147483647), Go accepts it and produces a descriptor, while C++ rejects it with a range error.
+- **Test**: `365_msg_int32_overflow` — all 9 profiles fail.
+- **Root cause**: `checkIntRangeOption` is only called at cli.go:4179 inside `resolveCustomFileOptions`. The other functions — `resolveCustomFieldOptions`, `resolveCustomMessageOptions`, `resolveCustomServiceOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`, `resolveCustomExtRangeOptions` — all skip range validation for 32-bit types.
+- **C++ protoc**: `test.proto:15:22: Value out of range, -2147483648 to 2147483647, for int32 option "msgoverflow.msg_val".`
+- **Go protoc-go**: Silently accepts `0x80000000`, encodes as varint 2147483648, produces valid descriptor.
+- **Fix hint**: Add `checkIntRangeOption` calls in each `resolveCustom*Options` function, guarded by `opt.AggregateFields == nil && len(opt.SubFieldPath) == 0` (same guard as in file options). Copy the pattern from cli.go:4177-4184 to each of the 8 other functions.
+- **Also affects**: Same bug for uint32 overflow (e.g., `0x100000000` for uint32), sint32 overflow, fixed32 overflow (via ParseUint), sfixed32 overflow (via ParseInt). All 32-bit types on all non-file option entity types.
+
+### Run 35 — int32 overflow inside aggregate option value not caught (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` for `TYPE_INT32` uses `strconv.ParseInt(value, 0, 64)` with 64-bit width and no range validation. For aggregate option values (message literal fields), `checkIntRangeOption` is never called — it's only called for simple (non-aggregate) options in the `resolveCustom*Options` functions. When an aggregate option has an int32 field with value `0x80000000` (2147483648, exceeds INT32_MAX), Go accepts it silently.
+- **Test**: `366_aggregate_int32_overflow` — all 9 profiles fail.
+- **Root cause**: `encodeAggregateFields()` at cli.go:6260 calls `encodeCustomOptionValue()` directly without any int32 range validation. `encodeCustomOptionValue()` at cli.go:5935 uses `ParseInt(value, 0, 64)` which accepts any value that fits in int64. The `checkIntRangeOption()` function exists but is only called in the `resolveCustom*Options` functions for simple options — the aggregate encoding path bypasses it entirely.
+- **C++ protoc**: `test.proto:15:16: Error while parsing option value for "cfg": Integer out of range (0x80000000)` — the text format parser validates int32 ranges.
+- **Go protoc-go**: Accepts `0x80000000` as a valid int32 value, encodes it as varint 2147483648, produces a descriptor.
+- **Fix hint**: Either (1) add range validation inside `encodeCustomOptionValue()` for TYPE_INT32, TYPE_SINT32, TYPE_UINT32, TYPE_SFIXED32, TYPE_FIXED32 (check result fits in 32-bit range after `ParseInt`/`ParseUint`), or (2) call `checkIntRangeOption()` from `encodeAggregateFields()` before calling `encodeCustomOptionValue()`. Option 1 is cleaner since it catches ALL callers.
+- **Also affects**: Same bug for TYPE_UINT32 (e.g., `0x100000000` in aggregate), TYPE_SINT32, TYPE_SFIXED32, TYPE_FIXED32 — all 32-bit integer types lack range validation in the aggregate encoding path. Negative values in aggregate int32 fields (e.g., `-2147483649`) would also overflow.
+
+### Run 36 — Duplicate non-repeated message-level custom option not rejected (VICTORY)
+- **Bug**: Go's `resolveCustomMessageOptions` (and all other `resolveCustom*Options` except `resolveCustomFileOptions`) does NOT check for duplicate non-repeated custom options. When a message has `option (msg_tag) = 42; option (msg_tag) = 99;` (same non-repeated option set twice), C++ protoc rejects the second one with "Option was already set", but Go silently accepts both and encodes two entries in the unknown fields.
+- **Test**: `367_msg_dup_option` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `resolveCustomFileOptions` at cli.go:4129-4147 has `seenCustomOpts` map that tracks which non-repeated, non-aggregate, non-subfield options have been set and emits "Option X was already set." for duplicates. None of the other resolvers (`resolveCustomFieldOptions`, `resolveCustomMessageOptions`, `resolveCustomEnumOptions`, `resolveCustomServiceOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`, `resolveCustomExtRangeOptions`) have this check.
+- **C++ protoc**: `test.proto:13:10: Option "(msg_tag)" was already set.`
+- **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in MessageOptions unknown fields.
+- **Fix hint**: Add the `seenCustomOpts` duplicate detection logic to each of the 8 other `resolveCustom*Options` functions. The pattern is: `seenCustomOpts := map[string]bool{}`, skip repeated/aggregate/subfield options, check `seenCustomOpts[extFQN]`, emit error if already set. Note: the `seenCustomOpts` scope should be per-entity (per message, per field, etc.), not per file.
+- **Also affects**: Same bug for field-level, enum-level, service-level, method-level, oneof-level, enum-value-level, and ext-range-level custom options. All non-file resolvers are missing the duplicate check.
+
+### Run 37 — Message-level bool option accepts `True` (case mismatch) (VICTORY)
+- **Bug**: Go's `resolveCustomMessageOptions` is missing bool validation. When a message has `option (msg_flag) = True;` (capital T), C++ protoc rejects it with `Value must be "true" or "false"`, but Go accepts it and encodes it as a valid bool option.
+- **Test**: `368_msg_bool_option_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Bool validation exists only in 3 of the 9 `resolveCustom*Options` functions: `resolveCustomFileOptions` (line 4151), `resolveCustomFieldOptions` (line 4462), and `resolveCustomExtRangeOptions` (line 5767). The other 6 resolvers — `resolveCustomMessageOptions`, `resolveCustomServiceOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions` — are ALL missing the `TYPE_BOOL` check that validates `value == "true" || value == "false"`.
+- **C++ protoc**: `test.proto:15:23: Value must be "true" or "false" for boolean option "msgboolcase.msg_flag".`
+- **Go protoc-go**: Silently accepts `True`, encodes it as a bool value via `encodeCustomOptionValue` which accepts `True`/`False`/`t`/`f` at line 5986.
+- **Fix hint**: Add the bool validation block (checking `ext.GetType() == TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0` and requiring `value == "true" || value == "false"`) to all 6 missing resolvers.
+- **Also affects**: Same bug for service-level, method-level, enum-level, enum-value-level, and oneof-level bool custom options — all 6 missing resolvers.
+
+### Run 38 — Service-level bool option accepts `True` (case mismatch) (VICTORY)
+- **Bug**: Go's `resolveCustomServiceOptions` is missing bool validation. When a service has `option (svc_flag) = True;` (capital T), C++ protoc rejects it with `Value must be "true" or "false"`, but Go accepts it and encodes it as a valid bool option. Ralph fixed message-level bool validation in Run 37 but only added it to `resolveCustomMessageOptions` — the other 5 resolvers (service, method, enum, enum_value, oneof) are still missing it.
+- **Test**: `369_svc_bool_option_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Bool validation now exists in 4 of the 9 `resolveCustom*Options` functions: `resolveCustomFileOptions` (line 4151), `resolveCustomFieldOptions` (line 4462), `resolveCustomMessageOptions` (line 4716), and `resolveCustomExtRangeOptions` (line 5794). The other 5 resolvers — `resolveCustomServiceOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions` — are ALL missing the `TYPE_BOOL` check.
+- **C++ protoc**: `test.proto:15:23: Value must be "true" or "false" for boolean option "svcboolcase.svc_flag".`
+- **Go protoc-go**: Silently accepts `True`, encodes it as a bool value via `encodeCustomOptionValue` which accepts `True`/`False`/`t`/`f`.
+- **Fix hint**: Add the bool validation block to all 5 remaining resolvers. Same pattern as line 4716 in `resolveCustomMessageOptions`.
+- **Also affects**: Same bug for method-level, enum-level, enum-value-level, and oneof-level bool custom options.
+
+### Run 39 — Method-level bool option accepts `True` (case mismatch) (VICTORY)
+- **Bug**: Go's `resolveCustomMethodOptions` is missing bool validation. When a method has `option (mtd_flag) = True;` (capital T), C++ protoc rejects it with `Value must be "true" or "false"`, but Go accepts it and encodes it as a valid bool option. Ralph fixed service-level bool validation in Run 38 but only added it to `resolveCustomServiceOptions` — the other 3 resolvers (method, enum, enum_value, oneof) are still missing it.
+- **Test**: `370_method_bool_option_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Bool validation now exists in 5 of the 9 `resolveCustom*Options` functions: `resolveCustomFileOptions` (line 4153), `resolveCustomFieldOptions` (line 4464), `resolveCustomMessageOptions` (line 4718), `resolveCustomServiceOptions` (line 4924), and `resolveCustomExtRangeOptions` (line 5823). The other 4 resolvers — `resolveCustomMethodOptions`, `resolveCustomEnumOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions` — are ALL missing the `TYPE_BOOL` check.
+- **C++ protoc**: `test.proto:16:25: Value must be "true" or "false" for boolean option "mtdboolcase.mtd_flag".`
+- **Go protoc-go**: Silently accepts `True`, encodes it as a bool value via `encodeCustomOptionValue` which accepts `True`/`False`/`t`/`f`.
+- **Fix hint**: Add the bool validation block to all 4 remaining resolvers. Same pattern as line 4924 in `resolveCustomServiceOptions`.
+- **Also affects**: Same bug for enum-level, enum-value-level, and oneof-level bool custom options.
+
+### Run 40 — Enum-level bool option accepts `True` (case mismatch) (VICTORY)
+- **Bug**: Go's `resolveCustomEnumOptions` is missing bool validation. When an enum has `option (enum_flag) = True;` (capital T), C++ protoc rejects it with `Value must be "true" or "false"`, but Go accepts it and encodes it as a valid bool option. Ralph fixed file/field/message/service/method/ext-range bool validation in previous runs but never added it to `resolveCustomEnumOptions`, `resolveCustomEnumValueOptions`, or `resolveCustomOneofOptions`.
+- **Test**: `371_enum_bool_option_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Bool validation exists in 6 of 9 `resolveCustom*Options` functions (file at 4151, field at 4462, message at 4716, service at 4922, method at 5126, ext-range at 5848). The other 3 resolvers — `resolveCustomEnumOptions` (5270), `resolveCustomEnumValueOptions` (5447), `resolveCustomOneofOptions` (5624) — are ALL missing the `TYPE_BOOL` check that validates `value == "true" || value == "false"`.
+- **C++ protoc**: `test.proto:12:24: Value must be "true" or "false" for boolean option "enumboolcase.enum_flag".`
+- **Go protoc-go**: Silently accepts `True`, encodes it as a bool value via `encodeCustomOptionValue` which accepts `True`/`False`/`t`/`f` at line 6067.
+- **Fix hint**: Add the bool validation block to all 3 remaining resolvers: `resolveCustomEnumOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`. Same pattern as line 4922 in `resolveCustomServiceOptions`.
+- **Also affects**: Same bug for enum-value-level and oneof-level bool custom options — both missing the same check.
+
+### Run 41 — Subnormal float default value string differs (VICTORY)
+- **Bug**: Go's `simpleFtoa` produces a different string representation than C++'s `SimpleFtoa` for subnormal float32 values (values smaller than `FLT_MIN` ≈ 1.17549435e-38). The round-trip check (`format → parse → compare`) succeeds in Go but fails in C++, causing C++ to use 9 significant digits while Go uses 6.
+- **Test**: `372_subnormal_float_default` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `simpleFtoa(float32(1e-45))` in parser.go:6080 formats to `"1.4013e-45"` (6 sig digits), then `ParseFloat("1.4013e-45", 32)` returns a float32 that equals the original — round-trip succeeds. C++'s `SimpleFtoa` formats the same `"1.4013e-45"`, but `strtof("1.4013e-45")` returns a DIFFERENT float32 — round-trip fails, so it falls through to `"%.9g"` → `"1.40129846e-45"` (9 sig digits).
+- **C++ protoc**: `default_value: "1.40129846e-45"` (14 bytes).
+- **Go protoc-go**: `default_value: "1.4013e-45"` (10 bytes). 4-byte difference in descriptor.
+- **Fix hint**: The discrepancy is in `strtof` (C library) vs `ParseFloat` (Go stdlib) behavior for subnormal float32 values. Go's `ParseFloat` is correctly rounding the string back to the same float32, while C's `strtof` (on macOS) fails to round-trip. To match C++ behavior, Go would need to replicate C's less-precise `strtof` round-trip failure, which is platform-specific. One approach: for subnormal float32 values (abs(v) < FLT_MIN and v != 0), always use 9 significant digits (skip the 6-digit attempt). Or: use `FormatFloat(v64, 'g', 6, 32)` (32-bit precision) instead of `64` to match C's float formatting behavior more closely.
+- **Also affects**: Any subnormal float32 default value will trigger this. Examples: `1e-45`, `1.17549e-38`, `5e-40`, etc. The exact set of affected values depends on which ones fail the C `strtof` round-trip.
+
+### Run 42 — Enum-value-level bool option accepts `True` (case mismatch) (VICTORY)
+- **Bug**: Go's `resolveCustomEnumValueOptions` is missing bool validation. When an enum value has `[(val_flag) = True]` (capital T), C++ protoc rejects it with `Value must be "true" or "false"`, but Go accepts it and encodes it as a valid bool option. Ralph fixed file/field/message/service/method/enum/ext-range bool validation in previous runs but never added it to `resolveCustomEnumValueOptions` or `resolveCustomOneofOptions`.
+- **Test**: `373_enumval_bool_option_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Bool validation exists in 7 of 9 `resolveCustom*Options` functions (file at 4151, field at 4462, message at 4716, service at 4922, method at 5126, enum at 5321, ext-range at 5875). The other 2 resolvers — `resolveCustomEnumValueOptions` (around 5512) and `resolveCustomOneofOptions` — are BOTH missing the `TYPE_BOOL` check that validates `value == "true" || value == "false"`.
+- **C++ protoc**: `test.proto:12:23: Value must be "true" or "false" for boolean option "evboolcase.val_flag".`
+- **Go protoc-go**: Silently accepts `True`, encodes it as a bool value via `encodeCustomOptionValue` which accepts `True`/`False`/`t`/`f` at line 6091.
+- **Fix hint**: Add the bool validation block to both remaining resolvers: `resolveCustomEnumValueOptions` and `resolveCustomOneofOptions`. Same pattern as line 5321 in `resolveCustomEnumOptions`.
+- **Also affects**: Same bug for oneof-level bool custom options — `resolveCustomOneofOptions` is missing the same check.
+
+### Run 43 — Oneof-level bool option accepts `True` (case mismatch) (VICTORY)
+- **Bug**: Go's `resolveCustomOneofOptions` is the LAST remaining resolver missing bool validation. When a oneof has `option (oneof_flag) = True;` (capital T), C++ protoc rejects it with `Value must be "true" or "false"`, but Go accepts it and encodes it as a valid bool option. Ralph fixed all other resolvers (file, field, message, service, method, enum, enum_value, ext-range) in previous runs but never added it to `resolveCustomOneofOptions`.
+- **Test**: `374_oneof_bool_option_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Bool validation now exists in 8 of 9 `resolveCustom*Options` functions (file at 4151, field at 4462, message at 4716, service at 4922, method at 5126, enum at 5321, enum_value at 5525, ext-range at 5902). The ONLY remaining resolver — `resolveCustomOneofOptions` (around line 5730) — is missing the `TYPE_BOOL` check that validates `value == "true" || value == "false"`.
+- **C++ protoc**: `test.proto:13:27: Value must be "true" or "false" for boolean option "oneofboolcase.oneof_flag".`
+- **Go protoc-go**: Silently accepts `True`, encodes it as a bool value via `encodeCustomOptionValue` which accepts `True`/`False`/`t`/`f`.
+- **Fix hint**: Add the bool validation block to `resolveCustomOneofOptions` after the int range check (around line 5735). Same pattern as line 5525 in `resolveCustomEnumValueOptions`: `if ext.GetType() == TYPE_BOOL && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0 { value := opt.Value; if value != "true" && value != "false" { errs = append(...); continue } }`.
+
+### Run 44 — Duplicate non-repeated field-level custom option not rejected (VICTORY)
+- **Bug**: Go's `resolveCustomFieldOptions` does NOT check for duplicate non-repeated custom options. When a field has `[(field_tag) = 42, (field_tag) = 99]` (same non-repeated option set twice), C++ protoc rejects the second one with "Option was already set", but Go silently accepts both and encodes two entries in the unknown fields.
+- **Test**: `375_field_dup_option` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `resolveCustomFileOptions` at cli.go:4129-4147 has `seenCustomOpts` map that tracks which non-repeated, non-aggregate, non-subfield options have been set and emits "Option X was already set." for duplicates. `resolveCustomMessageOptions` also has `seenMsgOpts` at cli.go:4672. But the other 7 resolvers (`resolveCustomFieldOptions`, `resolveCustomEnumOptions`, `resolveCustomServiceOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`, `resolveCustomExtRangeOptions`) all lack this check.
+- **C++ protoc**: `test.proto:12:47: Option "(field_tag)" was already set.`
+- **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in FieldOptions unknown fields.
+- **Fix hint**: Add a `seenFieldOpts` map (keyed by field pointer + extension FQN) to `resolveCustomFieldOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern needed for the other 5 resolvers (enum, service, method, enum_value, oneof, ext_range).
+- **Also affects**: Same bug for enum-level, service-level, method-level, enum-value-level, oneof-level, and ext-range-level custom options. All 7 non-file/non-message resolvers are missing the duplicate check.
+
+### Run 45 — Duplicate non-repeated enum-level custom option not rejected (VICTORY)
+- **Bug**: Go's `resolveCustomEnumOptions` does NOT check for duplicate non-repeated custom options. When an enum has `option (enum_tag) = 42; option (enum_tag) = 99;` (same non-repeated option set twice), C++ protoc rejects the second one with "Option was already set", but Go silently accepts both and encodes two entries in the unknown fields.
+- **Test**: `376_enum_dup_option` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `resolveCustomFileOptions` at cli.go:4129 has `seenCustomOpts`, `resolveCustomFieldOptions` at cli.go:4450 has `seenFieldOpts`, `resolveCustomMessageOptions` at cli.go:4689 has `seenMsgOpts`. But the other 6 resolvers (`resolveCustomEnumOptions`, `resolveCustomServiceOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`, `resolveCustomExtRangeOptions`) all lack this duplicate detection.
+- **C++ protoc**: `test.proto:13:10: Option "(enum_tag)" was already set.`
+- **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in EnumOptions unknown fields.
+- **Fix hint**: Add a `seenEnumOpts` map (keyed by enum pointer + extension FQN) to `resolveCustomEnumOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern needed for the other 5 resolvers (service, method, enum_value, oneof, ext_range).
+- **Also affects**: Same bug for service-level, method-level, enum-value-level, oneof-level, and ext-range-level custom options. All 6 non-file/non-field/non-message resolvers are missing the duplicate check.
+
+### Run 46 — Duplicate non-repeated service-level custom option not rejected (VICTORY)
+- **Bug**: Go's `resolveCustomServiceOptions` does NOT check for duplicate non-repeated custom options. When a service has `option (svc_tag) = 42; option (svc_tag) = 99;` (same non-repeated option set twice), C++ protoc rejects the second one with "Option was already set", but Go silently accepts both and encodes two entries in the unknown fields.
+- **Test**: `377_svc_dup_option` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Duplicate detection (`seenCustomOpts` map) exists in 4 of 9 `resolveCustom*Options` functions: `resolveCustomFileOptions` (line 4129), `resolveCustomFieldOptions` (line 4450), `resolveCustomMessageOptions` (line 4689), `resolveCustomEnumOptions` (line 5322). The other 5 resolvers — `resolveCustomServiceOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`, `resolveCustomExtRangeOptions` — all lack this check.
+- **C++ protoc**: `test.proto:16:10: Option "(svc_tag)" was already set.`
+- **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in ServiceOptions unknown fields.
+- **Fix hint**: Add a `seenSvcOpts` map (keyed by service pointer + extension FQN) to `resolveCustomServiceOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern needed for the other 4 resolvers (method, enum_value, oneof, ext_range).
+- **Also affects**: Same bug for method-level, enum-value-level, oneof-level, and ext-range-level custom options. All 5 non-file/non-field/non-message/non-enum resolvers are missing the duplicate check.
+
+### Run 47 — Duplicate non-repeated method-level custom option not rejected (VICTORY)
+- **Bug**: Go's `resolveCustomMethodOptions` does NOT check for duplicate non-repeated custom options. When a method has `option (mtd_tag) = 42; option (mtd_tag) = 99;` (same non-repeated option set twice), C++ protoc rejects the second one with "Option was already set", but Go silently accepts both and encodes two entries in the unknown fields.
+- **Test**: `378_method_dup_option` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Duplicate detection (`seenCustomOpts` map) exists in 5 of 9 `resolveCustom*Options` functions: `resolveCustomFileOptions` (line 4129), `resolveCustomFieldOptions` (line 4450), `resolveCustomMessageOptions` (line 4689), `resolveCustomEnumOptions` (line 5339), `resolveCustomServiceOptions` (line 4914). The other 4 resolvers — `resolveCustomMethodOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`, `resolveCustomExtRangeOptions` — all lack this check.
+- **C++ protoc**: `test.proto:17:12: Option "(mtd_tag)" was already set.`
+- **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in MethodOptions unknown fields.
+- **Fix hint**: Add a `seenMethodOpts` map (keyed by method pointer + extension FQN) to `resolveCustomMethodOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern needed for the other 3 resolvers (enum_value, oneof, ext_range).
+- **Also affects**: Same bug for enum-value-level, oneof-level, and ext-range-level custom options. All 4 non-file/non-field/non-message/non-enum/non-service resolvers are missing the duplicate check.
+
+### Run 48 — Duplicate non-repeated enum-value-level custom option not rejected (VICTORY)
+- **Bug**: Go's `resolveCustomEnumValueOptions` does NOT check for duplicate non-repeated custom options. When an enum value has `[(val_tag) = 42, (val_tag) = 99]` (same non-repeated option set twice), C++ protoc rejects the second one with "Option was already set", but Go silently accepts both and encodes two entries in the unknown fields.
+- **Test**: `379_enumval_dup_option` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Duplicate detection (`seenCustomOpts` map) exists in 6 of 9 `resolveCustom*Options` functions: `resolveCustomFileOptions` (line 4129), `resolveCustomFieldOptions` (line 4450), `resolveCustomMessageOptions` (line 4689), `resolveCustomServiceOptions` (line 4914), `resolveCustomEnumOptions` (line 5356), `resolveCustomMethodOptions` (line 5135). The other 3 resolvers — `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`, `resolveCustomExtRangeOptions` — all lack this check.
+- **C++ protoc**: `test.proto:13:31: Option "(val_tag)" was already set.`
+- **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in EnumValueOptions unknown fields.
+- **Fix hint**: Add a `seenEvOpts` map (keyed by enum value pointer + extension FQN) to `resolveCustomEnumValueOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern needed for the other 2 resolvers (oneof, ext_range).
+- **Also affects**: Same bug for oneof-level and ext-range-level custom options. Both resolvers are missing the duplicate check.
+
+### Run 49 — Duplicate non-repeated oneof-level custom option not rejected (VICTORY)
+- **Bug**: Go's `resolveCustomOneofOptions` does NOT check for duplicate non-repeated custom options. When a oneof has `option (oneof_tag) = 42; option (oneof_tag) = 99;` (same non-repeated option set twice), C++ protoc rejects the second one with "Option was already set", but Go silently accepts both and encodes two entries in the unknown fields.
+- **Test**: `380_oneof_dup_option` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Duplicate detection (`seenCustomOpts` map) exists in 7 of 9 `resolveCustom*Options` functions: `resolveCustomFileOptions` (line 4129), `resolveCustomFieldOptions` (line 4450), `resolveCustomMessageOptions` (line 4689), `resolveCustomServiceOptions` (line 4914), `resolveCustomEnumOptions` (line 5339), `resolveCustomMethodOptions` (line 5135), `resolveCustomEnumValueOptions` (line 5577). The other 2 resolvers — `resolveCustomOneofOptions` and `resolveCustomExtRangeOptions` — both lack this check.
+- **C++ protoc**: `test.proto:14:12: Option "(oneof_tag)" was already set.`
+- **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in OneofOptions unknown fields.
+- **Fix hint**: Add a `seenOneofOpts` map (keyed by oneof pointer + extension FQN) to `resolveCustomOneofOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern needed for `resolveCustomExtRangeOptions` — the last remaining resolver missing the duplicate check.
+- **Also affects**: Same bug for ext-range-level custom options. `resolveCustomExtRangeOptions` is the only remaining resolver missing the duplicate check.
+
+### Run 50 — Duplicate non-repeated ext-range-level custom option not rejected (VICTORY)
+- **Bug**: Go's `resolveCustomExtRangeOptions` is the LAST remaining resolver missing duplicate detection for non-repeated custom options. When an extension range has `[(range_tag) = 42, (range_tag) = 99]` (same non-repeated option set twice), C++ protoc rejects the second one with "Option was already set", but Go silently accepts both and encodes two entries in the unknown fields.
+- **Test**: `381_extrange_dup_option` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Duplicate detection (`seenCustomOpts` map) now exists in 8 of 9 `resolveCustom*Options` functions: `resolveCustomFileOptions`, `resolveCustomFieldOptions`, `resolveCustomMessageOptions`, `resolveCustomServiceOptions`, `resolveCustomEnumOptions`, `resolveCustomMethodOptions`, `resolveCustomEnumValueOptions`, `resolveCustomOneofOptions`. The ONLY remaining resolver — `resolveCustomExtRangeOptions` (around line 5984) — is missing the `seenCustomOpts` check.
+- **C++ protoc**: `test.proto:12:44: Option "(range_tag)" was already set.`
+- **Go protoc-go**: Silently accepts both, encodes two varint entries for field 50001 in ExtensionRangeOptions unknown fields.
+- **Fix hint**: Add a `seenExtRangeOpts` map (keyed by extension range pointer or message+range key + extension FQN) to `resolveCustomExtRangeOptions`. For non-repeated, non-aggregate, non-subfield options, check if already set and emit error. Same pattern as all other resolvers. This completes the duplicate detection coverage for ALL 9 option entity types.
+
+### Run 51 — Float/double default value `Inf` (capital I) accepted by Go, rejected by C++ (VICTORY)
+- **Bug**: Go's default value normalization for float/double fields uses `strings.ToLower(defVal)` and then compares against `"inf"`, `"-inf"`, `"nan"`, `"-nan"`. This means `Inf`, `INF`, `NaN`, `NAN`, `-Inf`, `-NaN` are all accepted. C++ protoc only accepts exact lowercase `inf`, `-inf`, and `nan` — anything else (like `Inf` with capital I) is rejected with "Expected number."
+- **Test**: `382_inf_default_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: parser.go:5618 does `lower := strings.ToLower(defVal)` then checks `lower == "inf"`. For `defVal = "Inf"`, `lower = "inf"` → matches → `defVal = "inf"` → produces valid descriptor. C++ protoc's parser does case-sensitive comparison: `"Inf" != "inf"` → error.
+- **C++ protoc**: `test.proto:6:46: Expected number.` — rejects `Inf` as a default value.
+- **Go protoc-go**: Accepts `Inf`, normalizes to `"inf"`, produces valid descriptor with `default_value: "inf"`.
+- **Fix hint**: Remove `strings.ToLower` call at line 5618. Compare `defVal` directly against exact lowercase strings: `if defVal == "inf" || defVal == "-inf" || defVal == "nan" || defVal == "-nan"`. This matches C++ protoc's case-sensitive handling.
+- **Also affected**: `INF`, `NaN`, `NAN`, `-Inf`, `-NaN` — all accepted by Go due to case-insensitive comparison. Run 25 tested `infinity` (full word) which was a different sub-bug (full-word matching). This run tests case sensitivity specifically.
+
+### Run 52 — String custom option accepts integer value, C++ rejects it (VICTORY)
+- **Bug**: Go's custom option resolver does not validate that string/bytes option values are quoted strings. When `option (my_label) = 42;` sets a string option to an integer literal, C++ protoc rejects it with `Value must be quoted string for string option`, but Go accepts it and encodes `"42"` as the string value.
+- **Test**: `383_string_opt_int_value` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `resolveCustomFileOptions` (and all other `resolveCustom*Options` functions) never checks the `opt.ValueType` for TYPE_STRING or TYPE_BYTES options. When the parser encounters `option (str_opt) = 42;`, it stores `42` as the value with `ValueType = TokenInt`. The encoder (`encodeCustomOptionValue`) for TYPE_STRING simply uses `opt.Value` as-is, treating `"42"` as a valid string. C++ protoc's `OptionInterpreter::SetOption` validates that string option values must be string literals.
+- **C++ protoc**: `test.proto:14:21: Value must be quoted string for string option "stroptint.my_label".`
+- **Go protoc-go**: Silently accepts `42`, encodes it as string bytes `"42"`, produces valid descriptor.
+- **Fix hint**: In each `resolveCustom*Options` function, add a check: if `ext.GetType() == TYPE_STRING || ext.GetType() == TYPE_BYTES`, and `opt.AggregateFields == nil && len(opt.SubFieldPath) == 0`, then validate `opt.ValueType == tokenizer.TokenString`. If not, emit error matching C++: `"Value must be quoted string for string option \"FQN\"."`. Same pattern as the TYPE_BOOL validation.
+- **Also affects**: TYPE_BYTES options have the same bug. Also, setting a string option to `true` (identifier) or `inf` (identifier) would also be accepted by Go but likely rejected by C++. Aggregate option fields might also lack this validation.
+
+### Run 56 — Enum custom option accepts integer value, C++ requires identifier (VICTORY)
+- **Bug**: Go's custom option resolver accepts integer values for TYPE_ENUM options. When `option (my_level) = 1;` sets an enum option to an integer literal, C++ protoc rejects it with `Value must be identifier for enum-valued option`, but Go accepts it and encodes the integer as a varint.
+- **Test**: `387_enum_opt_int_value` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `encodeCustomOptionValue()` at cli.go:6450 for TYPE_ENUM first tries `strconv.ParseInt(value, 0, 32)`. When the value is an integer literal like `"1"`, this succeeds and the integer is encoded directly as a varint. C++ protoc's `OptionInterpreter::SetOption` validates that enum option values must be identifiers (enum value names), not integer literals.
+- **C++ protoc**: `test.proto:17:21: Value must be identifier for enum-valued option "enumoptint.my_level".`
+- **Go protoc-go**: Silently accepts `1`, encodes as varint 1, produces valid descriptor.
+- **Fix hint**: In each `resolveCustom*Options` function, add a check: if `ext.GetType() == TYPE_ENUM && opt.AggregateFields == nil && len(opt.SubFieldPath) == 0`, then validate `opt.ValueType == tokenizer.TokenIdent`. If not, emit error: `"Value must be identifier for enum-valued option \"FQN\"."`. The integer encoding in `encodeCustomOptionValue` is correct for aggregate option values (text format allows integers for enum fields), so the validation should be at the resolver level, not the encoder level.
+- **Also affects**: All 9 `resolveCustom*Options` functions (file, field, message, service, method, enum, enum_value, oneof, ext_range) are likely missing this validation. Also, hex integers like `0x01` and negative integers like `-1` would also be accepted by Go but rejected by C++ for enum options.
+
+### Run 68 — Field-level float option accepts `Inf` (capital I), C++ rejects it (VICTORY)
+- **Bug**: Go's `resolveCustomFieldOptions` is completely MISSING float/double identifier validation. There's a stale comment at cli.go:4561 saying "Validate float/double identifier values must be lowercase 'inf' or 'nan'" but the actual validation code was never added — the lines that follow are about SCI path fixing, not float validation. When a field has `[(field_threshold) = Inf]`, Go accepts it and encodes float32 infinity, while C++ rejects it with "Value must be number".
+- **Test**: `398_field_float_inf_case` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `resolveCustomFieldOptions` at cli.go:4561 has NO float/double validation code at all. The comment is there but the actual check is missing. Compare with file-level (line 4186-4197), message-level (line 4829-4841), service-level (line 5078-5090), method-level (line 5325-5337), enum-level (line 5563-5575), oneof-level (line 6062-6074) — all have the validation. Field-level is the only resolver completely missing it.
+- **C++ protoc**: `test.proto:14:49: Value must be number for float option "fieldfloatcase.field_threshold".`
+- **Go protoc-go**: Silently accepts `Inf`, encodes as float32 infinity, produces valid descriptor.
+- **Fix hint**: Add the float validation block after the stale comment at line 4561. Use the same pattern as other resolvers. For field-level, the parser DOES bake `-` into values, so use `floatCheckVal` pattern (strip leading `-` before checking). Example: `floatCheckVal := opt.Value; if opt.Negative && strings.HasPrefix(floatCheckVal, "-") { floatCheckVal = floatCheckVal[1:] }; if floatCheckVal != "inf" && floatCheckVal != "nan" { ... }`.
+- **Also affects**: Same `Inf`/`NaN` acceptance bug for field-level double options. Also, the enum-value-level (line 5812) and ext-range-level (line 6308) resolvers have float validation but use `opt.Value` without stripping `-`, so `-inf` and `-nan` would be rejected — same bug as Run 67 but on different entity types.
+
+### Run 69 — Field-level float option with `-inf` rejected by Go, accepted by C++ (VICTORY)
+- **Bug**: Go's `resolveCustomFieldOptions` float validation at cli.go:4563 does NOT strip the leading `-` prefix before checking for `inf`/`nan`. The field parser bakes `-` into `opt.Value` (parser.go:5478: `custOpt.Value = "-" + custOpt.Value`), so `opt.Value = "-inf"`. The check `floatCheckVal != "inf" && floatCheckVal != "nan"` evaluates `"-inf" != "inf"` → true, so Go incorrectly rejects `-inf` as invalid. C++ protoc accepts `-inf` fine.
+- **Test**: `399_field_neg_inf_option` — all 9 profiles fail (C++ succeeds, Go errors).
+- **Root cause**: Ralph fixed Run 68 by adding float validation to the field-level resolver but forgot to add the `strings.HasPrefix(floatCheckVal, "-")` stripping that was added for message/service/method/enum/oneof resolvers (Run 67 fix). Compare line 4563 (no strip) with line 4845 (has strip).
+- **C++ protoc**: Accepts `[(field_threshold) = -inf]` fine, produces valid descriptor with -infinity encoded.
+- **Go protoc-go**: `test.proto:12:49: Value must be number for double option "fieldneginf.field_threshold".`
+- **Fix hint**: Add `if strings.HasPrefix(floatCheckVal, "-") { floatCheckVal = floatCheckVal[1:] }` after `floatCheckVal := opt.Value` at line 4563, matching the pattern at line 4845.
+- **Also affects**: Same `-` stripping missing in enum-value-level (line 5825) and ext-range-level (line 6322) resolvers. Both would reject `-inf`/`-nan` for float/double options on those entity types.
+
+### Run 71 — Enum-value-level float option with `-inf` rejected by Go, accepted by C++ (VICTORY)
+- **Bug**: Go's `resolveCustomEnumValueOptions` float validation at cli.go:5872 does NOT strip the leading `-` prefix before checking for `inf`/`nan`. The enum-value parser bakes `-` into `opt.Value` (parser.go:2622: `custOpt.Value = "-" + custOpt.Value`), so `opt.Value = "-inf"`. The check `opt.Value != "inf" && opt.Value != "nan"` evaluates `"-inf" != "inf"` → true, so Go incorrectly rejects `-inf` as invalid. C++ protoc accepts `-inf` fine.
+- **Test**: `401_enumval_neg_inf_option` — all 9 profiles fail (C++ succeeds, Go errors).
+- **Root cause**: Same bug as Run 69 (field-level) but on enum-value-level. Ralph fixed field-level by adding `strings.HasPrefix(floatCheckVal, "-")` stripping, but never applied the fix to enum-value-level or ext-range-level resolvers.
+- **C++ protoc**: Accepts `[(val_threshold) = -inf]` on enum value, produces valid descriptor with -infinity encoded.
+- **Go protoc-go**: `test.proto:12:30: Value must be number for double option "evneginf.val_threshold".`
+- **Fix hint**: Add `if strings.HasPrefix(floatCheckVal, "-") { floatCheckVal = floatCheckVal[1:] }` after the `floatCheckVal := opt.Value` at line 5872, matching the pattern in other resolvers.
+- **Also affects**: Same `-` stripping missing in ext-range-level (line 6368) resolver. That would reject `-inf`/`-nan` for float/double options on extension ranges too.
+
+### Run 73 — Edition `features.message_encoding` accepted on non-message field (VICTORY)
+- **Bug**: Go does NOT validate that `features.message_encoding` can only be set on message-typed fields. When a scalar field (e.g., `int32`) uses `int32 value = 1 [features.message_encoding = DELIMITED];` in an edition 2023 proto file, C++ protoc rejects it with `Only message fields can specify message encoding.`, but Go accepts it silently and produces a valid descriptor.
+- **Test**: `403_edition_msg_encoding_scalar` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go has `checkRepeatedFieldEncodingField` for `repeated_field_encoding` and `checkFieldPresenceRepeatedField` for `field_presence` on repeated fields, but has NO equivalent validation for `message_encoding`. The `featureTargets` map at cli.go:2038 allows `message_encoding` on fields, and no additional validation checks `field.GetType() == TYPE_MESSAGE || field.GetType() == TYPE_GROUP` to reject it on scalar fields.
+- **C++ protoc**: `test.proto:6:9: Only message fields can specify message encoding.`
+- **Go protoc-go**: Silently accepts, encodes FeatureSet with DELIMITED message_encoding, produces valid descriptor.
+- **Fix hint**: Add a `checkMessageEncodingField` function similar to `checkRepeatedFieldEncodingField` that rejects `message_encoding` on non-message fields: if `field.GetType() != TYPE_MESSAGE && field.GetType() != TYPE_GROUP && field.GetOptions().GetFeatures().GetMessageEncoding() != descriptorpb.FeatureSet_LENGTH_PREFIXED`, emit error. Also add a `collectMessageEncodingErrors` function that walks all messages/nested types, and call it from the validation pass.
+- **Also affects**: Same validation is missing for `features.utf8_validation` on non-string fields (C++ likely validates this too). Also, `features.message_encoding = DELIMITED` on a map field should probably also be rejected.
+
+### Run 74 — Edition `features.field_presence = LEGACY_REQUIRED` on extension field accepted by Go (VICTORY)
+- **Bug**: Go does NOT validate that `features.field_presence = LEGACY_REQUIRED` cannot be set on extension fields in edition 2023. When an extension field uses `extend Extendable { Payload info = 100 [features.field_presence = LEGACY_REQUIRED]; }`, C++ protoc rejects it with `Extensions can't be required.`, but Go accepts it silently and produces a valid descriptor.
+- **Test**: `404_edition_required_ext` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's `validateRequiredExtensions` at cli.go:3226 only checks for `LABEL_REQUIRED` (proto2 `required` keyword). In editions mode, required semantics are expressed via `features.field_presence = LEGACY_REQUIRED`, which sets the feature but does NOT change the label to `LABEL_REQUIRED`. So the existing validation doesn't catch it. C++ protoc's `ValidateFieldFeatures` separately checks for `LEGACY_REQUIRED` on extensions in edition files.
+- **C++ protoc**: `test.proto:14:11: Extensions can't be required.`
+- **Go protoc-go**: Silently accepts, encodes FeatureSet with LEGACY_REQUIRED field_presence, produces valid descriptor.
+- **Fix hint**: Add a check in the editions validation pass (or in `validateRequiredExtensions`): for edition files, check if any extension field has `features.field_presence = LEGACY_REQUIRED` in its options. If so, emit `"Extensions can't be required."` with proper line:col info. Check both top-level extensions (`fd.GetExtension()`) and message-level extensions.
+- **Also affects**: Same validation is likely missing for `features.field_presence = LEGACY_REQUIRED` on oneof members — C++ rejects that too with a different message.
+
+### Run 76 — Edition `features.message_encoding = DELIMITED` accepted on map field (VICTORY)
+- **Bug**: Go's `checkMessageEncodingScalarField` at cli.go:2546 checks `field.GetType() == TYPE_MESSAGE || field.GetType() == TYPE_GROUP` and returns early (allows) if true. Map fields have `TYPE_MESSAGE` type in the descriptor (they're synthetic repeated message fields), so Go allows `features.message_encoding = DELIMITED` on map fields. C++ protoc has a separate `is_map()` check and rejects message_encoding on map fields with "Only message fields can specify message encoding."
+- **Test**: `406_map_msg_encoding` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's validation only checks if the field type is NOT a message type (scalar rejection). It doesn't check if the message-typed field is a map field. Map fields ARE `TYPE_MESSAGE` but should NOT be eligible for `message_encoding` overrides. C++ protoc checks `f->is_map()` and rejects.
+- **C++ protoc**: `test.proto:6:22: Only message fields can specify message encoding.`
+- **Go protoc-go**: Silently accepts, encodes FeatureSet with DELIMITED message_encoding on the map field, produces valid descriptor.
+- **Fix hint**: In `checkMessageEncodingScalarField`, after the TYPE_MESSAGE/TYPE_GROUP return, add a check for map fields. Map fields can be identified by checking if the message type they point to has `options.map_entry = true`. Look up the type_name in the parsed descriptors and check `msg.GetOptions().GetMapEntry()`. Alternatively, check if the field has `GetLabel() == LABEL_REPEATED` and the type_name ends with `Entry` and is a nested message with `map_entry = true`. Simpler: pass a set of map entry type names and check `field.GetTypeName()` against it.
+- **Also affects**: Same validation gap exists for `features.repeated_field_encoding` on map fields — C++ might also reject that. And `features.field_presence` on map fields — C++ rejects with "Repeated fields can't specify field presence" since map fields are repeated.
+
+### Run 77 — Edition `features.field_presence` accepted on oneof member field (VICTORY)
+- **Bug**: Go does NOT validate that `features.field_presence` cannot be set on fields inside a `oneof`. In edition 2023, when a oneof member has `string name = 1 [features.field_presence = LEGACY_REQUIRED];`, C++ protoc rejects it with `Oneof fields can't specify field presence.`, but Go accepts it silently and produces a valid descriptor.
+- **Test**: `407_edition_required_oneof` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's `checkRequiredExtensionEditionsField` at cli.go:2597 only checks extension fields for LEGACY_REQUIRED, not oneof members. And Go has no validation for ANY field_presence feature on oneof members. C++ protoc's `ValidateFieldFeatures` checks `f->real_containing_oneof()` and rejects ANY field_presence override on oneof members — not just LEGACY_REQUIRED but also EXPLICIT and IMPLICIT.
+- **C++ protoc**: `test.proto:7:12: Oneof fields can't specify field presence.`
+- **Go protoc-go**: Silently accepts, encodes FeatureSet with LEGACY_REQUIRED field_presence on the oneof member, produces valid descriptor.
+- **Fix hint**: Add a validation check in the editions validation pass: iterate all messages, then for each message iterate its fields, check if `field.GetOneofIndex() != nil` (field is in a oneof), and if so, check if `field.GetOptions().GetFeatures().FieldPresence != nil`. If both true, emit error: `"Oneof fields can't specify field presence."` with proper line:col info from the field's SCI name path.
+- **Also affects**: Same validation is missing for `features.field_presence = EXPLICIT` and `features.field_presence = IMPLICIT` on oneof members — C++ rejects ALL field_presence overrides on oneof members, not just LEGACY_REQUIRED. Also, `features.field_presence` on map field entries might need similar validation (C++ rejects with "Repeated fields can't specify field presence" since map fields are repeated).
+
+### Run 78 — Bytes option error message says "bytes" instead of "string" (VICTORY)
+- **Bug**: Go's custom option resolver correctly distinguishes between `TYPE_STRING` and `TYPE_BYTES` in the error message when a non-string value is given, saying "bytes option". But C++ protoc uses `CPPTYPE_STRING` which covers both types and always says "string option". The error messages differ.
+- **Test**: `409_bytes_option_int_error` — all 9 profiles fail.
+- **Root cause**: In `resolveCustomFileOptions` (cli.go:4470-4476), Go checks `ext.GetType() == TYPE_BYTES` and sets `typeName = "bytes"`. In C++, both `TYPE_STRING` and `TYPE_BYTES` map to `CPPTYPE_STRING`, so the error always says `"string option"`. Same pattern exists in all 9 `resolveCustom*Options` functions.
+- **C++ protoc**: `test.proto:11:21: Value must be quoted string for string option "bytesopterr.my_bytes".`
+- **Go protoc-go**: `test.proto:11:21: Value must be quoted string for bytes option "bytesopterr.my_bytes".`
+- **Fix hint**: Change the check at line 4470-4472 (and all 8 other resolver functions) to always use `typeName := "string"` regardless of whether it's TYPE_STRING or TYPE_BYTES, matching C++ behavior.
+
+### Run 91 — Octal invalid digit missing warning (VICTORY)
+- **Bug**: Go tokenizer does not emit a warning/error when a numeric literal starting with `0` contains non-octal digits (8 or 9). C++ protoc produces `"Numbers starting with leading zero must be in octal."` as a separate error in addition to "Integer out of range." Go only produces the latter.
+- **Test**: `423_octal_invalid_digit` — all 9 profiles fail (error message mismatch).
+- **Root cause**: Go's tokenizer treats `09` as a decimal number and just passes it through. When the value is then validated as an integer literal (which expects octal for 0-prefixed numbers), it produces "Integer out of range" but never checks or warns that non-octal digits are present. C++ protoc's tokenizer explicitly checks for digits 8-9 in a 0-prefixed literal and reports a specific error.
+- **C++ protoc**: `test.proto:6:38: Numbers starting with leading zero must be in octal.\ntest.proto:6:37: Integer out of range.` (two errors, different columns)
+- **Go protoc-go**: `test.proto:6:37: Integer out of range.` (one error, missing the octal warning)
+- **Fix hint**: In the tokenizer's integer parsing code, when a number starts with `0` (not `0x`/`0X`) and contains digits 8 or 9, emit an error `"Numbers starting with leading zero must be in octal."` pointing at the invalid digit position. Then continue to also produce the "Integer out of range" error for consistency with C++.
+
+### Run 92 — Custom option `targets` restriction not validated (VICTORY)
+- **Bug**: Go does NOT validate the `targets` restriction on custom option extensions. When a custom option is declared with `targets = TARGET_TYPE_MESSAGE` (meaning it can only be used on messages), but is used on a field, C++ protoc rejects it with `"Option X cannot be set on an entity of type 'field'."` Go accepts it silently and produces a valid descriptor.
+- **Test**: `424_option_target_type` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's CLI code never calls `GetTargets()` on custom option extension declarations. The `targets` option is parsed correctly by the parser (parser.go:5987), but no validation function checks whether the extension's targets list includes the entity type it's being used on. The validation only exists for edition features targets (cli.go:2159+), not for custom option targets.
+- **C++ protoc**: `test.proto: Option targtest.msg_only_opt cannot be set on an entity of type 'field'.` (exit code 1).
+- **Go protoc-go**: Silently accepts the file and produces a valid descriptor (exit code 0).
+- **Fix hint**: After resolving custom options for each entity type, check if the extension's `FieldOptions.targets` list is non-empty and does not include the appropriate `TARGET_TYPE_*` for the entity. For field options, check `TARGET_TYPE_FIELD`; for message options, `TARGET_TYPE_MESSAGE`; for file options, `TARGET_TYPE_FILE`; etc. Emit error `"Option <fqn> cannot be set on an entity of type '<type>'."` matching C++ format.
+- **Also affects**: All 9 entity types (file, message, field, enum, enum_value, service, method, oneof, extension_range) — none validate targets. Also affects the `retention` option (which was Run 88) — both `targets` and `retention` are custom option metadata that Go doesn't properly enforce.
+
+### Run 93 — Edition `features.field_presence = LEGACY_REQUIRED` accepted at file level (VICTORY)
+- **Bug**: Go does NOT validate that `features.field_presence = LEGACY_REQUIRED` cannot be specified at the file level (as a default for all fields). When a file has `option features.field_presence = LEGACY_REQUIRED;` in an edition 2023 proto, C++ protoc rejects it with `Required presence can't be specified by default.`, but Go accepts it silently and produces a valid descriptor.
+- **Test**: `425_file_level_legacy_required` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's edition features validation has checks for `LEGACY_REQUIRED` on extension fields (Run 74) and oneof members (Run 77), but has NO check for file-level `features.field_presence = LEGACY_REQUIRED`. C++ protoc's feature validation rejects `LEGACY_REQUIRED` as a default because it would make all fields required by default, which is not allowed. Go's `validateFeatureTargets` and other validation functions never check if `LEGACY_REQUIRED` is set at the file level.
+- **C++ protoc**: `test.proto:1:1: Required presence can't be specified by default.` (exit code 1).
+- **Go protoc-go**: Silently accepts, encodes FeatureSet with LEGACY_REQUIRED field_presence at file level, produces valid descriptor (exit code 0).
+- **Fix hint**: Add a validation check: after parsing file options for edition proto files, if `fd.GetOptions().GetFeatures().GetFieldPresence() == LEGACY_REQUIRED`, emit error `"Required presence can't be specified by default."` at line 1 col 1. This check should be in the file-level validation pass, not the field-level one.
+- **Also affects**: Same validation may be missing for `LEGACY_REQUIRED` at the message level (`option features.field_presence = LEGACY_REQUIRED;` inside a message).
+
+### Run 96 — Synthetic oneof name conflict not handled (VICTORY)
+- **Bug**: Go does not handle the case where a proto3 `optional` field's synthetic oneof name (`_<fieldname>`) conflicts with an existing real oneof name. C++ protoc detects the conflict and renames the synthetic oneof by prepending `X` (e.g., `_foo` → `X_foo`). Go just creates the duplicate name and then fails with a "already defined" error during validation.
+- **Test**: `426_synthetic_oneof_conflict` — all 9 profiles fail (C++ succeeds, Go errors).
+- **Root cause**: When a message has `oneof _foo { ... }` AND `optional string foo = 3;`, Go generates synthetic oneof `_foo` (= `"_" + "foo"`) which collides with the real oneof. The name is generated at parser.go:742 (`name: "_" + field.GetName()`) without checking for conflicts. C++ protoc's `DescriptorBuilder::BuildFieldOrExtension()` checks if `_<name>` is taken and if so, tries `X_<name>`, then `XX_<name>`, etc. until a unique name is found.
+- **C++ protoc**: Produces valid descriptor with two oneofs: `_foo` (real) and `X_foo` (synthetic, renamed). Descriptor is 107 bytes.
+- **Go protoc-go**: Fails with `test.proto: "_foo" is already defined in "synconflict.Msg".` (exit code 1).
+- **Fix hint**: After generating the synthetic oneof name `"_" + fieldName`, check if that name conflicts with any existing oneof or field name in the message. If it does, prepend `X` repeatedly until a unique name is found: `X_foo`, `XX_foo`, etc. This should be done in the synthetic oneof creation loop at parser.go:741-744 (and the equivalent for nested messages at parser.go:2407-2410).
+- **Also affects**: Same bug exists in editions `optional` field synthetic oneofs (parser.go:2407-2410) and any other place where synthetic oneof names are generated.
+
+### Run 105 — Deep sub-field option merge not recursive (VICTORY)
+- **Bug**: Go's `mergeUnknownExtensions` only merges wire entries at the top-level extension field number. It does NOT recursively merge nested message fields within the merged payload. When multiple sub-field option assignments share intermediate path segments (e.g., `option (cfg).inner.value = "hello"; option (cfg).inner.num = 42;`), C++ protoc produces a single merged `inner` entry containing both `value` and `num`. Go produces TWO separate `inner` entries — one with `value`, one with `num`.
+- **Test**: `436_deep_subfield_merge` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: Each sub-field option assignment produces a complete wire encoding from the leaf value up through all parent messages. `option (cfg).inner.value = "hello"` produces `inner { value: "hello" }` and `option (cfg).inner.num = 42` produces `inner { num: 42 }`. The merge function concatenates these at the `cfg` level (field 50001), but WITHIN the merged payload, both `inner` entries (field 1) remain separate. C++ pre-merges at every nesting level, producing a single `inner { value: "hello" num: 42 }` entry.
+- **C++ protoc**: Produces 326-byte descriptor with single merged `inner` entry: `tag(1,2) + len(9) + value + num`.
+- **Go protoc-go**: Produces 328-byte descriptor with two separate `inner` entries: `tag(1,2) + len(7) + value` + `tag(1,2) + len(2) + num`. 2 bytes of extra tag+length overhead.
+- **Fix hint**: `mergeUnknownExtensions` (or a new helper) needs to recursively merge BytesType entries with the same field number within each level of the message wire format. After concatenating payloads at the extension level, parse the resulting bytes as wire-format entries, group by field number, and for BytesType entries with the same non-repeated message field number, recursively merge their contents. This requires knowing which fields are message-typed (non-repeated) vs scalar/repeated — use `msgFieldMap` or the extension's type descriptor.
+- **Also affects**: Any sub-field option path with 2+ levels of nesting where intermediate segments are shared. The deeper the nesting and the more shared segments, the larger the binary difference. Also affects all 9 option entity types (file, message, field, enum, service, method, oneof, enum_value, ext_range) wherever sub-field option merging occurs.
+
+### Run 106 — MSVS error format not applied to parse errors (VICTORY)
+- **Bug**: Go's `--error_format=msvs` flag does not format parse errors from the parser package. When `parser.ParseFile` returns a `*parser.MultiError`, the error is returned directly from `parseRecursive` at cli.go:842 without going through `formatErrorsMSVS`. Only validation errors collected in `collectErrors` are formatted. Parse errors bypass MSVS formatting entirely.
+- **Test**: CLI test `cli@error_format_msvs_parse` — 1 test fails (stderr mismatch).
+- **Root cause**: `parseRecursive` at cli.go:842-844 returns `MultiError` directly: `if me, ok := err.(*parser.MultiError); ok { return false, me }`. This bypasses the `formatErrorsMSVS(collectErrors, srcTree)` call at line 477. The existing `error_format_msvs` test (testdata/257_msvs_error) only triggers a validation error (duplicate field name), which IS formatted because it goes through `collectErrors`. Parse errors from the tokenizer/parser take a different return path.
+- **C++ protoc**: `testdata/437_msvs_parse_error/test.proto(6) : error in column=1: Expected ";".` (MSVS format, full path).
+- **Go protoc-go**: `test.proto:6:1: Expected ";".` (gcc format, short filename, no MSVS formatting applied).
+- **Fix hint**: In `parseRecursive`, when a `MultiError` is returned and `cfg.errorFormat == "msvs"`, apply MSVS formatting to each error string before returning. Or, collect parse errors into `collectErrors` instead of returning them directly, so they flow through the existing MSVS formatting path. Also, the filename in parse errors uses the virtual (relative) name, not the disk path — MSVS format in C++ includes the full disk path via `VirtualFileToDiskFile()`.
+- **Also affects**: Any proto file with a syntax/parse error (missing semicolons, unrecognized tokens, malformed strings, etc.) will produce gcc-format errors even when `--error_format=msvs` is specified. Only post-parse validation errors get MSVS formatting.
+
+### Run 124 — Decode mode doesn't unpack packed repeated fields (VICTORY)
+- **Bug**: Go's `printKnownField` in `--decode` mode does NOT handle packed encoding for repeated scalar fields. When a proto3 `repeated int32` field is encoded in packed format (wire type 2 / BytesType containing multiple varints), Go prints a single `values: 0` instead of unpacking and printing each value separately. C++ protoc correctly unpacks packed repeated fields and prints each value on its own line.
+- **Test**: Decode test `decode@packed_repeated` — stdout mismatch (1 test fails). Proto in `testdata/453_decode_packed/test.proto`. Hex data: `0a0301020312026f6b` (field 1 packed int32 [1,2,3], field 2 string "ok").
+- **Root cause**: `printKnownField` at cli.go:9025 for TYPE_INT32 does `fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int32(e.varint))` without checking if `e.wtype == BytesType`. When a packed repeated field arrives as BytesType, the entry has `e.varint = 0` (default uint64) because the value was stored in `e.bytes`, not `e.varint`. The function never looks at `e.bytes` for integer types. Same bug exists for ALL packable types: TYPE_INT64, TYPE_UINT32, TYPE_UINT64, TYPE_SINT32, TYPE_SINT64, TYPE_BOOL, TYPE_ENUM, TYPE_FIXED32, TYPE_FIXED64, TYPE_SFIXED32, TYPE_SFIXED64, TYPE_FLOAT, TYPE_DOUBLE.
+- **C++ protoc**: `values: 1\nvalues: 2\nvalues: 3\nlabel: "ok"` (three repeated entries, correctly unpacked).
+- **Go protoc-go**: `values: 0\nlabel: "ok"` (single entry, wrong value, packed encoding not handled).
+- **Fix hint**: In `printKnownField`, for each packable type (int32, int64, uint32, uint64, sint32, sint64, bool, enum, fixed32, fixed64, sfixed32, sfixed64, float, double), add a check: if `e.wtype == protowire.BytesType`, iterate over `e.bytes` consuming individual values (varints for varint types, fixed32/fixed64 for fixed types) and print each one. For example, for TYPE_INT32 with BytesType: `pos := 0; for pos < len(e.bytes) { v, n := protowire.ConsumeVarint(e.bytes[pos:]); pos += n; fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int32(v)) }`.
+- **Also affects**: ALL packable scalar types in decode mode. Proto3 uses packed encoding by default for repeated scalar fields, so this bug affects essentially ALL proto3 decode operations with repeated numeric/bool/enum fields.
+
+### Run 125 — Decode mode treats wrong-wire-type field as known instead of unknown (VICTORY)
+- **Bug**: Go's `printTextProto` in `--decode` mode always routes a field to `knownEntries` if the field number is found in the schema, regardless of wire type mismatch. When `int32 value = 1` (expects varint wire type 0) receives data with fixed32 wire type 5, Go treats it as known and prints `value: 0` (reading from the empty `e.varint` field). C++ protoc recognizes the wire type mismatch, puts the field in the unknown field set, and prints it as `1: 0x0000002a`.
+- **Test**: Decode test `decode@wrong_wire` — stdout mismatch (1 test fails). Proto in `testdata/455_decode_wrong_wire/test.proto`. Hex data: `0d2a00000012026f6b` (field 1 as fixed32=42, field 2 string "ok").
+- **Root cause**: After parsing wire data at cli.go:9006-9052, the code does `if fd != nil { knownEntries = append(knownEntries, entry) }` without checking if `e.wtype` matches the expected wire type for `fd.GetType()`. Then `printKnownField` for TYPE_INT32 reads `e.varint` (which is 0 since the data was in `e.fixed32`), printing the wrong value. C++ detects the wire type mismatch during parsing and places the field in `UnknownFieldSet` instead.
+- **C++ protoc**: `label: "ok"\n1: 0x0000002a` (field 1 as unknown fixed32, correct value).
+- **Go protoc-go**: `value: 0\nlabel: "ok"` (field 1 as known int32, wrong value 0).
+- **Fix hint**: Before adding to `knownEntries`, check if the wire type is compatible with the field type. For varint types (int32, int64, uint32, uint64, sint32, sint64, bool, enum): expect VarintType. For fixed64 types (fixed64, sfixed64, double): expect Fixed64Type. For fixed32 types (fixed32, sfixed32, float): expect Fixed32Type. For string/bytes/message: expect BytesType. For group: expect StartGroupType. If mismatch (and not a packed repeated field), route to `unknownEntries` instead.
+- **Also affects**: ALL field types in decode mode. Any wire type mismatch will either print wrong values (for types without wire type checks) or silently drop fields (for TYPE_DOUBLE/TYPE_FLOAT which have `if e.wtype ==` guards). This is a fundamental correctness bug in the decoder.
+
+### Run 129 — Decode mode prints all oneof fields instead of only the last one (VICTORY)
+- **Bug**: Go's `--decode` mode prints ALL fields from a oneof, even when multiple oneof members are present in the binary data. C++ protoc deserializes into a `DynamicMessage` which applies oneof semantics (last field wins), then prints only the final value. Go's decode mode parses the wire format directly and prints every field it encounters, without applying oneof deduplication.
+- **Test**: Decode test `decode@oneof_dedup` — stdout mismatch (1 test fails). Proto in `testdata/460_decode_oneof_dedup/test.proto`. Hex data: `0a0568656c6c6f102a1a026f6b` (field 1 string "hello", field 2 varint 42, field 3 string "ok" — fields 1 and 2 are in the same oneof).
+- **Root cause**: `printTextProto()` in cli.go processes all wire entries sequentially and adds them to `knownEntries` if a field descriptor is found. It never checks if a field belongs to a oneof, and never removes earlier oneof members when a later one is encountered. C++ protoc's `DynamicMessage::MergeFrom` handles this automatically — when setting a oneof field, it clears any previously set member of the same oneof.
+- **C++ protoc**: `id: 42\nlabel: "ok"` (only the LAST oneof member `id` is shown; earlier `name` is discarded).
+- **Go protoc-go**: `name: "hello"\nid: 42\nlabel: "ok"` (BOTH oneof members shown — incorrect protobuf semantics).
+- **Fix hint**: Before printing, post-process `knownEntries` to apply oneof deduplication. For each oneof in the message descriptor, track which field numbers belong to which oneof. Then scan `knownEntries` in reverse order; for each oneof, keep only the LAST entry and remove earlier entries from the same oneof. Need to use `msg.GetOneofDecl()` and check each field's `GetOneofIndex()` to build the oneof membership map. Or, build a proper `DynamicMessage`-like structure during decode.
+- **Also affects**: ANY proto2 or proto3 message with a oneof where the binary data contains multiple members from the same oneof. This is common in real-world data when messages are merged or when streaming updates append new field values. Also affects nested messages with oneofs decoded recursively.
+
+### Run 152 — `--retain_options` flag silently ignored by Go (VICTORY)
+- **Bug**: Go's `parseArgs()` silently skips the `--retain_options` flag (line 1355: just `continue`). The flag is NOT stored in any config field — it's completely ignored. C++ protoc uses this flag to prevent stripping source-retention options from `--descriptor_set_out` output. When a proto file defines extensions with `retention = RETENTION_SOURCE`, `--retain_options` should preserve those options in the descriptor output instead of stripping them.
+- **Test**: `479_retain_options` + new `descriptor_set_retain` profile — fails on `descriptor_set_retain` profile. Also causes 18 other existing test cases with retention-related options to fail on the new profile.
+- **Root cause**: `parseArgs()` at cli.go:1355-1357 just does `continue` when encountering `--retain_options`. The flag value is never stored. `stripSourceRetention()` at line 747 always strips source-retention options unconditionally, regardless of whether `--retain_options` was passed.
+- **C++ protoc**: With `--retain_options --descriptor_set_out=...`, produces 255-byte descriptor preserving the `(source_label) = "important"` field option.
+- **Go protoc-go**: With same flags, produces 242-byte descriptor that strips `(source_label)` — identical to output WITHOUT `--retain_options`. 13-byte difference.
+- **Fix hint**: (1) Add a `retainOptions bool` field to the CLI config struct. (2) In `parseArgs()`, set it when `--retain_options` is seen. (3) In `stripSourceRetention()` (or its caller), check the flag and skip stripping when true.
+
+### Run 232 — Encode mode checkNegUintFields misses group fields due to PascalCase name mismatch (VICTORY)
+- **Bug**: Go's `checkNegUintFieldsInner` populates `msgFields` using `fd.Name()` (lowercase, e.g., `info`), but text format uses the PascalCase group type name (e.g., `Info`). When the text format contains `Info { count: -5 }`, the function looks up `msgFields["Info"]` which doesn't exist (only `msgFields["info"]` exists), so it calls `skipBracedBlock` instead of recursing. The negative uint error inside the group is missed by Go's pre-check. It's caught later by `prototext.Unmarshal` with a different error message.
+- **Test**: CLI test `cli@encode_group_neg_uint` — stderr mismatch (1 test fails).
+- **Root cause**: `checkNegUintFieldsInner()` at cli.go:10718-10723 builds `msgFields` with `fd.Name()`. For group fields, `fd.Name()` returns lowercase (e.g., `info`) but text format uses the message type name in PascalCase (e.g., `Info`). The lookup at line ~10773 `msgFields[fieldName]` fails because `fieldName` is `"Info"`.
+- **C++ protoc**: `input:1:15: Expected integer, got: -`
+- **Go protoc-go**: `input:1:15: Integer out of range (-5)` (different error message from `reformatProtoTextErrors` because the neg-uint check was bypassed)
+- **Fix hint**: In `checkNegUintFieldsInner`, for group fields, add the PascalCase message type name to `msgFields` as well. For a group field `fd`, `fd.Message().Name()` gives the PascalCase name. Add: `if fd.Kind() == protoreflect.GroupKind { msgFields[string(fd.Message().Name())] = fd.Message() }`.
+- **Also affects**: Same issue likely exists in `checkDupFieldsInner`, `checkClosedEnumValuesInner`, and `checkOneofConflictsInner` — all of which build `msgFields` the same way. Each of these would miss their respective validation inside group fields.
+
+### Run 233 — Empty oneof with only options not rejected by Go (VICTORY)
+- **Bug**: Go's descriptor validation does not check that a oneof declaration contains at least one field. C++ protoc rejects `oneof choice { option (...) = ...; }` with "Oneof must have at least one field." at the file level. Go accepts it silently and produces a valid descriptor with a oneof that has no field members.
+- **Test**: `524_empty_oneof_validation` — all 10 profiles fail.
+- **Root cause**: Go lacks a validation pass that checks `len(oneof.fields) > 0` for each oneof declaration. C++ protoc's `DescriptorBuilder::BuildMessage` checks `oneof->field_count() == 0` and reports the error. Go's validation pipeline (in `cli.go`) has many validation functions but none that count oneof members.
+- **C++ protoc**: `oneof_only_opt.proto: Oneof must have at least one field.` (exit 1).
+- **Go protoc-go**: No error, produces descriptor with empty oneof (exit 0).
+- **Fix hint**: Add a validation function like `validateOneofHasFields` that iterates all messages (recursively for nested), checks each oneof, and counts how many fields reference that oneof index. If zero fields reference a oneof, emit `"FILENAME: Oneof must have at least one field."` error. Call it from the validation pipeline in `Run()`.
+
+### Run 234 — Encode mode pre-check scanners count tab as 1 column instead of tab-stop 8 (VICTORY)
+- **Bug**: Go's encode mode pre-check scanners (`checkDupFieldsInner`, `checkNegUintFieldsInner`, `checkClosedEnumValuesInner`, `checkOneofConflictsInner`) count tab characters (`\t`) as 1 column increment, while C++ protoc's text format parser uses tab stops of 8 (advancing to the next multiple of 8 + 1). When an error occurs after a tab, the column number in the error message differs.
+- **Test**: CLI test `cli@encode_tab_dup` — stderr mismatch (1 test fails).
+- **Root cause**: All four pre-check scanners handle `\t` in the whitespace case: `if data[i] == ' ' || data[i] == '\t' || data[i] == '\r' { col++; i++; continue }`. Tab always increments `col` by 1. But C++ protoc's `io::Tokenizer` advances the column to the next tab stop (column = (column / 8 + 1) * 8 + 1), effectively treating tabs as 8-wide.
+- **C++ protoc**: `input:1:11: Non-repeated field "id" is specified multiple times.` (tab stops at column 9, `:` at column 11).
+- **Go protoc-go**: `input:1:9: Non-repeated field "id" is specified multiple times.` (tab = 1 char, `:` at column 9).
+- **Fix hint**: Replace `col++` for `\t` with tab-stop calculation: `col = ((col - 1) / 8 + 1) * 8 + 1` (or `col += 8 - (col - 1) % 8`). Apply to all four scanners and also to `skipTextFormatValue` and `skipBracedBlock` if they track columns.
+- **Also affects**: Same tab counting issue exists in `skipTextFormatValue` (line 10996) and `skipBracedBlock` (line 11080) — they don't even handle `\t` separately from regular tokens. Also affects `checkClosedEnumValuesInner`, `checkNegUintFieldsInner`, and `checkOneofConflictsInner` — all have the same `col++` for tabs.
+
+### Run 235 — Encode mode reformatProtoTextErrors maps unexpected token to wrong type for integer fields (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` `reUnexpected` handler only checks for string/bytes field types when mapping "unexpected token" errors. For integer fields, it falls through to the default `Expected "{", found "TOKEN"` message instead of C++'s type-aware `Expected integer, got: TOKEN`.
+- **Test**: CLI test `cli@encode_int_bracket_value` — stderr mismatch (1 test fails).
+- **Root cause**: `reUnexpected` handler at cli.go:10381-10396 was partially fixed in Run 234 to check for `StringKind`/`BytesKind` fields. But for `Int32Kind`, `Int64Kind`, `Uint32Kind`, `Uint64Kind`, `Sint32Kind`, `Sint64Kind`, `Fixed32Kind`, `Fixed64Kind`, `Sfixed32Kind`, `Sfixed64Kind`, it still defaults to `Expected "{"`.
+- **C++ protoc**: `input:1:5: Expected integer, got: [`
+- **Go protoc-go**: `input:1:5: Expected "{", found "[".`
+- **Fix hint**: Extend the `reUnexpected` handler to check `fd.Kind()` for integer types and emit `Expected integer, got: TOKEN`, for float/double emit `Expected double, got: TOKEN`, for bool emit `Invalid value for boolean field...`, for enum emit `Expected integer or identifier, got: TOKEN`.
+- **Also affects**: Same bug for float/double fields (`Expected double, got: TOKEN`), bool fields (`Invalid value for boolean field...`), and enum fields (`Expected integer or identifier, got: TOKEN`). Also affects nested message fields where the field lookup via `findFieldNameBefore` returns the wrong context.
+
+### Run 236 — Encode mode truncated text format (unclosed `{`) missing location error (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` doesn't handle the case where text format input is truncated mid-message (e.g., `inner: {` without closing `}`). C++ protoc reports a specific location-aware error `input:2:1: Expected identifier, got: ` (pointing to EOF at the start of the next line), while Go only outputs the generic `Failed to parse input.` without any line/column error message.
+- **Test**: CLI test `cli@encode_truncated_msg` — stderr mismatch (1 test fails).
+- **Root cause**: When `prototext.Unmarshal` receives truncated input like `inner: {\n`, it returns an error about unexpected EOF. Go's `reformatProtoTextErrors` at cli.go doesn't have a handler that maps this to C++'s `Expected identifier, got:` format. The error gets swallowed, and only `Failed to parse input.` is emitted.
+- **C++ protoc**: `input:2:1: Expected identifier, got: ` + `Failed to parse input.` (exit 1)
+- **Go protoc-go**: `Failed to parse input.` (exit 1, missing the location error line)
+- **Fix hint**: Add a regex handler in `reformatProtoTextErrors` for prototext's EOF/truncation error that outputs `input:LINE:COL: Expected identifier, got: ` pointing to the position after the last token.
+- **Also affects**: Any truncated text format input, not just message fields — e.g., `name:` (value missing), `inner <` (angle bracket unclosed), etc.
+
+### Run 237 — checkNegUintFieldsInner doesn't recurse into `field: { }` (colon+brace) submessages (VICTORY)
+- **Bug**: Go's `checkNegUintFieldsInner` pre-check scanner in encode mode only recurses into submessages for the `field { }` form (without colon). For `field: { }` (with colon), it calls `skipTextFormatValue` which skips the entire block without checking for negative uint values inside. So `sub: { value: -5 }` where `value` is `uint32` in the inner message is NOT caught by the pre-check. C++ catches it and reports `Expected integer, got: -`. Go falls through to `prototext.Unmarshal` which reports a different error.
+- **Test**: CLI test `cli@encode_neg_skip` — stderr mismatch (1 test fails). Proto in `testdata/529_encode_neg_skip/test.proto`.
+- **Root cause**: `checkNegUintFieldsInner` at cli.go:10997 has two branches after parsing a field name: (1) `:` branch — checks for negative uint, then calls `skipTextFormatValue` (never recurses even if field is a known message type), (2) `{`/`<` branch — recurses if field is in `msgFields`, calls `skipBracedBlock` otherwise. The `:` branch is missing the logic to check if the value starts with `{`/`<` and the field is a known message type, and if so recurse instead of calling `skipTextFormatValue`. Compare with `checkDupFieldsInner` which DOES have this logic after `:`.
+- **C++ protoc**: `input:1:15: Expected integer, got: -\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: `input:1:15: Integer out of range (-5)\nFailed to parse input.` (exit 1). The `reformatProtoTextErrors` handler `reIntOverflow` catches Go's prototext error and reformats it, but with the wrong C++ equivalent message.
+- **Fix hint**: In `checkNegUintFieldsInner`, after the `:` and whitespace skip, check if the next char is `{`/`<` and the field is a known message type. If so, increment `i`, recurse, and continue. Same pattern as `checkDupFieldsInner` lines 10756-10766. Same bug likely exists in `checkClosedEnumValuesInner` and `checkOneofConflictsInner` — both have the same asymmetry between `field:` and `field {` branches.
+- **Also affects**: `checkClosedEnumValuesInner` — if a closed enum field is inside a submessage and specified via `sub: { status: 999 }`, the enum value check would be skipped. `checkOneofConflictsInner` — oneof conflict detection inside `sub: { }` would be skipped. `skipTextFormatValue` also doesn't handle `#` comments inside `{ }` blocks, which is a separate issue.
+
+### Run 238 — checkClosedEnumValuesInner doesn't recurse into `field: { }` submessages (VICTORY)
+- **Bug**: Go's `checkClosedEnumValuesInner` in encode mode doesn't recurse into submessages when the colon syntax `sub: { ... }` is used. When encountering `sub: { priority: 99 }` where `priority` is a proto2 closed enum and `99` is not a defined value, the Go compiler silently accepts the input. C++ protoc correctly detects the unknown enum value.
+- **Test**: `530_encode_closed_enum_colon_brace` — CLI test `encode_closed_enum_colon_brace` fails.
+- **Root cause**: In `checkClosedEnumValuesInner` at cli.go:10860-10913, the colon branch checks for closed enum values but after that falls through to `skipTextFormatValue` (line 10913). It never checks if the value after the colon is `{`/`<` for submessage recursion. Compare with the no-colon branch (line 10914) which correctly recurses into `checkClosedEnumValuesInner`. Also compare with `checkNegUintFieldsInner` (line 11005-11016) which correctly handles `field: { }` in its colon branch.
+- **C++ protoc**: `input:1:21: Unknown enumeration value of "99" for field "priority". Failed to parse input.` (exit 1)
+- **Go protoc-go**: Silent success (exit 0) — completely misses the unknown enum value.
+- **Fix hint**: In the colon branch, after the closed enum check falls through, add a check for `{`/`<` and recurse — same as lines 11005-11016 in `checkNegUintFieldsInner`. Insert before the `skipTextFormatValue` call at line 10913.
+
+### Run 240 — Encode mode checkDupFields doesn't detect duplicate extension fields (VICTORY)
+- **Bug**: Go's `checkDupFieldsInner` pre-check scanner in encode mode doesn't handle `[ext.name]` extension field syntax at all. When a non-repeated extension field is specified twice (e.g., `[encextord.extra]: 5 [encextord.extra]: 10`), Go doesn't detect the duplicate. C++ protoc detects it and prints a detailed error. Go's `prototext.Unmarshal` does reject it, but `reformatProtoTextErrors` has no handler for the "non-repeated field is already set" error pattern, so only `Failed to parse input.` is printed.
+- **Test**: CLI test `cli@encode_dup_ext_field` — stderr mismatch (1 test fails). Uses existing `testdata/477_encode_ext_order/test.proto`.
+- **Root cause**: Two issues: (1) `checkDupFieldsInner` only recognizes field names starting with a letter or `_` (line 10736). Extension field references start with `[`, which is not recognized. The scanner skips `[` byte-by-byte (line 10807), then tries to parse the extension name fragments as regular field names, never tracking them for duplicate detection. (2) `reformatProtoTextErrors` has no regex handler for Go's prototext error about duplicate non-repeated fields (likely `(line L:C): non-repeated field "X" is already set` or similar).
+- **C++ protoc**: `input:1:39: Non-repeated field "encextord.extra" is specified multiple times.` + `Failed to parse input.` (exit 1).
+- **Go protoc-go**: `Failed to parse input.` (exit 1). Missing the detailed duplicate field error.
+- **Fix hint**: Either (1) add `[...]` extension field parsing to `checkDupFieldsInner` — scan `[`, collect fully-qualified name up to `]`, track in `seenFields`, or (2) add a regex handler in `reformatProtoTextErrors` to catch Go's prototext "already set" error and reformat to `input:L:C: Non-repeated field "NAME" is specified multiple times.`
+- **Also affects**: Same issue exists in `checkNegUintFieldsInner`, `checkClosedEnumValuesInner`, `checkOneofConflictsInner` — none handle `[ext]` syntax, but those scanners check different things (negative uints, closed enums, oneof conflicts) so extension fields may not trigger those checks. Duplicate message-typed extension fields (non-repeated) would also be missed.
+
+### Run 241 — Encode mode reformatProtoTextErrors missing handler for invalid field name (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle `invalid field name` errors from `prototext.Unmarshal`. When text format input starts with a non-identifier token (e.g., `{`, `<`, `}`, `>`, `:`, `=`, `;`, `,`, or a quoted string), C++ protoc prints `input:1:1: Expected identifier, got: TOKEN` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_invalid_field_name` — stderr mismatch (1 test fails). Uses existing `testdata/01_basic_message/basic.proto` with `{` as input.
+- **Root cause**: Go's `prototext.Unmarshal` returns `syntax error (line 1:1): invalid field name: {` but `reformatProtoTextErrors` has no regex handler for `invalid field name:` pattern. The error doesn't match any existing handler (unknown field, field by number, missing separator, integer overflow, type mismatches, unexpected EOF, unexpected token, mismatched brackets), so it falls through without printing anything specific.
+- **C++ protoc**: `input:1:1: Expected identifier, got: {\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: `Failed to parse input.` (exit 1). Missing the detailed parse error.
+- **Fix hint**: Add a regex handler in `reformatProtoTextErrors` like `reInvalidFieldName := regexp.MustCompile(\`\(line (\d+):(\d+)\): invalid field name: (.+)\`)` and reformat to `input:L:C: Expected identifier, got: TOKEN`. Note: the TOKEN from Go's error may need cleaning (e.g., Go reports `"` for a quoted string, while C++ reports `"hello"` for the full string).
+- **Also affects**: Any non-identifier token at the start of a field position in text format input: `<`, `>`, `}`, `:`, `=`, `;`, `,`, and quoted strings all trigger the same missing handler.
+
+### Run 242 — Encode mode reformatProtoTextErrors missing handler for unknown extension (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode has no handler for "unable to resolve extension" errors from `prototext.Unmarshal`. When text format input references an undefined extension like `[unknown.ext]: 5`, C++ protoc reports a detailed error with line/column info, but Go only prints `Failed to parse input.`.
+- **Test**: CLI test `cli@encode_unknown_ext` — stderr mismatch (1 test fails). Uses existing `testdata/477_encode_ext_order/test.proto` with input `[unknown.ext]: 5 name: "test"`.
+- **Root cause**: Go's `prototext.Unmarshal` with a `dynamicpb.NewTypes` resolver returns something like `(line 1:C): unable to resolve "[unknown.ext]": proto not found` when the extension isn't registered. `reformatProtoTextErrors` has handlers for unknown field, invalid field name, field by number, missing separator, integer overflow, type mismatches, unexpected EOF, mismatched brackets, and unexpected token — but NO handler for "unable to resolve" or extension-not-found errors.
+- **C++ protoc**: `input:1:14: Extension "unknown.ext" is not defined or is not an extension of "encextord.Msg".\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: `Failed to parse input.` (exit 1). Missing the detailed extension-not-found error.
+- **Fix hint**: Add a regex handler like `reUnableToResolve := regexp.MustCompile(\`\(line (\d+):(\d+)\): unable to resolve "(.+)"\`)` and reformat to `input:L:C: Extension "NAME" is not defined or is not an extension of "TYPE".` The extension name from Go's error needs cleaning (Go wraps it in `[...]`). The `TYPE` is the message type being encoded. Column should point to the `:` after `]`.
+- **Also affects**: Extensions that exist but aren't extensions of the target message (e.g., using an extension for `FileOptions` on a `Msg`) would also produce "unable to resolve" or similar error.
+
+### Run 253 — checkDupFieldsInner confused by string concatenation misses duplicate field (VICTORY)
+- **Bug**: Go's `checkDupFieldsInner` pre-check scanner in `--encode` mode does NOT handle text format string concatenation (`"hello" "world"`). When a non-repeated string field has adjacent string literals (which C++ concatenates), the scanner only skips the first string via `skipTextFormatValue`, then misparses the second string token. The opening `"` falls through to the catch-all `i++; col++`, then the string content (`world`) is parsed as a phantom field name identifier, and the closing `"` triggers another `skipTextFormatValue` call that consumes subsequent text as a fake "string value" — swallowing the actual second `name:` assignment.
+- **Test**: CLI test `cli@encode_dup_string_concat` — stderr mismatch (1 test fails).
+- **Root cause**: `skipTextFormatValue` skips exactly ONE string token. Text format allows adjacent string concatenation (`"a" "b"` → `"ab"`), which the scanner doesn't understand. After skipping `"hello"`, the scanner encounters `"world"` — the `"` character doesn't match any handler (letter, `[`, `#`, `}`, `>`, whitespace, newline), so it falls to `i++; col++`. Then `world` is parsed as a field name, and `"` after `world` triggers `skipTextFormatValue` which reads from that `"` to the next `"` in the input (which is the opening quote of a completely different field's value), consuming everything in between as a fake string.
+- **C++ protoc**: `input:1:27: Non-repeated field "name" is specified multiple times.\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: `Failed to parse input.` (exit 1). Missing the detailed duplicate field error.
+- **Fix hint**: After `skipTextFormatValue` returns for a string value, check if the next non-whitespace character is `"` or `'` and loop to skip additional adjacent string tokens (string concatenation). Alternatively, modify `skipTextFormatValue` itself to handle string concatenation by looping: after skipping one string, if the next non-whitespace char is also a quote, skip it too.
+- **Also affects**: `checkClosedEnumValuesInner`, `checkNegUintFieldsInner`, `checkOneofConflictsInner` all call `skipTextFormatValue` and would have the same issue with string concatenation confusing the scanner.
+- **Secondary bug**: `reformatProtoTextErrors` has no handler for Go's prototext error `(line L:C): non-repeated field "NAME" is repeated`. Even if the pre-check scanner were fixed, this error pattern from prototext would still need a handler to produce the C++ format `input:L:C: Non-repeated field "NAME" is specified multiple times.`
+
+### Ideas for next time
+- ~~`checkNegUintFieldsInner` doesn't recurse into `field: { }` submessages~~ **DONE in Run 237 (529_encode_neg_skip)**
+- ~~Same `field: { }` vs `field { }` asymmetry exists in `checkClosedEnumValuesInner`~~ **DONE in Run 238 (530_encode_closed_enum_colon_brace)**
+- ~~Same `field: { }` vs `field { }` asymmetry exists in `checkOneofConflictsInner`~~ **NOT A BUG — checked Run 240, already handles both forms correctly (lines 11163-11168)**
+- Tab column counting also affects `checkNegUintFieldsInner`, `checkClosedEnumValuesInner`, `checkOneofConflictsInner` — test each with tab-before-error input
+- `skipTextFormatValue` and `skipBracedBlock` don't handle `#` comments inside braces — could cause scanners to get confused about nesting depth when braces appear in comments
+- `--print_free_field_numbers` with reserved ranges that overlap or touch — verify merge behavior matches C++
+- ~~`-nan` as custom float/double option value — Go errors on `strconv.ParseFloat("-nan")`, C++ accepts it~~ **DONE in Run 5 (336_neg_nan_option)**
+- ~~Subfield custom options with negative values on enum/field/message/service/method — double negation bug (parser bakes `-` into Value at line 2945, resolver adds it again at line 4927)~~ **DONE in Run 4 (335_field_subfield_neg_option)**
+- ~~String concatenation in field-level custom options — Go parser doesn't concatenate adjacent strings~~ **DONE in Run 6 (337_field_option_string_concat)**
+- ~~String concatenation in enum VALUE custom options (parser.go:2574-2582) — same bug as field-level, no concat loop~~ **DONE in Run 7 (338_enum_val_option_string_concat)**
+- ~~String concatenation in extension range custom options (parser.go:1138-1153) — same bug, no concat loop~~ **DONE in Run 8 (339_ext_range_option_string_concat)**
+- `float` custom option with `nan` — float32 NaN bits may also differ across platforms
+- Source code info accuracy for specific constructs (extend blocks, service methods, oneof fields)
+- CRLF line endings — tested `\v` in block comments, both agree; `\r` as column-incrementing whitespace also matches C++
+- Custom options with message-typed fields set to scalar values (error message differences)
+- Extension range validation for 19000-19999 reserved range
+- ~~Proto2 groups nested 3+ levels deep (group in group in group)~~ **Partially covered by Run 10 (group encoding bug)**
+- ~~Group-typed custom options — wrong wire type encoding~~ **DONE in Run 10 (341_group_option_encoding)**
+- ~~Edition features.repeated_field_encoding on non-repeated field~~ **DONE in Run 70 (400_edition_repeated_encoding)**
+- Edition features scope restrictions (message_encoding on non-message field, utf8_validation on non-string field)
+- Edition features + extensions interactions
+- Proto files importing the same file via different paths
+- Custom option scope resolution (Go returns first match, not proper scope-based lookup)
+- ~~Sub-field option type validation (Go doesn't check intermediate fields are MESSAGE type)~~ **DONE in Run 9 (340_scalar_subfield_option)**
+- Extension extendee type validation (Go doesn't check extendee is MESSAGE)
+- Block comment at EOF without trailing newline (similar bug to line comment?)
+- Positive sign `+` in aggregate values for angle-bracket syntax `< count: +42 >` — same bug as Run 11 in `consumeAggregateAngle`
+- Aggregate option with `+inf` or `+nan` — how does Go handle these?
+- ~~Repeated custom options corrupted when sub-field options present~~ **DONE in Run 12 (343_repeated_with_subfield)**
+- ~~Same merge bug but with repeated MESSAGE typed options (repeated Config vs sub-field) — would produce even more corrupted output~~ **Covered by Run 13 (344_field_repeated_merge) — field-level merge still passes nil**
+- Same merge bug with repeated bytes options — bytes payloads would be concatenated
+- Same merge bug for extension field options (cli.go:3453 also passes nil) — test with repeated options on extension fields
+- mergeFieldOptionsInMessages doesn't compute per-field mergeableFields — needs the same fix as file-level
+- ~~Message sub-field options not merged~~ **DONE in Run 14 (345_msg_subfield_merge)**
+- ~~Enum sub-field options not merged — same pattern as Run 14, `cloneWithMergedExtUnknowns` ignores EnumOptions~~ **DONE in Run 15 (346_enum_subfield_merge)**
+- ~~Service sub-field options not merged — same pattern~~ **DONE in Run 16 (347_svc_subfield_merge)**
+- ~~Method sub-field options not merged — same pattern~~ **DONE in Run 17 (348_method_subfield_merge)**
+- ~~Oneof sub-field options not merged — same pattern~~ **DONE in Run 18 (349_oneof_subfield_merge)**
+- ~~EnumValue sub-field options not merged — same pattern~~ **DONE in Run 19 (350_enumval_subfield_merge)**
+- ~~ExtensionRange sub-field options not merged — same pattern~~ **DONE in Run 20 (351_extrange_subfield_merge) — actually a parser bug, can't even parse sub-field path syntax**
+- Extension range options merge still missing in `cloneWithMergedExtUnknowns` — even after parser fix, merge will fail (test with flat option first to confirm merge is missing too)
+- `+inf` in aggregate option values — Go likely doesn't handle `+` prefix for infinity
+- Block comment at EOF without trailing newline — similar to Run 2 line comment bug
+- Source code info path differences for extension range options
+- ~~Custom option scope resolution — nested messages may resolve differently~~ **DONE in Run 23 (354_nested_ext_scope) — bare name fallback bypasses scope**
+- ~~Case-insensitive float/double default values — Go accepts `NaN`/`Inf`/`INF`/`infinity`/`Infinity`, C++ only accepts lowercase `nan`/`inf`~~ **DONE in Run 25 (356_infinity_default)**
+- ~~Same case-sensitivity issue may exist in custom option value parsing (e.g., `option (my_opt) = Infinity;` — does Go accept it?)~~ **DONE in Run 31 (362_float_option_case) — `Inf` accepted by Go, rejected by C++**
+- ~~`simpleFtoa` edge case: find a specific float32 value where Go's `FormatFloat(float64(v), 'g', 6, 64)` differs from C++'s `snprintf(buf, "%.6g", f)` due to the float64 bit width parameter~~ **DONE in Run 26 (357_float_overflow_default) — overflow to infinity produces `"+Inf"` vs `"inf"`**
+- ~~`simpleDtoa` same issue for double overflow (e.g., `1e309`) — Go's `ParseFloat` returns `ErrRange` so normalization is skipped entirely, storing raw `"1e309"` instead of `"inf"`~~ **DONE in Run 27 (358_double_overflow_default)**
+- Double default with `-0.0` or `0.0` — verify both produce same string
+- Negative infinity overflow: `default = -3.5e38` for float → Go produces `"-Inf"` vs C++ `"-inf"` (case difference)
+- Custom bool option with `"f"` or `"t"` — same bug as Run 28 but different variant
+- Custom bool option in aggregate: `option (cfg) = { enabled: True }` — also accepts `True`
+- Aggregate option bool with `"t"` or `"f"` — `encodeAggregateFields` likely has same permissive bool handling
+- ~~Enum shadow in compound type resolution — Go skips enums, C++ stops at shadow~~ **DONE in Run 29 (360_enum_shadow_scope)**
+- Similar shadow bugs: compound names where first part matches a package name? Or matches a different non-message type?
+- Extension extendee scope resolution differences — similar compound name resolution issues
+- `resolveTypeName` with three-part compound names (e.g., `A.B.C`) — multiple levels of scope walking
+- Custom double option with `NaN` (mixed case) — same bug as Run 31 for double type
+- Custom float option with `INF` (all caps) — same bug as Run 31
+- Aggregate option float/double with `Inf`/`NaN` — `encodeAggregateFields` likely has same permissive parsing
+- `strconv.ParseFloat` accepts `+inf` and `+Inf` — custom option with `+inf` might differ
+- Vertical tab (`\v`, 0x0B) as whitespace — same bug as Run 33 form feed, but for `\v` specifically
+- Source code info for `option` statements on extension range vs extension field
+- `resolveTypeName` with three-part compound names (e.g., `A.B.C`) — multiple levels of scope walking
+- Same int32/uint32 overflow bug for field-level, service-level, method-level, enum-level, enum-value-level, oneof-level, ext-range-level custom options (all missing `checkIntRangeOption`)
+- ~~Same int32 overflow bug in aggregate option encoding (`encodeAggregateFields` → `encodeCustomOptionValue`) — no range check there either~~ **DONE in Run 35 (366_aggregate_int32_overflow)**
+- Same aggregate overflow bug for uint32 (e.g., `0x100000000`), sint32, sfixed32, fixed32 — all 32-bit types in aggregate values
+- Aggregate bool with `True`/`t`/`f` — `encodeCustomOptionValue` still accepts case variants (line 5958)
+- Aggregate float/double with `Inf`/`NaN` (mixed case) — `strconv.ParseFloat` is case-insensitive
+- Source code info for extension declarations inside messages vs top-level
+- ~~Duplicate non-repeated custom option on field-level — same bug as Run 36 but for FieldOptions~~ **DONE in Run 44 (375_field_dup_option)**
+- Duplicate non-repeated custom option on enum/service/method/oneof/enum-value/ext-range — all missing seenCustomOpts check
+- Bool validation missing in message/field/enum/service/method/oneof/enum-value/ext-range resolvers — `True`/`False` accepted
+- Float/double identifier validation missing in message/field/enum/service/method/oneof/enum-value/ext-range resolvers — `Inf`/`NaN` accepted
+- Aggregate option with `True` bool value — `encodeCustomOptionValue` still accepts `True` at line 5969, bypasses simple option validation- ~~Subnormal float default value string differs~~ **DONE in Run 41 (372_subnormal_float_default)**
+- Same `simpleFtoa` issue with `simpleDtoa` for subnormal double values — might also differ
+- `simpleFtoa` with `FormatFloat(v64, 'g', 6, 32)` (32-bit) vs `FormatFloat(v64, 'g', 6, 64)` (64-bit) — changing bit width may fix some but break others
+- ~~Enum-value-level bool option with `True` — still missing validation in `resolveCustomEnumValueOptions`~~ **DONE in Run 42 (373_enumval_bool_option_case)**
+- ~~Oneof-level bool option with `True` — still missing validation in `resolveCustomOneofOptions`~~ **DONE in Run 43 (374_oneof_bool_option_case)**
+- Duplicate non-repeated custom option on field/enum/service/method/enum-value/oneof/ext-range — all missing `seenCustomOpts` check
+- Aggregate option bool with `True` — `encodeCustomOptionValue` still accepts `True`/`t`/`f` at line 6091
+- Aggregate option float/double with `Inf`/`NaN` (mixed case) — `strconv.ParseFloat` is case-insensitive
+- String option with identifier value (e.g., `option (my_str) = true;`) — Go likely accepts, C++ rejects
+- Bytes option with integer value (e.g., `option (my_bytes) = 42;`) — same bug as Run 52 but for TYPE_BYTES
+- String/bytes validation missing in all 9 resolveCustom*Options — same pattern as bool validation (Runs 37-43)
+- Float/double option with string value (e.g., `option (my_float) = "hello";`) — does Go reject properly?
+- Enum option with string value — same category of type mismatch validation
+- Enum option with integer value on message/field/service/method/enum/enum_value/oneof/ext_range — same bug as Run 56, all resolvers likely missing validation
+- Aggregate option enum field validation — `encodeCustomOptionValue` correctly accepts integers for enum in aggregate (text format), but does it match C++ for invalid enum value names?
+- Float/double option with identifier value other than `inf`/`nan` (e.g., `option (my_float) = FOO;`) — does Go reject properly?
+- ~~Surrogate code point in `\U` escape — Go replaces with U+FFFD, C++ encodes raw bytes~~ **DONE in Run 60 (391_surrogate_escape)**
+- Lone surrogate via `\u` (not paired) — Go tokenizer's `\u` path checks for head/trail surrogate pairing but a lone head surrogate without trail might also get replaced; and a lone trail surrogate (0xDC00-0xDFFF) with no preceding head surrogate goes straight to `appendUTF8` which would also replace it
+- Other invalid Unicode code points via `\U` — e.g., `\U0000FFFE` (non-character), `\U0000FFFF` — does Go treat these as valid?
+- ~~Subnormal double default value — `simpleDtoa` has no subnormal check unlike `simpleFtoa`~~ **TESTED Run 60 — C++ and Go agree on subnormal double formatting, no bug**
+- ~~Aggregate bool `True` — C++ text format also accepts `True`, not a bug~~ **TESTED Run 60 — both accept**
+- ~~Aggregate float `Inf`/`INF` — C++ text format also case-insensitive~~ **TESTED Run 60 — both accept**
+- ~~CRLF `\r\n` in comments — C++ also preserves `\r` in comment text~~ **TESTED Run 60 — both match**
+
+### Run 53 — Group field name lookup fails in aggregate option encoding (VICTORY)
+- **Bug**: Go's `collectMsgFields()` builds `msgFieldMap` keyed by field names. For group fields, the field name is lowercased (e.g., `"inner"`), but in C++ text format (used by protoc for aggregate options), groups are referenced by their MESSAGE TYPE NAME (capitalized, e.g., `"Inner"`). When a user writes `option (cfg) = { Inner { name: "hello" } }`, Go looks up `msgFields["Inner"]` which doesn't exist — the key is `"inner"`.
+- **Test**: `384_group_aggregate_option` — all 9 profiles fail.
+- **Root cause**: `collectMsgFields()` at cli.go:6481 inserts `fields[f.GetName()] = f` where `f.GetName()` for a group field returns the lowercased field name `"inner"`. But the parser stores `af.Name = "Inner"` from the source text. Then `encodeAggregateFields()` does `msgFields["Inner"]` which fails.
+- **C++ protoc**: Accepts it — text format uses message type name for groups.
+- **Go protoc-go**: Fails with `error encoding custom option: unknown field "Inner" in message test.Config`.
+- **Fix hint**: In `collectMsgFields`, for `TYPE_GROUP` fields, also add the message type name as a key: extract the last component of `f.GetTypeName()` (which is the CamelCase message name) and add `fields[typeName] = f` as an alias.
+- **Also affects**: Any aggregate option value that references a group field by its type name (which is the standard text format convention).
+
+### Run 54 — Negative uint32 option error message and column mismatch (VICTORY)
+- **Bug**: Go's error message for negative unsigned option values differs from C++ protoc in both wording and column number. C++ says `"Value must be integer, from 0 to 4294967295"` at column 19 (pointing at `-`). Go says `"Value out of range, 0 to 4294967295"` at column 20 (pointing at `1`).
+- **Test**: `385_neg_uint_option` — all 9 profiles fail.
+- **Root cause**: Two issues: (1) Go's error message uses `"Value out of range"` instead of C++'s `"Value must be integer"`. C++ treats negative values for unsigned types as "not an integer in range" rather than "out of range". (2) Go's error column points at the numeric value token (`1` at column 20) instead of the sign token (`-` at column 19). The sign and value are separate tokens; Go reports the value token position, C++ reports the sign position.
+- **C++ protoc**: `test.proto:10:19: Value must be integer, from 0 to 4294967295, for uint32 option "neguint.my_val".`
+- **Go protoc-go**: `test.proto:10:20: Value out of range, 0 to 4294967295, for uint32 option "neguint.my_val".`
+- **Fix hint**: (1) Change the error message from `"Value out of range"` to `"Value must be integer"` to match C++ wording. (2) Track the position of the `-` sign token and use it for the error column when reporting unsigned negative value errors. The sign token position is available in the parser where `opt.Negative` is set.
+- **Also affects**: Same error message mismatch likely exists for `uint64`, `fixed32`, `fixed64` options with negative values. Also, if this check is in `checkIntRangeOption`, it affects all resolver types that call it.
+
+### Run 55 — Aggregate option string field accepts integer value (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` for TYPE_STRING/TYPE_BYTES does not validate that the value is a string literal. When an aggregate option has `{ name: 42 }` where `name` is a `string` field, Go accepts the integer `42` and encodes it as the string `"42"`. C++ protoc's text format parser requires string fields to have quoted string values and rejects integers with `Expected string, got: 42`.
+- **Test**: `386_aggregate_string_int` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `encodeCustomOptionValue()` at cli.go:6339-6342 for TYPE_STRING/TYPE_BYTES just does `protowire.AppendString(b, value)` without checking `valueType`. The aggregate path goes from `encodeAggregateFields` → `encodeCustomOptionValue` without any string type validation. Run 52 fixed simple option string validation in the `resolveCustom*Options` functions, but aggregate options bypass those resolvers entirely.
+- **C++ protoc**: `test.proto:16:16: Error while parsing option value for "cfg": Expected string, got: 42`
+- **Go protoc-go**: Silently accepts `42`, encodes as string bytes `"42"`, produces valid descriptor.
+- **Fix hint**: In `encodeCustomOptionValue`, for TYPE_STRING and TYPE_BYTES, check `valueType != tokenizer.TokenString` and return an error like `Expected string, got: VALUE`. Or add validation in `encodeAggregateFields` before calling `encodeCustomOptionValue` for string/bytes fields.
+- **Also affects**: Same bug for TYPE_BYTES fields. Also, setting a string field to an identifier (`name: foo`) or a float (`name: 3.14`) would also be accepted by Go but rejected by C++. This affects all aggregate option encoding paths (both `{ }` and `< >` syntax).
+
+### Run 57 — Empty aggregate option `option (cfg) = {};` fails in Go (VICTORY)
+- **Bug**: Go's `consumeAggregate()` returns `nil` for an empty `{}` aggregate, causing `AggregateFields` to be nil. The resolver then falls through to `encodeCustomOptionValue` which doesn't handle TYPE_MESSAGE, producing `unsupported custom option type: TYPE_MESSAGE`. C++ protoc handles empty aggregate options fine, encoding an empty message (zero payload bytes).
+- **Test**: `388_empty_aggregate_option` — all 9 profiles fail.
+- **Root cause**: `consumeAggregate()` at parser.go:4978 initializes `var fields []AggregateField` which is nil. When the aggregate `{}` is empty, the loop doesn't execute and `nil` is returned. In the resolver at cli.go:4321, `if opt.AggregateFields != nil` is false, so the code falls through to `encodeCustomOptionValue(ext, opt.Value, ...)` where `opt.Value` is `{` and ext type is TYPE_MESSAGE — which hits the default case error.
+- **C++ protoc**: Accepts `option (cfg) = {};` and produces valid descriptor with empty Config option.
+- **Go protoc-go**: Fails with `error encoding custom option: unsupported custom option type: TYPE_MESSAGE`.
+- **Fix hint**: Either (1) change `consumeAggregate()` to return `[]AggregateField{}` instead of nil for empty aggregates (e.g., `fields = make([]AggregateField, 0)`), or (2) in the resolver, also check `valTok.Value == "{"` to detect aggregate syntax even with nil fields, or (3) more robustly, initialize the `aggregateFields` variable in `parseFileOption` to a non-nil empty slice when `{` is consumed.
+- **Also affects**: Same bug likely exists in all 9 option parsers (file, message, field, enum, enum_value, service, method, oneof, extension range) — any that call `consumeAggregate()` and check `AggregateFields != nil`.
+
+### Run 58 — Aggregate option field encoding order differs from C++ (VICTORY)
+- **Bug**: Go's `encodeAggregateFields()` encodes fields in **source order** (the order they appear in the aggregate option text), while C++ protoc's `TextFormat::Parser` encodes fields in **field number order**. When fields are listed out of field-number order (e.g., field 2 before field 1), the encoded bytes differ.
+- **Test**: `389_agg_field_order` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `encodeAggregateFields()` at cli.go:6703 iterates `aggFields` in the order they were parsed (source order) and appends encoded bytes directly. C++ protoc's text format parser sorts/inserts fields by field number when building the message, so the wire format always has fields in field-number order regardless of source order.
+- **C++ protoc**: Encodes `child` (field 1) before `value` (field 2) even when `value: 42` is written before `child { ... }` in the source.
+- **Go protoc-go**: Encodes `value` (field 2) first, then `child` (field 1), following source order.
+- **Fix hint**: Either (1) sort `aggFields` by field number before encoding, or (2) collect encoded bytes with their field numbers and sort before concatenating, or (3) sort the `inner` byte slice by tag after encoding all fields. Option (1) is simplest: `sort.Slice(aggFields, func(i, j int) bool { return msgFields[aggFields[i].Name].GetNumber() < msgFields[aggFields[j].Name].GetNumber() })` before the encoding loop. Note: repeated fields with the same number must preserve relative order.
+- **Also affects**: Same issue exists in `encodeAggregateOption()` which has a similar loop. Both functions need the same fix.
+
+### Run 59 — Aggregate option invalid enum value error message mismatch (VICTORY)
+- **Bug**: Go's error message for invalid enum value names in aggregate option fields differs from C++ protoc in format, detail, and line/column info. C++ says `Error while parsing option value for "my_cfg": Unknown enumeration value of "NONEXISTENT" for field "level"` with line:column. Go says `error encoding custom option: field level: enum type ".agetest.Level" has no value named "NONEXISTENT"` with no column info.
+- **Test**: `390_agg_bad_enum` — all 9 profiles fail.
+- **Root cause**: `encodeAggregateFields()` generates a Go-specific error message when an enum value lookup fails, using the internal enum type name format (`.pkg.EnumType`) and different wording. It also lacks the aggregate option name context and line/column info that C++ includes. C++ wraps the error with `Error while parsing option value for "OPTION_NAME": ...` and includes the source location of the aggregate.
+- **C++ protoc**: `test.proto:22:19: Error while parsing option value for "my_cfg": Unknown enumeration value of "NONEXISTENT" for field "level".`
+- **Go protoc-go**: `test.proto: error encoding custom option: field level: enum type ".agetest.Level" has no value named "NONEXISTENT"`
+- **Fix hint**: (1) Change the enum lookup error message to match C++'s wording: `Unknown enumeration value of "VALUE" for field "FIELD"`. (2) Wrap aggregate encoding errors with the option name context: `Error while parsing option value for "OPT_NAME": ...`. (3) Include line/column info from the source token positions.
+- **Also affects**: Other aggregate option encoding errors (type mismatches, unknown fields) likely have similar message format differences.
+
+### Run 60 — Surrogate code point in \U escape produces different bytes (VICTORY)
+- **Bug**: Go's `appendUTF8` function in `io/tokenizer/tokenizer.go:659` uses `utf8.EncodeRune` to encode Unicode code points from `\U` escape sequences. `utf8.EncodeRune` replaces surrogate code points (0xD800–0xDFFF) with U+FFFD (replacement character). C++ protobuf's `AppendUTF8` does raw UTF-8 encoding without surrogate validation, producing the (invalid but byte-accurate) 3-byte UTF-8 sequence for the surrogate.
+- **Test**: `391_surrogate_escape` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `appendUTF8(sb, 0xD800)` calls `utf8.EncodeRune(buf, rune(0xD800))`. Go's `utf8.ValidRune(0xD800)` returns false (surrogate range), so `EncodeRune` substitutes `RuneError` (U+FFFD = 0xEF 0xBF 0xBD). C++ just encodes 0xD800 as 3-byte UTF-8: 0xED 0xA0 0x80. The decoded string bytes differ, so `cEscape` produces different octal representations in the default value.
+- **C++ protoc**: default_value = `\355\240\200` (bytes ED A0 80, raw encoding of 0xD800)
+- **Go protoc-go**: default_value = `\357\277\275` (bytes EF BF BD, encoding of U+FFFD)
+- **Fix hint**: In `appendUTF8`, bypass `utf8.EncodeRune` for surrogate code points and do raw UTF-8 encoding manually: `if cp >= 0xD800 && cp <= 0xDFFF { sb.WriteByte(byte(0xE0 | (cp >> 12))); sb.WriteByte(byte(0x80 | ((cp >> 6) & 0x3F))); sb.WriteByte(byte(0x80 | (cp & 0x3F))); return }`. Or use a custom UTF-8 encoder that doesn't validate surrogates.
+- **Also affects**: Any string/bytes literal containing `\U` escapes with surrogate code points (0xD800–0xDFFF). Also affects `\u` escapes for lone surrogates (not part of a surrogate pair), if the Go tokenizer can produce lone surrogates through the `\u` path.
+
+### Run 61 — Aggregate option float/double field with string value produces wrong error message (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` for TYPE_FLOAT/TYPE_DOUBLE just tries `strconv.ParseFloat(value, N)` without checking the token type. When an aggregate option has `{ ratio: "not_a_number" }` where `ratio` is a `double` field, Go returns a generic `"invalid double value: not_a_number"` error with no line:col info. C++ protoc's text format parser recognizes the wrong token type immediately and returns `"Expected double, got: \"not_a_number\""` with line:col info.
+- **Test**: `392_agg_float_string_value` — all 9 profiles fail.
+- **Root cause**: `encodeCustomOptionValue()` at cli.go:6472-6502 for TYPE_FLOAT and TYPE_DOUBLE never checks `valueType`. It directly passes `value` to `strconv.ParseFloat`, which returns `strconv.ErrSyntax` for non-numeric strings. The error is wrapped by `encodeAggregateFields` as `"field ratio: invalid double value: not_a_number"`, then by `formatAggregateError` which falls through to the generic format `"test.proto: error encoding custom option: field ratio: invalid double value: not_a_number"` (no line:col).
+- **C++ protoc**: `test.proto:16:16: Error while parsing option value for "cfg": Expected double, got: "not_a_number"`
+- **Go protoc-go**: `test.proto: error encoding custom option: field ratio: invalid double value: not_a_number`
+- **Fix hint**: Add a `valueType` check in `encodeCustomOptionValue` for TYPE_FLOAT/TYPE_DOUBLE: if `valueType == tokenizer.TokenString`, return a typed error like `&aggregateExpectedDoubleError{gotValue: "\"" + value + "\""}` that `formatAggregateError` can match to produce the C++ format: `"Expected double, got: \"VALUE\""` with proper line:col from `braceTok`. Also need to add the new error type and handle it in `formatAggregateError`.
+- **Also affects**: Same issue for TYPE_INT32, TYPE_INT64, TYPE_UINT32, TYPE_UINT64, TYPE_SINT32, TYPE_SINT64, TYPE_FIXED32, TYPE_FIXED64, TYPE_SFIXED32, TYPE_SFIXED64 — all integer types in aggregate options would produce generic parse errors instead of C++'s typed token-mismatch errors. Also affects TYPE_BOOL (if given a string value like `enabled: "yes"` — though this might already be caught by `aggregateBoolError`). Also affects TYPE_ENUM (if given a string literal instead of an identifier).
+
+### Run 62 — Comment after opening brace treated as detached instead of trailing (VICTORY)
+- **Bug**: Go's source code info handling does not treat a comment on the line immediately after a message's opening `{` as a trailing comment for the message. C++ protoc assigns `// Trailing on message opening` as `trailing_comments` on the message's SCI entry (path=[4,0]). Go instead treats it as a `leading_detached_comments` entry on the first field inside the message (path=[4,0,2,0]).
+- **Test**: `393_trailing_comment_after_brace` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: C++ protoc's `SourceLocationTable` treats the first comment block inside a `{...}` scope (before any declarations) as a trailing comment for the scope's declaration. Go's `collectComments` in `io/tokenizer/tokenizer.go` does not implement this scope-trailing-comment logic — it simply collects comments as leading/detached for the next token, never assigning them as trailing to a preceding scope-opening statement.
+- **C++ protoc**: path=[4,0] has trailing_comments: ' Trailing on the message opening\n'. path=[4,0,2,0] has leading_comments: ' Leading on field x\n' (no detached).
+- **Go protoc-go**: path=[4,0] has NO trailing_comments. path=[4,0,2,0] has leading_comments: ' Leading on field x\n' AND leading_detached_comments: ' Trailing on the message opening\n'.
+- **Fix hint**: After parsing the opening `{` of a message/enum/service/oneof block, if the next non-blank-line comment exists before the first declaration, assign it as `trailing_comments` for the block's declaration rather than as a detached leading comment for the first member. This requires coordinating between the parser and the SCI tracking — the parser needs to signal that the current comment context is "just opened a block" so that the next comment is tagged as trailing.
+- **Also affects**: Same issue likely exists for enum `{`, service `{`, oneof `{`, and extend `{` blocks. Any scope-opening brace where a comment immediately follows on the next line.
+
+### Run 63 — Group field leading comment attached to wrong SCI entry (VICTORY)
+- **Bug**: Go's source code info assigns the leading comment on a proto2 group field to the **field descriptor** entry (path=[4,0,2,0]), while C++ protoc assigns it to the **nested message type** entry (path=[4,0,3,0]). In C++ protoc, group declarations produce two SCI entries: one for the field (no comment) and one for the nested message (with the leading comment). Go attaches the comment to the field instead.
+- **Test**: `394_group_comment_sci` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: When parsing a group field, the parser generates SCI entries for both the field descriptor (path=[4,0,2,0]) and the nested message type (path=[4,0,3,0]). In C++ protoc, the leading comment is attached to the nested message type's location. In Go, `attachComments` is called on the field descriptor's location entry, which picks up the leading comment first. The nested message type's location entry is added later without the comment since it was already consumed.
+- **C++ protoc**: path=[4,0,2,0] (field) has NO leading_comments. path=[4,0,3,0] (nested msg) has leading_comments: ' Leading comment on group\n'.
+- **Go protoc-go**: path=[4,0,2,0] (field) has leading_comments: ' Leading comment on group\n'. path=[4,0,3,0] (nested msg) has NO leading_comments.
+- **Fix hint**: In `parseGroupField`, call `attachComments` on the nested message type location entry (path=[4,0,3,0]) instead of (or before) the field location entry (path=[4,0,2,0]). The comment should be attached to the nested message, not the field. This matches C++ protoc's behavior where group comments describe the message type, not the field.
+- **Also affects**: Same issue likely exists for group fields inside oneof declarations and group fields in extend blocks, if those code paths also attach comments to the field entry first.
+
+### Run 65 — Multiple reserved name statements corrupt SCI location ordering (VICTORY)
+- **Bug**: Go's `parseMessageReserved` uses `*nameIdx` (accumulated across ALL reserved name statements) instead of a `count` computed from a `startCount` when rearranging SCI locations. When a message has two separate `reserved "name";` statements, the second statement's rearrangement copies `*nameIdx` (= 2) entries instead of just the 1 entry added by the current statement, pulling in a duplicate of the first statement's name entry and corrupting the SCI location ordering.
+- **Test**: `395_multi_reserved_name` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: At parser.go line ~867, the SCI rearrangement does `copy(p.locations[len(p.locations)-int(*nameIdx):], ...)` using the cumulative `*nameIdx` to determine how many entries to shift. Compare with reserved RANGES at line ~990 which correctly uses `count := int(*rangeIdx - startCount)`. The name path lacks a `startCount` variable.
+- **C++ protoc**: Produces SCI entries in order: stmt[4,0,10], name[4,0,10,0], stmt[4,0,10], name[4,0,10,1] — interleaved statement and name entries.
+- **Go protoc-go**: Produces SCI entries in order: stmt[4,0,10], stmt[4,0,10], name[4,0,10,0], name[4,0,10,1] — statements grouped together, names grouped together (wrong ordering).
+- **Same size**: Both produce 229-byte descriptors, but binary content differs due to SCI entry ordering.
+- **Fix hint**: Add `startNameCount := *nameIdx` before the name parsing loop, then use `count := int(*nameIdx - startNameCount)` in the copy/rearrangement, matching the pattern used for reserved ranges.
+- **Also affects**: Same bug exists in enum reserved names (parser.go ~line 3231) and editions identifier reserved names (parser.go ~line 895). Any proto entity with two or more separate `reserved "name"` statements will have corrupted SCI ordering.
+
+### Run 66 — Custom option scope resolution doesn't walk message scopes (VICTORY)
+- **Bug**: Go's `findFileOptionExtension` only walks the package hierarchy (dot-separated package components) when resolving custom option names. It does NOT walk up through enclosing message scopes. When an extension is declared inside a message (e.g., `message Outer { extend google.protobuf.MessageOptions { ... } }`) and used by a nested message (`Outer.Inner`), Go fails to find it because it starts scope resolution from `fd.GetPackage()` instead of from the message's FQN.
+- **Test**: `396_nested_extend_scope` — all 9 profiles fail.
+- **Root cause**: `findFileOptionExtension()` at cli.go:4381 uses `currentPkg` (= `fd.GetPackage()`) as the starting scope. For message options resolved in `resolveCustomMessageOptions()` at line 4731, the scope is always the file's package (e.g., `nestedscope`), never the message's FQN (e.g., `nestedscope.Outer.Inner`). So the scope walk tries: `nestedscope.msg_label` → `msg_label` → not found. It never tries `nestedscope.Outer.Inner.msg_label` or `nestedscope.Outer.msg_label`, which is where C++ would find the extension (FQN = `nestedscope.Outer.msg_label`).
+- **C++ protoc**: Accepts `option (msg_label) = "inner_value"` inside `Outer.Inner` because scope resolution walks: `nestedscope.Outer.Inner.msg_label` → `nestedscope.Outer.msg_label` → FOUND.
+- **Go protoc-go**: Fails with `Option "(msg_label)" unknown` because scope walk starts from package, not message.
+- **Fix hint**: (1) Add a `messageFQN` field to `CustomMessageOption` that captures the FQN of the message the option is on. (2) Pass this FQN as `currentPkg` to `findFileOptionExtension` instead of `fd.GetPackage()`. (3) Same fix needed for `CustomEnumOption`, `CustomServiceOption`, `CustomMethodOption`, `CustomOneofOption`, `CustomEnumValueOption`, `CustomExtRangeOption`, `CustomFieldOption` — all entity-level custom options should resolve from their entity's scope, not just the file package.
+- **Also affects**: Any custom option on any entity type that references an extension declared inside a message. The bug exists in all `resolveCustom*Options` functions.
+
+### Run 67 — Message-level negative inf/nan float option rejected by Go (VICTORY)
+- **Bug**: Go's message-level option parser bakes `-` into `custOpt.Value` (parser.go:1722-1726: `val = "-" + val`), so `opt.Value = "-inf"` when the option is `option (x) = -inf;`. The CLI resolver's float/double validation at cli.go:4830-4831 checks `opt.Value != "inf" && opt.Value != "nan"` — since `"-inf" != "inf"` is TRUE, Go incorrectly rejects `-inf` as invalid. File-level options don't have this bug because the file parser stores the raw value without `-` prefix.
+- **Test**: `397_msg_neg_inf_option` — all 9 profiles fail.
+- **Root cause**: Inconsistent negation handling between file-level and message-level option parsers. File parser (line 4674) stores `Value: valTok.Value` (raw, no dash). Message parser (line 1722-1726) bakes `-` into value. The float validation only checks for `"inf"` and `"nan"`, not `"-inf"` or `"-nan"`.
+- **C++ protoc**: Accepts `option (msg_threshold) = -inf;` on a message, produces valid descriptor with -inf encoded.
+- **Go protoc-go**: Fails with `test.proto:12:28: Value must be number for double option "test.msg_threshold".`
+- **Fix hint**: Either (1) strip the `-` prefix when doing the `inf`/`nan` check in the resolver, or (2) stop baking `-` into the value in the message parser (match file-level pattern), or (3) extend the check to also accept `"-inf"` and `"-nan"`.
+- **Also affects**: Same bug exists in enum-level (parser.go:2995), service-level (parser.go:3500), method-level (parser.go:3753), oneof-level (parser.go:4261), enum-value-level (parser.go:2622), and field-level (parser.go:5478) option parsers — ALL bake `-` into value. So `-inf` and `-nan` would be rejected for ALL non-file-level float/double custom options.
+
+### Run 70 — Edition `features.repeated_field_encoding` accepted on non-repeated field (VICTORY)
+- **Bug**: Go's parser/validator does NOT check that `features.repeated_field_encoding` can only be applied to repeated fields. When a non-repeated field uses `int32 value = 1 [features.repeated_field_encoding = EXPANDED];` in an edition 2023 proto file, C++ protoc rejects it with `Only repeated fields can specify repeated field encoding.`, but Go accepts it silently and produces a valid descriptor with the feature set.
+- **Test**: `400_edition_repeated_encoding` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's field option parsing for editions features does not validate that `repeated_field_encoding` is only meaningful for `LABEL_REPEATED` fields. C++ protoc has explicit validation in the feature resolver that checks `f->is_repeated()` before allowing `repeated_field_encoding` to be set.
+- **C++ protoc**: `test.proto:8:9: Only repeated fields can specify repeated field encoding.`
+- **Go protoc-go**: Silently accepts the feature, encodes it into the field's FeatureSet, produces valid descriptor.
+- **Fix hint**: After parsing field options for edition proto files, add a validation check: if the field has `features.repeated_field_encoding` set and `field.GetLabel() != LABEL_REPEATED`, emit an error matching C++: `"Only repeated fields can specify repeated field encoding."`. The check should be in the parser's field option handling code or in a validation pass in the CLI.
+- **Also affects**: Other edition features may have similar scope restrictions not validated by Go (e.g., `features.message_encoding` might only be valid on message-typed fields, `features.utf8_validation` might only be valid on string fields).
+
+### Run 72 — Edition `features.field_presence` accepted on repeated field (VICTORY)
+- **Bug**: Go does NOT validate that `features.field_presence` cannot be set on repeated fields. When a repeated field uses `repeated int32 values = 1 [features.field_presence = EXPLICIT];` in an edition 2023 proto file, C++ protoc rejects it with `Repeated fields can't specify field presence.`, but Go accepts it silently and produces a valid descriptor.
+- **Test**: `402_field_presence_repeated` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go has `checkRepeatedFieldEncodingField` validation for `repeated_field_encoding` (added after Run 70) but has NO equivalent validation for `field_presence`. The `featureTargets` map at cli.go:2033 allows `field_presence` on all fields, and no additional validation checks `field.GetLabel() == LABEL_REPEATED` to reject it.
+- **C++ protoc**: `test.proto:6:18: Repeated fields can't specify field presence.`
+- **Go protoc-go**: Silently accepts, encodes FeatureSet with EXPLICIT field_presence, produces valid descriptor.
+- **Fix hint**: Add a `checkFieldPresenceField` function similar to `checkRepeatedFieldEncodingField` that rejects `field_presence` on repeated fields: if `field.GetLabel() == LABEL_REPEATED && field.GetOptions().GetFeatures().FieldPresence != nil`, emit error. Also add a `collectFieldPresenceErrors` function that walks all messages/nested types, and call it from the validation pass.
+- **Also affects**: Map fields (which are syntactic sugar for repeated message entries) should also reject `field_presence`. Same validation is missing for `features.message_encoding` on non-message fields and `features.utf8_validation` on non-string fields. Also, `field_presence = LEGACY_REQUIRED` on a `oneof` field should probably be rejected.
+
+### Run 75 — Edition `features.utf8_validation = NONE` accepted on non-string field (VICTORY)
+- **Bug**: Go does NOT validate that `features.utf8_validation` can only be meaningfully set on string fields. When a non-string field (e.g., `int32`) uses `int32 value = 1 [features.utf8_validation = NONE];` in an edition 2023 proto file, C++ protoc rejects it with `Only string fields can specify utf8 validation.`, but Go accepts it silently and produces a valid descriptor.
+- **Test**: `405_utf8_validation_nonstring` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's `collectFieldFeatureErrors` at cli.go:2342 checks that `enum_type` and `json_format` can't be set on fields, but has NO check for `utf8_validation` being on a non-string field. The comment at line 2345 says `utf8_validation` targets FIELD (allowed), but doesn't add the semantic check that the field must be `TYPE_STRING`. The `featureTargets` map at cli.go:2039 allows `utf8_validation` on fields, and no additional validation checks `field.GetType() == TYPE_STRING` to reject it on non-string fields.
+- **C++ protoc**: `test.proto:6:9: Only string fields can specify utf8 validation.`
+- **Go protoc-go**: Silently accepts, encodes FeatureSet with NONE utf8_validation, produces valid descriptor.
+- **Fix hint**: Add a `checkUtf8ValidationField` function similar to `checkRepeatedFieldEncodingField` that rejects `utf8_validation` on non-string fields: if `field.GetType() != TYPE_STRING && field.GetOptions().GetFeatures().Utf8Validation != nil && field.GetOptions().GetFeatures().GetUtf8Validation() != descriptorpb.FeatureSet_VERIFY`, emit error `"Only string fields can specify utf8 validation."`. Add a `collectUtf8ValidationErrors` function that walks all messages/nested types, and call it from the validation pass.
+- **Also affects**: Same validation should apply to bytes fields (they're not strings either), and to extension fields with `features.utf8_validation` set.
+
+### Run 77 — Extensions can't specify field_presence (any value, not just LEGACY_REQUIRED) (VICTORY)
+- **Bug**: Go's `checkRequiredExtensionEditionsField` only rejects `features.field_presence = LEGACY_REQUIRED` on extension fields. C++ protoc rejects ALL `field_presence` values on extensions (`IMPLICIT`, `EXPLICIT`, `LEGACY_REQUIRED`) with `"Extensions can't specify field presence."`. Go only checks for the `LEGACY_REQUIRED` case, allowing `IMPLICIT` and `EXPLICIT` through silently.
+- **Test**: `408_ext_field_presence` — all 9 profiles fail.
+- **Root cause**: `checkRequiredExtensionEditionsField` at cli.go:2627-2633 checks `field.GetOptions().GetFeatures().GetFieldPresence() == descriptorpb.FeatureSet_LEGACY_REQUIRED`. This only catches one specific enum value. The correct check is: if `FieldPresence` is set at all (non-nil), reject it — extensions can't specify ANY field_presence.
+- **C++ protoc**: `test.proto:11:9: Extensions can't specify field presence.` (exit code 1).
+- **Go protoc-go**: Silently accepts it, produces a descriptor set (exit code 0).
+- **Fix hint**: Change the condition from checking `== LEGACY_REQUIRED` to just checking if `FieldPresence != nil`. Also rename the function from `checkRequiredExtensionEditionsField` to something like `checkExtensionFieldPresence` since it's not just about required anymore. The error message should also change from "Extensions can't be required." to "Extensions can't specify field presence." to match C++.
+
+### Run 79 — Extending an enum type produces wrong error message (VICTORY)
+- **Bug**: Go doesn't check that the extendee of an `extend` block is a message type. When extending an enum, C++ protoc correctly says `"Status" is not a message type` at the extend statement. Go skips this validation and instead falls through to the extension range check, producing a misleading error about extension numbers not being declared.
+- **Test**: `410_extend_enum_type` — all 9 profiles fail.
+- **Root cause**: In the descriptor validation path, Go doesn't check whether the resolved extendee type is actually a message (vs an enum). It proceeds to check if the extension number falls within the extendee's declared extension ranges, which fails for enums since they don't have extension ranges, giving a confusing error.
+- **C++ protoc**: `test.proto:11:8: "Status" is not a message type.` (line of `extend Status`, column of `Status`).
+- **Go protoc-go**: `test.proto:12:31: "test.Status" does not declare 100 as an extension number.` (line of the field, wrong column, FQN instead of local name).
+- **Fix hint**: In the descriptor validation, before checking extension ranges, verify that the resolved extendee type is a message descriptor (not an enum). If it's an enum, emit `"<name>" is not a message type.` with the correct line/column from the extend statement.
+
+### Run 80 — Go allows utf8_validation on bytes fields, C++ rejects it (VICTORY)
+- **Bug**: Go's `checkUtf8ValidationField` at cli.go:2706-2712 returns early (allows) for both `TYPE_STRING` and `TYPE_BYTES` fields. But C++ protoc only allows `utf8_validation` on `TYPE_STRING` fields. Setting `features.utf8_validation = NONE` on a `bytes` field should produce an error, but Go silently accepts it and produces a descriptor.
+- **Test**: `411_utf8_bytes_field` — all 9 profiles fail.
+- **Root cause**: The condition `if field.GetType() == TYPE_STRING || field.GetType() == TYPE_BYTES { return }` at cli.go:2706-2707 is too broad. It should only allow `TYPE_STRING`.
+- **C++ protoc**: `test.proto:5:9: Only string fields can specify utf8 validation.` (rejects with error).
+- **Go protoc-go**: Produces valid descriptor (no error) — incorrectly allows utf8_validation on bytes field.
+- **Fix hint**: Change the condition at cli.go:2706 from `field.GetType() == TYPE_STRING || field.GetType() == TYPE_BYTES` to just `field.GetType() == TYPE_STRING`.
+
+### Run 81 — Import without string argument produces different error message (VICTORY)
+- **Bug**: Go's `ExpectString()` returns a generic `"Expected string."` error, while C++ protoc uses a context-specific error message `"Expected a string naming the file to import."`. When `import;` is written (missing the file path string), the error messages differ.
+- **Test**: `412_import_no_string` — all 9 profiles fail.
+- **Root cause**: Go's tokenizer `ExpectString()` at tokenizer.go:592-598 always returns `fmt.Errorf("Expected string.")`. C++ protoc's parser calls `ConsumeString(&import_path, "Expected a string naming the file to import.")` which passes a custom error message to the tokenizer for each call site.
+- **C++ protoc**: `test.proto:5:7: Expected a string naming the file to import.`
+- **Go protoc-go**: `test.proto:5:7: Expected string.`
+- **Fix hint**: Either (1) change `ExpectString()` to accept an optional custom error message parameter, or (2) change `parseImport` to not use `ExpectString()` and instead manually check the next token type with a custom error. The same pattern affects `parseSyntax`, `parseEdition`, and reserved name parsing — each should have context-specific error messages matching C++.
+- **Also affects**: `syntax = ;` would produce `"Expected string."` instead of C++ protoc's syntax-specific error. `reserved ;` with a string expected would also differ. Each call site of `ExpectString()` could have a different C++-specific message.
+
+### Run 82 — Group syntax in proto3 produces different error message (VICTORY)
+- **Bug**: Go parser doesn't recognize the `group` keyword in proto3 at all — it treats `group` as a type name and fails with a generic parse error. C++ protoc recognizes the group syntax but rejects it with a clear semantic error "Groups are not supported in proto3 syntax." pointing at the `group` keyword.
+- **Test**: `413_group_proto3` — all 9 profiles fail.
+- **Root cause**: Go's `parseField()` in parser.go handles `group` keyword only in proto2 mode. When parsing proto3, `group` is not recognized as a keyword, so the parser sees `group Inner = 1 {` and treats `group` as a type name, `Inner` as the field name, then chokes at `{` expecting `;`.
+- **C++ protoc**: `test.proto:6:3: Groups are not supported in proto3 syntax.`
+- **Go protoc-go**: `test.proto:6:19: Expected ";".`
+- **Fix hint**: In the proto3 parsing path, check for `group` keyword and emit a clear error like "Groups are not supported in proto3 syntax." at the correct position (column 3, where `group` starts) before bailing out. This matches C++ protoc's behavior of recognizing the syntax but rejecting it semantically.
+
+### Run 83 — sfixed32 custom option overflow error message mismatch (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` for `TYPE_SFIXED32` rejects `0x80000000` with a generic `"invalid sfixed32 value"` error without line/column info. C++ protoc recognizes it as a range validation issue and reports `"Value out of range, -2147483648 to 2147483647, for int32 option"` with proper line/column location.
+- **Test**: `414_sfixed32_overflow` — all 9 profiles fail.
+- **Root cause**: Go's `checkIntRangeOption` only handles `TYPE_INT32`, `TYPE_SINT32`, and `TYPE_UINT32` — it does not check `TYPE_SFIXED32` or `TYPE_FIXED32`. The overflow is caught later in `encodeCustomOptionValue` when `strconv.ParseInt` fails, producing a different error format without source location.
+- **C++ protoc**: `test.proto:11:19: Value out of range, -2147483648 to 2147483647, for int32 option "sfixedoverflow.my_val".`
+- **Go protoc-go**: `test.proto: error encoding custom option: invalid sfixed32 value: 0x80000000`
+- **Fix hint**: Add `TYPE_SFIXED32` to the int32 range check case in `checkIntRangeOption`, and add `TYPE_FIXED32` to the uint32 range check case. This would catch the overflow early with proper line/column info and the standard range error message.
+- **Also affects**: `TYPE_FIXED32` (unsigned 32-bit) likely has the same issue — values above `0xFFFFFFFF` would get a different error message format.
+
+### Run 84 — Negative extension range start produces different error message (VICTORY)
+- **Bug**: Go parser produces `"Expected integer."` when encountering a negative number in `extensions -1 to 10;`, while C++ protoc produces `"Expected field number range."`. The `-` sign before the number is not a valid start for an extension range, and each compiler reports a different error about it.
+- **Test**: `415_neg_ext_range` — all 9 profiles fail.
+- **Root cause**: Go's extension range parsing sees `-` and calls a generic integer parsing function that reports "Expected integer" when it can't parse the negative sign as part of a valid integer in this context. C++ protoc has a more specific check that knows it's parsing an extension range and reports "Expected field number range" — a more helpful context-aware error.
+- **C++ protoc**: `test.proto:6:14: Expected field number range.`
+- **Go protoc-go**: `test.proto:6:14: Expected integer.`
+- **Fix hint**: In the extension range parsing code (parser.go), when encountering `-` as the first token where a range start is expected, emit `"Expected field number range."` instead of falling through to the generic integer parser.
+
+### Run 85 — Go tokenizer silently accepts nested `/*` inside block comments (VICTORY)
+- **Bug**: Go's block comment parser does NOT detect `/*` inside a block comment. C++ protoc scans for `/*` within block comments and emits error `"/*" inside block comment.  Block comments cannot be nested.` Go silently accepts `/* outer /* nested */` and treats the whole thing as a valid comment — the inner `/*` is just ignored.
+- **Test**: `416_nested_block_comment` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's tokenizer `readBlockComment()` in `io/tokenizer/tokenizer.go` only looks for `*/` to close the comment. It does NOT check if `/*` appears inside the comment body. C++ protoc's `Tokenizer::NextChar()` in `io/tokenizer.cc` specifically checks for `/*` while scanning block comments and calls `AddError()` when found.
+- **C++ protoc**: `test.proto:5:11: "/*" inside block comment.  Block comments cannot be nested.` (exit code 1).
+- **Go protoc-go**: Silently accepts the file and produces a valid descriptor (exit code 0).
+- **Fix hint**: In the block comment scanning loop, while looking for `*/`, also check for `/*` and emit an error like `"/*" inside block comment.  Block comments cannot be nested.` with the correct line/column pointing at the inner `/*`.
+
+### Run 86 — MessageSet scalar extension not validated (VICTORY)
+- **Bug**: Go does not validate that extensions of messages with `option message_set_wire_format = true` must be optional messages. When a scalar extension (e.g., `optional int32`) is defined for a MessageSet type, Go silently accepts it and produces a descriptor. C++ protoc correctly rejects it with a clear error message.
+- **Test**: `417_msgset_scalar_ext` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's `validateMessageSetFields()` in `cli.go:3479` only checks that MessageSet messages don't have regular fields. There is NO validation that extensions TO MessageSet types must be optional messages (`TYPE_MESSAGE` with `LABEL_OPTIONAL`). C++ protoc's `descriptor.cc` has this validation in `DescriptorBuilder::CrossLinkField()`.
+- **C++ protoc**: `test.proto:11:12: Extensions of MessageSets must be optional messages.` (exit code 1).
+- **Go protoc-go**: Silently accepts the file and produces a valid descriptor (exit code 0).
+- **Fix hint**: Add a new validation function (e.g., `validateMessageSetExtensions`) that iterates all extensions, checks if the extendee has `message_set_wire_format = true`, and if so, validates that the extension field has `type == TYPE_MESSAGE` and `label == LABEL_OPTIONAL`. Error message should be: `"Extensions of MessageSets must be optional messages."` with line/col pointing at the extension field name.
+
+### Run 87 — Aggregate bool field with integer value `2` produces different error message (VICTORY)
+- **Bug**: When an aggregate option has `enabled: 2` where `enabled` is a `bool` field, both C++ protoc and Go protoc-go reject it — but with different error messages. C++ says "Integer out of range (2)" while Go says "Invalid value for boolean field "enabled". Value: "2"."
+- **Test**: `418_agg_bool_int_error` — all 9 profiles fail (error message mismatch).
+- **Root cause**: C++ protoc's text format parser treats bool as an integer type and validates range (only 0 and 1 are valid), producing "Integer out of range (2)". Go's `encodeAggregateFields` in `cli.go` has a separate bool-specific check that produces a more descriptive but non-matching error message.
+- **C++ protoc**: `test.proto:15:16: Error while parsing option value for "cfg": Integer out of range (2)`
+- **Go protoc-go**: `test.proto:15:16: Error while parsing option value for "cfg": Invalid value for boolean field "enabled". Value: "2".`
+- **Fix hint**: In `encodeAggregateFields`, when a bool field receives an out-of-range integer, match C++ error: `"Integer out of range (%s)"` instead of `"Invalid value for boolean field..."`.
+
+### Run 88 — Source-retention options not stripped from descriptor (VICTORY)
+- **Bug**: Go protoc does NOT strip source-retention options from the descriptor. When a field extension is declared with `[retention = RETENTION_SOURCE]`, C++ protoc removes the option value from the runtime descriptor (the option is only preserved in source code info). Go keeps it in the descriptor, producing extra bytes.
+- **Test**: `420_retention_source` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: Go's CLI code does not check the `retention` field on extension declarations. When encoding custom options into the descriptor, it includes ALL option values regardless of retention setting. C++ protoc checks `retention = RETENTION_SOURCE` and strips those option values from the serialized FileDescriptorProto before outputting descriptor sets or sending to plugins.
+- **C++ protoc**: Produces 148-byte descriptor without the `(debug_info)` option value in FieldOptions (stripped due to `RETENTION_SOURCE`).
+- **Go protoc-go**: Produces 158-byte descriptor with the `(debug_info)` option value still in FieldOptions — 10 bytes larger.
+- **Fix hint**: After encoding custom options into the descriptor, iterate all fields/messages/etc and check if any extension has `options.retention == RETENTION_SOURCE`. If so, remove those extension entries from the unknown fields. Or, during `resolveCustomFieldOptions`, skip encoding options whose extension declaration has `retention = RETENTION_SOURCE` unless generating source-retained output.
+- **Also affects**: Likely affects ALL custom option types (file, message, enum, service, method, oneof, enum_value, ext_range) — any custom option with `retention = RETENTION_SOURCE` will be incorrectly retained in the descriptor.
+
+### Run 89 — decode_raw cEscapeForDecode missing single quote escape (VICTORY)
+- **Bug**: Go's `cEscapeForDecode` function in `cli.go:7868` does NOT escape the single quote character `'` (0x27). C++ protoc uses `absl::CEscape` which escapes `'` as `\'`. When `--decode_raw` decodes a BytesType field containing a `'`, the output differs.
+- **Test**: Added `decode_raw_single_quote` to `STDIN_TESTS` in `scripts/test` with hex data `0a0127` (field 1, string `'`). 1 profile fails (`stdin@decode_raw_single_quote`).
+- **Root cause**: `cEscapeForDecode()` at cli.go:7868 has cases for `\n`, `\r`, `\t`, `"`, `\\` but is missing `case '\''`. The `'` character (0x27) is in the printable ASCII range (0x20-0x7E), so it falls through to the default branch and is printed unescaped. Meanwhile, the parser's `cEscape()` function at parser.go:6371 DOES have the `case '\''` and correctly escapes it.
+- **C++ protoc**: `1: "\'"` (single quote escaped with backslash)
+- **Go protoc-go**: `1: "'"` (single quote unescaped)
+- **Fix hint**: Add `case '\'': sb.WriteString(`\'`)` to `cEscapeForDecode()` between the `"` and `\\` cases. This matches what the parser's `cEscape` already does.
+
+### Run 90 — Positive sign `+` in float/double default value produces different error (VICTORY)
+- **Bug**: Go parser does not handle the `+` sign before default values for float/double fields. When `[default = +inf]` is used, Go consumes `+` as the value token (a symbol), then treats `inf` as unexpected. C++ protoc recognizes `+` at the position and produces a clear "Expected number" error.
+- **Test**: `422_positive_float_default` — all 9 profiles fail.
+- **Root cause**: `parseFieldOptions()` at parser.go:5737 only checks for `-` sign before default values (`if optName == "default" && p.tok.Peek().Value == "-"`), not `+`. When `+` is encountered, it becomes `valTok` with `valTok.Value = "+"`, then the float validation code at line 5792-5798 sees `valTok.Type == TokenIdent` with value `"inf"` is never reached (because `valTok` is `+` not `inf`). Go then fails at subsequent parsing.
+- **C++ protoc**: `test.proto:6:39: Expected number.` — error at column of `+`
+- **Go protoc-go**: `test.proto:6:40: Expected ";".\ntest.proto:6:40: Expected "]".` — error at column of `inf`, wrong error message
+- **Fix hint**: Add `+` handling alongside `-` handling: `if optName == "default" && (p.tok.Peek().Value == "-" || p.tok.Peek().Value == "+")`. When `+`, just consume it and skip (positive sign is no-op for the value). Or, replicate C++ behavior and reject `+` with "Expected number" error.
+- **Hex escape side note**: Also tested `\x4142` hex escape (testdata/421_hex_escape_length) — both C++ and Go limit `\x` to 2 hex digits, so no bug there. Test removed.
+
+### Run 94 — `--decode` mode not implemented, causes "Missing output directives" (VICTORY)
+- **Bug**: Go protoc-go completely ignores the `--decode=MESSAGE_TYPE` flag. The `parseArgs()` function at cli.go:1021 has `if strings.HasPrefix(arg, "--encode=") || strings.HasPrefix(arg, "--decode=") { continue }` — it silently skips these flags. When a valid proto file is provided with `--decode`, Go falls through to the "Missing output directives" validation error instead of entering decode mode.
+- **Test**: CLI test `cli@decode_with_file` — added to `CLI_TESTS` in `scripts/test`. Uses `--decode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto` with stdin data `x`.
+- **Root cause**: `--decode` and `--encode` flags are deliberately skipped in `parseArgs()` with a `continue` statement. No decode/encode mode is implemented. The `cfg` struct has no fields for decode/encode mode. The validation at line 430 (`if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers`) doesn't account for decode/encode being valid "output" modes.
+- **C++ protoc**: Enters decode mode, reads "x\n" (0x78 0x0a) from stdin, decodes as valid protobuf (field 15, varint 10), prints "15: 10" to stdout, exits 0.
+- **Go protoc-go**: Ignores `--decode`, processes proto file, hits "Missing output directives" check, prints error to stderr, exits 1.
+- **Discrepancy**: Exit code mismatch (C++ 0 vs Go 1) and stderr mismatch (C++ empty vs Go "Missing output directives.").
+- **Fix hint**: Implement `--decode` mode: (1) add `decodeType string` field to config, (2) parse `--decode=TYPE` in `parseArgs`, (3) skip "Missing output directives" check when decode/encode mode is active, (4) after building descriptor pool, read stdin, decode binary proto using the specified message type, print text format to stdout.
+- **Also affects**: `--encode=MESSAGE_TYPE` is similarly unimplemented (same `continue` skip).
+
+### Run 95 — decode_raw fails on group wire types (VICTORY)
+- **Bug**: Go's `--decode_raw` mode fails to parse protobuf data containing group wire types (wire type 3 = start group, wire type 4 = end group). C++ protoc correctly decodes groups and prints them with `{ }` notation. Go fails with "Failed to parse input." exit code 1.
+- **Test**: Added `decode_raw_group` to `STDIN_TESTS` in `scripts/test` with hex data `0b0a0568656c6c6f0c` (field 1 start group, field 1 string "hello", field 1 end group). 1 profile fails (`stdin@decode_raw_group`).
+- **Root cause**: `validateRawProto()` at cli.go:7870-7880 has a `StartGroupType` case that doesn't actually validate group contents. After consuming the start tag, it checks the first inner tag — if it's NOT the matching end group tag, it immediately returns `"group validation not implemented"` instead of actually parsing/skipping the inner fields. The validation failure at line 413 (`if err := validateRawProto(data); err != nil`) blocks `decodeRawProto()` (which DOES handle groups correctly at line 7819-7835) from ever being called.
+- **C++ protoc**: Decodes group correctly, prints `1 {\n  1: "hello"\n}` (exit 0).
+- **Go protoc-go**: `Failed to parse input.` (exit 1).
+- **Fix hint**: In `validateRawProto`, the `StartGroupType` case needs to recursively validate inner fields (like `decodeRawField` does in `decodeRawProto`). Instead of `return fmt.Errorf("group validation not implemented")`, it should consume each inner field by calling itself recursively or by using a helper that skips fields based on wire type, until it finds the matching `EndGroupType` tag.
+- **Also affects**: Any protobuf binary data containing group wire types (proto2 groups, MessageSet wire format) will fail `--decode_raw`.
+
+### Run 96 — Non-ASCII codepoint warnings missing from Go tokenizer (VICTORY)
+- **Bug**: C++ protoc's tokenizer emits "Interpreting non ascii codepoint NNN." warning messages when it encounters non-ASCII bytes in the input (outside of string literals). Go's tokenizer silently skips or rejects non-ASCII bytes without emitting these diagnostic messages. When a .proto file contains non-ASCII characters in identifiers (e.g., `héllo` with UTF-8 é = bytes 0xC3 0xA9), C++ produces warning lines for each non-ASCII byte before the parse error, while Go produces only the parse error.
+- **Test**: `427_non_ascii_ident` — all 9 profiles fail.
+- **Root cause**: C++ `io/tokenizer.cc` has a `TryConsumeOne` path that detects non-ASCII bytes and calls `AddError("Interpreting non ascii codepoint %d.", c)` before continuing. Go's `io/tokenizer/tokenizer.go` has no equivalent warning path — it simply treats non-ASCII bytes as unexpected characters and produces a generic parse error.
+- **C++ protoc**: `test.proto:2:10: Interpreting non ascii codepoint 195.` + `test.proto:2:10: Expected ";"` + `test.proto:2:11: Interpreting non ascii codepoint 169.`
+- **Go protoc-go**: `test.proto:2:10: Expected ";"` (missing the two codepoint warnings).
+- **Fix hint**: In Go's tokenizer, when encountering a byte with value >= 128, emit a warning/error `Interpreting non ascii codepoint %d.` (using the raw byte value, not the Unicode codepoint) before producing the parse error. This matches C++ behavior which reports each individual byte of multi-byte UTF-8 sequences.
+
+### Run 97 — Edition `json_format = LEGACY_BEST_EFFORT` doesn't downgrade JSON name conflict to warning (VICTORY)
+- **Bug**: Go does NOT downgrade JSON name conflicts to warnings when `features.json_format = LEGACY_BEST_EFFORT` is set at the file level in an edition 2023 proto. When a message has two fields whose default JSON names collide (`foo_bar` → `fooBar` and `fooBar` → `fooBar`), C++ protoc recognizes the `LEGACY_BEST_EFFORT` feature and emits a WARNING (prefixed with "warning:") while still producing the descriptor (exit code 0). Go ignores the feature and treats the conflict as a hard error (exit code 1), refusing to produce the descriptor.
+- **Test**: `428_json_format_legacy` — all 9 profiles fail (C++ succeeds, Go errors).
+- **Root cause**: Go's `validateJsonNameConflicts()` in `cli.go` always treats JSON name conflicts as errors. It does not check the file's `features.json_format` value. When `LEGACY_BEST_EFFORT` is set, C++ protoc's `ValidateJsonNameConflicts` emits a `WARNING` instead of an `ERROR` and continues compilation. Go has no warning mechanism and no check for this feature.
+- **C++ protoc**: `test.proto:9:9: warning: The default JSON name of field "fooBar" ("fooBar") conflicts with the default JSON name of field "foo_bar".` (exit 0, descriptor produced).
+- **Go protoc-go**: `test.proto:9:9: The default JSON name of field "fooBar" ("fooBar") conflicts with the default JSON name of field "foo_bar".` (exit 1, no descriptor).
+- **Fix hint**: In `validateJsonNameConflicts()`, check if `fd.GetSyntax() == "editions"` and `fd.GetOptions().GetFeatures().GetJsonFormat() == descriptorpb.FeatureSet_LEGACY_BEST_EFFORT`. If true, either skip JSON name conflict detection entirely, or change the errors to warnings (print to stderr with "warning:" prefix but don't add to the error list). The "warning:" prefix on the message AND the successful exit code are both needed to match C++ behavior.
+- **Also affects**: Message-level `features.json_format = LEGACY_BEST_EFFORT` should also downgrade conflicts within that specific message (not file-wide). Nested message inheritance of `json_format` feature should also be respected.
+
+### Run 98 — Edition open enum without zero first value not rejected (VICTORY)
+- **Bug**: Go does NOT validate that OPEN enums in edition 2023 must have their first value equal to zero. In edition 2023, the default `features.enum_type` is `OPEN`, and OPEN enums require the first value to be 0 (same as proto3). When an edition file has `enum Priority { HIGH = 1; LOW = 2; }` (first value is 1, not 0), C++ protoc rejects it with "The first enum value must be zero for open enums." Go silently accepts it and produces a valid descriptor.
+- **Test**: `429_edition_open_enum_zero` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `collectProto3EnumZeroErrors` is only called from `validateProto3()` at cli.go:2412 and 2897, which only runs for `fd.GetSyntax() == "proto3"` files (checked at line 2407). There is NO equivalent validation for editions files. Editions files with default `features.enum_type = OPEN` should have the same first-value-zero requirement, but no validation code checks this.
+- **C++ protoc**: `test.proto:6:10: The first enum value must be zero for open enums.` (exit code 1).
+- **Go protoc-go**: Silently accepts, produces valid descriptor (exit code 0).
+- **Fix hint**: Add a new validation function (e.g., `validateEditionsOpenEnumZero`) that: (1) iterates edition files, (2) for each enum (top-level and nested), checks if the effective `enum_type` is OPEN (check enum-level features override, then file-level features, then default for edition 2023 which is OPEN), (3) if OPEN and first value != 0, emit the same error. Call it from the Phase 2 validation block alongside the other editions validations.
+- **Also affects**: Same validation is missing for nested enums inside messages in editions files. Also, enums explicitly set to `features.enum_type = OPEN` (redundant with default) should also be validated. Enums set to `features.enum_type = CLOSED` should be exempt.
+
+### Run 99 — Edition reserved names must be identifiers not string literals (VICTORY)
+- **Bug**: Go does NOT validate that reserved names in edition 2023 files must use bare identifiers, not string literals. In proto2/proto3, `reserved "foo"` uses quoted strings. In editions, the syntax changes to `reserved foo` (bare identifier). C++ protoc rejects `reserved "old_field"` in edition files with "Reserved names must be identifiers in editions, not string literals." Go silently accepts the string literal form.
+- **Test**: `430_edition_reserved_string_lit` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's parser accepts `reserved "old_field"` in edition files the same way it does for proto2/proto3. There is no validation that checks whether edition files use string literals vs bare identifiers for reserved names. The C++ parser has a specific check in `Parser::ParseReservedNames()` that rejects string literals when `is_editions` is true.
+- **C++ protoc**: `test.proto:11:12: Reserved names must be identifiers in editions, not string literals.` (exit code 1).
+- **Go protoc-go**: Silently accepts, produces valid descriptor (exit code 0).
+- **Fix hint**: In the parser's `parseReservedNames` (or wherever reserved names are parsed), check if the file syntax is `editions`. If so, reject string literal tokens and require identifier tokens. Alternatively, add a validation pass in cli.go that checks `fd.GetSyntax() == "editions"` files and rejects reserved name entries that look like they came from string literals (though this info may be lost after parsing).
+
+### Run 100 — Proto3 enum value prefix conflict not validated (VICTORY)
+- **Bug**: Go does NOT validate that proto3 enum value names don't conflict when the enum type name prefix is stripped and case is ignored. In proto3, C++ protoc checks that no two enum values resolve to the same name after removing the enum type's name as a prefix (case-insensitive). For example, in `enum Status { STATUS_UNKNOWN = 0; UNKNOWN = 1; }`, stripping the `STATUS_` prefix from `STATUS_UNKNOWN` gives `UNKNOWN`, which conflicts with the literal `UNKNOWN` value.
+- **Test**: `431_enum_prefix_conflict` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's enum validation has no prefix-stripping conflict check. C++ protoc's `DescriptorBuilder::BuildEnumValue` calls `EnumValueToPascalCase` and checks for prefix conflicts among all enum values, ensuring that values like `STATUS_UNKNOWN` and `UNKNOWN` are flagged. Go has `validateEnumValueConflicts` (or similar) but only checks exact name duplicates, not prefix-stripped case-insensitive duplicates.
+- **C++ protoc**: `test.proto:7:3: Enum name UNKNOWN has the same name as STATUS_UNKNOWN if you ignore case and strip out the enum name prefix (if any). (If you are using allow_alias, please assign the same number to each enum value name.)`
+- **Go protoc-go**: Silently accepts, produces valid descriptor (exit code 0).
+- **Fix hint**: Add a validation function that, for proto3 (and editions OPEN) enums, strips the uppercase enum type name prefix from each value name, converts to a canonical form (e.g., uppercase), and checks for duplicates. The prefix to strip is the enum type name converted to UPPER_SNAKE_CASE followed by `_`. If two values have the same canonical name after stripping and case folding, emit the C++ error message. The check should also respect `allow_alias` — if aliased values (same number) have conflicting stripped names, it's allowed.
+- **Also affects**: Same validation should apply to editions OPEN enums (default enum_type in edition 2023). Nested enums inside messages should also be checked. The prefix stripping algorithm must match C++ exactly — it's case-insensitive and strips the enum name as an upper-case prefix.
+
+### Run 101 — Cross-file duplicate symbol not detected (VICTORY)
+- **Bug**: Go does NOT detect when a symbol (message, enum, service, etc.) with the same fully-qualified name is defined in two different files. When file `b.proto` imports `a.proto` and both define `package.Shared`, C++ protoc rejects the redefinition with `"package.Shared" is already defined in file "a.proto"`. Go silently accepts it and produces a descriptor.
+- **Test**: `432_cross_file_dup` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: Go's descriptor pool / type resolution does not track which symbols have been defined by which file and check for cross-file duplicates. C++ protoc's `DescriptorPool::BuildFile` maintains a global symbol table and checks every new definition against it. When adding `crossdup.Shared` from `test.proto`, it finds it already exists from `dep.proto` and rejects it.
+- **C++ protoc**: `test.proto:7:9: "crossdup.Shared" is already defined in file "dep.proto".` (exit code 1).
+- **Go protoc-go**: Silently accepts, produces valid descriptor (exit code 0).
+- **Fix hint**: In the descriptor pool's `BuildFile` equivalent (or during symbol registration), maintain a map of fully-qualified symbol names to their defining file. Before registering a new symbol, check if it already exists in the map. If so, emit an error: `"<fqn>" is already defined in file "<orig_file>".` This affects all symbol types: messages, enums, services, extensions, and their nested types.
+- **Also affects**: Same bug likely exists for conflicting enum values, service methods, and extension field numbers across files. Any cross-file duplicate detection is probably missing.
+
+### Run 102 — Duplicate cross-file extension number treated as error instead of warning (VICTORY)
+- **Bug**: Go treats duplicate extension field numbers across files as a hard ERROR (exit 1), while C++ protoc treats them as a WARNING (exit 0) and still produces the descriptor. When `dep.proto` extends `Base` with field number 100 and `test.proto` also extends `Base` with field number 100, C++ protoc emits a warning and continues. Go emits an error and stops.
+- **Test**: `433_dup_ext_num` — all 9 profiles fail (C++ succeeds with warning, Go fails with error).
+- **Root cause**: Go's extension number duplicate detection uses `errors` (hard failures) instead of `warnings` (continue compilation). C++ protoc's `DescriptorBuilder` detects the duplicate but classifies it as a warning, printing "warning: Extension number 100 has already been used..." to stderr while still producing a valid descriptor. Go's validation emits the same check as a fatal error.
+- **C++ protoc**: `test.proto:6:27: warning: Extension number 100 has already been used in "dupextnum.Base" by extension "dupextnum.ext_a" defined in dep.proto.` (exit code 0, descriptor produced).
+- **Go protoc-go**: `test.proto:6:27: Extension number 100 has already been used in "dupextnum.Base" by extension "dupextnum.ext_a".` (exit code 1, no descriptor).
+- **Fix hint**: Change the extension number duplicate check from a hard error to a warning. Print to stderr with "warning:" prefix but don't add to the error list. Also, the Go error message is missing "defined in dep.proto" — add the source file info.
+- **Also affects**: Same warning-vs-error mismatch may exist for other cross-file validation checks that C++ treats as warnings.
+
+### Run 103 — Incomplete float exponent `1e` accepted by Go, rejected by C++ (VICTORY)
+- **Bug**: Go's tokenizer does NOT validate that `e`/`E` in a float literal must be followed by at least one digit. When `[default = 1e]` is used, Go tokenizes `1e` as a valid `TokenFloat` and stores `default_value: "1e"` in the descriptor. C++ protoc rejects it with `"e" must be followed by exponent.`
+- **Test**: `434_incomplete_exponent` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `readNumber()` in `io/tokenizer/tokenizer.go:486-493` consumes the `e` character, optionally `+`/`-`, and then greedily consumes digits. But if no digits follow the `e` (or `e+`/`e-`), it doesn't report an error — the exponent part is simply empty. The token `1e` is returned as type `TokenFloat`. Same bug exists in `readFloatStartingWithDot()` at lines 514-521.
+- **C++ protoc**: `test.proto:5:40: "e" must be followed by exponent.` (exit code 1).
+- **Go protoc-go**: Accepts `1e` as valid float, stores `default_value: "1e"` in descriptor (exit code 0).
+- **Fix hint**: After consuming `e`/`E` and optional sign, check if at least one digit was consumed. If not, emit error `"\"e\" must be followed by exponent."` at the position of the `e` character. Same fix needed in `readFloatStartingWithDot()`.
+- **Also affects**: `1E`, `1e+`, `1e-`, `.5e`, `.5E+`, etc. — any float literal where `e`/`E` is not followed by digits. Also affects float literals in custom option values, aggregate option values, and anywhere else the tokenizer is used.
+
+### Run 104 — Positive sign `+` in field default value produces wrong error (VICTORY)
+- **Bug**: Go's parser doesn't handle the `+` sign before default values. When a field has `[default = +42]`, Go's parser treats `+` as the value token (a Symbol), then tries to validate it as an integer. This produces "Integer out of range." followed by cascade errors "Expected ';'" and "Expected ']'". C++ protoc gives a single clean error: "Expected integer for field default value."
+- **Test**: `435_positive_default` — all 9 profiles fail (both reject, but error messages differ).
+- **Root cause**: `parseFieldOptions()` at parser.go:5787-5790 checks for `-` sign before default values but does NOT check for `+`. When `+` is encountered, it's consumed as `valTok` (a Symbol). The parser then tries to process `+` as the default value string, `strconv.ParseUint("+", 0, 64)` fails, and it reports "Integer out of range" (misleading). Then `42` is left in the token stream, confusing subsequent parsing.
+- **C++ protoc**: `test.proto:7:35: Expected integer for field default value.` (single error, clean).
+- **Go protoc-go**: `test.proto:7:35: Integer out of range.` + `test.proto:7:36: Expected ";".` + `test.proto:7:36: Expected "]".` (three errors, misleading).
+- **Fix hint**: After checking for `-`, also check for `+` sign: `if optName == "default" && p.tok.Peek().Value == "+" { p.tok.Next() }` — just skip it since positive sign is a no-op for numeric values. Or, match C++ behavior: if `+` is seen, emit "Expected integer for field default value." error.
+
+### Run 105 — Missing "Need space between number and identifier" tokenizer warning (VICTORY)
+- **Bug**: Go's tokenizer does NOT emit the "Need space between number and identifier." warning when a number token is immediately followed by an alphabetic character without whitespace. When a proto has `[default = 0b1010]` (binary literal syntax, not valid in proto), C++ tokenizer reads `0` as a number, sees `b` immediately after, and emits the specific warning before the parse error. Go's tokenizer reads `0` as a number and `b1010` as a separate identifier, producing only a generic "Expected ";"." error.
+- **Test**: `438_number_ident_space` — all 9 profiles fail.
+- **Root cause**: Go's `readNumber()` in `io/tokenizer/tokenizer.go:455` does not check if the character immediately following a number token is an alphabetic character. C++ tokenizer's `ConsumeNumber` checks this and calls `AddError("Need space between number and identifier.")` when it detects a number-to-identifier transition without whitespace.
+- **C++ protoc**: `test.proto:4:38: Need space between number and identifier.` + `test.proto:4:38: Expected "]".`
+- **Go protoc-go**: `test.proto:4:38: Expected ";".` + `test.proto:4:38: Expected "]".`
+- **Fix hint**: After `readNumber()` finishes building the number token, check if `t.pos < len(t.input)` and the next character is alphabetic (`isIdentStart(t.input[t.pos])`). If so, emit `TokenError{..., Message: "Need space between number and identifier."}`. This matches C++ behavior in `io/tokenizer.cc`'s `Tokenizer::Next()` where it checks `current_char_ == '_' || ascii_isalpha(current_char_)` after consuming a number.
+
+### Run 106 — Unknown edition error message differs in capitalization and punctuation (VICTORY)
+- **Bug**: Go's `parseEdition()` produces `unknown edition "2025"` (lowercase, no period) while C++ protoc produces `Unknown edition "2025".` (capital U, trailing period). The error message format doesn't match.
+- **Test**: `439_unknown_edition` — all 9 profiles fail.
+- **Root cause**: `parseEdition()` in `compiler/parser/parser.go:548` uses `fmt.Errorf("%d:%d: unknown edition %q", ...)` — lowercase `u` and no trailing period. C++ protoc's `Parser::Parse()` in `compiler/parser.cc` uses `Unknown edition "%s".` with capital `U` and a trailing period.
+- **C++ protoc**: `test.proto:1:11: Unknown edition "2025".`
+- **Go protoc-go**: `test.proto:1:11: unknown edition "2025"`
+- **Fix hint**: Change the format string in `parseEdition()` from `"unknown edition %q"` to `"Unknown edition %q."` (capitalize and add period). Also note Go uses `%q` which adds Go-style quoting — verify that `%q` produces the same output as C++'s `"%s"` with explicit quotes.
+
+### Run 107 — jstype = JS_NORMAL on non-int64 field incorrectly rejected (VICTORY)
+- **Bug**: Go's `collectJstypeErrors()` rejects `jstype = JS_NORMAL` on non-int64 fields, but C++ protoc accepts it. `JS_NORMAL` is the default value, so explicitly setting it is harmless. C++ only rejects non-default jstype values (like `JS_STRING` or `JS_NUMBER`) on non-int64 fields.
+- **Test**: `440_jstype_normal_nonint64` — all 9 profiles fail.
+- **Root cause**: `collectJstypeErrors()` at cli.go:1349 checks `field.Options != nil && field.Options.Jstype != nil` but does NOT filter out `JS_NORMAL`. The extension-level check at cli.go:1337 DOES have `GetJstype() != JS_NORMAL`, but the field-level check in the inner function is missing this condition.
+- **C++ protoc**: Accepts `string name = 1 [jstype = JS_NORMAL]` fine, produces valid descriptor (exit 0).
+- **Go protoc-go**: Rejects with `jstype is only allowed on int64, uint64, sint64, fixed64 or sfixed64 fields.` (exit 1).
+- **Fix hint**: Add `field.GetOptions().GetJstype() != descriptorpb.FieldOptions_JS_NORMAL` condition to the check in `collectJstypeErrors()`, matching what the extension-level check does. I.e., change the condition to: `if field.Options != nil && field.Options.Jstype != nil && field.GetOptions().GetJstype() != descriptorpb.FieldOptions_JS_NORMAL {`
+
+### Run 108 — Validation error ordering differs between C++ and Go (VICTORY)
+- **Bug**: When a message has multiple validation errors (duplicate field number + reserved number conflict + reserved name conflict), Go outputs them in a different order than C++ protoc. C++ runs reserved-number and reserved-name checks before duplicate-field-number checks, but Go runs duplicate-field-number first.
+- **Test**: `441_error_ordering` — all 9 profiles fail.
+- **Root cause**: Go's validation functions in `cli.go` run field number duplication checks before reserved range/name checks. C++ protoc's `DescriptorBuilder::CrossLinkField` runs reserved checks first (checking each field against reserved ranges and names), then does duplicate field number validation afterward. The order of error accumulation differs.
+- **C++ protoc**: `Field "ccc" uses reserved number 3.` → `Field name "ccc" is reserved.` → `Field number 1 has already been used...` → `Suggested field numbers...`
+- **Go protoc-go**: `Field number 1 has already been used...` → `Field "ccc" uses reserved number 3.` → `Field name "ccc" is reserved.` → `Suggested field numbers...`
+- **Fix hint**: Reorder the validation calls in Go to match C++ ordering. In the function that validates message fields, run reserved-number and reserved-name checks before duplicate-field-number checks. This likely involves swapping the order of `collectDuplicateFieldNumberErrors` and `collectReservedFieldErrors` (or equivalent) calls.
+
+### Run 109 — Enum reserved -2147483648 (INT32_MIN) rejected by Go, accepted by C++ (VICTORY)
+- **Bug**: Go's `parseEnumReserved` rejects `reserved -2147483648;` (INT32_MIN) in enum reserved ranges with "Integer out of range." C++ protoc accepts it fine. The value `-2147483648` is a valid int32 value (it's exactly `INT32_MIN`), but Go checks the unsigned magnitude `2147483648 > MaxInt32` BEFORE applying the negation sign.
+- **Test**: `442_enum_reserved_int32_min` — all 9 profiles fail (C++ succeeds, Go errors).
+- **Root cause**: `parseEnumReserved()` at parser.go:3472-3474 does `parseIntLenient(numTok.Value, 0, 64)` which returns `2147483648` for the token `"2147483648"`. Then checks `startNum > math.MaxInt32` → `2147483648 > 2147483647` → TRUE → error. The negation is applied AFTER this check at line 3476-3480, but we never get there because the pre-negation range check already rejected the value.
+- **C++ protoc**: Accepts `reserved -2147483648;` fine, produces valid descriptor (exit 0).
+- **Go protoc-go**: `test.proto:9:13: Integer out of range.` (exit 1).
+- **Fix hint**: Move the `startNum > math.MaxInt32` check to AFTER negation. Or allow `startNum == math.MaxInt32 + 1` when `startNeg` is true (since `-(MaxInt32+1) == MinInt32`). Same issue exists for the end-of-range value at line 3518-3524 — `en > math.MaxInt32` would also reject `-2147483648` as the end of a range.
+- **Also affects**: Same bug likely exists for `reserved -2147483648 to 0;` (would fail on the start value) and `reserved 0 to -2147483648;` (would fail on the end value if negative). Also, message reserved ranges at parser.go:968 may have a similar issue if enum-style negative values are supported there (they aren't in proto2/proto3 messages, but editions may differ).
+
+### Run 110 — --direct_dependencies flag silently ignored by Go (VICTORY)
+- **Bug**: Go's CLI silently skips the `--direct_dependencies=` flag (just `continue`s past it). C++ protoc uses this flag to validate that all imports are declared as direct dependencies — if an import is missing from the list, C++ emits an error. Go doesn't implement any of this validation, so it always succeeds even when direct dependencies are violated.
+- **Test**: CLI test `cli@direct_dependencies` — exit code mismatch (C++ exits 1, Go exits 0).
+- **Root cause**: `cli.go:1065` has `if strings.HasPrefix(arg, "--direct_dependencies=") { continue }` — the flag value is parsed but completely discarded. No `directDependencies` field in the config, no validation in the import resolution phase. The related `--direct_dependencies_violation_msg` flag isn't even recognized (would fail with "Unknown flag").
+- **C++ protoc**: `test.proto: File is imported but not declared in --direct_dependencies: dep.proto` (exit 1).
+- **Go protoc-go**: Silently succeeds (exit 0), no error about undeclared dependency.
+- **Fix hint**: (1) Parse `--direct_dependencies=` value into a set of allowed imports (colon-delimited). (2) Also parse `--direct_dependencies_violation_msg=`. (3) After resolving imports, check each import against the allowed set. (4) If missing, emit the violation message (default: "File is imported but not declared in --direct_dependencies: %s").
+- **Also affects**: `--direct_dependencies_violation_msg` flag is completely unrecognized — Go fails with "Unknown flag" instead of accepting it.
+
+### Run 111 — \U escape above U+10FFFF accepted by Go, rejected by C++ (VICTORY)
+- **Bug**: Go's tokenizer `appendUTF8()` silently handles code points above `U+10FFFF` by writing the literal `\U%08x` text back into the string, instead of rejecting them. C++ protoc's tokenizer validates that `\U` escapes have code points ≤ `0x10FFFF` and rejects values above that range with a clear error message.
+- **Test**: `444_unicode_escape_range` — all 9 profiles fail (C++ errors, Go succeeds).
+- **Root cause**: `appendUTF8()` in `io/tokenizer/tokenizer.go` has a branch for `cp > 0x10FFFF` that does `fmt.Fprintf(sb, "\\U%08x", cp)` — writing the escape sequence as literal text. This means the string gets a literal backslash-U followed by hex digits instead of decoded bytes. The tokenizer never errors on this. C++ protoc's tokenizer checks `if (code_point > 0x10FFFF)` and emits `"Expected eight hex digits up to 10ffff for \\U escape sequence"`.
+- **C++ protoc**: `test.proto:9:41: Expected eight hex digits up to 10ffff for \U escape sequence` (exit code 1).
+- **Go protoc-go**: Silently accepts, stores literal `\U00200000` text as `default_value` in descriptor (exit code 0).
+- **Fix hint**: In `appendUTF8()`, instead of writing the literal escape text for `cp > 0x10FFFF`, the tokenizer should emit an error: `TokenError{..., Message: "Expected eight hex digits up to 10ffff for \\U escape sequence."}`. Or add a check in the `\U` escape handler in `readString()` before calling `appendUTF8()`.
+- **Also affects**: Any string literal with `\U` code points from `0x110000` to `0xFFFFFFFF`. Same issue exists for `\u` escapes combined into surrogates that produce values > `0x10FFFF` (though that's unlikely since surrogates map to supplementary plane values ≤ `0x10FFFF`).
+
+### Run 112 — --fatal_warnings flag silently ignored by Go (VICTORY)
+- **Bug**: Go's CLI recognizes the `--fatal_warnings` flag but silently ignores it (`continue` at cli.go:1049). C++ protoc uses this flag to turn warnings into fatal errors (exit code 1). When both compilers emit an identical warning (e.g., cross-file duplicate extension number), C++ exits 1 with `--fatal_warnings` while Go exits 0.
+- **Test**: CLI test `cli@fatal_warnings_ext` — exit code mismatch (C++ exits 1, Go exits 0).
+- **Root cause**: `cli.go:1049` has `if arg == "--fatal_warnings" { continue }` — the flag is parsed but completely discarded. No `fatalWarnings` boolean is stored, and warnings are never checked for fatal promotion before exit.
+- **C++ protoc**: `test.proto:7:27: warning: Extension number 100 has already been used...` (exit code 1 with --fatal_warnings).
+- **Go protoc-go**: Same warning message (exit code 0, --fatal_warnings ignored).
+- **Fix hint**: (1) Parse `--fatal_warnings` into a boolean config field. (2) After compilation, if `fatalWarnings` is true and any warnings were emitted, set exit code to 1. Or, before printing warnings, promote them to errors (remove "warning:" prefix) and add to the error list.
+- **Also affects**: Any other scenario that produces warnings (e.g., unused imports, JSON name conflicts in proto2) would also be affected if Go ever implements those warnings.
+
+### Run 113 — --experimental_allow_proto3_optional flag not recognized by Go (VICTORY)
+- **Bug**: Go's CLI does not recognize `--experimental_allow_proto3_optional` as a valid boolean flag. C++ protoc recognizes it as a no-op flag (proto3 optional is now fully supported) and silently accepts it. Go falls through to the generic unknown-flag handler and rejects it with "Missing value for flag: --experimental_allow_proto3_optional".
+- **Test**: CLI test `cli@experimental_allow_proto3_optional` — exit code and stderr mismatch.
+- **Root cause**: Go's `parseArgs()` in `cli.go` has no handler for `--experimental_allow_proto3_optional`. The flag starts with `--` and has no `=`, so it reaches the fallback at line 1171 which returns `"Missing value for flag: %s"`. C++ protoc has this as a registered boolean flag that's accepted but ignored.
+- **C++ protoc**: Silently accepts flag, produces valid descriptor (exit code 0, empty stderr).
+- **Go protoc-go**: `Missing value for flag: --experimental_allow_proto3_optional` (exit code 1).
+- **Fix hint**: Add `if arg == "--experimental_allow_proto3_optional" { continue }` to the flag parsing section in `parseArgs()`, alongside the other no-op flags like `--deterministic_output` and `--retain_options`.
+
+### Run 114 — Blank line between comments creates spurious empty detached comment (VICTORY)
+- **Bug**: Go's comment collector emits a spurious empty `leading_detached_comments: ""` entry when there is a blank line between a line comment and a block comment before a token. C++ protoc treats the blank line as a separator between the two comment groups but does NOT create an empty string entry.
+- **Test**: `447_detached_comment_blank_line` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: In Go's `collectComments()` (or equivalent comment tracking in the tokenizer), when a blank line is encountered between two comments, the tokenizer creates an empty comment group entry `""` for the gap. C++ protoc's comment collector recognizes the blank line as a boundary between detached comment groups but doesn't insert an empty string — it just starts a new group for the next comment.
+- **C++ protoc**: `leading_detached_comments: " Line comment\n"` + `leading_detached_comments: " Block comment "` (2 entries).
+- **Go protoc-go**: `leading_detached_comments: " Line comment\n"` + `leading_detached_comments: ""` + `leading_detached_comments: " Block comment "` (3 entries, extra empty one).
+- **Fix hint**: In the comment collector, when a blank line separates two comment groups, don't emit an empty detached comment for the blank line. Instead, just close the current group and start a new one. The blank line is a separator, not a comment.
+
+### Run 115 — decode_raw rejects overflowed 10-byte varint that C++ accepts (VICTORY)
+- **Bug**: Go's `--decode_raw` rejects a 10-byte varint where the 10th byte has value 0x02 (which overflows uint64). C++ protoc accepts it and wraps the value to 0. The protobuf wire format spec allows up to 10 bytes for a varint, but Go's `protowire.ConsumeVarint` rejects 10th bytes > 0x01 since only 1 bit (bit 63) fits in uint64.
+- **Test**: STDIN_TEST `decode_raw_overflow_varint` with hex `0880808080808080808002` — 1 test fails.
+- **Root cause**: Go's `google.golang.org/protobuf/encoding/protowire.ConsumeVarint` strictly validates that the 10th byte of a varint is ≤ 0x01. C++ protobuf's `CodedInputStream::ReadVarint64` does not check for overflow — it simply shifts and ORs the bits, allowing wrap-around. The varint `0x80,0x80,...,0x80,0x02` decodes to 2 << 63 = 2^64 which wraps to 0 in C++ uint64 but is rejected by Go.
+- **C++ protoc**: Outputs `1: 0` (accepts and wraps, exit code 0).
+- **Go protoc-go**: Outputs `Failed to parse input.` on stderr (exit code 1).
+- **Fix hint**: In the decode_raw implementation, use a custom varint reader that allows overflow (matching C++ behavior), or catch the protowire error and manually decode overflowed varints by masking to 64 bits.
+
+### Run 119 — --decode mode prints enum values as numbers instead of names (VICTORY)
+- **Bug**: Go's `printTextProto` function in `--decode` mode prints enum field values as raw numeric values (e.g., `color: 1`) instead of looking up the enum value name (e.g., `color: COLOR_RED`). C++ protoc's text format printer always resolves enum values to their symbolic names.
+- **Test**: Decode test `decode@enum_value` — stdout mismatch. Added `run_decode_test` function and `DECODE_TESTS` array to `scripts/test`. Test proto in `testdata/448_decode_enum/test.proto`.
+- **Root cause**: `printTextProto()` in `cli.go` handles varint fields by printing the raw integer value. It does not check if the field's type is `TYPE_ENUM`, look up the enum's `EnumDescriptorProto`, and find the matching `EnumValueDescriptorProto` to print its name.
+- **C++ protoc**: `color: COLOR_RED` + `label: "world"` (exit code 0).
+- **Go protoc-go**: `color: 1` + `label: "world"` (exit code 0).
+- **Fix hint**: In `printTextProto`, when a varint field has `GetType() == TYPE_ENUM`, look up the field's `GetTypeName()` in `allMsgs` (or a separate enum map), find the `EnumValueDescriptorProto` whose `GetNumber()` matches the varint value, and print its `GetName()` instead of the numeric value.
+
+### Run 120 — --decode mode float field prints too many digits (VICTORY)
+- **Bug**: Go's `formatTextFloat` converts `float32` to `float64` and then calls `formatTextDouble` which uses `strconv.FormatFloat(v, 'g', -1, 64)` with bitSize=64. This produces the shortest decimal that uniquely represents the **float64** value, not the original **float32** value. For most float32 values, this outputs way too many digits. C++ protoc uses `SimpleFtoa` which uses `snprintf(buf, "%.6g", val)` with float32 precision.
+- **Test**: Decode test `decode@float_value` — stdout mismatch. Proto in `testdata/449_decode_float/test.proto`. Hex data: `0dcdcccc3d1203666f6f` (field 1 float32 0.1, field 2 string "foo").
+- **Root cause**: `formatTextFloat(v float32)` at cli.go:9141 does `return formatTextDouble(float64(v))`. This promotes the float32 to float64, losing the information about the original precision. `formatTextDouble` then calls `FormatFloat(v, 'g', -1, 64)` which finds the shortest decimal for the float64 representation. Since `float64(float32(0.1))` = `0.10000000149011612` (which is NOT `0.1` as a float64), Go prints all those digits.
+- **C++ protoc**: `value: 0.1` (SimpleFtoa uses float32-precision formatting).
+- **Go protoc-go**: `value: 0.10000000149011612` (formatTextDouble uses float64-precision formatting).
+- **Fix hint**: Change `formatTextFloat` to use `strconv.FormatFloat(float64(v), 'g', -1, 32)` with bitSize=32 (not 64). The `32` tells FormatFloat to find the shortest decimal that uniquely represents the value as a float32, matching C++ SimpleFtoa behavior. Alternatively, implement float32-specific formatting: try 6 significant digits, check if round-trip succeeds, then try 9 digits.
+- **Also affects**: ANY float32 value that's not exactly representable in a short decimal will be over-specified. Examples: 0.1 → "0.10000000149011612", 1/3 → "0.3333333432674408", 0.3 → "0.30000001192092896". This affects ALL `--decode` output for any message with float fields.
+
+### Run 121 — Decode mode prints TYPE_INT64 as unsigned instead of signed (VICTORY)
+- **Bug**: Go's `printKnownField` for `TYPE_INT64` prints `e.varint` (which is `uint64`) with `%d` without casting to `int64`. For negative values like -1, the wire format stores `0xFFFFFFFFFFFFFFFF` as the varint. Go prints `18446744073709551615` (unsigned interpretation). C++ protoc casts to `int64` and prints `-1`.
+- **Test**: Decode test `decode@neg_int64` — stdout mismatch (1 test fails).
+- **Root cause**: `printKnownField` at cli.go:9016-9018 has `case TYPE_INT64, TYPE_UINT64: fmt.Fprintf(w, "%s%s: %d\n", prefix, name, e.varint)`. Both TYPE_INT64 and TYPE_UINT64 share the same case, printing `e.varint` (uint64) directly. TYPE_INT64 should cast to `int64(e.varint)` to get the signed representation, while TYPE_UINT64 should keep unsigned. These two types should be separate cases.
+- **C++ protoc**: `value: -1` (interprets varint as signed int64).
+- **Go protoc-go**: `value: 18446744073709551615` (prints varint as unsigned uint64).
+- **Fix hint**: Split the case into two: `case TYPE_INT64: fmt.Fprintf(w, "%s%s: %d\n", prefix, name, int64(e.varint))` and `case TYPE_UINT64: fmt.Fprintf(w, "%s%s: %d\n", prefix, name, e.varint)`. The cast `int64(e.varint)` converts two's complement back to signed representation.
+- **Also affects**: ANY negative int64 value decoded with `--decode` will show as a large positive number. This is a fundamental decode correctness bug for signed 64-bit integers.
+
+### Run 122 — Decode mode appends spurious trailing dot to integer-valued doubles (VICTORY)
+- **Bug**: Go's `formatTextDouble` appends a trailing `.` when the formatted string has no decimal point or exponent. For integer-valued doubles like `1.0`, Go outputs `value: 1.` while C++ protoc outputs `value: 1`. The trailing dot is Go's invention — C++ `SimpleDtoa` returns `"1"` and the text format printer doesn't modify it.
+- **Test**: Decode test `decode@double_integer` — stdout mismatch (1 test fails).
+- **Root cause**: `formatTextDouble()` at cli.go:9136-9138 checks `if !strings.Contains(s, ".") && !strings.Contains(s, "e")` and appends `s += "."`. C++ protoc's `SimpleDtoa(1.0)` returns `"1"` without a trailing dot, and the text format printer prints it as-is.
+- **C++ protoc**: `value: 1` (no trailing dot).
+- **Go protoc-go**: `value: 1.` (with trailing dot).
+- **Fix hint**: Remove the dot-appending logic from `formatTextDouble`. C++ text format does NOT add a trailing dot to integer-valued doubles. The function should just return `s` directly after `FormatFloat`. Same fix may be needed for `formatTextFloat` if it has the same logic.
+- **Also affects**: ANY integer-valued double or float in `--decode` mode will have a spurious trailing dot. Examples: `2.0` → `"2."` instead of `"2"`, `100.0` → `"100."` instead of `"100"`, `-3.0` → `"-3."` instead of `"-3"`. This affects all messages with double/float fields decoded in `--decode` mode.
+
+### Run 123 — Decode mode formatTextFloat appends spurious trailing dot to integer-valued floats (VICTORY)
+- **Bug**: Go's `formatTextFloat` appends a trailing `.` when the formatted string has no decimal point or exponent. For integer-valued float32 values like `2.0f`, Go outputs `value: 2.` while C++ protoc outputs `value: 2`. This is the same bug as Run 122 (formatTextDouble) but in `formatTextFloat` — Ralph fixed the double version but left the float version with the same bug.
+- **Test**: Decode test `decode@float_integer` — stdout mismatch (1 test fails). Proto in `testdata/452_decode_float_int/test.proto`. Hex data: `0d000000401203666f6f` (field 1 float32 2.0, field 2 string "foo").
+- **Root cause**: `formatTextFloat()` at cli.go:9163-9165 checks `if !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E")` and appends `s += "."`. C++ protoc's `SimpleFtoa(2.0f)` returns `"2"` without a trailing dot, and the text format printer prints it as-is. The subnormal path at line 9154-9156 also has the same trailing dot logic.
+- **C++ protoc**: `value: 2` (no trailing dot).
+- **Go protoc-go**: `value: 2.` (with trailing dot).
+- **Fix hint**: Remove both trailing dot blocks from `formatTextFloat`: the one at line 9154-9156 (subnormal path) and the one at line 9163-9165 (normal path). C++ `SimpleFtoa` never adds a trailing dot. Just return `s` directly after formatting. This was already fixed for `formatTextDouble` in Run 122 — same fix needed for `formatTextFloat`.
+- **Also affects**: ANY integer-valued float32 in `--decode` mode will have a spurious trailing dot. Examples: `1.0f` → `"1."`, `100.0f` → `"100."`, `-3.0f` → `"-3."`. Also affects subnormal float paths (though subnormals are never integer-valued, the dot logic is still wrong for any subnormal that formats without a decimal point — e.g., if FormatFloat somehow produces an integer-like string).
+
+### Run 124 — Decode mode prints extension fields as unknown (raw field number) instead of by name (VICTORY)
+- **Bug**: Go's `buildFieldMap()` in `cli.go` only iterates `msg.GetField()` when building the known-field map for `--decode` mode. Extension fields (defined via `extend Base { ... }`) are not part of `GetField()` — they live in `FileDescriptorProto.GetExtension()`. So extension fields are treated as unknown and printed by raw field number (`100: 42`) instead of by their fully-qualified name in brackets (`[decodeext.extra]: 42`).
+- **Test**: Decode test `decode@extension_field` — stdout mismatch (1 test fails).
+- **Root cause**: `buildFieldMap(msgDesc)` at cli.go:8846 only calls `msgDesc.GetField()`. Extensions are separate in the descriptor: `fd.GetExtension()` contains top-level extensions, and nested messages can also have extensions. C++ protoc uses the `Reflection` interface which knows about all registered extensions from the descriptor pool.
+- **C++ protoc**: `[decodeext.extra]: 42` (extension printed by name in brackets).
+- **Go protoc-go**: `100: 42` (extension treated as unknown field, printed by number).
+- **Fix hint**: After building `fieldMap` from `msg.GetField()`, also iterate all `fd.GetExtension()` across all parsed files. For each extension where `GetExtendee()` matches the target message type, add it to `fieldMap` with its field number. Print extension fields as `[fully.qualified.name]: value` using brackets (C++ text format convention).
+- **Also affects**: ALL proto2 messages with extensions decoded in `--decode` mode. Any extension field will be printed as an unknown field by number.
+
+### Run 125 — Decode mode does not sort map entries by key (VICTORY)
+- **Bug**: Go's `--decode` mode prints map entries in wire order (order they appear in the binary data). C++ protoc's TextFormat sorts map entries alphabetically by key before printing. When a map has entries keyed "timeout" and "retries", C++ prints "retries" first (alphabetical), Go prints "timeout" first (wire order).
+- **Test**: Decode test `decode@map_sort` — stdout mismatch (1 test fails). Proto in `testdata/456_decode_map_sort/test.proto`. Hex data: `0a0b0a0774696d656f7574101e0a0b0a07726574726965731003120474657374` (two map entries keyed "timeout" then "retries", plus label "test").
+- **Root cause**: `printTextProto()` in cli.go sorts known entries by field number but does NOT sort map field entries by key. C++ protoc's `TextFormat::Printer` internally uses `MapSorter` to sort map entries by key before printing each map field.
+- **C++ protoc**: `settings { key: "retries" value: 3 } settings { key: "timeout" value: 30 } label: "test"` (alphabetical by key).
+- **Go protoc-go**: `settings { key: "timeout" value: 30 } settings { key: "retries" value: 3 } label: "test"` (wire order).
+- **Fix hint**: In `printTextProto`, after sorting entries by field number, additionally sort entries within each field number group for map fields by their key value. Need to detect map fields (field has `TYPE_MESSAGE` and the message has `options.map_entry = true`), then parse each entry's bytes to extract the key, and sort by key. Keys can be string, int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64, bool — all need type-appropriate sorting.
+- **Also affects**: ALL map fields in `--decode` mode will have wrong entry order. Any map with 2+ entries where the keys are not in alphabetical/ascending order in the wire data.
+
+### Run 126 — Decode mode keeps proto2 unknown enum values as known fields instead of moving to unknown set (VICTORY)
+- **Bug**: In proto2, when an enum field has a value not defined in the enum, C++ protoc's `Reflection` places it in the `UnknownFieldSet` and the text format printer prints it as an unknown varint entry (`1: 99`). Go's decode mode keeps unknown enum values as known field entries and prints them by field name (`s: 99`). This causes TWO differences: (1) field format (known vs unknown), and (2) field ordering (known fields are sorted by number and printed first, unknown fields after).
+- **Test**: Decode test `decode@proto2_unknown_enum` — stdout mismatch (1 test fails). Proto in `testdata/457_decode_proto2_unknown_enum/test.proto`. Hex data: `086312026f6b` (field 1 varint 99, field 2 string "ok").
+- **Root cause**: `printTextProto()` in cli.go dispatches entries to `knownEntries` or `unknownEntries` based solely on whether a field descriptor exists for the field number. For enum fields with unknown values, the field descriptor exists, so the entry goes to `knownEntries`. But C++ protobuf's `Reflection::Set` for proto2 enum fields rejects unknown values and stores them in `UnknownFieldSet` instead, causing them to be printed as unknown fields.
+- **C++ protoc**: `label: "ok"\n1: 99\n` (unknown enum value printed as unknown varint field AFTER known fields).
+- **Go protoc-go**: `s: 99\nlabel: "ok"\n` (unknown enum value printed as known field by name, sorted by field number BEFORE label).
+- **Fix hint**: In `printTextProto`, when processing a known entry with `TYPE_ENUM` and the syntax is proto2 (not proto3/editions), check if the varint value is in the enum's value map. If not, move the entry to `unknownEntries` instead of `knownEntries`. Proto3 keeps unknown enum values in the field, so this only applies to proto2. Need to pass the file's syntax to `printTextProto`.
+- **Also affects**: ANY proto2 enum field decoded with `--decode` where the binary data contains a value not defined in the enum. This includes both positive and negative unknown values. For negative unknown values, C++ additionally prints the raw unsigned varint (e.g., `1: 18446744073709551613` for -3), while Go would print the signed int32 value (`s: -3`).
+
+### Run 127 — Decode mode treats edition 2023 OPEN enums as CLOSED (VICTORY)
+- **Bug**: Go's `findMessageType()` at cli.go:8729 uses `isClosed := fd.GetSyntax() != "proto3"` to decide if enums are closed. Edition 2023 files have `GetSyntax()` returning `"editions"`, which is `!= "proto3"`, so `isClosed = true`. But edition 2023's default `features.enum_type` is OPEN, meaning unknown enum values should stay as known fields (like proto3). Go incorrectly moves unknown enum values to the unknown field set.
+- **Test**: Decode test `decode@edition_open_enum` — stdout mismatch (1 test fails). Proto in `testdata/458_decode_edition_open_enum/test.proto`. Hex data: `086312026f6b` (field 1 varint 99, field 2 string "ok").
+- **Root cause**: `findMessageType()` builds `closedEnums` map using `isClosed := fd.GetSyntax() != "proto3"`. For edition files, syntax is `"editions"`, not `"proto3"`, so ALL edition enums are treated as closed. But edition 2023's default `enum_type` is OPEN, so unknown values should be kept as known fields.
+- **C++ protoc**: `p: 99\nlabel: "ok"\n` (unknown enum value 99 printed as known field with field name, OPEN enum behavior).
+- **Go protoc-go**: `label: "ok"\n1: 99\n` (unknown enum value moved to unknown set, printed as unknown varint by field number AFTER known fields).
+- **Fix hint**: Instead of `fd.GetSyntax() != "proto3"`, check edition features: for `"editions"` syntax, check if the enum has `features.enum_type = CLOSED` explicitly set or if file-level features resolve to CLOSED. For `"proto2"`, always closed. For `"proto3"`, always open. Could also do `isClosed := fd.GetSyntax() == "proto2"` as a simpler fix, since editions default is OPEN.
+- **Also affects**: ALL edition 2023 messages with OPEN enums decoded in `--decode` mode. Any unknown enum value in an edition file will be incorrectly treated as an unknown field.
+
+### Run 128 — Decode mode formatTextDouble uses wrong precision algorithm (VICTORY)
+- **Bug**: Go's `formatTextDouble` in decode mode uses `strconv.FormatFloat(v, 'g', -1, 64)` which produces the **shortest** round-trippable decimal representation. C++ `SimpleDtoa` uses `snprintf(buf, "%.15g", val)` first (15 significant digits), and if round-trip fails, uses `snprintf(buf, "%.17g", val)` (17 digits). For doubles needing exactly 16 digits for shortest representation, Go outputs 16 digits while C++ skips from 15 to 17 digits.
+- **Test**: `459_decode_double_precision` — decode@double_precision fails.
+- **Root cause**: `formatTextDouble()` at cli.go:9472-9483 uses `FormatFloat(v, 'g', -1, 64)` (Go shortest) instead of the 15-then-17 pattern used by C++. The parser's `simpleDtoa` (parser.go:6337-6350) correctly implements 15/17, but the decode-mode `formatTextDouble` does not.
+- **C++ protoc**: `value: 2.0000000000000009` (17 significant digits, because 15-digit `"2"` doesn't round-trip).
+- **Go protoc-go**: `value: 2.000000000000001` (16 significant digits, Go's shortest representation).
+- **Fix hint**: Replace `FormatFloat(v, 'g', -1, 64)` in `formatTextDouble` with the same 15-then-17 algorithm used by `simpleDtoa` in parser.go:6337-6350.
+
+### Run 130 — Decode mode doesn't merge duplicate non-repeated scalar fields (VICTORY)
+- **Bug**: Go's `--decode` mode prints ALL entries for a non-repeated scalar field when the binary data contains duplicates. C++ protoc's `DynamicMessage::ParseFromString` applies "last value wins" semantics for non-repeated fields, then `TextFormat::Print` outputs each field exactly once. Go's decode mode collects all wire entries into `knownEntries` and prints every one without deduplication (except for oneof fields which have special handling added in Run 129).
+- **Test**: Decode test `decode@dup_scalar` — stdout mismatch (1 test fails). Proto in `testdata/461_decode_dup_scalar/test.proto`. Hex data: `0801080212026f6b` (field 1 varint 1, field 1 varint 2, field 2 string "ok").
+- **Root cause**: `printTextProto()` in cli.go sorts and prints all `knownEntries` without checking for duplicate field numbers on non-repeated fields. There is oneof dedup logic (lines 9113-9141 from Run 129 fix) but no general non-repeated field dedup. C++ handles this automatically because `ParseFromString` → `MergeFrom` overwrites non-repeated scalar fields with the last value.
+- **C++ protoc**: `value: 2\nlabel: "ok"\n` (only last value for non-repeated int32 field 1).
+- **Go protoc-go**: `value: 1\nvalue: 2\nlabel: "ok"\n` (both entries printed — incorrect protobuf merging semantics).
+- **Fix hint**: Before printing `knownEntries`, post-process to apply "last value wins" for non-repeated fields. For non-repeated scalars/enums/strings/bytes, keep only the last entry with each field number. For non-repeated message fields, merge all entries with the same field number by concatenating their bytes (protobuf merge semantics: submessages are merged, not replaced). For repeated fields (including maps), keep all entries. Need to check `fd.GetLabel() != LABEL_REPEATED` to identify non-repeated fields.
+- **Also affects**: ALL non-repeated field types in `--decode` mode when binary data has duplicate field entries. This is common when messages are merged via concatenation (a standard protobuf pattern). Non-repeated message fields would be even more wrong — Go prints each sub-message separately instead of merging them. Non-repeated string/bytes/enum/float/double/bool/fixed types all have the same bug.
+
+### Run 131 — Decode mode doesn't merge duplicate non-repeated group fields (VICTORY)
+- **Bug**: Go's `--decode` mode dedup/merge logic for non-repeated fields only handles `BytesType` (length-delimited) message fields. Group fields use `StartGroupType` (wire type 3) and store data in `e.group`, not `e.bytes`. When binary data has two entries for the same non-repeated group field (with different sub-fields), C++ merges both groups' sub-fields into one output. Go keeps only the LAST group entry, losing sub-fields from earlier entries.
+- **Test**: Decode test `decode@group_merge` — stdout mismatch (1 test fails). Proto in `testdata/462_decode_group_merge/test.proto`. Hex data: `0b0a0568656c6c6f0c0b102a0c12026f6b` (field 1 group with name="hello", field 1 group with value=42, field 2 string "ok").
+- **Root cause**: The merge block at cli.go:9153 checks `e.wtype == protowire.BytesType`, which is false for groups (`e.wtype == StartGroupType`). So the group merge path is never entered. The "keep last" logic at the filtering step then discards all but the last entry. C++ protobuf's `DynamicMessage::MergeFrom` merges group entries by combining sub-fields from all entries.
+- **C++ protoc**: `Inner {\n  name: "hello"\n  value: 42\n}\nlabel: "ok"\n` (both group entries merged — all sub-fields present).
+- **Go protoc-go**: `Inner {\n  value: 42\n}\nlabel: "ok"\n` (first group entry's `name: "hello"` lost — only last entry kept).
+- **Fix hint**: Add a parallel merge path for group fields: check `e.wtype == protowire.StartGroupType` and merge `e.group` bytes (concatenate group payloads). Something like: `if e.known.GetType() == TYPE_GROUP && e.wtype == protowire.StartGroupType { mergedGroups[e.num] = append(mergedGroups[e.num], e.group...); knownEntries[lastIdx[e.num]].group = mergedGroups[e.num] }`. The concatenation works because protobuf group merge semantics are the same as message merge — sub-fields are merged by concatenation.
+- **Also affects**: ANY proto2 message with non-repeated group fields decoded from binary data containing multiple entries. Group fields are rare but valid in proto2.
+
+### Run 132 — Decode mode doesn't reject invalid UTF-8 in proto3 string fields (VICTORY)
+- **Bug**: Go's `--decode` mode does not validate UTF-8 encoding for proto3 string fields. When decoding binary data that contains invalid UTF-8 bytes (e.g., `\x80\x81`) in a proto3 string field, C++ protoc rejects the input with "Failed to parse input." and exit code 1, while Go happily decodes and prints the raw bytes as octal escapes with exit code 0.
+- **Test**: `463_decode_utf8_invalid` — decode test fails (exit code mismatch: C++ returns 1, Go returns 0).
+- **Root cause**: Go's `printKnownField` at cli.go:9291-9292 prints TYPE_STRING using `cEscapeForDecode(e.bytes)` without any UTF-8 validation. C++ protoc's `ParseFromString` validates UTF-8 for proto3 string fields during parsing and aborts if validation fails. Go's decode mode skips parsing into a proto message entirely — it directly reads wire format entries and prints them, never checking UTF-8.
+- **C++ protoc**: `String field 'decodeutf8.test.Record.name' contains invalid UTF-8 data...` + `Failed to parse input.` (exit 1).
+- **Go protoc-go**: `id: 42\nname: "\200\201"\n` (exit 0) — prints invalid UTF-8 as octal escapes.
+- **Fix hint**: Before printing a TYPE_STRING field value, check if `e.bytes` is valid UTF-8 using `utf8.Valid(e.bytes)`. If the message is proto3 syntax (check `fd.GetFile().GetSyntax() == "proto3"` or the file's edition features), reject the input with an appropriate error message and exit code 1. Note: proto2 string fields do NOT require UTF-8 validation in C++ protoc, only proto3.
+- **Also affects**: Any proto3 message decoded with `--decode` that has string fields with invalid UTF-8 content.
+
+### Run 133 — Go accepts extension range past max field number (536870912) (VICTORY)
+- **Bug**: Go's parser does not validate that extension range numbers must be ≤ 536870911 (2^29 - 1, the maximum protobuf field number). When a proto2 message declares `extensions 536870912;`, C++ protoc rejects it with "Extension numbers cannot be greater than 536870911." and exit code 1, while Go accepts it silently and produces a descriptor set.
+- **Test**: `464_ext_range_past_max` — all 9 profiles fail.
+- **Root cause**: The parser (or descriptor pool) does not enforce the maximum field number constraint on extension range start/end values. C++ protoc validates this in `DescriptorBuilder::BuildExtensionRange` which checks `end > FieldDescriptor::kMaxNumber + 1`. Go's equivalent code does not perform this check.
+- **C++ protoc**: `test.proto: Extension numbers cannot be greater than 536870911.` (exit 1).
+- **Go protoc-go**: Silently accepts and produces a descriptor (exit 0).
+- **Fix hint**: In the parser or descriptor pool validation, when processing `extensions` declarations, check that both start and end of the range are ≤ 536870911. If not, emit an error: "Extension numbers cannot be greater than 536870911."
+
+### Run 134 — Decode mode missing warning for absent required fields (VICTORY)
+- **Bug**: Go's `--decode` mode does not emit a warning when a proto2 message is missing required fields. C++ protoc prints `warning:  Input message is missing required fields:  <names>` to stderr when required fields are absent from the wire data. Go silently decodes what's present without any warning.
+- **Test**: Decode test `decode@missing_required` — stderr mismatch (1 test fails).
+- **Root cause**: Go's `runDecode()` / `printTextProto()` functions do not check if all `LABEL_REQUIRED` fields are present in the decoded data. After parsing the wire format, C++ calls `message.IsInitialized()` which checks all required fields recursively, then emits the warning listing missing field names. Go has no equivalent check.
+- **C++ protoc**: stderr: `warning:  Input message is missing required fields:  id, name`, stdout: `extra: 7` (exit 0).
+- **Go protoc-go**: stderr: (empty), stdout: `extra: 7` (exit 0).
+- **Fix hint**: After decoding the message, iterate all fields in the message descriptor. For each field with `GetLabel() == LABEL_REQUIRED`, check if it was seen in the wire data. If any are missing, print `warning:  Input message is missing required fields:  <comma-separated names>` to stderr. For nested messages, also check required fields recursively.
+
+### Run 135 — Decode mode emits spurious "invalid bytes" on truncated input (VICTORY)
+- **Bug**: Go's `--decode` mode prints an extra "invalid bytes" line to stderr before "Failed to parse input." when the input is truncated (incomplete wire data). C++ protoc only prints "Failed to parse input." Go's decode implementation leaks an internal error message that C++ does not emit.
+- **Test**: Decode test `decode@truncated` — stderr mismatch (1 test fails).
+- **Root cause**: Go's `runDecode()` or the wire-format parsing layer emits "invalid bytes" to stderr as part of its error handling before the top-level "Failed to parse input." message. C++ protoc's `Message::ParseFromString()` returns false on truncated data without printing extra diagnostics — only the outer decode loop prints "Failed to parse input."
+- **C++ protoc**: stderr: `Failed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `invalid bytes\nFailed to parse input.` (exit 1). Extra line in stderr.
+- **Fix hint**: In the decode error path, suppress the "invalid bytes" diagnostic or only print the top-level "Failed to parse input." message, matching C++ protoc's behavior.
+
+### Run 136 — Decode mode sint32 zigzag with oversized varint (VICTORY)
+- **Bug**: Go's `--decode` mode uses the full 64-bit varint value for `sint32` zigzag decoding, while C++ protoc truncates to uint32 first. When a sint32 field has a varint that exceeds 32 bits (e.g., 0x100000001), C++ reads it as uint32(0x01) then zigzag-decodes to -1. Go zigzag-decodes the full uint64 value 0x100000001 to -2147483649.
+- **Test**: Decode test `decode@sint32_truncate` — stdout mismatch (1 test fails).
+- **Root cause**: Go's `printKnownField()` calls `protowire.DecodeZigZag(e.varint)` on the raw uint64 varint value without truncating to uint32 first. C++ protoc's `WireFormatLite::ReadSInt32` internally calls `ReadVarint32` which truncates the varint to 32 bits, then calls `ZigZagDecode32`. The different truncation order produces different values: Go gets DecodeZigZag(0x100000001) = -2147483649, C++ gets ZigZagDecode32(uint32(0x100000001)) = ZigZagDecode32(1) = -1.
+- **C++ protoc**: `value: -1` (truncate to uint32, then zigzag decode).
+- **Go protoc-go**: `value: -2147483649` (zigzag decode full uint64).
+- **Fix hint**: In `printKnownField()` for `TYPE_SINT32`, truncate to uint32 before zigzag: `protowire.DecodeZigZag(uint64(uint32(e.varint)))` instead of `protowire.DecodeZigZag(e.varint)`. Same may apply to `TYPE_INT32` and `TYPE_UINT32` — they should also truncate to 32 bits.
+
+### Run 137 — Decode mode keeps unknown fields in map entries (VICTORY)
+- **Bug**: Go's `--decode` mode prints unknown fields inside map entries, while C++ protoc strips them. When a map entry's wire data contains an unknown field (field number other than 1=key, 2=value), C++ protoc's `DynamicMessage::ParseFromString` discards the unknown field during map parsing, producing clean `key`/`value`-only output. Go just recursively decodes the map entry bytes as a regular sub-message, printing all fields including unknowns.
+- **Test**: Decode test `decode@map_unknown` — stdout mismatch (1 test fails). Proto in `testdata/468_decode_map_unknown/test.proto`. Hex data: `0a080a026869102a180112 0178` (field 1 map entry with key="hi" value=42 plus unknown field 3=1, field 2 string "x").
+- **Root cause**: `printTextProto()` in cli.go treats map entries like any other sub-message. When recursing into a TYPE_MESSAGE field with `GetOptions().GetMapEntry() == true`, it calls `printTextProto` on the raw bytes, which decodes ALL wire fields including unknowns. C++ protobuf's map implementation parses map entries into a MapEntry message that only has key/value fields — any extra fields are silently discarded during `ParseFromString`.
+- **C++ protoc**: `data {\n  key: "hi"\n  value: 42\n}\nlabel: "x"\n` (no unknown field).
+- **Go protoc-go**: `data {\n  key: "hi"\n  value: 42\n  3: 1\n}\nlabel: "x"\n` (unknown field `3: 1` printed).
+- **Fix hint**: In `printTextProto`, when recursing into a sub-message that is a map entry (`msgDesc.GetOptions().GetMapEntry() == true`), suppress unknown fields in the output. Either: (1) after collecting knownEntries and unknownEntries for the sub-message, clear unknownEntries if the message is a map entry, or (2) pass a flag to `printTextProto` indicating it's inside a map entry and should skip unknown field printing.
+
+### Run 139 — Null byte in comment not rejected by Go tokenizer (VICTORY)
+- **Bug**: Go's tokenizer does not validate for control characters (like null byte `\x00`) in comments or general text. C++ protoc's tokenizer validates all input characters and rejects files containing control characters (other than whitespace `\n`, `\r`, `\t`) with "Invalid control characters encountered in text." Go silently accepts the null byte inside a line comment and parses the file successfully.
+- **Test**: `469_null_in_comment` — all 9 profiles fail.
+- **Root cause**: C++ `Tokenizer::Next()` calls `ReadChar()` which checks `current_char_ == '\0'` and invalid control character ranges, producing error messages. Go's `tokenizer.go` `readLineCommentText()` and `readBlockCommentText()` simply consume all bytes until the comment terminator (`\n` or `*/`) without validating that each byte is a valid character.
+- **C++ protoc**: `test.proto:3:9: Invalid control characters encountered in text.` + `test.proto:3:10: Expected top-level statement (e.g. "message").` → exit 1.
+- **Go protoc-go**: Silently accepts the file, produces valid descriptor → exit 0.
+- **Fix hint**: In the tokenizer, add character validation similar to C++ `ReadChar()` — reject null bytes and other control characters (except `\n`, `\r`, `\t`, and maybe `\f` which was handled in Run 29). Specifically, in `readLineCommentText()` and `readBlockCommentText()`, check each byte and emit an error for control characters.
+
+### Run 140 — Go emits spurious "Integer out of range" error for hex literal with no digits (VICTORY)
+- **Bug**: Go's tokenizer/parser emits an extra "Integer out of range." error before the correct "0x must be followed by hex digits." error when processing a hex literal `0x` with no hex digits after it. C++ protoc only emits the hex-digits error. The spurious error is at a different column (column 36 pointing at the default value position) while the hex error is at column 38.
+- **Test**: `470_hex_no_digits` — all 9 profiles fail (error mismatch: Go emits 2 errors, C++ emits 1).
+- **Root cause**: When `0x` is encountered, the tokenizer correctly detects the missing hex digits and adds the hex-digits error. But either the tokenizer records `0x` as an integer token with value 0, or the parser attempts to parse the token and triggers a separate range check that produces the spurious "Integer out of range." error. The C++ tokenizer just emits the hex-digits error and doesn't attempt further validation of the malformed literal.
+- **C++ protoc**: `test.proto:6:38: "0x" must be followed by hex digits.`
+- **Go protoc-go**: `test.proto:6:36: Integer out of range.` + `test.proto:6:38: "0x" must be followed by hex digits.`
+- **Fix hint**: In the tokenizer or parser, when a `0x` literal has no hex digits, don't also emit an "Integer out of range" error. The hex-digits error is sufficient. Either suppress the range check when the hex error has already been reported, or ensure the token value is set to a valid default (like 0) so the range check passes.
+
+### Run 142 — --encode mode silently skipped, produces wrong error (VICTORY)
+- **Bug**: Go's parseArgs() silently skips `--encode=TYPE` (cli.go:1084 `continue`), so `--encode` never sets any state. When a valid proto file is provided with `--encode=basic.Person`, C++ protoc enters encode mode (reads text format from stdin, writes binary to stdout, exits 0). Go ignores `--encode`, sees no output directives, and errors with "Missing output directives." (exit 1).
+- **Test**: CLI test `cli@encode_with_proto` — exit code mismatch (C++ 0, Go 1).
+- **Root cause**: `parseArgs()` at cli.go:1084 has `if strings.HasPrefix(arg, "--encode=") { continue }` — the flag is parsed but discarded without setting any encode mode state. C++ protoc's CommandLineInterface recognizes `--encode` and enters a completely different code path that reads text format from stdin, looks up the message type in the parsed descriptors, encodes it to binary, and writes to stdout.
+- **C++ protoc**: Enters encode mode, parses empty text format input, outputs empty binary, exits 0.
+- **Go protoc-go**: Ignores `--encode`, falls through to "Missing output directives." error, exits 1.
+- **Fix hint**: Implement encode mode: (1) parse `--encode=TYPE` and store the type name, (2) after building descriptors, look up the message type, (3) read text format from stdin, (4) encode to binary protobuf, (5) write to stdout. Similar to `--decode` but in reverse. Use `prototext.Unmarshal` or a custom text format parser, then `proto.Marshal`.
+
+### Run 143 — ExtensionRangeOptions source-retention not stripped from descriptor (VICTORY)
+- **Bug**: Go's `stripMsgSourceRetention` in `cli.go` strips source-retention options from FileOptions, MessageOptions, FieldOptions, EnumOptions, EnumValueOptions, ServiceOptions, MethodOptions, OneofOptions — but completely ignores ExtensionRangeOptions. When an extension range has a custom option with `retention = RETENTION_SOURCE`, C++ protoc strips the option from the descriptor output. Go keeps it.
+- **Test**: `471_ext_range_retention` — 7 profiles fail (descriptor_set, descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: `stripMsgSourceRetention()` at cli.go:4847 handles fields, oneofs, extensions, nested enums, and nested messages, but has no code for `msg.GetExtensionRange()`. The extension range options (accessible via `er.GetOptions()`) are never checked for source-retention fields, so `ExtensionRangeOptions` unknowns with `RETENTION_SOURCE` field numbers are kept in the descriptor.
+- **C++ protoc**: Produces 67-byte descriptor without the `(range_debug)` option value (stripped due to `RETENTION_SOURCE`).
+- **Go protoc-go**: Produces 83-byte descriptor with the `(range_debug)` option value still present — 16 bytes larger.
+- **Fix hint**: In `stripMsgSourceRetention`, add a loop over `msg.GetExtensionRange()` similar to the field/oneof loops: `for ri, er := range msg.GetExtensionRange() { if stripOptsUnknowns(er.GetOptions(), srcRetFields[".google.protobuf.ExtensionRangeOptions"], append(append([]int32{}, msgPath...), 5, int32(ri), 3), strippedPaths) { er.Options = nil } }`. Also need to add `ExtensionRangeOptions` to `fdHasSourceRetentionOpts` checks if not already there.
+
+### Run 144 — Encode mode missing detailed error message for invalid text format (VICTORY)
+- **Bug**: Go's `--encode` mode only prints `"Failed to parse input."` to stderr when the text format input has errors (e.g., unknown field names). C++ protoc also prints a detailed error message with the source location and specific error description before the generic "Failed to parse input." message. Go swallows the detailed error from `prototext.Unmarshal` and only prints the generic message.
+- **Test**: CLI test `cli@encode_bad_field` — stderr mismatch (1 test fails). Proto in `testdata/472_encode_error/test.proto`. Input: `bad_field: 42`.
+- **Root cause**: `runEncode()` at cli.go:8791-8794 catches the `prototext.Unmarshal` error but only prints `fmt.Fprintln(os.Stderr, "Failed to parse input.")`. The actual error from `prototext.Unmarshal` contains detailed information like `(line 1:10): Message type "encerr.Foo" has no field named "bad_field"` but Go discards it. C++ protoc's `TextFormat::Parser::Parse` prints detailed diagnostics AND then the outer encode loop prints "Failed to parse input."
+- **C++ protoc**: stderr: `input:1:10: Message type "encerr.Foo" has no field named "bad_field".\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed error line.
+- **Fix hint**: Before the generic "Failed to parse input." message, parse and print the error from `prototext.Unmarshal`. The error message format needs to be converted from Go's prototext format (`(line 1:10): ...`) to C++ protoc's format (`input:1:10: ...`). Extract line/column from the error, then print `fmt.Fprintf(os.Stderr, "input:%d:%d: %s\n", line, col, message)` followed by the generic "Failed to parse input." message.
+- **Also affects**: ANY invalid text format input to `--encode` mode will produce less helpful error messages in Go than in C++. This includes: unknown fields, type mismatches, syntax errors in text format, etc.
+
+### Run 145 — Aggregate option float-for-integer error message falls through to generic format (VICTORY)
+- **Bug**: Go's `formatAggregateError()` handles specific error types (`aggregateDupFieldError`, `aggregateBoolError`, `aggregatePositiveSignError`, `aggregateIntRangeError`, `aggregateStringExpectedError`, `aggregateFloatExpectedError`, `aggregateEnumError`) with proper `file:line:col: Error while parsing option value for "name": ...` formatting. But when a float literal like `3.14` is used for an integer field, `encodeCustomOptionValue` returns a generic `fmt.Errorf("invalid integer value: %s", value)` — not one of the recognized error types. This falls through to the generic fallback at line 8245: `"%s: error encoding custom option: %v"` which lacks line/column info and uses different wording.
+- **Test**: `473_agg_float_for_int` — all 9 profiles fail (error message mismatch).
+- **Root cause**: `encodeCustomOptionValue()` at cli.go:7666-7668 returns `fmt.Errorf("invalid integer value: %s", value)` for int32/int64/sint32/sint64 fields when `strconv.ParseInt` fails. This is a plain error, not a typed error struct. `formatAggregateError()` at line 8209-8245 has no `errors.As` case for it, so the error falls through to line 8245's generic format without line/column info.
+- **C++ protoc**: `test.proto:15:16: Error while parsing option value for "cfg": Expected integer, got: 3.14`
+- **Go protoc-go**: `test.proto: error encoding custom option: field count: invalid integer value: 3.14`
+- **Fix hint**: Create a new error type like `aggregateExpectedIntegerError` with the value that was found, and return it from `encodeCustomOptionValue` for int parse failures. Add `errors.As` matching in `formatAggregateError`. The error message should be `Expected integer, got: 3.14` to match C++.
+- **Also affects**: Same issue exists for uint32/uint64 parse failures at line 7687-7688 (`invalid unsigned integer value`), fixed32/sfixed32/fixed64/sfixed64 parse failures, and any other `fmt.Errorf` returns from `encodeCustomOptionValue` that aren't covered by the specific error types.
+
+### Run 146 — Go ignores --descriptor_set_in flag, can't resolve imports from pre-compiled descriptors (VICTORY)
+- **Bug**: Go's `parseArgs()` silently skips `--descriptor_set_in=FILES` (cli.go:1092 `continue`), so pre-compiled descriptor sets are never loaded. When a .proto file imports another .proto that only exists in the descriptor_set_in (not on the proto_path), C++ protoc resolves the import from the pre-compiled descriptors and succeeds. Go ignores the flag and fails with "File not found" errors.
+- **Test**: CLI test `cli@descriptor_set_in_import` — exit code mismatch (C++ 0, Go 1).
+- **Root cause**: `parseArgs()` at cli.go:1092-1094 has `if strings.HasPrefix(arg, "--descriptor_set_in=") { continue }` — the flag is parsed but discarded without loading any descriptors. C++ protoc's `CommandLineInterface` recognizes `--descriptor_set_in`, reads the specified binary FileDescriptorSet files, and makes them available as pre-parsed imports. This allows resolving imports without the source .proto files being on disk.
+- **C++ protoc**: Successfully compiles `test.proto` that imports `dep.proto` from the descriptor_set_in file (exit 0).
+- **Go protoc-go**: Fails with `dep.proto: File not found.` + `Import "dep.proto" was not found or had errors.` + `"dep.Dep" is not defined.` (exit 1).
+- **Fix hint**: Parse `--descriptor_set_in` value, read the binary file(s), unmarshal as `FileDescriptorSet`, and inject the contained `FileDescriptorProto` entries into the parsed file map before resolving imports. The descriptor_set_in files may be delimited by `:` (or `;` on Windows).
+- **Test setup**: `testdata/474_descriptor_set_in/dep.proto` compiled to `dep.pb`, `testdata/474_descriptor_set_in/main/test.proto` imports `dep.proto` but dep.proto is NOT on the import path.
+
+### Run 147 — Encode mode outputs fields in text input order instead of field number order (VICTORY)
+- **Bug**: Go's `--encode` mode serializes fields in the order they appear in the text format input, instead of canonical field number order. C++ protoc always serializes in field number order regardless of input order. When `id: 42 name: "Alice"` is provided (field 2 before field 1), C++ outputs field 1 first, Go outputs field 2 first.
+- **Test**: CLI test `cli@encode_field_order` — stdout mismatch (1 test fails).
+- **Root cause**: `runEncode()` uses `prototext.Unmarshal` to parse text input into a `dynamicpb.Message`, then `proto.Marshal` to serialize. For dynamic messages, `proto.Marshal` iterates fields using `Range()`, which in `dynamicpb` returns fields in the order they were set (i.e., the order `prototext.Unmarshal` encountered them). C++ protoc's `Message::SerializeToString` always serializes in field number order.
+- **C++ protoc**: stdout binary = `\x0a\x05Alice\x10\x2a` (field 1=name first, then field 2=id).
+- **Go protoc-go**: stdout binary = `\x10\x2a\x0a\x05Alice` (field 2=id first, then field 1=name).
+- **Fix hint**: Use `proto.MarshalOptions{Deterministic: true}` which guarantees field number ordering. Or sort the dynamic message fields before marshaling. Alternatively, iterate the message descriptor's fields in number order and re-set them on a fresh dynamic message.
+
+### Run 148 — Go missing unused import warning (VICTORY)
+- **Bug**: Go does NOT emit a warning when a file imports another proto file but never uses any types from it. C++ protoc produces `warning: Import foo.proto is unused.` on stderr (exit 0). Go silently accepts the unused import with no warning.
+- **Test**: CLI test `cli@unused_import` — stderr mismatch (1 test fails). Proto in `testdata/475_unused_import/test.proto` imports `dep.proto` but never references any type from it.
+- **Root cause**: Go has no unused import detection at all — no code in the compiler checks whether imported files are actually referenced by the importing file. C++ protoc tracks type usage and emits warnings for imports that contribute no symbols.
+- **C++ protoc**: stderr: `testdata/475_unused_import/test.proto:4:1: warning: Import dep.proto is unused.` (exit 0).
+- **Go protoc-go**: stderr: (empty) (exit 0).
+- **Fix hint**: After validation, iterate each file's `Dependency` list. For each dependency, check whether any type from it is referenced (field types, method input/output types, extension extendee, option types, etc.). If none, emit `warning: Import %s is unused.` with location from source code info path [3, depIdx]. For `import public`, the transitive re-exports also count as usage.
+- **Also affects**: ALL proto files with unused imports will silently compile without warning in Go. This includes unused weak imports too.
+
+### Run 149 — Encode mode oneof conflict error message missing (VICTORY)
+- **Bug**: Go's `--encode` mode does not report the specific oneof conflict error that C++ protoc produces. When two fields in the same oneof are both set in text format input (`name: "hello" id: 42`), C++ prints `input:1:17: Field "id" is specified along with field "name", another member of oneof "choice".` before `Failed to parse input.` Go only prints the generic `Failed to parse input.` without identifying the conflicting fields.
+- **Test**: CLI test `cli@encode_oneof_conflict` — stderr mismatch (1 test fails). Proto in `testdata/476_encode_oneof_conflict/test.proto` has message with oneof.
+- **Root cause**: `runEncode()` uses `prototext.Unmarshal` which returns a Go error, then `reformatProtoTextErrors()` only handles "unknown field" errors (regex: `\(line (\d+):(\d+)\): unknown field: (\w+)`). It doesn't handle oneof conflict errors. The Go prototext library produces a different error format for oneof conflicts that is not caught and reformatted.
+- **C++ protoc**: stderr: `input:1:17: Field "id" is specified along with field "name", another member of oneof "choice".\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed oneof conflict message.
+- **Fix hint**: Add another regex case in `reformatProtoTextErrors()` to detect oneof conflict errors from Go's prototext library and reformat them to match C++ format: `input:LINE:COL: Field "FIELD2" is specified along with field "FIELD1", another member of oneof "ONEOF".`
+
+### Run 150 — Encode mode extension fields placed before regular fields in binary output (VICTORY)
+- **Bug**: Go's `--encode` mode outputs extension fields BEFORE regular fields in the binary encoding, violating canonical field-number ordering. When encoding `name: "ab" [encextord.extra]: 5` with field 1 (name, string) and field 3 (extra, extension int32), C++ outputs field 1 first then field 3. Go outputs field 3 first then field 1.
+- **Test**: CLI test `cli@encode_ext_order` — stdout mismatch (1 test fails). Proto in `testdata/477_encode_ext_order/test.proto` has proto2 message with extensions.
+- **Root cause**: `runEncode()` uses `dynamicpb.NewMessage(msgDesc)` and `prototext.Unmarshal` to parse the text format, then `proto.MarshalOptions{Deterministic: true}` to serialize. With `dynamicpb`, extensions are stored separately from regular fields. When marshaling, Go's proto library outputs regular fields first in field-number order, then extension fields — but if prototext sets extensions via the dynamic message's extension mechanism, they may be iterated in a different order than regular fields. The result is extension fields appear before regular fields in the output.
+- **C++ protoc**: stdout binary = `\x0a\x02ab\x18\x05` (field 1 first, field 3 second).
+- **Go protoc-go**: stdout binary = `\x18\x05\x0a\x02ab` (field 3 first, field 1 second).
+- **Fix hint**: After unmarshaling, iterate all fields and extensions in field-number order and rebuild the message, or manually sort the serialized output by tag. Alternatively, use a custom marshal that handles dynamic messages with extensions in canonical order. Could also post-process the wire format to reorder tags.
+- **Also affects**: Any `--encode` input with extension fields will have non-canonical field ordering in Go's output.
+
+### Run 151 — Encode mode rejects invalid UTF-8 in string field, C++ only warns (VICTORY)
+- **Bug**: Go's `--encode` mode fails with "Failed to parse input." (exit 1) when a string field contains invalid UTF-8 bytes via octal escape (e.g., `\377`). C++ protoc accepts it with a warning (exit 0) and produces the binary output. The exit code and stderr both differ.
+- **Test**: CLI test `cli@encode_invalid_utf8` — exit code mismatch (1 test fails). Proto in `testdata/478_encode_invalid_utf8/test.proto`.
+- **Root cause**: `runEncode()` uses Go's `prototext.Unmarshal` which strictly validates UTF-8 for `TYPE_STRING` fields and rejects invalid sequences. C++ protoc's text format parser allows any bytes in string fields and only issues a warning during serialization via `WireFormatLite::VerifyUtf8String`.
+- **C++ protoc**: exit 0, stderr warning "String field contains invalid UTF-8 data", stdout has valid binary.
+- **Go protoc-go**: exit 1, stderr "Failed to parse input.", no stdout.
+- **Fix hint**: Either (1) use `bytes` mode in prototext unmarshal for string fields, (2) post-process the unmarshaled message to allow invalid UTF-8 like C++ does, or (3) catch the UTF-8 error from prototext.Unmarshal and issue a warning instead of failing, then re-attempt with `bytes`-mode handling. Most compatible fix: custom text format parser that doesn't validate UTF-8 for string fields, matching C++ behavior.
+- **Also affects**: Any `--encode` input with string fields containing non-UTF-8 bytes (e.g., Latin-1, raw binary data via octal/hex escapes).
+
+### Run 152 — Decode mode omits default values for missing map entry fields (VICTORY)
+- **Bug**: Go's `--decode` mode does not print default values for missing fields within map entries. When a map entry's wire data is missing the key field, C++ protoc prints `key: ""` (the default value for a string key), while Go omits the key line entirely. Same for missing value fields — C++ prints `value: 0`, Go omits it.
+- **Test**: Decode test `decode@map_missing_key` — stdout mismatch (1 test fails). Proto in `testdata/480_decode_map_missing_key/test.proto`. Hex data: `0A02102A12026F6B` (map entry with only value=42, no key field; then label="ok").
+- **Root cause**: Go's `printTextProto()` only prints fields that are actually present in the wire data. For map entries, if a field (key or value) is absent from the wire bytes, it's simply not printed. C++ protoc's `DynamicMessage::ParseFromString` fills in default values for all fields including missing map entry fields, then `TextFormat::Print` outputs all fields including those with default values.
+- **C++ protoc**: `data {\n  key: ""\n  value: 42\n}\nlabel: "ok"\n` (missing key printed as default empty string).
+- **Go protoc-go**: `data {\n  value: 42\n}\nlabel: "ok"\n` (missing key omitted entirely).
+- **Fix hint**: When decoding a map entry sub-message (detected by `msgDesc.GetOptions().GetMapEntry() == true`), after collecting all wire entries, check if field 1 (key) or field 2 (value) are missing. If so, synthesize entries with default values: empty string for string keys, 0 for integer keys/values, false for bool keys, empty bytes for bytes values, first enum value name for enum values. Then include them in the sorted output.
+- **Also affects**: ANY map field decoded with `--decode` where the wire data has map entries with missing key or value fields. This is a valid (if unusual) protobuf encoding — parsers must fill in defaults for absent fields.
+
+### Run 153 — Decode mode prints default-valued fields in proto3 that C++ omits (VICTORY)
+- **Bug**: Go's `--decode` mode prints ALL fields found in the raw wire data, including fields with default values (0, "", empty bytes, false) for proto3 messages. C++ protoc's `--decode` parses into a DynamicMessage then uses TextFormat::Print which respects proto3 implicit presence — fields equal to their default are NOT considered "set" and are omitted from the text output.
+- **Test**: Decode test `decode@proto3_default` — stdout mismatch (1 test fails). Proto in `testdata/481_decode_proto3_default/test.proto`. Hex data: `080012001a0020002a026f6b` (id=0, name="", data="", flag=false, label="ok").
+- **Root cause**: Go's `printTextProto()` iterates over the raw wire data and prints every field it encounters, regardless of proto3 presence semantics. It has no awareness of whether a field value equals the default for its type. C++ uses `Message::ParseFromString` which populates a `DynamicMessage`, where proto3 fields with default values are NOT tracked as "set". Then `TextFormat::Print` only outputs set fields.
+- **C++ protoc**: `label: "ok"\n` (only the non-default field is printed).
+- **Go protoc-go**: `id: 0\nname: ""\ndata: ""\nflag: false\nlabel: "ok"\n` (all 5 fields printed, including 4 with default values).
+- **Fix hint**: In `printTextProto`, after collecting wire entries and before printing each known field, check if the field has proto3 implicit presence (syntax == "proto3" AND field is not `optional` AND not inside a oneof). If so, skip printing when the value equals the default: varint==0 for int/bool/enum, empty bytes for string/bytes, float/double bits==0. Don't skip for `optional` proto3 fields (which have explicit presence).
+- **Also affects**: ANY proto3 message decoded with `--decode` where the wire data contains fields with default values. Also affects editions with implicit presence (`field_presence = IMPLICIT`).
+
+### Run 154 — Encode mode sorts map entries by key instead of preserving input order (VICTORY)
+- **Bug**: Go's `--encode` mode sorts map entries alphabetically by key, while C++ protoc preserves the text format input order. When encoding `tags { key: "c" value: 3 } tags { key: "a" value: 1 } tags { key: "b" value: 2 }`, C++ outputs entries as c, a, b (input order), Go outputs a, b, c (sorted).
+- **Test**: CLI test `cli@encode_map_order` — stdout mismatch (1 test fails). Proto in `testdata/482_encode_map_order/test.proto`.
+- **Root cause**: `runEncode()` uses `proto.MarshalOptions{Deterministic: true}` which sorts map entries by key. C++ protoc's `Message::SerializeToString` outputs map entries in hash-map iteration order, which for `TextFormat::Parse` input preserves the insertion (input) order. The `Deterministic: true` flag is used to get canonical field-number ordering (needed for regular fields, as found in Run 147), but it also sorts map entries — which C++ does NOT do.
+- **C++ protoc**: stdout binary has map entries in input order: c(3), a(1), b(2).
+- **Go protoc-go**: stdout binary has map entries sorted by key: a(1), b(2), c(3).
+- **Fix hint**: Cannot simply remove `Deterministic: true` because that would break field-number ordering (Run 147). Instead, need to either: (1) manually serialize — iterate message descriptor fields in field-number order, and for map fields output entries in the order they were parsed, or (2) post-process the dynamic message to record insertion order of map entries and use a custom marshal, or (3) use `Deterministic: false` but manually sort non-map fields by number. The fundamental issue is that Go's `proto.Marshal` with `Deterministic: true` conflates "canonical field order" with "sorted map keys", while C++ separates these concerns.
+- **Also affects**: ANY `--encode` input with map fields will produce differently-ordered output in Go vs C++. Map entries are semantically unordered in protobuf, but the wire bytes differ, causing comparison failures.
+
+### Run 155 — Encode mode missing detailed syntax error message (VICTORY)
+- **Bug**: Go's `--encode` mode drops the detailed syntax error message from `prototext.Unmarshal`. When text format input has a syntax error (e.g., `name "Alice"` missing the `:` separator), C++ protoc prints a detailed error like `input:1:6: Expected ":", found ""Alice"".` followed by `Failed to parse input.`. Go only prints `Failed to parse input.` without the detailed error line.
+- **Test**: CLI test `cli@encode_missing_colon` — stderr mismatch (1 test fails).
+- **Root cause**: `reformatProtoTextErrors()` at cli.go:9478 only handles the "unknown field" regex pattern: `\(line (\d+):(\d+)\): unknown field: (\w+)`. All other prototext errors (syntax errors, type mismatches, etc.) fall through unhandled. The Go prototext library returns an error like `proto: syntax error (line 1:1): missing field separator :` but `reformatProtoTextErrors` doesn't match it, so no detailed error is printed to stderr before the generic "Failed to parse input." message.
+- **C++ protoc**: `input:1:6: Expected ":", found ""Alice"".` + `Failed to parse input.` (exit 1).
+- **Go protoc-go**: `Failed to parse input.` only (exit 1). Missing the detailed error line.
+- **Fix hint**: Extend `reformatProtoTextErrors` to handle additional prototext error patterns. At minimum, add a fallback case that extracts the `(line L:C)` location and error message from the Go error string and reformats it as `input:L:C: MESSAGE`. Or, print the raw error to stderr as a fallback when no specific pattern matches. The C++ format is `input:LINE:COL: DESCRIPTION`.
+- **Also affects**: ALL `--encode` mode text format parse errors beyond "unknown field" — missing separators, unexpected tokens, invalid values, malformed text format, etc. — will all be silently dropped, showing only the generic "Failed to parse input." message.
+
+### Run 156 — Go silently ignores --dependency_out flag, doesn't write file or error on bad path (VICTORY)
+- **Bug**: Go's `parseArgs()` silently skips `--dependency_out=FILE` (cli.go:1406 `continue`), so the dependency output file is never written. When the specified path is invalid (nonexistent directory), C++ protoc fails with an error and exit code 1, while Go silently succeeds with exit code 0. Even when the path IS valid, C++ writes the file and Go doesn't — but only the invalid-path case produces a detectable difference (exit code mismatch).
+- **Test**: CLI test `cli@dependency_out_bad_path` — exit code mismatch (C++ 1, Go 0).
+- **Root cause**: `parseArgs()` at cli.go:1406-1408 has `if strings.HasPrefix(arg, "--dependency_out=") { continue }` — the flag is parsed but discarded. C++ protoc's `CommandLineInterface::Run()` opens the dependency output file path and writes the Make-format dependency rule (`output: input1 input2 ...`) after successful compilation. If the file can't be opened/written, C++ fails with an OS error.
+- **C++ protoc**: stderr: `/nonexistent_nelsontest_dir/deps.txt: No such file or directory` (exit 1).
+- **Go protoc-go**: stderr: (empty) (exit 0).
+- **Fix hint**: Parse `--dependency_out=FILE` value, store in `cfg.dependencyOut`. After successful compilation, write a Makefile-format dependency rule: `<output_files>: <input_proto_files>\n`. If the file can't be written, emit the OS error and return failure. The format is typically `<descriptor_set_out_or_plugin_out>: <proto_files>`.
+- **Also affects**: ANY use of `--dependency_out` will silently be ignored. Build systems (like Bazel, Make) that use `--dependency_out` for incremental builds will get no dependency file from Go protoc, potentially causing stale builds.
+
+### Run 157 — Bool-keyed map entries reordered in encode mode (VICTORY)
+- **Bug**: Go's `reorderMapEntriesBySource` fails to reorder `map<bool, string>` entries because `extractBinaryMapKeyStr` returns "0"/"1" (varint representation) while `extractTextMapKeys` returns "true"/"false" (text format representation). The key strings don't match, so the reordering function can't correlate binary entries with their source-order positions.
+- **Test**: `483_encode_bool_map_order` — cli@encode_bool_map_order fails.
+- **Root cause**: `extractBinaryMapKeyStr()` at cli.go:9142 handles varint keys with `fmt.Sprintf("%d", v)`, returning "0" or "1" for bool keys. But `extractMapKeyFromEntry()` returns "true" or "false" from the text format. When `reorderWireEntriesByKeys` tries to match source keys ["true","false"] against binary keys ["1","0"], none match, so no reordering happens and Go's default sort order (false before true) is preserved.
+- **C++ protoc**: Preserves text format insertion order: `true→"yes"` first, then `false→"no"`.
+- **Go protoc-go**: Outputs `false→"no"` first, then `true→"yes"` (Go map iteration / deterministic sort order).
+- **Fix hint**: In `extractBinaryMapKeyStr`, for varint field 1 where the map key type is bool, return "true"/"false" instead of "1"/"0". Alternatively, in `extractTextMapKeys`, normalize "true" to "1" and "false" to "0". Or in `reorderWireEntriesByKeys`, add bool normalization when matching keys.
+- **Also affects**: Any `map<bool, T>` field in encode mode will have wrong entry ordering.
+
+### Run 158 — Decode mode doesn't suppress defaults for editions IMPLICIT presence (VICTORY)
+- **Bug**: Go's `--decode` mode only suppresses default-valued fields for proto3 messages. For editions files with `features.field_presence = IMPLICIT`, default-valued fields should also be suppressed — but Go prints them anyway. C++ protoc correctly suppresses default-valued fields for both proto3 and editions IMPLICIT presence.
+- **Test**: Decode test `decode@edition_implicit_default` — stdout mismatch (1 test fails).
+- **Root cause**: `findMessageType()` at cli.go:9888 only calls `collectNoPresenceMsgs()` when `isProto3` is true. For editions files (`fd.GetSyntax() == "editions"`), the function is never called, so `noPresenceMsgs` map doesn't include messages from editions files with `field_presence = IMPLICIT`. Then `printTextProto()` at line 10510 checks `noPresenceMsgs[msgFQN]` which is false for editions messages, and default values are printed.
+- **C++ protoc**: `label: "ok"\n` (suppresses id=0, name="", flag=false as default values for IMPLICIT presence).
+- **Go protoc-go**: `id: 0\nname: ""\nflag: false\nlabel: "ok"\n` (prints all 4 fields including 3 with default values).
+- **Fix hint**: In `findMessageType()`, for editions files, check if the file (or individual fields) have `field_presence = IMPLICIT` (feature resolution). If so, call `collectNoPresenceMsgs` for those messages. Need to handle feature inheritance: file-level features apply to all messages, message-level features override, field-level features override further. For editions, check `fd.GetOptions().GetFeatures().GetFieldPresence()` == `IMPLICIT` at the file level, then per-message, then per-field.
+- **Also affects**: Any editions file with `field_presence = IMPLICIT` decoded with `--decode` will print default-valued fields that C++ omits. Also affects per-message and per-field `features.field_presence = IMPLICIT` overrides.
+
+### Run 159 — Decode mode packed repeated enum doesn't move unknown values to unknown fields (VICTORY)
+- **Bug**: Go's decode mode unpacks packed repeated enum fields into individual varint entries and adds them ALL to `knownEntries` without checking for closed enum unknown values. For proto2 (closed enums), unknown enum values in packed data should be moved to the unknown field set, but Go keeps them as known fields and prints the numeric value.
+- **Test**: Decode test `decode@packed_enum_unknown` — stdout mismatch (1 test fails).
+- **Root cause**: Packed unpacking at cli.go:10363-10406 always appends to `knownEntries`. The closed enum check at lines 10409-10417 only applies to non-packed entries (in the `else if` branch). So packed enum entries bypass the closed enum unknown value check entirely. Run 126 fixed the non-packed case but the packed case was missed.
+- **C++ protoc**: `s: UNKNOWN\ns: ACTIVE\nlabel: "ok"\n1: 99\n` (moves unknown value 99 to unknown fields, printed as `1: 99`).
+- **Go protoc-go**: `s: UNKNOWN\ns: ACTIVE\ns: 99\nlabel: "ok"\n` (keeps unknown value as known field, printed as `s: 99`).
+- **Fix hint**: After unpacking each packed varint entry for an enum type, check if the value is in the closed enum's value map. If not, add it to `unknownEntries` instead of `knownEntries`. Add the same check as lines 10409-10417 inside the packed unpacking loop (around line 10403-10405).
+
+### Run 160 — Encode mode drops detailed error for duplicate non-repeated field (VICTORY)
+- **Bug**: Go's `--encode` mode swallows the detailed error message when a non-repeated field is specified multiple times in text format input. C++ protoc reports the field name and location; Go only prints the generic "Failed to parse input." message.
+- **Test**: CLI test `cli@encode_dup_field` — stderr mismatch (1 test fails).
+- **Root cause**: `reformatProtoTextErrors()` at cli.go:9527 only handles two error patterns: "unknown field" and "missing field separator". When `prototext.Unmarshal` returns a duplicate-field error (different pattern), `reformatProtoTextErrors` doesn't match it and returns without printing anything specific. Only the generic "Failed to parse input." is printed afterward.
+- **C++ protoc**: stderr: `input:1:23: Non-repeated field "id" is specified multiple times.\nFailed to parse input.`
+- **Go protoc-go**: stderr: `Failed to parse input.`
+- **Fix hint**: Add a new regex in `reformatProtoTextErrors` to match Go's duplicate field error pattern (something like `non-repeated field "X" is already set` or similar from prototext) and reformat it to match C++ format: `input:L:C: Non-repeated field "NAME" is specified multiple times.`
+
+### Run 161 — Encode mode double NaN bit pattern differs from C++ (VICTORY)
+- **Bug**: Go's `--encode` mode uses Go's canonical NaN bit pattern (`0x7FF8000000000001`) for `double` fields, while C++ protoc uses `0x7FF8000000000000`. The encode mode uses `prototext.Unmarshal` from Go's standard protobuf library, which produces Go's NaN. This is the same root cause as Run 3 (custom option NaN), but in the encode code path which uses a completely different mechanism (Go standard library's `prototext` package vs custom option encoding).
+- **Test**: CLI test `cli@encode_nan` — stdout (binary output) mismatch (1 test fails).
+- **Root cause**: `prototext.Unmarshal` in Go's `google.golang.org/protobuf/encoding/prototext` package parses `nan` into Go's canonical `math.NaN()` which is `float64(0x7FF8000000000001)`. C++ protoc's text format parser uses `strtod("nan", ...)` which returns `0x7FF8000000000000`. The one-bit difference in the lowest mantissa bit produces different binary output.
+- **C++ protoc**: `09 00 00 00 00 00 00 f8 7f` (double NaN = `0x7FF8000000000000`).
+- **Go protoc-go**: `09 01 00 00 00 00 00 f8 7f` (double NaN = `0x7FF8000000000001`).
+- **Fix hint**: After `prototext.Unmarshal`, walk the resulting message and replace any NaN double values with `math.Float64frombits(0x7FF8000000000000)` to match C++. Or patch the serialized bytes post-marshal. This is tricky since Go's protobuf library internally uses Go's NaN representation.
+- **Also affects**: Any `--encode` with `nan` in a double field. Float NaN (`0x7FC00000`) happens to match between Go and C++, so only double is affected.
+
+### Run 162 — Decode/encode mode "Type not defined" error message format mismatch (VICTORY)
+- **Bug**: Go's `--decode` (and `--encode`) mode produces a different error message format than C++ protoc when the specified message type doesn't exist in the schema. C++ uses `Type not defined: NAME` while Go uses `Type "NAME" is not defined.` — different word order, quotes around the type name, and a trailing period.
+- **Test**: CLI test `cli@decode_bad_type` — stderr mismatch (1 test fails).
+- **Root cause**: `cli.go:9383` uses `fmt.Errorf("Type \"%s\" is not defined.", msgTypeName)` while C++ protoc's `command_line_interface.cc` uses `"Type not defined: " + type_name`.
+- **C++ protoc**: `Type not defined: basic.NoSuchType`
+- **Go protoc-go**: `Type "basic.NoSuchType" is not defined.`
+- **Fix hint**: Change the error format at cli.go:9383 (and lines 9390, 9394, 9967) from `Type "%s" is not defined.` to `Type not defined: %s` to match C++.
+- **Also affects**: `--encode` mode has the same bug (same code path or similar error at line 9967).
+
+### Run 163 — Encode mode NaN not canonicalized in map double/float values (VICTORY)
+- **Bug**: Go's `canonicalizeNaN()` function in `cli.go` handles NaN canonicalization for singular fields, repeated fields, and recursing into message-valued maps — but does NOT handle `double`/`float` values directly inside map fields (e.g., `map<string, double>`). When encoding `values { key: "x" value: nan }`, Go's `prototext.Unmarshal` produces Go's canonical NaN (`0x7FF8000000000001`) which is not replaced by C++ NaN (`0x7FF8000000000000`).
+- **Test**: CLI test `cli@encode_map_nan` — stdout (binary output) mismatch (1 test fails). Proto in `testdata/488_encode_map_nan/test.proto`.
+- **Root cause**: `canonicalizeNaN()` at cli.go:9515-9521 only recurses into map values when `fd.MapValue().Kind() == protoreflect.MessageKind`. It has no case for `protoreflect.DoubleKind` or `protoreflect.FloatKind` on map values. So NaN values in `map<K, double>` or `map<K, float>` are left as Go's NaN bit pattern.
+- **C++ protoc**: NaN bytes `00 00 00 00 00 00 f8 7f` = `0x7FF8000000000000`.
+- **Go protoc-go**: NaN bytes `01 00 00 00 00 00 f8 7f` = `0x7FF8000000000001`. One-bit difference in the lowest mantissa bit.
+- **Fix hint**: In `canonicalizeNaN`'s map branch (lines 9515-9521), add cases for `protoreflect.DoubleKind` and `protoreflect.FloatKind`: `if fd.MapValue().Kind() == protoreflect.DoubleKind { ... check math.IsNaN(mv.Float()) and replace ... }`. Also for FloatKind. Code pattern:
+  ```go
+  } else if fd.IsMap() {
+      v.Map().Range(func(k protoreflect.MapKey, mv protoreflect.Value) bool {
+          switch fd.MapValue().Kind() {
+          case protoreflect.MessageKind:
+              canonicalizeNaN(mv.Message().(*dynamicpb.Message))
+          case protoreflect.DoubleKind:
+              if math.IsNaN(mv.Float()) {
+                  v.Map().Set(k, protoreflect.ValueOfFloat64(math.Float64frombits(0x7FF8000000000000)))
+              }
+          case protoreflect.FloatKind:
+              if math.IsNaN(float64(float32(mv.Float()))) {
+                  v.Map().Set(k, protoreflect.ValueOfFloat32(math.Float32frombits(0x7FC00000)))
+              }
+          }
+          return true
+      })
+  }
+  ```
+- **Also affects**: Any `--encode` with `nan` in a `map<K, double>` or `map<K, float>` field. Singular and repeated double/float NaN values ARE canonicalized (fixed in Run 161).
+
+### Run 164 — Trailing comment before closing brace dropped from SCI (VICTORY)
+- **Bug**: Go's source code info does not capture comments between the last field in a message and the closing `}` brace. C++ protoc treats such comments as `trailing_comments` on the last field's SCI entry. Go drops them entirely — the comment is not attached to any SCI location.
+- **Test**: `489_trailing_comment_before_close` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: When parsing a message body, after the last field is parsed and before the closing `}` is consumed, any comments on the intervening lines should be collected as trailing comments for the last declaration. Go's comment collection logic does not assign these comments to the preceding declaration — they are consumed by the `}` token processing but never attached to any SCI entry.
+- **C++ protoc**: path=[4,0,2,0] (the field `name`) has `trailing_comments: " trailing on last field before close\n"`.
+- **Go protoc-go**: path=[4,0,2,0] has NO `trailing_comments`. The comment is completely lost.
+- **Fix hint**: After parsing each declaration in a message body, before consuming the next token (which could be `}`), check if there are pending comments and attach them as trailing comments to the previous declaration's SCI entry. This is similar to the fix needed for Run 62 (comment after opening brace) but affects the opposite end of the scope.
+- **Also affects**: Same bug likely exists for comments before `}` in enums, services, oneofs, and extend blocks — any scope where a comment appears after the last declaration and before the closing brace.
+
+### Run 165 — Encode mode accepts numeric value for proto2 closed enum (VICTORY)
+- **Bug**: Go's `--encode` mode accepts numeric integer values (like `99`) for proto2 closed enum fields, while C++ protoc rejects them with `Unknown enumeration value of "99" for field "s"`. Proto2 enums are "closed" — they only accept values defined in the enum. Go's `prototext.Unmarshal` from the standard library doesn't enforce closed enum validation, so any integer is silently accepted and encoded.
+- **Test**: CLI test `cli@encode_closed_enum` — exit code mismatch (C++ 1, Go 0).
+- **Root cause**: Go's `--encode` mode at `runEncode()` uses `prototext.Unmarshal` from `google.golang.org/protobuf/encoding/prototext` to parse text format input into a `dynamicpb.Message`. The Go prototext library doesn't validate enum values against the enum's value set for proto2 (closed) enums. C++ protoc's text format parser (`TextFormat::Parser::ParseFromString`) checks if the integer value is a defined enum value for closed enums, and rejects it with the error `Unknown enumeration value of "N" for field "F"`.
+- **C++ protoc**: stderr: `input:1:7: Unknown enumeration value of "99" for field "s".\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: (empty) (exit 0). Silently produces binary output with enum value 99.
+- **Fix hint**: After `prototext.Unmarshal`, walk the message and check that all enum fields (in proto2 files) have values that are defined in the enum type. For each enum field, check if `fd.Enum().Values().ByNumber(v.Enum())` returns nil — if so, the value is unknown and should be rejected. Alternatively, add a post-unmarshal validation step that checks `fd.Syntax() == protoreflect.Proto2` and validates enum values. Error format: `input:LINE:COL: Unknown enumeration value of "N" for field "F".\nFailed to parse input.` The line/column info may be hard to extract from Go's prototext library.
+- **Also affects**: Any proto2 message with closed enum fields encoded via `--encode` mode. Also affects editions files with `features.enum_type = CLOSED` (which is the default for editions).
+
+### Run 166 — Encode mode --deterministic_output flag is silently ignored (VICTORY)
+- **Bug**: Go's `parseArgs()` parses the `--deterministic_output` flag into `cfg.deterministicOutput` (line 1402) but this field is NEVER READ anywhere in the encode logic. When `--deterministic_output --encode` is used with map fields, C++ protoc sorts map entries by key (deterministic order). Go ignores the flag entirely and preserves the text format input insertion order (from the `reorderMapEntriesBySource` logic added in Run 154's fix).
+- **Test**: CLI test `cli@encode_deterministic_map` — stdout mismatch (1 test fails). Reuses proto from `testdata/482_encode_map_order/test.proto`.
+- **Root cause**: `cfg.deterministicOutput` is set at cli.go:1402 but never checked in `runEncode()` or anywhere else. The encode path at line 9492 always calls `reorderMapEntriesBySource` to preserve input order, regardless of `--deterministic_output`. When the flag is set, it should skip the reordering and let `proto.MarshalOptions{Deterministic: true}` (line 9477) sort map entries by key, which is what C++ does.
+- **C++ protoc**: With `--deterministic_output`, sorts map entries by key: a(1), b(2), c(3). stdout binary has entries in sorted key order.
+- **Go protoc-go**: Ignores `--deterministic_output`, preserves input order: c(3), a(1), b(2). stdout binary has entries in input order.
+- **Fix hint**: In `runEncode()`, pass `cfg.deterministicOutput` (need to thread it through). When true, skip the `reorderMapEntriesBySource` call at line 9492. The existing `proto.MarshalOptions{Deterministic: true}` already sorts map keys, so just don't reorder them back to source order. Something like: `if !cfg.deterministicOutput { out = reorderMapEntriesBySource(out, msgDesc, string(data)) }`.
+- **Also affects**: Any `--encode --deterministic_output` with map fields will produce differently-ordered output. The flag is documented in the help text (line 44-45) but completely non-functional.
+
+### Run 167 — --version output reports wrong version string (VICTORY)
+- **Bug**: Go's `--version` flag prints `libprotoc 29.3` while C++ protoc prints `libprotoc 33.4`. The version string is hardcoded at cli.go:1336 and does not match the installed C++ protoc version. Notably, the CompilerVersion sent in CodeGeneratorRequest (plugin.go:105) correctly uses 33.4, so the version inconsistency is only in the text output.
+- **Test**: CLI test `cli@version` — stdout mismatch (1 test fails).
+- **Root cause**: `cli.go` line 1336: `fmt.Println("libprotoc 29.3")` is a stale hardcoded version string. The Go port was originally tracking protoc 29.3 but the system C++ protoc has been updated to 33.4. The plugin request version (plugin.go:105-110) was updated but the `--version` text was not.
+- **C++ protoc**: stdout: `libprotoc 33.4` (exit 0).
+- **Go protoc-go**: stdout: `libprotoc 29.3` (exit 0).
+- **Fix hint**: Update line 1336 in cli.go to `fmt.Println("libprotoc 33.4")` or better yet, derive the version string from the same constants used in plugin.go (Major=6, Minor=33, Patch=4 → "33.4").
+
+### Run 168 — --proto_path=virtual=disk mapping syntax not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--proto_path=VIRTUAL=DISK` (or `-IVIRTUAL=DISK`) syntax where `VIRTUAL` is a path prefix mapped to `DISK` directory. Go's `parseArgs()` treats the entire `VIRTUAL=DISK` string as a single literal directory path, so it fails with "directory does not exist".
+- **Test**: CLI test `cli@proto_path_mapping` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails). Test data: `testdata/491_proto_path_mapping/actual/test.proto`.
+- **Root cause**: `parseArgs()` at cli.go:1340-1342 does `arg[len("--proto_path="):]` which extracts the full `vdir=testdata/491_proto_path_mapping/actual` as a single string and appends it to `cfg.protoPath`. Go's `SourceTree` in `importer/importer.go` only supports plain directory paths in `Roots []string` — it has no concept of virtual-to-disk path mapping. C++ protoc's `DiskSourceTree` has `MapPath(virtual_path, disk_path)` which allows path prefix substitution.
+- **C++ protoc**: Parses `vdir=actual_dir` as mapping virtual prefix `vdir` to disk path `actual_dir`. Successfully resolves `vdir/test.proto` to `actual_dir/test.proto`. Exit 0.
+- **Go protoc-go**: Treats `vdir=actual_dir` as a literal directory name. Warns "directory does not exist", then fails with "Could not make proto path relative". Exit 1.
+- **Fix hint**: (1) In `parseArgs()`, split `--proto_path` values on `=` to detect `VIRTUAL=DISK` mapping syntax. (2) Add a `PathMapping` type to `SourceTree` (like `map[string]string`) alongside `Roots`. (3) In `Open()`, check if the requested filename matches any virtual prefix and substitute the disk path. (4) The first `=` separates virtual from disk (the disk path itself may contain `=`).
+- **Also affects**: `-I` flag (which is an alias for `--proto_path`) has the same issue.
+
+### Run 169 — Import cycle error uses virtual filename instead of disk path (VICTORY)
+- **Bug**: Go's `parseRecursive()` uses the virtual filename (e.g., `test.proto`) in import cycle error messages, while C++ protoc uses the full disk path (e.g., `testdata/492_self_import/test.proto`). The error message prefix differs.
+- **Test**: CLI test `cli@self_import` — stderr mismatch (1 test fails).
+- **Root cause**: At cli.go:934, `cycleStart` is set to `filename` which is the virtual filename. The error at line 944 uses `cycleStart` directly without mapping it back to the disk path via `mapErrorFilename`. The `collectErrors` at line 508-512 are joined and returned without any filename mapping. Only warnings (lines 656, 708) go through `mapErrorFilename`.
+- **C++ protoc**: `testdata/492_self_import/test.proto:3:1: File recursively imports itself: test.proto -> test.proto` (disk path prefix).
+- **Go protoc-go**: `test.proto:3:1: File recursively imports itself: test.proto -> test.proto` (virtual filename prefix).
+- **Fix hint**: Either (1) apply `mapErrorFilename` to each error in `collectErrors` before joining at line 512, or (2) use the disk path when constructing the error at line 944 by calling `srcTree.VirtualFileToDiskFile(filename)`. Option 1 is more general — it would fix filename mapping for ALL collected errors, not just import cycle errors.
+- **Also affects**: Any error in `collectErrors` that uses virtual filenames will have the same prefix mismatch. This includes "File not found" errors (line 958) and other parse/import errors.
+
+### Run 170 — Space-separated flag value for --encode/--decode not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports both `--flag=VALUE` and `--flag VALUE` (space-separated) syntax for flags like `--encode`, `--decode`, `--proto_path`, etc. Go's `parseArgs()` only supports the `--flag=VALUE` form. When `--encode basic.Person` (space-separated) is used, Go fails with "Missing value for flag: --encode" while C++ correctly consumes `basic.Person` as the flag's value.
+- **Test**: CLI test `cli@encode_space_flag` — exit code mismatch: C++ exit 0, Go exit 1.
+- **Root cause**: `parseArgs()` in cli.go handles flags only via `strings.HasPrefix(arg, "--flag=")` pattern. When a flag like `--encode` appears without `=`, Go falls through to the end of the flag parsing loop where it hits the "Missing value for flag" error at line 1536-1541. C++ protoc's argument parser consumes the next argument as the value for flags that take a value argument.
+- **C++ protoc**: Parses `--encode` + `basic.Person` as `--encode=basic.Person`. Successfully encodes with empty stdin. Exit 0.
+- **Go protoc-go**: Sees `--encode` alone, reports "Missing value for flag: --encode". Exit 1.
+- **Fix hint**: (1) For flags that take values (`--encode`, `--decode`, `--proto_path`, `--plugin`, etc.), when `arg` matches the flag name exactly (without `=`), consume `args[i+1]` as the value and increment `i`. (2) Alternative: refactor to use a proper flag parsing library that handles both forms.
+- **Also affects**: `--decode TYPE`, `--proto_path DIR`, `--plugin NAME=PATH`, `--descriptor_set_in FILE`, `--descriptor_set_out FILE`, `--dependency_out FILE`, `--error_format FMT`, and any other flag that takes a value argument.
+
+### Run 171 — Encode mode missing required-field warning for group fields (VICTORY)
+- **Bug**: Go's encode mode doesn't emit the "Input message is missing required fields" warning when a proto2 group has a required field that's missing from the text input. C++ protoc correctly detects and warns about missing required fields inside groups, using dotted notation like `result[0].url`. Go silently encodes the partial message without any warning.
+- **Test**: CLI test `cli@encode_group_missing_req` — stderr mismatch: C++ emits warning, Go is silent.
+- **Root cause**: Go's encode mode likely doesn't recurse into group fields when checking for missing required fields after encoding. The missing-required-field check works for regular message fields (Run tested `encmissreq.Record` with required `name` — both warn) but fails when the required field is inside a group (`repeated group Result` containing `required string url`).
+- **C++ protoc**: `warning:  Input message is missing required fields:  result[0].url` on stderr, exit 0.
+- **Go protoc-go**: No warning, exit 0. Binary output is identical.
+- **Fix hint**: In the encode mode's post-encoding validation, add recursion into group fields when checking for missing required fields. Groups use wire type START_GROUP/END_GROUP but the message structure is the same — required field checking should recurse into groups just like it does for message fields.
+
+### Run 172 — `-oFILE` shorthand for `--descriptor_set_out=FILE` not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `-oFILE` as a shorthand for `--descriptor_set_out=FILE` (documented in C++ protoc `--help` as `-oFILE, --descriptor_set_out=FILE`). Go's `parseArgs()` does not recognize this shorthand. When `-o/dev/null` is used, Go treats it as an unknown flag and reports "Missing value for flag: -o/dev/null", then exits 1. C++ succeeds silently with exit 0.
+- **Test**: CLI test `cli@short_o_flag` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` has no handling for `-o` prefix. It handles `-I` (shorthand for `--proto_path`), but not `-o`. The C++ protoc help shows both forms: `-oFILE, --descriptor_set_out=FILE`. Go only supports the long form `--descriptor_set_out=FILE`.
+- **C++ protoc**: Accepts `-o/dev/null`, writes descriptor set output, no stderr, exit 0.
+- **Go protoc-go**: Rejects `-o/dev/null` with `Missing value for flag: -o/dev/null` on stderr, exit 1.
+- **Fix hint**: In `parseArgs()`, add handling for `-o` prefix similar to how `-I` is handled: `if strings.HasPrefix(arg, "-o") { cfg.descriptorSetOut = arg[2:]; continue }`. This would extract the filename from immediately after `-o` (no space separator).
+
+### Run 173 — Decode mode fails on nested groups (group inside a group) (VICTORY)
+- **Bug**: Go's `--decode` mode fails to parse messages containing nested groups (a group field inside another group field). C++ protoc decodes them correctly. The Go decoder produces "Failed to parse input." and exits 1 when encountering a group-typed field within a group.
+- **Test**: Decode test `decode@nested_group` — `testdata/495_decode_nested_group` with hex `0a0568656c6c6f130a04746573741b082a1c14` (message with `name="hello"`, `Inner { label="test" Deep { value=42 } }`).
+- **Root cause**: Go's decode mode likely doesn't properly register or resolve group field descriptors for sub-groups nested inside an outer group. Single-level groups work fine (tested in `462_decode_group_merge`), but adding a second level of group nesting triggers the failure. The wire format uses START_GROUP/END_GROUP tags at both levels, but Go's decoder apparently can't handle the inner group's tags.
+- **C++ protoc**: Decodes correctly: `name: "hello"\nInner {\n  label: "test"\n  Deep {\n    value: 42\n  }\n}` exit 0.
+- **Go protoc-go**: `Failed to parse input.` exit 1.
+- **Fix hint**: In the decode mode's group handling, ensure that when a group field is encountered inside another group, the inner group's field descriptor is properly resolved from the parent group's message type (not the top-level message type). The inner group's message type needs to be looked up in the enclosing group's descriptor, not the root message.
+
+### Run 174 — Encode mode missing-required-field order differs from C++ (VICTORY)
+- **Bug**: Go's encode mode lists missing required fields in depth-first order, while C++ protoc lists them in field-number order within each message level (breadth-first). When encoding a message with nested required fields at different depths, the warning message differs.
+- **Test**: CLI test `cli@encode_req_order` — `testdata/496_encode_req_order` with input `mid { deep { } }`. Message `Outer` has `optional Mid mid = 1`, `Mid` has `optional Deep deep = 1; required int32 x = 2;`, `Deep` has `required string name = 1;`.
+- **Root cause**: Go's `collectMissingRequired` (or equivalent) recurses depth-first into sub-messages before checking sibling required fields. So it finds `mid.deep.name` (deep nesting) before `mid.x` (same level). C++ collects missing fields in field-number order within each message, producing `mid.x, mid.deep.name` (field 2 before field 1's sub-field).
+- **C++ protoc**: `warning:  Input message is missing required fields:  mid.x, mid.deep.name` (field-number order within each level).
+- **Go protoc-go**: `warning:  Input message is missing required fields:  mid.deep.name, mid.x` (depth-first order).
+- **Fix hint**: Change the missing-required-field collection to process all fields in a message before recursing into sub-messages. Or collect all missing fields and sort them by depth/field-number to match C++ order.
+
+### Run 175 — --descriptor_set_in with colon-separated multiple files not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--descriptor_set_in=FILE1:FILE2` (colon-delimited on Unix) to load multiple pre-compiled descriptor set files. Go's `os.ReadFile(cfg.descriptorSetIn)` treats the entire `FILE1:FILE2` string as a single filename, causing a "no such file or directory" error.
+- **Test**: CLI test `cli@descriptor_set_in_multi` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails). Test data: `testdata/497_descriptor_set_in_multi/`.
+- **Root cause**: `cli.go:486` does `os.ReadFile(cfg.descriptorSetIn)` which passes the whole colon-separated string as a single file path. C++ protoc's `CommandLineInterface::Run()` splits the `--descriptor_set_in` value on the OS path separator (`:` on Unix, `;` on Windows) and reads each file individually, merging the FileDescriptorSets.
+- **C++ protoc**: Splits `dep1.pb:dep2.pb` into two files, reads both, merges descriptors, succeeds. Exit 0.
+- **Go protoc-go**: Tries to open `dep1.pb:dep2.pb` as a single file. Fails with "no such file or directory". Exit 1.
+- **Fix hint**: In the `if cfg.descriptorSetIn != ""` block at cli.go:485, split `cfg.descriptorSetIn` on `:` (or `filepath.ListSeparator` for portability), then iterate each file path, read it, unmarshal as FileDescriptorSet, and merge all descriptors into the `parsed` map. Something like: `for _, path := range strings.Split(cfg.descriptorSetIn, string(os.PathListSeparator)) { data, err := os.ReadFile(path); ... }`
+- **Also affects**: Any use case with multiple pre-compiled descriptor sets (common in large build systems like Bazel where dependencies are compiled separately).
+
+### Run 176 — @filename response file syntax not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `@filename` syntax to read arguments from a file (one argument per line). Go's `parseArgs()` has no handling for `@`-prefixed arguments — it treats `@testdata/498_response_file/args.txt` as a literal proto file or unknown argument, resulting in "Missing output directives." and exit 1.
+- **Test**: CLI test `cli@response_file` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` iterates `args` but never checks for the `@` prefix. C++ protoc's `CommandLineInterface::Run()` calls `ExpandArgumentFiles(&arguments)` which scans for `@`-prefixed args, reads the referenced file, splits on newlines, and inserts the resulting arguments in place of the `@filename` arg. Go has no equivalent expansion step.
+- **C++ protoc**: Reads `testdata/498_response_file/args.txt`, expands to `--descriptor_set_out=/dev/null -Itestdata/01_basic_message testdata/01_basic_message/basic.proto`, succeeds. Exit 0.
+- **Go protoc-go**: Treats `@testdata/498_response_file/args.txt` as a literal arg, sees no output directives. Exit 1.
+- **Fix hint**: Before `parseArgs()`, add an `expandArgumentFiles` step: iterate args, for any arg starting with `@`, read the file at `arg[1:]`, split contents by newline, filter empty lines, and replace the `@filename` arg with the resulting lines. Each line is one argument. No shell expansion (no quotes, wildcards, etc.). Relative paths are resolved against the working directory (NOT against `--proto_path`).
+- **Also affects**: Large projects and build systems that use response files to avoid command-line length limits. Bazel, CMake, and other tools commonly use `@filename` syntax.
+
+### Run 177 — Decode mode accepts truncated packed fixed32 data that C++ rejects (VICTORY)
+- **Bug**: Go's `--decode` mode silently accepts malformed packed `fixed32` data where the byte length is not a multiple of 4. C++ protoc rejects such data with "Failed to parse input." and exit code 1. Go decodes as many complete fixed32 values as possible and silently drops trailing bytes, printing the result and exiting with code 0.
+- **Test**: Decode test `decode@packed_trunc` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: Go's `proto.Unmarshal` / `protowire` library is more lenient with packed repeated fixed-size fields. When it encounters a BytesType entry for a packed repeated fixed32 field with a length that isn't a multiple of 4, it decodes the complete elements and ignores the remainder. C++ protoc's wire format parser strictly validates that packed fixed-size field lengths are exact multiples of the element size.
+- **C++ protoc**: Rejects `0a05010203040512026f6b` (field 1 packed fixed32 with 5 bytes) with "Failed to parse input." exit 1.
+- **Go protoc-go**: Decodes 1 fixed32 value (67305985) from the first 4 bytes, drops the 5th byte, prints `vals: 67305985\nlabel: "ok"`, exit 0.
+- **Fix hint**: After `proto.Unmarshal` succeeds in `runDecode`, manually validate that all packed repeated fixed-size fields have lengths that are multiples of their element size (4 for fixed32/sfixed32/float, 8 for fixed64/sfixed64/double). Or, parse the raw wire data before calling `proto.Unmarshal` and check for this condition. Alternatively, use a stricter unmarshal option if available.
+- **Also affects**: Packed `fixed64`, `sfixed32`, `sfixed64`, `float`, `double` fields with non-multiple-of-element-size lengths would also be silently accepted by Go but rejected by C++.
+
+### Run 178 — Space-separated --proto_path flag value not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--proto_path DIR` (space-separated) syntax, but Go's `parseArgs()` only handles `--proto_path=DIR` (equals-sign form). When `--proto_path testdata/01_basic_message` is used with a space, Go treats `--proto_path` as a flag with no value and falls through to the "Missing value for flag" error handler. C++ correctly consumes the next argument as the flag's value.
+- **Test**: CLI test `cli@proto_path_space` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` at cli.go:1373 only checks `strings.HasPrefix(arg, "--proto_path=")`. When `arg == "--proto_path"` (no `=`), Go falls through to line 1589-1594 which matches any `-`-prefixed arg and reports "Missing value for flag". The `-I` shorthand at line 1386-1400 already handles space separation (when `path == ""`, it advances to the next arg), but `--proto_path` does not.
+- **C++ protoc**: Parses `--proto_path` + `testdata/01_basic_message` as `--proto_path=testdata/01_basic_message`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--proto_path` alone, falls through to "Missing value for flag: --proto_path". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--proto_path"` that consumes `args[i+1]` as the value: `if arg == "--proto_path" { if i+1 < len(args) { i++; /* parse args[i] as proto_path */ } else { return nil, fmt.Errorf("Missing value for flag: %s", arg) }; continue }`. Same pattern as the `--encode`/`--decode` space handlers already added at lines 1487-1509.
+- **Also affects**: `--descriptor_set_out`, `--descriptor_set_in`, `--dependency_out`, `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg`, `--plugin` — all flags that take a value and only handle `--flag=VALUE` form, not `--flag VALUE`.
+
+### Run 179 — Space-separated --descriptor_set_out flag not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--descriptor_set_out /dev/null` (space-separated) syntax, but Go's `parseArgs()` only handles `--descriptor_set_out=VALUE` (equals-sign form). When `--descriptor_set_out /dev/null` is used with a space, Go treats `--descriptor_set_out` as a flag with no value and reports "Missing value for flag: --descriptor_set_out".
+- **Test**: CLI test `cli@dso_space` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` at cli.go:1431 only checks `strings.HasPrefix(arg, "--descriptor_set_out=")`. When `arg == "--descriptor_set_out"` (no `=`), Go falls through to the "Missing value for flag" error handler. Same class of bug as Run 178 (`--proto_path` space), but affecting a different flag.
+- **C++ protoc**: Parses `--descriptor_set_out` + `/dev/null` as `--descriptor_set_out=/dev/null`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--descriptor_set_out` alone, falls through to "Missing value for flag: --descriptor_set_out". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--descriptor_set_out"` that consumes `args[i+1]` as the value, similar to the `--encode`/`--decode` space handlers. Same pattern needed for `--error_format`, `--descriptor_set_in`, `--dependency_out`, `--direct_dependencies`, `--direct_dependencies_violation_msg`, `--plugin`.
+- **Also affects**: All value-taking long flags that only handle `--flag=VALUE` form.
+
+### Run 180 — Space-separated --descriptor_set_in flag not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--descriptor_set_in FILE` (space-separated) syntax, but Go's `parseArgs()` only handles `--descriptor_set_in=FILE` (equals-sign form). When `--descriptor_set_in testdata/474_descriptor_set_in/dep.pb` is used with a space, Go treats `--descriptor_set_in` as a flag with no value and reports "Missing value for flag: --descriptor_set_in".
+- **Test**: CLI test `cli@dsi_space` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` at cli.go:1496 only checks `strings.HasPrefix(arg, "--descriptor_set_in=")`. When `arg == "--descriptor_set_in"` (no `=`), Go falls through to the "Missing value for flag" error handler. Same class of bug as Runs 178-179 (`--proto_path` and `--descriptor_set_out` space), but affecting a different flag.
+- **C++ protoc**: Parses `--descriptor_set_in` + `dep.pb` as `--descriptor_set_in=dep.pb`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--descriptor_set_in` alone, falls through to "Missing value for flag: --descriptor_set_in". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--descriptor_set_in"` that consumes `args[i+1]` as the value, similar to the `--encode`/`--decode` space handlers already added.
+- **Also affects**: All value-taking long flags that only handle `--flag=VALUE` form: `--error_format`, `--dependency_out`, `--direct_dependencies`, `--direct_dependencies_violation_msg`, `--plugin`.
+
+### Run 181 — Duplicate --descriptor_set_out flag accepted by Go but rejected by C++ (VICTORY)
+- **Bug**: C++ protoc rejects duplicate `--descriptor_set_out` flags with the error `--descriptor_set_out may only be passed once.` and exits 1. Go's `parseArgs()` silently overwrites the previous value and continues, exiting 0. This is a validation gap — C++ validates that single-value flags are not specified more than once, Go does not.
+- **Test**: CLI test `cli@dup_dso` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` at line 1431 handles `--descriptor_set_out=` by simply assigning `cfg.descriptorSetOut = ...`. If the flag appears twice, the second value overwrites the first without any error. C++ protoc's `CommandLineInterface::InterpretArgument()` checks if `descriptor_set_out_name_` is already set and emits an error if the flag is specified again.
+- **C++ protoc**: `--descriptor_set_out may only be passed once.` on stderr, exit 1.
+- **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
+- **Fix hint**: Before assigning `cfg.descriptorSetOut`, check if it's already non-empty. If so, emit an error: `return nil, fmt.Errorf("--descriptor_set_out may only be passed once.")`. Same validation likely needed for other single-value flags: `--descriptor_set_in`, `--dependency_out`, `--encode`, `--decode`, `--error_format`, etc.
+- **Also affects**: Potentially all single-value flags that should only be specified once: `--descriptor_set_in`, `--dependency_out`, `--encode`, `--decode`, `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg`.
+
+### Run 182 — Space-separated --dependency_out flag not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--dependency_out /dev/null` (space-separated) syntax, but Go's `parseArgs()` only handles `--dependency_out=VALUE` (equals-sign form). When `--dependency_out /dev/null` is used with a space, Go treats `--dependency_out` as a flag with no value and reports "Missing value for flag: --dependency_out".
+- **Test**: CLI test `cli@dependency_out_space` — stderr mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` at cli.go:1557 only checks `strings.HasPrefix(arg, "--dependency_out=")`. When `arg == "--dependency_out"` (no `=`), Go falls through to the "Missing value for flag" error handler. Same class of bug as Runs 178-180, but for `--dependency_out`.
+- **C++ protoc**: Parses `--dependency_out` + `/dev/null` as `--dependency_out=/dev/null`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--dependency_out` alone, reports "Missing value for flag: --dependency_out". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--dependency_out"` that consumes `args[i+1]` as the value, same pattern as `--descriptor_set_in` space handler at lines 1507-1515.
+- **Also affects**: `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg` — all value-taking long flags that only handle `--flag=VALUE` form, not `--flag VALUE`.
+
+### Run 184 — --decode and --encode mutual exclusion not validated by Go (VICTORY)
+- **Bug**: Go's `parseArgs()` allows both `--decode=TYPE` and `--encode=TYPE` to be specified simultaneously without error. C++ protoc validates mutual exclusion and rejects with "Only one of --encode and --decode can be specified." (exit 1). Go sets both `cfg.decodeType` and `cfg.encodeType`, then silently runs decode mode (since the `decodeType` check comes before `encodeType` in the dispatch logic), ignoring `--encode` entirely.
+- **Test**: CLI test `decode_encode_mutex` — fails (exit code mismatch + stderr mismatch).
+- **Root cause**: `parseArgs()` at cli.go:1518-1542 parses `--encode=` and `--decode=` independently, storing values in `cfg.encodeType` and `cfg.decodeType`. No validation checks that at most one of these is set. The dispatch at cli.go:757-763 checks `decodeType != ""` first, so decode mode runs and `--encode` is silently ignored.
+- **C++ protoc**: `protoc --decode=basic.Person --encode=basic.Person ...` → stderr: `"Only one of --encode and --decode can be specified."`, exit 1.
+- **Go protoc-go**: Same command with empty stdin → no stderr, exit 0 (silently succeeds with empty decode output).
+- **Fix hint**: After parsing all args, add a check: `if cfg.decodeType != "" && cfg.encodeType != "" { return error "Only one of --encode and --decode can be specified." }`. Same for `--decode_raw` + `--encode` and `--decode_raw` + `--decode`.
+
+### Run 185 — Space-separated --error_format flag value not supported by Go (VICTORY)
+- **Bug**: Go's `parseArgs()` only handles `--error_format=VALUE` form, not `--error_format VALUE` (space-separated). When `--error_format msvs` is passed, Go fails with `Missing value for flag: --error_format` (exit 1) while C++ protoc accepts it fine (exit 0).
+- **Test**: CLI test `error_format_space` — fails (exit code mismatch: C++ 0, Go 1; stderr mismatch).
+- **Root cause**: `parseArgs()` in cli.go only has a `strings.HasPrefix(arg, "--error_format=")` handler and no `arg == "--error_format"` handler to consume the next arg. Same pattern as other space-separated flag bugs (Runs 178-182).
+- **C++ protoc**: `protoc --error_format msvs --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto` → exit 0, no errors.
+- **Go protoc-go**: Same command → stderr: `Missing value for flag: --error_format`, exit 1.
+- **Fix hint**: Add a handler for `arg == "--error_format"` that consumes `args[i+1]` as the value, same pattern as other space-separated flag handlers.
+
+### Run 186 — allow_alias = false error message mismatch (VICTORY)
+- **Bug**: Go's validation doesn't handle the case where `option allow_alias = false;` is explicitly set on an enum that has aliased values. C++ protoc detects this specific case and reports `"Status" declares 'option allow_alias = false;' which has no effect. Please remove the declaration.` Go ignores the explicit `false` setting and reports the standard duplicate value error instead.
+- **Test**: `500_allow_alias_false` — all 10 profiles fail (error mismatch).
+- **Root cause**: Go's enum alias validation (in cli.go or descriptor validation) doesn't check whether `allow_alias` is explicitly set to `false`. C++ protoc specifically checks if `allow_alias` is explicitly set to `false` and reports a distinct error telling the user to remove the pointless declaration. Go just treats `allow_alias = false` the same as `allow_alias` not being set at all.
+- **C++ protoc**: `test.proto:12:1: "Status" declares 'option allow_alias = false;' which has no effect. Please remove the declaration.`
+- **Go protoc-go**: `test.proto:9:13: "aliasf.RUNNING" uses the same enum value as "aliasf.ACTIVE". If this is intended, set 'option allow_alias = true;' to the enum definition. The next available enum value is 2.`
+- **Fix hint**: In enum validation, check if `EnumOptions.GetAllowAlias()` is explicitly set (not just false by default). If explicitly set to false AND there are aliased values, emit the C++ error message. The tricky part is distinguishing "explicitly set to false" from "not set at all" — need to check if the option was actually parsed and set, not just check `GetAllowAlias() == false`.
+
+### Run 187 — Duplicate --descriptor_set_in flag accepted by Go but rejected by C++ (VICTORY)
+- **Bug**: C++ protoc rejects duplicate `--descriptor_set_in` flags with `--descriptor_set_in may only be passed once. To specify multiple descriptor sets, pass them all as a single parameter separated by ':'.` and exits 1. Go's `parseArgs()` silently overwrites the previous value and continues, exiting 0. Same class of bug as Run 181 (duplicate `--descriptor_set_out`).
+- **Test**: CLI test `cli@dup_dsi` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` at line 1529 handles `--descriptor_set_in=` by simply assigning `cfg.descriptorSetIn = ...`. If the flag appears twice, the second value overwrites the first without any error. C++ protoc checks if the value is already set and emits an error.
+- **C++ protoc**: `--descriptor_set_in may only be passed once. To specify multiple descriptor sets, pass them all as a single parameter separated by ':'.` on stderr, exit 1.
+- **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
+- **Fix hint**: Before assigning `cfg.descriptorSetIn`, check if it's already non-empty. If so, emit the same error as C++: `return nil, fmt.Errorf("--descriptor_set_in may only be passed once. To specify multiple descriptor sets, pass them all as a single parameter separated by ':'.")`.
+- **Also affects**: Same validation likely missing for `--dependency_out`, `--encode`, `--decode`, `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg`.
+
+### Run 188 — Duplicate --dependency_out flag accepted by Go but rejected by C++ (VICTORY)
+- **Bug**: C++ protoc rejects duplicate `--dependency_out` flags with `--dependency_out may only be passed once.` and exits 1. Go's `parseArgs()` silently overwrites the previous value and continues, exiting 0. Same class of bug as Run 181 (duplicate `--descriptor_set_out`) and Run 187 (duplicate `--descriptor_set_in`).
+- **Test**: CLI test `cli@dup_depout` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` at line ~1557 handles `--dependency_out=` by simply assigning `cfg.dependencyOut = ...`. If the flag appears twice, the second value overwrites the first without any error. C++ protoc checks if the value is already set and emits an error.
+- **C++ protoc**: `--dependency_out may only be passed once.` on stderr, exit 1.
+- **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
+- **Fix hint**: Before assigning `cfg.dependencyOut`, check if it's already non-empty. If so, emit: `return nil, fmt.Errorf("--dependency_out may only be passed once.")`.
+- **Also affects**: Same validation likely missing for `--encode`, `--decode`, `--error_format`, `--direct_dependencies`, `--direct_dependencies_violation_msg`.
+
+### Run 189 — Duplicate --encode flag accepted by Go but rejected by C++ (VICTORY)
+- **Bug**: C++ protoc rejects duplicate `--encode` flags with `Only one of --encode and --decode can be specified.` and exits 1. Go's `parseArgs()` silently overwrites the previous value and continues, exiting 0. Same class of bug as Runs 181, 187, 188 (duplicate flag detection).
+- **Test**: CLI test `cli@dup_encode` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` handles `--encode=` by simply assigning `cfg.encodeType = ...`. If the flag appears twice, the second value overwrites the first without any error. C++ protoc checks if the mode is already set to encode/decode and emits the mutual exclusion error.
+- **C++ protoc**: `Only one of --encode and --decode can be specified.` on stderr, exit 1.
+- **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
+- **Fix hint**: Before assigning `cfg.encodeType`, check if it's already non-empty. If so, emit: `return nil, fmt.Errorf("Only one of --encode and --decode can be specified.")`.
+- **Also affects**: Same validation likely missing for duplicate `--decode`, duplicate `--direct_dependencies`, duplicate `--direct_dependencies_violation_msg`.
+
+### Run 190 — Duplicate --direct_dependencies flag accepted by Go but rejected by C++ (VICTORY)
+- **Bug**: C++ protoc rejects duplicate `--direct_dependencies` flags with `--direct_dependencies may only be passed once. To specify multiple direct dependencies, pass them all as a single parameter separated by ':'.` and exits 1. Go's `parseArgs()` silently overwrites the previous value and continues, exiting 0. Same class of bug as Runs 181, 187-189 (duplicate flag detection).
+- **Test**: CLI test `cli@dup_direct_deps` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` handles `--direct_dependencies=` by simply assigning `cfg.directDependencies`. If the flag appears twice, the second value overwrites the first without any error. C++ protoc checks if the value is already set and emits an error.
+- **C++ protoc**: `--direct_dependencies may only be passed once. To specify multiple direct dependencies, pass them all as a single parameter separated by ':'.` on stderr, exit 1.
+- **Go protoc-go**: Silently accepts both, uses the last value, exit 0.
+- **Fix hint**: Before assigning `cfg.directDependencies`, check if it's already been set. If so, emit: `return nil, fmt.Errorf("--direct_dependencies may only be passed once. To specify multiple direct dependencies, pass them all as a single parameter separated by ':'.")`.
+- **Also affects**: Same validation likely missing for duplicate `--direct_dependencies_violation_msg`, duplicate `--error_format`.
+
+### Run 191 — --print_free_field_numbers not mutually exclusive with --decode/--encode (VICTORY)
+- **Bug**: C++ protoc treats `--print_free_field_numbers` as a "mode" mutually exclusive with `--encode` and `--decode`. When combined with `--decode=TYPE`, C++ rejects with `Only one of --encode and --decode can be specified.` and exits 1. Go ignores the mode conflict, executes `--print_free_field_numbers`, and exits 0.
+- **Test**: CLI test `cli@pfn_decode_mutex` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: Go's `parseArgs()` sets both `cfg.printFreeFieldNumbers = true` and `cfg.decodeType = "basic.Person"`. The mutual exclusion check in Go only checks `--encode` vs `--decode`, not `--print_free_field_numbers` vs either. C++ treats `--print_free_field_numbers` as equivalent to an encode/decode mode and checks for conflicts.
+- **C++ protoc**: `Only one of --encode and --decode can be specified.` on stderr, exit 1.
+- **Go protoc-go**: Prints free field numbers and exits 0. `--decode` flag is silently ignored.
+- **Fix hint**: Add a mutual exclusion check in `parseArgs()` or `Run()`: if `cfg.printFreeFieldNumbers` is true AND (`cfg.decodeType != ""` OR `cfg.encodeType != ""` OR `cfg.decodeRaw`), emit the error `Only one of --encode and --decode can be specified.`. C++ groups all four modes under the same umbrella.
+- **Also affects**: `--print_free_field_numbers` + `--encode` has the same bug (Go runs pfn and ignores encode). `--print_free_field_numbers` + `--decode_raw` has a different behavior (both fail, but with different error messages).
+
+### Run 192 — Trailing comment after closing brace incorrectly attached to entity in SCI (VICTORY)
+- **Bug**: Go's source code info attaches trailing comments that appear after a closing `}` brace as `trailing_comments` on the entity that was just closed. C++ protoc does NOT attach these comments as trailing comments — they are detached or become leading comments for the next entity.
+- **Test**: `501_brace_trailing_comment` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: The Go parser's comment tracking logic attaches `// after nested enum brace` as a trailing comment to the nested `Status` enum. C++ protoc recognizes that a comment after `}` on the same line is NOT a trailing comment for the entity because `}` ends the entity — the comment belongs to the parent scope or next entity.
+- **C++ protoc**: No trailing comment on the nested enum. The `// after nested enum brace` comment is detached.
+- **Go protoc-go**: Attaches `trailing_comments: " after nested enum brace\n"` to the nested enum's SCI location.
+- **Fix hint**: In the parser's comment tracking, when a `}` closes an entity (message, enum, service, etc.), do not attach any same-line comment as a trailing comment to that entity. The comment should be treated as a leading or detached comment for the next statement in the parent scope.
+- **Also affects**: Same bug occurs for top-level enums (`// after color brace`), nested messages, services — any entity whose `}` is followed by a same-line comment. Run 164 found a similar but different comment bug.
+
+### Run 193 — Go does not emit json_name conflict warning for proto2 fields (VICTORY)
+- **Bug**: C++ protoc emits a warning when two fields in the same message have conflicting default JSON names (e.g., `my_name` → `myName` vs field literally named `myName`). Go does not detect or emit this warning at all. Both compilers exit 0 and produce identical binary output, but C++ writes the warning to stderr while Go is silent.
+- **Test**: CLI test `cli@json_name_conflict` — stderr mismatch (1 test fails). Test data: `testdata/502_json_name_conflict/test.proto`.
+- **Root cause**: Go's descriptor validation does not check for conflicting auto-generated JSON names across fields in the same message. C++ protoc's `DescriptorPool::CrossLinkMessage` validates JSON name uniqueness and emits `warning: The default JSON name of field "X" ("Y") conflicts with the default JSON name of field "Z".` when conflicts exist.
+- **C++ protoc**: `test.proto:5:18: warning: The default JSON name of field "myName" ("myName") conflicts with the default JSON name of field "my_name".` (stderr, exit 0).
+- **Go protoc-go**: No output (exit 0).
+- **Fix hint**: After building all field descriptors in a message, compute the default JSON name for each field (snake_case → camelCase) and check for duplicates. Emit a warning (not error) for proto2 files. For proto3, this is already an error (both compilers reject it).
+- **Also affects**: Any proto2 message with fields whose auto-generated JSON names collide. Also affects editions files with `features.json_format = ALLOW`.
+
+### Run 194 — Encode mode missing specific error for negative unsigned field value (VICTORY)
+- **Bug**: Go's encode mode (`--encode`) does not emit the specific text format parse error when a negative value is provided for a `uint32` field. C++ protoc reports `input:1:8: Expected integer, got: -` before the generic `Failed to parse input.` summary. Go only reports the summary.
+- **Test**: CLI test `encode_neg_uint` — uses `testdata/503_encode_neg_uint/test.proto` with input `value: -1 label: "ok"` for `encneguint.Record`.
+- **Root cause**: `reformatProtoTextErrors()` at cli.go:9802 only handles two error patterns from Go's `prototext.Unmarshal`: "unknown field" and "missing field separator". When `prototext.Unmarshal` rejects a negative value for an unsigned field, the error message doesn't match either pattern, so no specific error is printed — just the generic "Failed to parse input." summary.
+- **C++ protoc**: `input:1:8: Expected integer, got: -\nFailed to parse input.` (stderr, exit 1).
+- **Go protoc-go**: `Failed to parse input.` (stderr, exit 1). Missing the specific error line.
+- **Fix hint**: Add a new regex pattern in `reformatProtoTextErrors` to match Go's prototext error for invalid negative unsigned values and reformat it to match C++ format: `input:LINE:COL: Expected integer, got: -`.
+- **Also affects**: Any encode mode input where a negative literal is used for `uint32`, `uint64`, `fixed32`, or `fixed64` fields.
+
+### Run 195 — Encode mode checkNegUintFields does not recurse into nested messages (VICTORY)
+- **Bug**: Go's `checkNegUintFields()` only scans top-level fields of the encoded message for negative unsigned values. When a negative value appears in a nested sub-message field (e.g., `inner { count: -5 }`), Go doesn't produce the detailed `input:1:16: Expected integer, got: -` error. C++ protoc's text format parser detects the issue at any nesting depth.
+- **Test**: CLI test `encode_nested_neg_uint` — uses `testdata/504_encode_nested_neg_uint/test.proto` with input `inner { count: -5 } label: "ok"` for `encnestedneguint.Outer`. Stderr mismatch: C++ has two lines, Go has one.
+- **Root cause**: `checkNegUintFields()` at cli.go:10088 builds `uintFields` only from `msgDesc.Fields()` at the top level. It scans the text format input linearly for `fieldName: -value` patterns but has no concept of `{` `}` scoping — it never recurses into nested message bodies to check their unsigned fields.
+- **C++ protoc**: `input:1:16: Expected integer, got: -\nFailed to parse input.` (stderr, exit 1).
+- **Go protoc-go**: `Failed to parse input.` (stderr, exit 1). Missing the specific error line.
+- **Fix hint**: Either (1) make `checkNegUintFields` track `{` `}` nesting and maintain a stack of message descriptors to check unsigned fields at each level, or (2) move negative-uint checking into `reformatProtoTextErrors` pattern matching.
+- **Also affects**: Any depth of nesting — double-nested, triple-nested, etc. Also affects `uint64`, `fixed32`, `fixed64` fields in nested messages.
+
+### Run 196 — dependency_out fails on /dev/fd/1 when stdout is redirected (VICTORY)
+- **Bug**: Go's `writeDependencyOut()` uses `os.Create()` which opens the file with `O_RDWR|O_CREATE|O_TRUNC` flags. On macOS, when stdout is redirected to a file, opening `/dev/fd/1` with `O_RDWR` fails with "Permission denied". C++ protoc uses `fopen("w")` which uses `O_WRONLY`, which works fine.
+- **Test**: CLI test `dependency_out_stdout` — uses `--dependency_out=/dev/fd/1 --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto`. Exit code mismatch: C++ exits 0, Go exits 1 with "Permission denied".
+- **Root cause**: `writeDependencyOut()` at cli.go:945 calls `os.Create(depPath)`, which is equivalent to `os.OpenFile(depPath, O_RDWR|O_CREATE|O_TRUNC, 0666)`. When `depPath` is `/dev/fd/1` and stdout is redirected to a file (as the test harness does), macOS refuses the `O_RDWR` open on the fd device node. C++ protoc's `fopen(path, "w")` uses `O_WRONLY` which succeeds.
+- **C++ protoc**: Exit 0, writes dependency output to stdout via `/dev/fd/1`.
+- **Go protoc-go**: Exit 1, stderr: `/dev/fd/1: Permission denied`.
+- **Fix hint**: Use `os.OpenFile(depPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)` instead of `os.Create(depPath)`.
+- **Secondary bug**: Even if the open is fixed, the dependency output content differs — Go writes basenames (e.g., `basic.proto`), C++ writes the full command-line path (e.g., `testdata/01_basic_message/basic.proto`). This is in `orderedFiles` passed to `writeDependencyOut`.
+
+### Run 197 — Encode mode deduplicates duplicate map keys, C++ preserves them (VICTORY)
+- **Bug**: Go's `proto.Marshal` deduplicates map entries with the same key during serialization (last-wins semantics), while C++ protoc's `Message::SerializeToString()` preserves all entries including duplicates. When encoding text format input with duplicate map keys like `items { key: "a" value: 1 } items { key: "a" value: 2 }`, Go outputs 7 bytes (one entry) while C++ outputs 14 bytes (two entries).
+- **Test**: CLI test `encode_map_dup_key` — uses `--encode=encmapdupkey.Record` with input containing duplicate map keys. stdout mismatch (binary output differs).
+- **Root cause**: `runEncode()` at cli.go:9676 uses `proto.MarshalOptions{Deterministic: true}` which calls Go's protobuf library `proto.Marshal`. Go's map marshaling iterates the `map[K]V` (which already deduplicated keys during `prototext.Unmarshal`), producing only one entry per unique key. C++ protoc preserves the raw repeated field entries for map fields (map is syntactic sugar for `repeated MapEntry`).
+- **C++ protoc**: Exit 0, stdout = 14 bytes (two MapEntry messages for key "a").
+- **Go protoc-go**: Exit 0, stdout = 7 bytes (one MapEntry message for key "a", value = 2).
+- **Fix hint**: This is fundamental to how Go's protobuf library handles maps vs C++'s representation. To match C++, Go would need to avoid using native Go maps and instead preserve the repeated field semantics. Could potentially use `dynamicpb` to manually construct repeated entries, or patch `prototext.Unmarshal` to preserve duplicates in the underlying repeated field rather than the Go map.
+
+### Run 198 — Trailing comma in aggregate option list accepted by Go but rejected by C++ (VICTORY)
+- **Bug**: Go's `consumeAggregate()` accepts trailing commas in list values inside aggregate options (`values: [1, 2, 3,]`), while C++ protoc rejects them with "Expected integer, got: ]". C++ requires each comma to be followed by another value. Go silently accepts the trailing comma and produces a valid descriptor. This causes all profiles to fail because C++ errors out (exit 1) while Go succeeds (exit 0).
+- **Test**: `506_trailing_comma_aggregate` — all 10 profiles fail.
+- **Root cause**: Go's aggregate option list parsing in `consumeAggregate()` likely loops on commas without checking if the next token is the closing `]`. After consuming a comma, it should check if the next token is `]` and either reject (to match C++) or handle it. Currently, it seems to loop back, see `]`, and exit the loop normally.
+- **C++ protoc**: `test.proto:17:20: Error while parsing option value for "opts": Expected integer, got: ]` — rejects trailing comma. Exit 1.
+- **Go protoc-go**: Accepts trailing comma, produces valid descriptor. Exit 0.
+- **Fix hint**: In `consumeAggregate()` list parsing, after consuming a `,`, check if the next token is `]`. If so, either (1) emit an error "Expected integer, got: ]" to match C++ behavior, or (2) break out of the loop. Option 1 matches C++ exactly.
+
+### Run 199 — Bare `-I` flag (no value, last arg) produces wrong error message (VICTORY)
+- **Bug**: When `-I` is the last argument with no value, C++ protoc detects the missing flag value and reports "Missing value for flag: -I" with exit 1. Go's protoc-go silently adds an empty string to `protoPaths` and then reports "Missing input file." with exit 1. The error message is wrong — it should report the missing flag value, not the missing input file.
+- **Test**: CLI test `bare_i_flag` — stderr mismatch. 1 test fails.
+- **Root cause**: Go's `-I` flag parsing at cli.go:1418-1423 does `path := arg[2:]` which yields `""`, then checks `if path == "" && i+1 < len(args)` to consume the next arg as the value. If `-I` is the last arg, `i+1 >= len(args)` so it falls through with `path = ""` — silently accepting an empty proto_path. C++ protoc specifically detects this case and reports the missing value.
+- **C++ protoc**: `Missing value for flag: -I` (exit 1).
+- **Go protoc-go**: `Missing input file.` (exit 1).
+- **Fix hint**: After the `if path == "" && i+1 < len(args)` block, add: `if path == "" { return cfg, fmt.Errorf("Missing value for flag: -I") }`.
+
+### Run 200 — Space-separated --direct_dependencies flag not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--direct_dependencies basic.proto` (space-separated) syntax, but Go's `parseArgs()` only handles `--direct_dependencies=VALUE` (equals-sign form). When `--direct_dependencies basic.proto` is used with a space, Go treats `--direct_dependencies` as a flag with no value and reports "Missing value for flag: --direct_dependencies" with exit 1. C++ correctly consumes the next argument as the flag's value.
+- **Test**: CLI test `cli@direct_deps_space` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` only checks `strings.HasPrefix(arg, "--direct_dependencies=")`. When `arg == "--direct_dependencies"` (no `=`), Go falls through to the "Missing value for flag" error handler. Same class of bug as Runs 178-185 (space-separated flags for `--proto_path`, `--descriptor_set_out`, `--descriptor_set_in`, `--dependency_out`, `--error_format`), but affecting `--direct_dependencies`.
+- **C++ protoc**: Parses `--direct_dependencies` + `basic.proto` as `--direct_dependencies=basic.proto`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--direct_dependencies` alone, reports "Missing value for flag: --direct_dependencies". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--direct_dependencies"` that consumes `args[i+1]` as the value, same pattern as other space-separated flag handlers.
+- **Also affects**: `--direct_dependencies_violation_msg` and `--plugin` likely have the same space-separated flag bug.
+
+### Run 201 — Go accepts built-in options on extension ranges that C++ rejects (VICTORY)
+- **Bug**: Go's parser accepts built-in options like `deprecated` and `packed` on extension range declarations (`extensions 100 to 200 [deprecated = true]`), but C++ protoc correctly rejects them because `ExtensionRangeOptions` does not have these fields. Go treats built-in options generically across all option types without validating that the option belongs to the correct options message type.
+- **Test**: `507_extrange_builtin_option` — all 10 profiles fail (C++ errors with exit 1, Go succeeds with exit 0).
+- **Root cause**: Go's parser has special handling for built-in options (`deprecated`, `packed`, `json_name`, etc.) that accepts them on any declaration type. It doesn't validate that the built-in option is actually a field of the appropriate options message (`FieldOptions`, `MessageOptions`, `EnumOptions`, `ExtensionRangeOptions`, etc.). For extension ranges, the only valid built-in options would be those that exist in `ExtensionRangeOptions` — which does NOT include `deprecated`, `packed`, or other field-level options.
+- **C++ protoc**: `test.proto:11:26: Option "deprecated" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).`
+- **Go protoc-go**: Accepts silently, produces a valid descriptor with exit 0.
+- **Fix hint**: In the parser's extension range option handling, validate that the option name is a valid field of `ExtensionRangeOptions`. Built-in options like `deprecated`, `packed`, `json_name`, `jstype`, `ctype`, `lazy`, `unverified_lazy`, `weak` are `FieldOptions` fields and should be rejected on extension ranges. Alternatively, check against the known set of `ExtensionRangeOptions` fields (which are primarily `uninterpreted_option`, `declaration`, `features`, and `verification`).
+- **Also affects**: Other built-in options that are field-specific (like `packed`, `json_name`, `ctype`, `jstype`, `lazy`, etc.) are likely also incorrectly accepted on extension ranges, enum values, services, methods, and other declaration types where they don't belong.
+
+### Run 202 — Space-separated --plugin flag not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--plugin protoc-gen-dump=path/to/plugin` (space-separated) syntax, but Go's `parseArgs()` only handles `--plugin=VALUE` (equals-sign form). When `--plugin value` is used with a space, Go treats `--plugin` as a flag with no value and reports "Missing value for flag: --plugin" with exit 1. C++ correctly consumes the next argument as the flag's value.
+- **Test**: CLI test `cli@plugin_space` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go` only checks `strings.HasPrefix(arg, "--plugin=")`. When `arg == "--plugin"` (no `=`), Go falls through to the "Missing value for flag" error handler. Same class of bug as Runs 178-185, 200 (space-separated flags for `--proto_path`, `--descriptor_set_out`, `--descriptor_set_in`, `--dependency_out`, `--error_format`, `--direct_dependencies`), but affecting `--plugin`.
+- **C++ protoc**: Parses `--plugin` + `protoc-gen-dump=path` as `--plugin=protoc-gen-dump=path`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--plugin` alone, reports "Missing value for flag: --plugin". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--plugin"` that consumes `args[i+1]` as the value, same pattern as other space-separated flag handlers.
+
+### Run 203 — Encode mode missing detailed parse error for numeric field name (VICTORY)
+- **Bug**: Go's encode mode (text format parser) omits the detailed parse error message when stdin contains an integer where a field name is expected. C++ protoc outputs `input:1:1: Expected identifier, got: 1` followed by `Failed to parse input.`, while Go only outputs `Failed to parse input.` without the location-specific error.
+- **Test**: CLI test `cli@encode_field_num` — stderr mismatch (1 test fails).
+- **Root cause**: Go's encode mode uses the `prototext` library from `google.golang.org/protobuf` for text format parsing. When parsing fails, the library returns an error, but the Go CLI only prints `Failed to parse input.` without surfacing the detailed error from the text format parser. C++ protoc's text format parser calls `AddError` with location info which gets printed before the generic failure message.
+- **C++ protoc**: `input:1:1: Expected identifier, got: 1\nFailed to parse input.`
+- **Go protoc-go**: `Failed to parse input.`
+- **Fix hint**: In the encode mode handler, after `prototext.Unmarshal` fails, print the error returned by the library (which should contain location and detail info like `Expected identifier, got: 1`) before printing `Failed to parse input.`. Format it as `input:LINE:COL: MESSAGE` to match C++ output.
+
+### Run 204 — Space-separated --option_dependencies flag not supported by Go (VICTORY)
+- **Bug**: C++ protoc supports `--option_dependencies basic.proto` (space-separated) syntax, but Go's `parseArgs()` only handles `--option_dependencies=VALUE` (equals-sign form). When `--option_dependencies value` is used with a space, Go treats `--option_dependencies` as a flag with no value and reports "Missing value for flag: --option_dependencies" with exit 1. C++ correctly consumes the next argument as the flag's value.
+- **Test**: CLI test `cli@option_deps_space` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: `parseArgs()` in `cli.go:1683` only checks `strings.HasPrefix(arg, "--option_dependencies=")`. When `arg == "--option_dependencies"` (no `=`), Go falls through to the "Missing value for flag" error handler. Same class of bug as Runs 178-185, 200, 202 (space-separated flags), but affecting `--option_dependencies`.
+- **C++ protoc**: Parses `--option_dependencies` + `basic.proto` as `--option_dependencies=basic.proto`. Succeeds. Exit 0.
+- **Go protoc-go**: Sees `--option_dependencies` alone, reports "Missing value for flag: --option_dependencies". Exit 1.
+- **Fix hint**: Add a handler for `arg == "--option_dependencies"` that consumes `args[i+1]` as the value, same pattern as other space-separated flag handlers.
+
+### Run 205 — Missing warning for --include_imports without --descriptor_set_out (VICTORY)
+- **Bug**: C++ protoc outputs a warning to stderr when `--include_imports` is used without `--descriptor_set_out`: `--include_imports only makes sense when combined with --descriptor_set_out.` Go silently ignores the flag with no warning. Both exit 0 (success), but stderr differs.
+- **Test**: CLI test `cli@include_imports_warn` — stderr mismatch (1 test fails).
+- **Root cause**: Go's `parseArgs()` in `cli.go` parses `--include_imports` and sets the flag, but nowhere does it check whether `descriptorSetOut` is set and emit the corresponding warning. C++ protoc checks this condition after argument parsing and emits the warning to stderr.
+- **C++ protoc**: Outputs `--include_imports only makes sense when combined with --descriptor_set_out.` to stderr. Exit 0.
+- **Go protoc-go**: No stderr output. Exit 0.
+- **Fix hint**: After argument parsing, check if `includeImports` is true but `descriptorSetOut` is empty, and if so, output the warning to stderr. Same issue affects `--include_source_info` and `--retain_options` flags.
+- **Also affects**: `--include_source_info` (warning: `--include_source_info only makes sense when combined with --descriptor_set_out.`) and `--retain_options` (same pattern).
+
+### Run 206 — Missing warning for --include_source_info without --descriptor_set_out (VICTORY)
+- **Bug**: C++ protoc outputs a warning to stderr when `--include_source_info` is used without `--descriptor_set_out`: `--include_source_info only makes sense when combined with --descriptor_set_out.` Go silently ignores the flag with no warning. Both exit 0, but stderr differs.
+- **Test**: CLI test `cli@include_source_info_warn` — stderr mismatch (1 test fails).
+- **Root cause**: Same pattern as Run 205 (`--include_imports`). Go's `parseArgs()` parses `--include_source_info` and sets the flag, but never checks whether `descriptorSetOut` is set to emit the corresponding warning.
+- **C++ protoc**: Outputs `--include_source_info only makes sense when combined with --descriptor_set_out.` to stderr. Exit 0.
+- **Go protoc-go**: No stderr output. Exit 0.
+- **Fix hint**: After argument parsing, check if `includeSourceInfo` is true but `descriptorSetOut` is empty, and emit the warning. Same pattern as `--include_imports` fix.
+- **Also affects**: `--retain_options` flag has the same missing warning bug (still untested).
+
+### Run 207 — Missing warning for --retain_options without --descriptor_set_out (VICTORY)
+- **Bug**: C++ protoc outputs a warning to stderr when `--retain_options` is used without `--descriptor_set_out`: `--retain_options only makes sense when combined with --descriptor_set_out.` Go silently ignores the flag with no warning. Both exit 0, but stderr differs.
+- **Test**: CLI test `cli@retain_options_warn` — stderr mismatch (1 test fails).
+- **Root cause**: Same pattern as Run 205 (`--include_imports`) and Run 206 (`--include_source_info`). Go's `parseArgs()` parses `--retain_options` and sets the flag, but never checks whether `descriptorSetOut` is set to emit the corresponding warning.
+- **C++ protoc**: Outputs `--retain_options only makes sense when combined with --descriptor_set_out.` to stderr. Exit 0.
+- **Go protoc-go**: No stderr output. Exit 0.
+- **Fix hint**: After argument parsing, check if `retainOptions` is true but `descriptorSetOut` is empty, and emit the warning. Same fix pattern as `--include_imports` and `--include_source_info`.
+
+### Run 208 — --deterministic_output without --encode not rejected by Go (VICTORY)
+- **Bug**: C++ protoc rejects `--deterministic_output` when it's not combined with `--encode`, printing `Can only use --deterministic_output with --encode.` and exiting with code 1. Go silently accepts `--deterministic_output` in any mode (with `--decode`, `--decode_raw`, `--descriptor_set_out`, `--print_free_field_numbers`) without any error.
+- **Test**: CLI test `cli@deterministic_no_encode` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: Go's `parseArgs()` in `cli.go` parses `--deterministic_output` and sets `cfg.deterministicOutput = true`, but never validates that `--encode` is also specified. There is no post-parse check that enforces the `--deterministic_output` + `--encode` requirement.
+- **C++ protoc**: `Can only use --deterministic_output with --encode.` Exit 1.
+- **Go protoc-go**: No error. Exit 0 (silently succeeds).
+- **Fix hint**: After argument parsing, check if `cfg.deterministicOutput` is true but `cfg.encodeType` is empty. If so, print `Can only use --deterministic_output with --encode.` to stderr and exit 1. This check should be placed alongside similar post-parse validation checks.
+
+### Run 209 — Encode mode checkDupFields does not recurse into nested submessages (VICTORY)
+- **Bug**: Go's `checkDupFields` in `cli.go:10182` only checks top-level fields for duplicates in `--encode` mode. When a non-repeated field is duplicated inside a nested submessage (e.g., `sub { name: "first" name: "second" }`), Go doesn't detect the duplicate and emits only "Failed to parse input." without the specific error message. C++ protoc correctly detects the nested duplicate and reports the exact field name and location.
+- **Test**: CLI test `cli@encode_nested_dup` — stderr mismatch (1 test fails).
+- **Root cause**: `checkDupFields()` at cli.go:10182 iterates top-level field names but never recurses into submessage blocks. When it encounters a field name followed by `{` or `<`, it calls `skipTextFormatValue()` which skips the entire block. C++ protoc's `TextFormat::Parser::MergeField` recursively checks each submessage scope for duplicates.
+- **C++ protoc**: `input:1:25: Non-repeated field "name" is specified multiple times.` + `Failed to parse input.` Exit 1.
+- **Go protoc-go**: `Failed to parse input.` Exit 1 (missing the specific "Non-repeated field" error line).
+- **Fix hint**: Add recursion to `checkDupFields`. When a field name is followed by `{` or `<`, look up whether it corresponds to a message-type field and, if so, recurse into the submessage block with a fresh `seenFields` map and the submessage's descriptor. Similar to how `checkNegUintFieldsInner` already recurses into submessages.
+- **Also affects**: Deeply nested structures (nested 3+ levels) would also miss duplicate detection.
+
+### Run 210 — Absolute import path (leading `/`) resolved differently by Go (VICTORY)
+- **Bug**: Go's importer resolves import paths starting with `/` (e.g., `import "/dep.proto"`) by stripping the leading slash and searching relative to proto_path roots. C++ protoc treats the leading `/` as indicating an absolute filesystem path and fails to find the file since `/dep.proto` doesn't exist at the filesystem root.
+- **Test**: `510_absolute_import` — all 10 profiles fail (C++ errors with exit 1, Go succeeds with exit 0).
+- **Root cause**: Go's `SourceTree` in `importer/importer.go` likely joins each root with the import path using `filepath.Join(root, importPath)`. When `importPath` is `/dep.proto`, `filepath.Join(".", "/dep.proto")` returns `dep.proto` (Go's `filepath.Join` cleans the path). C++ protoc's `DiskSourceTree` treats absolute paths differently — it doesn't prepend the proto_path root to an absolute import path, so it looks for `/dep.proto` literally on the filesystem.
+- **C++ protoc**: `/dep.proto: File not found.` + `test.proto:3:1: Import "/dep.proto" was not found or had errors.` + `test.proto:5:3: "Base" is not defined.` Exit 1.
+- **Go protoc-go**: Resolves `/dep.proto` as `dep.proto` relative to proto_path, finds the file, succeeds. Exit 0.
+- **Fix hint**: In the importer's file resolution, check if the import path starts with `/`. If so, either (1) treat it as an absolute path (don't prepend proto_path roots), matching C++ behavior, or (2) reject it with an explicit error. The C++ behavior is to search literally for the absolute path, not to strip the leading slash.
+
+### Run 211 — --decode combined with --descriptor_set_out not rejected by Go (VICTORY)
+- **Bug**: C++ protoc rejects combining `--decode` (or `--encode`) with `--descriptor_set_out`, printing `Cannot use --encode or --decode and generate descriptors at the same time.` and exiting with code 1. Go silently accepts the combination and exits 0, ignoring the `--descriptor_set_out` flag entirely.
+- **Test**: CLI test `cli@decode_with_dso` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: Go's `parseArgs()` in `cli.go` doesn't validate mutual exclusion between encode/decode modes and descriptor set output. After parsing, it processes `--decode` mode first (before `--descriptor_set_out` output), so the descriptor set output is never reached. C++ protoc validates this combination after argument parsing and rejects it upfront.
+- **C++ protoc**: `Cannot use --encode or --decode and generate descriptors at the same time.` Exit 1.
+- **Go protoc-go**: No error output. Exit 0.
+- **Fix hint**: After argument parsing, check if `(cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw)` AND `cfg.descriptorSetOut != ""`. If both conditions are true, emit: `return nil, fmt.Errorf("Cannot use --encode or --decode and generate descriptors at the same time.")`.
+- **Also affects**: `--encode` + `--descriptor_set_out` has the same bug. `--decode_raw` + `--descriptor_set_out` likely too.
+
+### Run 212 — Encode mode checkClosedEnumValues doesn't recurse into nested messages (VICTORY)
+- **Bug**: Go's `checkClosedEnumValues()` in `cli.go:10300` only checks top-level fields of the message being encoded. When a nested sub-message contains a proto2 closed enum field with an unknown numeric value, C++ protoc rejects it with `Unknown enumeration value of "99" for field "status"`, but Go silently accepts it and produces binary output.
+- **Test**: CLI test `cli@encode_nested_closed_enum` — C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: `checkClosedEnumValues()` iterates `msgDesc.Fields()` to find enum fields, but never recurses into `TYPE_MESSAGE` fields to check their enum fields. When `inner { status: 99 }` is in the text input, Go's check misses the `status` field because it's inside a nested message.
+- **C++ protoc**: `input:1:20: Unknown enumeration value of "99" for field "status".` + `Failed to parse input.` Exit 1.
+- **Go protoc-go**: No error output. Exit 0. Silently encodes the unknown enum value.
+- **Fix hint**: Make `checkClosedEnumValues` recursive — when encountering a `TYPE_MESSAGE` field, look for its `{...}` block in the text input and recursively check the sub-message's fields. Similar to how `checkNegUintFieldsInner` and `checkDupFieldsInner` recurse.
+- **Also affects**: Map fields with proto2 enum values (e.g., `map<string, SomeProto2Enum>`) likely have the same issue — the enum check doesn't descend into map entry messages.
+
+### Run 213 — Encode mode checkOneofConflicts doesn't recurse into nested messages (VICTORY)
+- **Bug**: Go's `checkOneofConflicts()` in `cli.go:10517` only scans top-level fields of the text format input. When a nested sub-message contains a oneof conflict (e.g., `inner { name: "hello" id: 42 }`), C++ protoc detects it and prints a specific error message, but Go misses it entirely. Go still fails because `prototext.Unmarshal` rejects the conflict, but the specific diagnostic message is lost.
+- **Test**: CLI test `cli@encode_nested_oneof` — 1 test fails (stderr mismatch).
+- **Root cause**: `checkOneofConflicts()` reads field names at the top level of the text format input and checks against `msgDesc.Fields()`. When it encounters a submessage block `{ ... }`, it calls `skipTextFormatValue` to skip over it instead of recursing into the block to check the nested message's oneofs. Same non-recursion pattern as `checkClosedEnumValues` (Run 212), `checkDupFields` (Run 209), and `checkNegUintFields` (Run 195).
+- **C++ protoc**: `input:1:25: Field "id" is specified along with field "name", another member of oneof "choice".` + `Failed to parse input.` Exit 1.
+- **Go protoc-go**: `Failed to parse input.` Exit 1. Missing the specific oneof conflict diagnostic.
+- **Fix hint**: Make `checkOneofConflicts` recursive. When encountering a submessage field (identified by `{ }` block in text format), look up the field descriptor, get its message type, and recurse into the block to check that message's oneofs. Similar to how `checkClosedEnumValuesInner`, `checkDupFieldsInner`, and `checkNegUintFieldsInner` recurse.
+
+### Run 214 — --print_free_field_numbers not mutually exclusive with --descriptor_set_out (VICTORY)
+- **Bug**: C++ protoc treats `--print_free_field_numbers` as an encode/decode-like mode that is mutually exclusive with `--descriptor_set_out`. When combined, C++ rejects with `Cannot use --encode or --decode and generate descriptors at the same time.` and exits 1. Go silently accepts the combination, runs `--print_free_field_numbers` mode, ignores `--descriptor_set_out`, and exits 0.
+- **Test**: CLI test `cli@pfn_dso_mutex` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: Go's `parseArgs()` and post-parse validation do not check for the combination of `cfg.printFreeFieldNumbers` and `cfg.descriptorSetOut`. C++ protoc groups `--print_free_field_numbers` under the same "mode" umbrella as `--encode`/`--decode`/`--decode_raw` and validates mutual exclusion with `--descriptor_set_out`. Go only checks `--encode`/`--decode` vs `--descriptor_set_out` (via Run 211's fix), but never includes `--print_free_field_numbers` in that check.
+- **C++ protoc**: `Cannot use --encode or --decode and generate descriptors at the same time.` Exit 1.
+- **Go protoc-go**: Prints `basic.Person    free: 4-INF` to stdout. Exit 0.
+- **Fix hint**: In the post-parse validation, extend the check for `--descriptor_set_out` mutual exclusion to also include `cfg.printFreeFieldNumbers`. Something like: `if cfg.descriptorSetOut != "" && (cfg.decodeType != "" || cfg.encodeType != "" || cfg.decodeRaw || cfg.printFreeFieldNumbers) { return nil, fmt.Errorf("Cannot use --encode or --decode and generate descriptors at the same time.") }`.
+- **Also affects**: `--print_free_field_numbers` combined with plugin output flags (`--X_out`) likely has similar missing validation.
+
+### Run 215 — --print_free_field_numbers not mutually exclusive with --X_out plugin flags (VICTORY)
+- **Bug**: C++ protoc rejects combining `--print_free_field_numbers` with any `--X_out` plugin flag, printing `Cannot use --encode, --decode or print .proto info and generate code at the same time.` and exiting with code 1. Go silently accepts the combination, runs `--print_free_field_numbers` mode, ignores the plugin output flag, and exits 0.
+- **Test**: CLI test `cli@pfn_plugin_mutex` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails).
+- **Root cause**: Go's post-parse validation does not check for mutual exclusion between `cfg.printFreeFieldNumbers` and plugin output flags (`cfg.plugins`). C++ protoc groups `--print_free_field_numbers` under the "print .proto info" mode and validates it is not combined with any code generation output. Go's validation at line 488-493 only checks `len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers && ...` to ensure at least ONE output mode is specified, but never checks that ONLY ONE is specified when `printFreeFieldNumbers` is true.
+- **C++ protoc**: `Cannot use --encode, --decode or print .proto info and generate code at the same time.` Exit 1.
+- **Go protoc-go**: Prints `basic.Person    free: 4-INF` to stdout. Exit 0.
+- **Fix hint**: After argument parsing, check if `cfg.printFreeFieldNumbers` is true AND `len(cfg.plugins) > 0`. If both conditions are true, emit: `return nil, fmt.Errorf("Cannot use --encode, --decode or print .proto info and generate code at the same time.")`. Same check should apply to `--encode` and `--decode` with plugin output flags.
+- **Also affects**: `--encode` + `--X_out` and `--decode` + `--X_out` likely have the same missing validation bug.
+
+### Run 216 — --decode_raw not mutually exclusive with --X_out plugin flags (VICTORY)
+- **Bug**: Go's post-parse validation does not check for mutual exclusion between `--decode_raw` and plugin output flags (`--X_out`). C++ protoc groups `--decode_raw` under the "decode" mode and validates it cannot be combined with any code generation output. Go allows both and happily decodes stdin while ignoring or running the plugin.
+- **Test**: CLI test `decode_raw_plugin_mutex` — `--decode_raw --dump_out=/tmp/test -I testdata/01_basic_message testdata/01_basic_message/basic.proto` with stdin `" "`.
+- **Root cause**: Go's argument validation does not treat `cfg.decodeRaw` as part of the encode/decode mode that should be mutually exclusive with code generation output. The validation at line 488-493 checks `len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers && ...` to ensure at least ONE output mode, but never checks that decode_raw precludes plugin output.
+- **C++ protoc**: `Cannot use --encode, --decode or print .proto info and generate code at the same time.` Exit 1.
+- **Go protoc-go**: `4: 10` (raw decode output). Exit 0. Silently processes both.
+- **Fix hint**: After argument parsing, check if `cfg.decodeRaw` is true AND (`len(cfg.plugins) > 0` OR `cfg.descriptorSetOut != ""`). If so, emit the mutual exclusion error.
+- **Also affects**: `--decode_raw` + `--descriptor_set_out` likely has the same missing validation bug.
+
+### Run 217 — Encode mode missing detailed error message for invalid bool value (VICTORY)
+- **Bug**: Go's `--encode` mode only outputs `Failed to parse input.` when encountering an invalid boolean value like `TRUE` (all caps). C++ protoc additionally outputs a detailed error with location info: `input:1:12: Invalid value for boolean field "flag". Value: "TRUE".` before the generic failure message.
+- **Test**: `cli@encode_bool_TRUE` — CLI test fails (stderr mismatch).
+- **Root cause**: Go's text format parser in encode mode does not emit detailed error messages for invalid boolean values. When parsing `TRUE` as a bool field value, Go's parser rejects it but only propagates a generic "Failed to parse input." error to stderr. C++ protoc's text format parser emits a specific error message including the field name, the invalid value, and the line:column location.
+- **C++ protoc**: `input:1:12: Invalid value for boolean field "flag". Value: "TRUE".\nFailed to parse input.`
+- **Go protoc-go**: `Failed to parse input.`
+- **Fix hint**: In the encode mode text format parser, when a bool field receives an unrecognized identifier (not `true`, `false`, `True`, `t`, `f`, `0`, `1`), emit a specific error: `input:LINE:COL: Invalid value for boolean field "FIELD". Value: "VALUE".` before the generic failure. Look at `parseTextFormatField` or similar encode-mode parsing functions in cli.go.
+- **Also affects**: Other invalid values for bool fields (like `yes`, `Yes`, `YES`, `no`, `No`, `NO`) likely have the same missing detailed error.
+
+### Run 218 — Encode mode reformatProtoTextErrors uses top-level message type for nested unknown fields (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors()` in `cli.go:10093` always uses the top-level `msgTypeName` parameter when formatting "has no field named" errors. When an unknown field is inside a nested submessage (e.g., `inner { bad_field: "hello" }`), Go reports `Message type "Outer" has no field named "bad_field"` instead of `Message type "Inner"`. C++ protoc correctly identifies the nested message type.
+- **Test**: CLI test `cli@encode_nested_unknown` — stderr mismatch (1 test fails).
+- **Root cause**: `reformatProtoTextErrors()` receives Go's prototext error which says `unknown field: bad_field` but doesn't include which message type the unknown field was attempted on. The function unconditionally uses the top-level `msgTypeName` parameter, which is always the outer message type. Go's prototext library error format `(line L:C): unknown field: NAME` doesn't specify the message context, so the reformatter can't determine the correct nested message type.
+- **C++ protoc**: `input:1:18: Message type "encnestedunknown.Inner" has no field named "bad_field".`
+- **Go protoc-go**: `input:1:18: Message type "encnestedunknown.Outer" has no field named "bad_field".`
+- **Fix hint**: Instead of always using `msgTypeName`, determine which nested message the field belongs to by walking the text format input. Parse the nesting structure (track `identifier { ... }` blocks) to find which message context the unknown field is in. At the error's line:col position, walk backwards through the text to find the enclosing field name, look up its type in the message descriptor, and use that type name for the error message. Or, parse Go's prototext error more carefully — if newer versions include the message type.
+
+### Run 219 — Import path with ".." not validated by Go importer (VICTORY)
+- **Bug**: Go's importer does NOT validate import paths for disallowed components like `..`, `.`, backslashes, or consecutive slashes. When a proto file has `import "../outside.proto"`, C++ protoc rejects the virtual path with a specific validation error: `Backslashes, consecutive slashes, ".", or ".." are not allowed in the virtual path`. Go's importer skips this validation and simply tries to find the file, reporting a generic `File not found.` error when it can't locate it.
+- **Test**: `515_dotdot_import` — all 10 profiles fail (error mismatch).
+- **Root cause**: C++ protoc's `DiskSourceTree::VirtualFileToDiskFile()` calls `IsValidVirtualPath()` which checks for backslashes, consecutive slashes, `.` components, and `..` components in the import path. Go's `SourceTree` importer lacks this validation step entirely — it goes straight to file resolution via `filepath.Join` which may silently normalize paths (e.g., stripping `..` or `.` components).
+- **C++ protoc**: `../outside.proto: Backslashes, consecutive slashes, ".", or ".." are not allowed in the virtual path` + `test.proto:5:1: Import "../outside.proto" was not found or had errors.` Exit 1.
+- **Go protoc-go**: `../outside.proto: File not found.` + `test.proto:5:1: Import "../outside.proto" was not found or had errors.` Exit 1.
+- **Fix hint**: Add a `ValidateVirtualPath(path string) error` function to the importer that checks: (1) no backslash characters, (2) no consecutive slashes `//`, (3) no `.` path components (split by `/` and check each component), (4) no `..` path components. Call it before attempting file resolution. If validation fails, emit the error: `Backslashes, consecutive slashes, ".", or ".." are not allowed in the virtual path`.
+- **Also affects**: Import paths with `.` (e.g., `import "./dep.proto"`), consecutive slashes (e.g., `import "dir//file.proto"`), and backslashes (though backslashes would be rejected by the tokenizer as invalid escape sequences in string literals).
+
+### Run 220 — --decode with --descriptor_set_in requires no proto files, but Go demands them (VICTORY)
+- **Bug**: Go's argument validation requires at least one `.proto` input file on the command line even when using `--decode` with `--descriptor_set_in`. C++ protoc correctly allows `--decode` with `--descriptor_set_in` and no proto files — the message type info comes from the descriptor set, not from parsing proto files.
+- **Test**: CLI test `cli@decode_dsi_no_proto` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: Go's `parseArgs()` in `cli.go` checks for missing input files and returns `"Missing input file."` error before considering that `--descriptor_set_in` provides all needed type information. C++ protoc's `CommandLineInterface::Run()` skips the input file requirement when `--descriptor_set_in` is specified.
+- **C++ protoc**: Loads types from descriptor set, reads stdin, decodes successfully. `15: 10` on stdout. Exit 0.
+- **Go protoc-go**: `Missing input file.` on stderr. Exit 1.
+- **Fix hint**: In `parseArgs()`, when checking for missing input files, also check if `cfg.descriptorSetIn != ""` AND (`cfg.decodeType != ""` OR `cfg.encodeType != ""`). If a descriptor set is provided for encode/decode mode, input proto files should not be required.
+- **Also affects**: `--encode` with `--descriptor_set_in` (no proto files) likely has the same bug — Go would require proto files when C++ doesn't.
+
+### Run 221 — Encode mode reformatProtoTextErrors missing handler for integer overflow (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle "integer out of range" errors from `prototext.Unmarshal`. When encoding a uint32 field with value `4294967296` (exceeds uint32 max), C++ protoc prints `input:1:6: Integer out of range (4294967296)` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_int_overflow` — stderr mismatch (1 test fails). Proto in `testdata/516_encode_int_overflow/test.proto`.
+- **Root cause**: `reformatProtoTextErrors()` only handles 4 error patterns: unknown field, field by number, missing separator, invalid bool value. It has no handler for integer range errors from Go's prototext library. The prototext error for integer overflow doesn't match any of the existing regex patterns, so the function returns without printing anything specific, and only the generic "Failed to parse input." message appears on stderr.
+- **C++ protoc**: stderr: `input:1:6: Integer out of range (4294967296)\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed integer range error.
+- **Fix hint**: Add a regex in `reformatProtoTextErrors` to match Go's prototext error for integer overflow (likely something like `(line L:C): invalid value for uint32 type` or `value out of range`) and reformat it to match C++ format: `input:L:C: Integer out of range (VALUE).`
+- **Also affects**: int32 overflow, sint32 overflow, sfixed32 overflow — any 32-bit integer field with an out-of-range value in `--encode` mode will have the same missing error message.
+
+### Run 222 — Encode mode reformatProtoTextErrors missing handler for double type mismatch (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle "expected double" errors from `prototext.Unmarshal`. When encoding a double field with a string value (e.g., `dval: "not_a_number"`), C++ protoc prints `input:1:7: Expected double, got: "not_a_number"` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_double_type_error` — stderr mismatch (1 test fails). Proto in `testdata/517_encode_double_type_error/test.proto`.
+- **Root cause**: `reformatProtoTextErrors()` only handles 5 error patterns: unknown field, field by number, missing separator, invalid bool value, integer overflow. It has no handler for type mismatch errors (like a string provided for a double/float field). The prototext error doesn't match any of the existing regex patterns, so the function returns without printing anything specific, and only the generic "Failed to parse input." message appears on stderr.
+- **C++ protoc**: stderr: `input:1:7: Expected double, got: "not_a_number"\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed type mismatch error.
+- **Fix hint**: Add a regex in `reformatProtoTextErrors` to match Go's prototext error for type mismatch (likely something like `(line L:C): invalid value for double type: "VALUE"`) and reformat it to match C++ format: `input:L:C: Expected double, got: "VALUE".`
+- **Also affects**: float fields with string values, int32 fields with string values, and other type mismatch scenarios in `--encode` mode will have the same missing error message.
+
+### Run 223 — Encode mode reformatProtoTextErrors missing handler for string type mismatch (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle "invalid value for string type" errors from `prototext.Unmarshal`. When encoding a string field with an integer value (e.g., `name: 42`), C++ protoc prints `input:1:7: Expected string, got: 42` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_string_type_error` — stderr mismatch (1 test fails). Uses existing `testdata/01_basic_message/basic.proto` with `name: 42` input.
+- **Root cause**: `reformatProtoTextErrors()` has no regex to match Go's prototext error for string type mismatch (probably `(line L:C): invalid value for string type: 42`). The double/float handler uses `(?:double|float)` in its regex, which doesn't match `string`. The error falls through all patterns without printing anything, and only the generic "Failed to parse input." appears.
+- **C++ protoc**: stderr: `input:1:7: Expected string, got: 42\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed type mismatch error.
+- **Fix hint**: Add a regex in `reformatProtoTextErrors` like `reString := regexp.MustCompile(\`\(line (\d+):(\d+)\): invalid value for string type: (.+)\`)` and reformat to `input:L:C: Expected string, got: VALUE`.
+- **Also affects**: bytes fields with integer values, and possibly other type mismatch scenarios where a non-string value is provided for a string/bytes field.
+
+### Run 224 — Double overflow in custom option value rejected by Go (VICTORY)
+- **Bug**: Go's `encodeCustomOptionValue` rejects `1e309` as a custom double option value because `strconv.ParseFloat("1e309", 64)` returns `err = ErrRange`. C++ protoc accepts it and encodes the value as IEEE 754 positive infinity. The Go code at cli.go:8340-8341 checks `if err != nil` and returns "invalid double value: 1e309" without checking whether the value overflowed to infinity (a valid result).
+- **Test**: `518_double_overflow_option` — all 10 profiles fail.
+- **Root cause**: `encodeCustomOptionValue()` in cli.go for `TYPE_DOUBLE` calls `strconv.ParseFloat(value, 64)`. When the value overflows double range, Go returns `(+Inf, ErrRange)`. The code checks `if err != nil { return nil, fmt.Errorf("invalid double value: %s", value) }` — it doesn't distinguish overflow (valid: encode as infinity) from truly invalid syntax (invalid).
+- **C++ protoc**: Accepts `1e309`, encodes as positive infinity (0x7FF0000000000000), produces valid descriptor.
+- **Go protoc-go**: Rejects with `error encoding custom option: invalid double value: 1e309`, exit 1.
+- **Fix hint**: After `strconv.ParseFloat`, check `if err != nil && !math.IsInf(v, 0) { return error }`. When `IsInf(v, 0)` is true, the overflow is valid — just encode the infinity bits. Same fix needed for `TYPE_FLOAT` with `3.5e38` (float32 overflow).
+- **Also affects**: `TYPE_FLOAT` custom option with `3.5e38` (exceeds FLT_MAX). Same pattern: `ParseFloat(value, 32)` returns `ErrRange`, rejected as "invalid float value". Negative overflow (e.g., `-1e309`) would also be rejected.
+
+### Run 225 — Encode mode reformatProtoTextErrors missing handler for enum type mismatch (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle "invalid value for enum type" errors from `prototext.Unmarshal`. When encoding an enum field with a quoted string value (e.g., `status: "ACTIVE"` instead of `status: ACTIVE`), C++ protoc prints `input:1:9: Expected integer or identifier, got: "ACTIVE"` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_enum_type_error` — stderr mismatch (1 test fails). Proto in `testdata/519_encode_enum_type_error/test.proto`.
+- **Root cause**: `reformatProtoTextErrors()` handles 6 error patterns (unknown field, field by number, missing separator, int overflow, double/float type, string/bytes type, bool type) but has no handler for enum type mismatch. Go's prototext error for enum type mismatch (probably `(line L:C): invalid value for enum type: "VALUE"`) doesn't match any of the existing regex patterns, so the function returns without printing anything.
+- **C++ protoc**: stderr: `input:1:9: Expected integer or identifier, got: "ACTIVE"\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed enum type error.
+- **Fix hint**: Add a regex in `reformatProtoTextErrors` like `reEnum := regexp.MustCompile(\`\(line (\d+):(\d+)\): invalid value for enum type: (.+)\`)` and reformat to `input:L:C: Expected integer or identifier, got: VALUE`. Note: C++ says "integer or identifier" for enums, not just "identifier".
+- **Also affects**: Any enum field in `--encode` mode where the value is provided as a quoted string instead of a bare identifier will have the same missing error message.
+
+### Run 226 — SCI location ordering for enum value options with mixed custom/standard options (VICTORY)
+- **Bug**: When an enum value has both a custom option and a standard option (`[(label) = "default", deprecated = true]`), Go emits the SCI location entries in field-number order (standard option `deprecated` field 1 first, custom option `label` field 50001 second). C++ protoc emits them in source order (custom option first, standard option second).
+- **Test**: `520_enum_val_option_sci_order` — 6 profiles fail (descriptor_set_src, descriptor_set_full, plugin, plugin_param, multi_plugin, plugin_descriptor).
+- **Root cause**: Go's parser processes standard enum value options (like `deprecated`) before custom options when generating SCI entries, rather than preserving source order. The SCI path `[5,0,2,0,3,50001]` (custom option) should come before `[5,0,2,0,3,1]` (deprecated) because that's the source order, but Go outputs them reversed.
+- **C++ protoc**: SCI locations for enum value options are in source order: custom option path first, standard option path second. Produces 624-byte descriptor.
+- **Go protoc-go**: SCI locations for enum value options are in field-number order: standard option first, custom option second. Same 624-byte descriptor but binary differs at byte 428.
+- **Fix hint**: In the parser's enum value option handling, SCI entries for options within `[...]` should be emitted in the order they appear in source, not grouped by standard-vs-custom.
+
+### Run 227 — --experimental_editions flag not accepted by Go (VICTORY)
+- **Bug**: C++ protoc silently accepts `--experimental_editions` as a no-op flag (editions are now stable in v33.4). Go's `parseArgs()` doesn't recognize this flag at all, falling through to the "Missing value for flag" error handler and exiting 1.
+- **Test**: CLI test `cli@experimental_editions` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: Go's `parseArgs()` in `cli.go` has handlers for `--experimental_allow_proto3_optional` (line 1582: just `continue`) and other deprecated no-op flags, but no handler for `--experimental_editions`. When Go encounters `--experimental_editions`, it doesn't match any known flag pattern and falls through to the error path.
+- **C++ protoc**: `protoc --experimental_editions --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto` → exit 0, no errors.
+- **Go protoc-go**: Same command → stderr: `Missing value for flag: --experimental_editions`, exit 1.
+- **Fix hint**: Add `if arg == "--experimental_editions" { continue }` alongside the other no-op flag handlers in `parseArgs()`.
+
+### Run 228 — --descriptor_set_in with overlapping files causes duplicate definition errors in Go (VICTORY)
+- **Bug**: When `--descriptor_set_in=file1.pb:file2.pb` is used and both files contain the same FileDescriptorProto (e.g., `file2.pb` was compiled with `--include_imports` and includes `file1.pb`'s contents), C++ protoc silently skips the duplicate, while Go fails with "already defined" errors.
+- **Test**: CLI test `cli@dsi_overlap` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails).
+- **Root cause**: In `cli.go:553-568`, when loading `--descriptor_set_in` files, the loop iterates over all files in each descriptor set and does `parsed[fd.GetName()] = fd` + `orderedFiles = append(orderedFiles, fd.GetName())`. If the same `fd.GetName()` appears in multiple descriptor sets (e.g., `base.proto` in both `base.pb` and `main_with_imports.pb`), `parsed` overwrites (fine) but `orderedFiles` gets a duplicate entry. Later validation then processes `base.proto` twice via `orderedFiles`, causing "already defined" errors for all symbols.
+- **C++ protoc**: `--descriptor_set_in=base.pb:main_with_imports.pb --decode=main.MainMsg` → exit 0, no errors.
+- **Go protoc-go**: Same command → stderr: `base.proto: "value" is already defined in "base.BaseMsg".\nbase.proto: "BaseMsg" is already defined in "base".`, exit 1.
+- **Fix hint**: Before adding to `orderedFiles`, check if `fd.GetName()` is already in `parsed`. If so, skip it (don't add to `orderedFiles` again): `if _, exists := parsed[fd.GetName()]; !exists { orderedFiles = append(orderedFiles, fd.GetName()) } parsed[fd.GetName()] = fd`.
+
+### Run 229 — Encode mode reformatProtoTextErrors missing handler for message field type mismatch (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle "expected message opening brace" errors from `prototext.Unmarshal`. When encoding a message field with a scalar value (e.g., `inner: 42` instead of `inner { ... }`), C++ protoc prints `input:1:8: Expected "{", found "42".` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_msg_type_error` — stderr mismatch (1 test fails). Proto in `testdata/522_encode_msg_type_error/test.proto`.
+- **Root cause**: `reformatProtoTextErrors()` handles 7 error patterns (unknown field, field by number, missing separator, int overflow, double/float type, string/bytes type, enum type, bool type) but has no handler for message type mismatch. Go's prototext error for providing a scalar to a message field doesn't match any existing regex, so the function returns without printing the detailed error.
+- **C++ protoc**: stderr: `input:1:8: Expected "{", found "42".\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed message type error.
+- **Fix hint**: Add a regex in `reformatProtoTextErrors` to match Go's prototext error for message type mismatch (likely `(line L:C): invalid value for message type: VALUE`) and reformat to match C++ format: `input:L:C: Expected "{", found "VALUE".`
+- **Also affects**: Any message/group field in `--encode` mode where a scalar is provided instead of `{ ... }` will have the same missing error message.
+
+### Run 230 — Encode mode reformatProtoTextErrors missing handler for integer field type mismatch (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode doesn't handle errors when an integer field receives a string value. When encoding `id: "hello"` where `id` is `int32`, C++ protoc prints `input:1:5: Expected integer, got: "hello"` before `Failed to parse input.`. Go only prints `Failed to parse input.` — the detailed error is silently dropped.
+- **Test**: CLI test `cli@encode_int_type_error` — stderr mismatch (1 test fails). Uses existing `testdata/01_basic_message/basic.proto` (has `int32 id = 2`).
+- **Root cause**: `reformatProtoTextErrors()` has a `reIntOverflow` regex that matches `invalid value for ... type: (-?\d+)` — note the capture group `(-?\d+)` only matches numeric values. When Go's prototext reports `invalid value for int32 type: "hello"`, the quoted string `"hello"` does NOT match `\d+`, so this handler is skipped. None of the other handlers match either (`reDouble` requires float/double type, `reString` requires string/bytes type, `reEnum` requires enum type, `reBool` requires bool type). The error falls through all patterns and is silently dropped.
+- **C++ protoc**: stderr: `input:1:5: Expected integer, got: "hello"\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: stderr: `Failed to parse input.` (exit 1). Missing the detailed type mismatch error.
+- **Fix hint**: Change the `reIntOverflow` regex capture group from `(-?\d+)` to something broader like `(.+)` to capture non-numeric values too. Or add a separate handler that catches the "invalid value for int32 type" case with a string value and reformats it as `Expected integer, got: VALUE`.
+- **Also affects**: Any integer type field (int32, int64, uint32, uint64, sint32, sint64, fixed32, fixed64, sfixed32, sfixed64) where a string value is provided in `--encode` mode will have the same missing error message.
+
+### Run 231 — MSVS error format not applied to unused import warnings (VICTORY)
+- **Bug**: Go's unused import warning output does NOT apply `--error_format=msvs` formatting. When `--error_format=msvs` is specified, C++ protoc formats warnings in MSVS format (`file(line) : warning in column=col: message`) but Go outputs warnings in GCC format (`file:line:col: message`).
+- **Test**: CLI test `cli@msvs_unused_import_warn` — stderr mismatch (1 test fails).
+- **Root cause**: In `cli.go:786-788`, unused import warnings are printed with `fmt.Fprintln(os.Stderr, mapErrorFilename(w, srcTree))`. This only maps the filename but does NOT check `cfg.errorFormat == "msvs"` to apply MSVS formatting. All error paths (collectErrors, resolveErrors, valErrors, etc.) check `cfg.errorFormat == "msvs"` and call `formatErrorsMSVS()`, but warnings are handled separately and skip this step.
+- **C++ protoc**: `testdata/475_unused_import/test.proto(4) : warning in column=1: warning: Import dep.proto is unused.`
+- **Go protoc-go**: `testdata/475_unused_import/test.proto:4:1: warning: Import dep.proto is unused.`
+- **Fix hint**: (1) Before printing warnings, check `cfg.errorFormat == "msvs"` and format them. (2) Note: C++ uses `warning in column=` (not `error in column=`) for warnings in MSVS mode. The current `formatErrorLineMSVS` always uses `error in column=`. Would need a variant that uses `warning in column=` for warning messages. Could detect if the message contains `warning:` prefix and use `warning in column=` accordingly.
+- **Also affects**: Any other warning messages output via the same path (e.g., `--include_imports` / `--include_source_info` / `--retain_options` warnings used with `--print_free_field_numbers`).
+
+### Run 232 — Decode mode missing recursion depth limit (VICTORY)
+- **Bug**: Go's `--decode` mode does not enforce a recursion depth limit when decoding nested submessages. C++ protoc has a default recursion limit of 100 levels — when binary input contains more than 100 levels of nested submessages, C++ rejects with `Failed to parse input.` (exit 1). Go happily decodes any depth and outputs the full nested structure (exit 0).
+- **Test**: Decode test `decode@recursion_limit` — exit code mismatch: C++ exit 1, Go exit 0 (1 test fails). Proto in `testdata/525_decode_recursion_limit/test.proto`. Binary input has 101 levels of nested `Nested.child` with `name: "hi"` at the leaf.
+- **Root cause**: Go uses `proto.Unmarshal()` or `protowire` decoding which has no configurable recursion depth limit (or a much higher one). C++ protoc's `google::protobuf::io::CodedInputStream` has a `SetRecursionLimit(100)` default that is enforced during deserialization. When the binary data exceeds this depth, `MergePartialFromCodedStream` fails and C++ reports the parse failure.
+- **C++ protoc**: `Failed to parse input.` Exit 1.
+- **Go protoc-go**: 203 lines of nested output. Exit 0.
+- **Fix hint**: Before calling `proto.Unmarshal()` in decode mode, set the recursion limit on the unmarshaller options, or manually track recursion depth during decoding. Alternatively, use `protowire` with a depth counter that errors at 100 levels. The Go `proto.UnmarshalOptions` struct has a `RecursionLimit` field that can be set to 100 to match C++ behavior.
+
+### Run 233 — checkDupFields ignores `#` comments causing false duplicate errors in encode mode (VICTORY)
+- **Bug**: Go's `checkDupFields` pre-check scanner in encode mode does NOT handle `#` comments. When text format input contains `name: "hello" # name: "wrong"`, the C++ text format parser treats `# name: "wrong"` as a comment and ignores it. But Go's `checkDupFields` scanner treats the comment text literally — parsing `name` from the comment as a field name, seeing `:` after it, and falsely detecting `name` as specified twice.
+- **Test**: CLI test `cli@encode_comment_dup` — stderr mismatch (1 test fails).
+- **Root cause**: `checkDupFieldsInner()` at cli.go:10525 scans input byte-by-byte, handling whitespace (' ', '\t', '\r', '\n'), braces ('}', '>'), and letters/underscore (field names). But it has no handler for `#` — when it encounters `#`, it falls through to the default case at line 10601 (`i++; col++`) which just skips the `#` character. The rest of the comment line is then parsed as if it were field assignments, causing false positives for duplicate field detection.
+- **C++ protoc**: Exit 0. Encodes `name: "hello"` successfully, treating `# name: "wrong"` as a comment.
+- **Go protoc-go**: Exit 1. `input:1:21: Non-repeated field "name" is specified multiple times.` + `Failed to parse input.`
+- **Fix hint**: Add `#` comment handling in `checkDupFieldsInner`, e.g. after the `'\n'` case: `if data[i] == '#' { for i < len(data) && data[i] != '\n' { i++; col++ } continue }`. Same fix needed in `checkClosedEnumValuesInner`, `checkNegUintFieldsInner`, `checkOneofConflictsInner` — all four pre-check scanners have the same bug.
+- **Also affects**: `checkClosedEnumValues`, `checkNegUintFields`, `checkOneofConflicts` — any of these could produce false positives when `#` comments contain field-like text matching their patterns.
+
+### Run 234 — Encode mode reformatProtoTextErrors maps unexpected token to wrong expected type (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` catches prototext's "unexpected token" error and always reformats it as `Expected "{", found "TOKEN"`. But C++ protoc gives context-sensitive error messages based on the field type: `Expected string, got: [` for string fields, `Expected integer, got: [` for integer fields, etc.
+- **Test**: CLI test `cli@encode_bracket_value` — stderr mismatch (1 test fails).
+- **Root cause**: `reformatProtoTextErrors` at cli.go has a handler `reUnexpected` that matches `(line L:C): unexpected token: TOKEN` and always emits `Expected "{", found "TOKEN"`. This assumes the unexpected token was for a submessage field, but it could be for any field type (string, integer, etc.). Go's prototext doesn't distinguish between "unexpected token for string field" vs "unexpected token for message field" — it just says "unexpected token".
+- **C++ protoc**: `input:1:7: Expected string, got: [` (knows the field is a string type).
+- **Go protoc-go**: `input:1:7: Expected "{", found "["` (always assumes message context).
+- **Fix hint**: Before emitting the reformatted error, look up the field type at the given line:col position. If the field is a string type, emit `Expected string, got: TOKEN`. If integer, emit `Expected integer, got: TOKEN`. If double/float, emit `Expected double, got: TOKEN`. Only use `Expected "{"` when the field is actually a message type. Could use `findFieldNameBefore` to get the field name, then look it up in `msgDesc.Fields()` to determine the type.
+- **Also affects**: Any scalar field type (string, int32, int64, double, float, bool, bytes, enum) where the value is `[` or another unexpected token that triggers the "unexpected token" path in prototext.
+
+### Run 235 — Encode mode reUnexpected handler fails for nested message field types (VICTORY)
+- **Bug**: Go's `reUnexpected` handler in `reformatProtoTextErrors` correctly looks up the field name and type using `findFieldNameBefore` + `msgDesc.Fields().ByName()` — but `msgDesc` is always the **top-level** message descriptor. When the unexpected token error occurs inside a nested submessage (e.g., `inner { score: [ }`), `findFieldNameBefore` returns "score", but `msgDesc.Fields().ByName("score")` returns nil because "score" is a field of `Inner`, not `Outer`. The handler falls through to the default `Expected "{"` case.
+- **Test**: CLI test `cli@encode_nested_bracket_double` — stderr mismatch (1 test fails). Proto in `testdata/526_encode_nested_unexpected/test.proto`.
+- **Root cause**: Run 234 fixed the `reUnexpected` handler to look up the field type and produce context-specific error messages (e.g., `Expected double` for double fields, `Expected integer` for int fields). But the fix only works for top-level fields because it looks up `fieldName` in `msgDesc` which is the outer message descriptor. For nested fields, the lookup returns nil and Go falls through to `Expected "{"`.
+- **C++ protoc**: `input:1:16: Expected double, got: [` (knows `score` is a double field in `Inner`).
+- **Go protoc-go**: `input:1:16: Expected "{", found "[".` (can't find `score` in `Outer`, defaults to message assumption).
+- **Fix hint**: Instead of using the top-level `msgDesc`, trace the nesting path through the text format input to find the correct message descriptor. Walk the text from the start, tracking `fieldname { ... }` nesting to determine which submessage the error position is inside. Then look up the field in that submessage's descriptor. Similar to what `resolveNestedMsgType` does for unknown field errors.
+- **Also affects**: Any scalar field (int, string, bool, enum, float, bytes) inside a nested message that receives an unexpected token will get the wrong `Expected "{"` error instead of the correct type-specific error.
+
+### Run 236 — Encode mode checkDupFields misses non-repeated message field duplicates (VICTORY)
+- **Bug**: Go's `checkDupFieldsInner` only detects duplicate specifications of non-repeated *scalar* fields. Non-repeated *message* fields (like `Inner sub = 1;`) are placed in `msgFieldDescs` but NOT in `nonRepeatedScalar` (line 10679-10680), so when `sub` appears twice in text format input, the pre-check doesn't flag it. C++ protoc detects this and prints a specific error: `Non-repeated field "sub" is specified multiple times.`
+- **Test**: CLI test `cli@encode_dup_msg_field` — stderr mismatch (1 test fails). Proto in `testdata/528_encode_dup_msg_field/test.proto`.
+- **Root cause**: `checkDupFieldsInner` at cli.go:10674-10686 builds `nonRepeatedScalar` for non-message, non-repeated fields and `msgFieldDescs` for message/group fields. The duplicate check at line 10725-10731 only checks `nonRepeatedScalar[fieldName]`. When `sub { value: 1 } sub { value: 2 }` is parsed, `sub` is a message field so it's not in `nonRepeatedScalar`, and the check is skipped. Go's `prototext.Unmarshal` does reject duplicate singular message fields, but `reformatProtoTextErrors` has no handler for the error pattern, so only the generic "Failed to parse input." appears.
+- **C++ protoc**: `input:1:22: Non-repeated field "sub" is specified multiple times.\nFailed to parse input.` (exit 1).
+- **Go protoc-go**: `Failed to parse input.` (exit 1). Missing the detailed duplicate field error.
+- **Fix hint**: In `checkDupFieldsInner`, add non-repeated message fields to the `seenFields` tracking. At line 10754 (the `{ }` branch without `:`), check if the message field is non-repeated and already seen: `if !fd.IsList() { if seenFields[fieldName] { return error } seenFields[fieldName] = true }`. Same for the `sub:` with `{` branch at line 10739. Alternatively, add a regex handler in `reformatProtoTextErrors` for Go's prototext error about duplicate singular fields.
+- **Also affects**: Non-repeated group fields specified twice would have the same issue. Also, the `checkDupFields` function doesn't handle extension fields `[ext.name]` at all (they're skipped entirely), so duplicate extension field specifications would also be missed.
+
+### Run 237 — checkNegUintFieldsInner doesn't recurse into `field: { }` (colon+brace) submessages (VICTORY)
+Already documented above.
+
+### Run 238 — checkClosedEnumValuesInner doesn't recurse into `field: { }` submessages (VICTORY)
+Already documented above.
+
+### Run 239 — Encode mode reformatProtoTextErrors missing handler for mismatched close bracket (VICTORY)
+- **Bug**: Go's `reformatProtoTextErrors` in `--encode` mode has no handler for mismatched close bracket errors. When a submessage is opened with `<` but closed with `}` (or `{` closed with `>`), C++ protoc produces a detailed error like `Expected ">", found "}"` with line/column info. Go's `prototext.Unmarshal` rejects it but `reformatProtoTextErrors` doesn't match the error pattern, so only `Failed to parse input.` appears.
+- **Test**: CLI test `cli@encode_bracket_mismatch` — stderr mismatch (1 test fails). Proto in `testdata/531_encode_bracket_mismatch/test.proto`.
+- **Root cause**: `reformatProtoTextErrors` at cli.go:10392 has handlers for unknown field, field by number, missing separator, integer overflow, type mismatches, unexpected EOF, and unexpected token — but no handler for Go's prototext error about mismatched close group characters. Go's prototext likely reports something like `(line 1:14): mismatched close group character '}'` but the regex patterns don't match it.
+- **C++ protoc**: `input:1:14: Expected ">", found "}".` + `Failed to parse input.` (exit 1).
+- **Go protoc-go**: `Failed to parse input.` (exit 1). Missing the detailed bracket mismatch error.
+- **Fix hint**: Add a new regex handler in `reformatProtoTextErrors` to catch Go's prototext mismatched close bracket error and reformat it to `input:L:C: Expected "EXPECTED", found "FOUND".` format. Pattern: `\(line (\d+):(\d+)\): mismatched close group character` or similar.
+- **Also affects**: The reverse mismatch (`{` opened, `>` closed) has the same missing handler. Also, deeply nested mismatches (like `sub < inner { val: 1 > }`) would have similar issues.
+
+### Run 240 — checkNegUintFieldsInner falsely flags extension submessage fields as top-level (VICTORY)
+- **Bug**: Go's `checkNegUintFieldsInner` pre-check scanner in `--encode` mode does NOT handle `[ext_name]` extension field syntax. When text format input contains `[pkg.my_ext]: { count: -5 }`, the scanner skips `[`, reads `pkg` as a field name, consumes `.my_ext]:` via skipTextFormatValue, then parses `{ count: -5 }` as if `count` were a TOP-LEVEL field. If the top-level message has `uint32 count`, the scanner falsely reports "Expected integer, got: -" — even though `count` inside the extension refers to a different message type where it's `int32`.
+- **Test**: CLI test `cli@encode_ext_neg_uint` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails). Proto in `testdata/532_encode_ext_neg_uint/test.proto`.
+- **Root cause**: `checkNegUintFieldsInner` at cli.go:11112 has no handler for `[` (extension field syntax). The `[` character falls through to the default `i++; col++` case. The extension name and brackets are consumed haphazardly by the identifier parser and skipTextFormatValue. The submessage `{ ... }` content is then parsed in the top-level message context, where different field types may exist. Same field name `count` is uint32 at top level but int32 inside the extension message.
+- **C++ protoc**: Accepts `[encextneg.my_ext]: { count: -5 } label: "ok"` — exit 0. Extension's `Inner.count` is int32, -5 is valid.
+- **Go protoc-go**: `input:1:30: Expected integer, got: -` + `Failed to parse input.` — exit 1. Scanner treats `count` as top-level `Outer.count` (uint32).
+- **Fix hint**: Add `[` handling in `checkNegUintFieldsInner` similar to `checkDupFieldsInner`: parse the FQN inside brackets, look up the extension in a registry, and if it's a message type, recurse into the extension's message descriptor. Alternatively, when `[` is encountered, skip everything until the matching `]`, then skip the `:` and the value/submessage.
+- **Also affects**: `checkClosedEnumValuesInner` and `checkOneofConflictsInner` have the SAME bug — they also lack `[` extension field handling. If an extension submessage contains a field name matching a closed enum field or oneof field of the top-level message, they would produce false errors. Future test cases.
+
+### Run 243 — checkClosedEnumValuesInner falsely flags extension submessage fields as top-level closed enum (VICTORY)
+- **Bug**: Go's `checkClosedEnumValuesInner` pre-check scanner in `--encode` mode does NOT handle `[ext_name]` extension field syntax. When text format input contains `[encextcenum.my_ext] { priority: 999 } label: "ok"`, the scanner skips `[`, reads `encextcenum` as a field name, skips `.my_ext]` via skipTextFormatValue, then parses `{ priority: 999 }` as if `priority` were a TOP-LEVEL field. Since `Outer.priority` is a proto2 closed enum (Priority), the scanner falsely reports "Unknown enumeration value of 999 for field priority" — even though `priority` inside the extension refers to `Inner.priority` (int32), where 999 is perfectly valid.
+- **Test**: CLI test `cli@encode_ext_closed_enum` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails). Proto in `testdata/533_encode_ext_closed_enum/test.proto`.
+- **Root cause**: `checkClosedEnumValuesInner` at cli.go:10963 has no handler for `[` (extension field syntax). The `[` character falls through to the default `i++; col++` case at line 11080. The extension name and brackets are consumed haphazardly — `encextcenum` is read as a field name, `.my_ext]` is skipped by `skipTextFormatValue`. The submessage `{ priority: 999 }` content is then parsed in the top-level Outer message context, where `priority` is a closed enum (Priority with values LOW=0, HIGH=1). Since 999 is not a valid Priority value, a false error is produced.
+- **C++ protoc**: Accepts the input — exit 0. Extension's `Inner.priority` is int32, 999 is valid.
+- **Go protoc-go**: `input:1:38: Unknown enumeration value of "999" for field "priority".` + `Failed to parse input.` — exit 1. Scanner treats `priority` as top-level `Outer.priority` (closed enum Priority).
+- **Fix hint**: Add `[` handling in `checkClosedEnumValuesInner` similar to `checkNegUintFieldsInner` (line 11133): parse the FQN inside brackets, look up the extension in a registry, and if it's a message type with closed enum fields, recurse into the extension's message descriptor. If not a message or unknown extension, skip the value with `skipTextFormatValue` or `skipBracedBlock`.
+- **Also affects**: `checkOneofConflictsInner` has the SAME bug — it lacks `[` extension field handling. If an extension submessage contains a field with the same name as a oneof member, it would produce false oneof conflict errors. Future test case.
+
+### Run 244 — checkOneofConflictsInner falsely flags extension submessage fields as top-level oneof conflict (VICTORY)
+- **Bug**: Go's `checkOneofConflictsInner` pre-check scanner in `--encode` mode does NOT handle `[ext_name]` extension field syntax. When text format input contains `[encextoneof.my_ext] { name: "hello" id: 42 }`, the scanner skips `[`, reads `encextoneof` as a field name, skips `.my_ext]` via skipTextFormatValue, then parses `{ name: "hello" id: 42 }` as if these were TOP-LEVEL fields. Since `Outer` has a oneof `choice` containing both `name` and `id`, the scanner falsely reports "Field \"id\" is specified along with field \"name\", another member of oneof \"choice\"" — even though `name` and `id` inside the extension refer to `Inner` fields (not in any oneof).
+- **Test**: CLI test `cli@encode_ext_oneof_conflict` — exit code mismatch: C++ exit 0, Go exit 1 (1 test fails). Proto in `testdata/534_encode_ext_oneof_conflict/test.proto`.
+- **Root cause**: `checkOneofConflictsInner` at cli.go:11400 only handles identifiers (letters/underscore) as field names. When `[` is encountered, it falls through to the default `i++; col++` case at line 11468. The extension name is consumed haphazardly by the identifier parser, and the submessage content `{ name: "hello" id: 42 }` is parsed in the top-level message context where `name` and `id` are oneof members.
+- **C++ protoc**: Accepts `[encextoneof.my_ext] { name: "hello" id: 42 } label: "ok"` — exit 0. Extension's `Inner.name` and `Inner.id` are not in any oneof.
+- **Go protoc-go**: `input:1:40: Field "id" is specified along with field "name", another member of oneof "choice".` + `Failed to parse input.` — exit 1.
+- **Fix hint**: Add `[` handling in `checkOneofConflictsInner`: when `[` is encountered, skip everything until the matching `]`, then skip the optional `:` and the value/submessage with `skipTextFormatValue` or `skipBracedBlock`. Do NOT parse the extension's submessage fields in the top-level oneof context.
+
+### Run 245 — Tab column counting differs in encode mode error messages (VICTORY)
+- **Bug**: Go's `--encode` mode uses Go's `prototext.Unmarshal` which counts tab characters as 1 column. C++ protoc's text format parser expands tabs to 8-column tab stops (standard terminal tab stops). When an error occurs after a tab character, the column number reported differs.
+- **Test**: CLI test `cli@encode_tab_column` — stderr mismatch (1 test fails).
+- **Root cause**: Go's proto library (`google.golang.org/protobuf/encoding/prototext`) counts each byte as one column. C++ protoc's `google::protobuf::io::Tokenizer` expands tabs to the next multiple of 8 columns (columns 8, 16, 24...). After a single tab, C++ says column 9 (1-based) while Go says column 2.
+- **C++ protoc**: `input:1:17: Message type "basic.Person" has no field named "badfield".` (tab→col 9, plus 8 chars "badfield" = col 17 for the colon)
+- **Go protoc-go**: `input:1:10: Message type "basic.Person" has no field named "badfield".` (tab→col 2, plus 8 chars = col 10)
+- **Fix hint**: The `reformatProtoTextErrors` function in `cli.go` would need to re-count columns accounting for tab expansion to match C++ behavior. Alternatively, the Go prototext library would need to be patched (unlikely). A workaround: post-process error positions by scanning the input for tabs and adjusting column numbers. This is tricky because `reformatProtoTextErrors` doesn't have access to the original input text.
+
+### Run 246 — Tab column counting NOT applied for reIntType handler (VICTORY)
+- **Bug**: Ralph fixed the tab column issue in Run 245 for the `reUnknown` handler (unknown field error at line 10415), but the `reIntType` handler (line 10464) still passes Go's raw byte-offset column through without adjusting for tabs. When a tab precedes a field, Go's prototext reports the value column in byte offsets (tab = 1 column), but C++ expands tabs to 8-column stops.
+- **Test**: CLI test `cli@encode_tab_int_type` — stderr column mismatch (1 test fails).
+- **Root cause**: `reIntType` at cli.go:10464 does `fmt.Fprintf(os.Stderr, "input:%s:%s: Expected integer, got: %s\n", m[1], m[2], val)` using `m[2]` directly from Go's regex match. No `goColToTabCol` conversion is applied.
+- **C++ protoc**: `input:1:13: Expected integer, got: "hello"` (tab→9, i=9, d=10, :=11, space=12, "=13)
+- **Go protoc-go**: `input:1:6: Expected integer, got: "hello"` (tab→2, i=2, d=3, :=4, space=5, "=6)
+- **Fix hint**: Apply `goColToTabCol(data, goLine, goCol)` to convert Go's byte-offset column to a tab-expanded column before outputting. Same fix needed for ALL handlers that pass through `m[2]` without adjustment: `reFieldNum` (10434), `reIntOverflow` (10456), `reIntType` (10464), `reDouble` (10474), `reString` (10484), `reEnum` (10492), `reUnexpected` (10567+), `reBool` (10502). The `reSep` handler (10443) is already correct because `findTokenAfterIdent` uses `textTabCol`.
+- **Also fails**: All the other handlers listed above will have the same tab column bug — each one is a potential future test case.

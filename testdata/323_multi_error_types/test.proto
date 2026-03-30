@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package multierrtypes;
+
+message Foo {
+  string name = 1;
+  string name = 2;
+}
+
+message Bar {
+  string id = 1;
+  string id = 2;
+}
+
+message Baz {
+  string value = 1;
+  string value = 2;
+}

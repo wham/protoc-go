@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package enumprefix;
+
+enum Status {
+  STATUS_UNKNOWN = 0;
+  UNKNOWN = 1;
+}
+
+message Msg {
+  Status s = 1;
+}

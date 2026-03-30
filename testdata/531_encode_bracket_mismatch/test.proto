@@ -1,0 +1,11 @@
+syntax = "proto2";
+package encbracket;
+
+message Inner {
+  optional int32 val = 1;
+}
+
+message Outer {
+  optional Inner sub = 1;
+  optional string name = 2;
+}

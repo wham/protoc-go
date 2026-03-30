@@ -1,0 +1,14 @@
+syntax = "proto2";
+
+package decode_p2_enum;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message Record {
+  optional Status s = 1;
+  optional string label = 2;
+}

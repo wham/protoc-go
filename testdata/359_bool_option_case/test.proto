@@ -1,0 +1,17 @@
+syntax = "proto2";
+
+package boolcase;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional bool my_flag = 50001;
+}
+
+// Go accepts "True" (capital T) as a valid bool value for custom options.
+// C++ protoc only accepts lowercase "true" or "false".
+option (my_flag) = True;
+
+message Dummy {
+  optional string name = 1;
+}

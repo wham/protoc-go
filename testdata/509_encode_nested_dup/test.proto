@@ -1,0 +1,10 @@
+syntax = "proto2";
+package encnestdup;
+message Inner {
+  optional string name = 1;
+  optional int32 id = 2;
+}
+message Outer {
+  optional Inner sub = 1;
+  optional string label = 2;
+}

@@ -1,0 +1,18 @@
+syntax = "proto2";
+package deepmerge;
+
+import "google/protobuf/descriptor.proto";
+
+message Inner {
+  optional string value = 1;
+  optional int32 num = 2;
+}
+
+message Outer {
+  optional Inner inner = 1;
+  optional string name = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional Outer cfg = 50001;
+}

@@ -1,0 +1,7 @@
+syntax = "proto2";
+package decodebytes;
+
+message Record {
+  optional bytes data = 1;
+  optional string label = 2;
+}

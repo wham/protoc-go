@@ -1,0 +1,18 @@
+syntax = "proto2";
+
+package fieldsubneg;
+
+import "google/protobuf/descriptor.proto";
+
+message Range {
+  optional int32 lo = 1;
+  optional int32 hi = 2;
+}
+
+extend google.protobuf.FieldOptions {
+  optional Range valid_range = 50001;
+}
+
+message Sensor {
+  optional int32 temperature = 1 [(valid_range).lo = -40, (valid_range).hi = 85];
+}

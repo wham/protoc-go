@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package bytesopterr;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional bytes my_bytes = 50001;
+}
+
+option (my_bytes) = 42;
+
+message Msg {
+  optional int32 x = 1;
+}

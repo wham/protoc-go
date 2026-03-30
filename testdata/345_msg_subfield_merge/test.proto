@@ -1,0 +1,21 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package msgmerge;
+
+message Config {
+  optional string name = 1;
+  optional int32 value = 2;
+}
+
+extend google.protobuf.MessageOptions {
+  optional Config msg_cfg = 50001;
+}
+
+message MyMsg {
+  option (msg_cfg).name = "hello";
+  option (msg_cfg).value = 42;
+
+  optional string data = 1;
+}

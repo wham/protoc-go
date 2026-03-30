@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package aliasf;
+
+enum Status {
+  option allow_alias = false;
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  RUNNING = 1;
+}
+
+message Holder {
+  Status s = 1;
+}

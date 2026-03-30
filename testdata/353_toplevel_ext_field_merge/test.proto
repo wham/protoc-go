@@ -1,0 +1,25 @@
+syntax = "proto2";
+
+package test;
+
+import "google/protobuf/descriptor.proto";
+
+message ExtFieldCfg {
+  optional string label = 1;
+  optional int32 priority = 2;
+}
+
+extend google.protobuf.FieldOptions {
+  optional ExtFieldCfg ext_field_cfg = 50001;
+}
+
+// Top-level extension whose own FieldOptions have sub-field custom options.
+// The two sub-field assignments should be merged into one ExtFieldCfg entry.
+extend google.protobuf.MessageOptions {
+  optional int32 my_marker = 50002
+      [(ext_field_cfg).label = "marker", (ext_field_cfg).priority = 10];
+}
+
+message TestMsg {
+  optional int32 id = 1;
+}

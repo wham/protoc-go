@@ -1,0 +1,7 @@
+syntax = "proto3";
+package decodemapunk;
+
+message Record {
+  map<string, int32> data = 1;
+  string label = 2;
+}

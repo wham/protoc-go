@@ -1,0 +1,27 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package enummerge;
+
+message EnumMeta {
+  optional string label = 1;
+  optional int32 priority = 2;
+}
+
+extend google.protobuf.EnumOptions {
+  optional EnumMeta enum_cfg = 50001;
+}
+
+enum Status {
+  option (enum_cfg).label = "tracker";
+  option (enum_cfg).priority = 10;
+
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message Wrapper {
+  optional Status status = 1;
+}

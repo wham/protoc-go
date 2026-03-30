@@ -1,0 +1,10 @@
+syntax = "proto3";
+package errorder;
+
+message Msg {
+  string aaa = 1;
+  string bbb = 1;
+  string ccc = 3;
+  reserved 3;
+  reserved "ccc";
+}

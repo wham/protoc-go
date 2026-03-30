@@ -1,0 +1,14 @@
+syntax = "proto2";
+
+package enumvalstrconcat;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.EnumValueOptions {
+  optional string ev_label = 50002;
+}
+
+enum Color {
+  RED = 0 [(ev_label) = "bright" " " "red"];
+  GREEN = 1;
+}

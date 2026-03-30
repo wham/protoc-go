@@ -1,0 +1,17 @@
+syntax = "proto2";
+
+package aggboolint;
+
+import "google/protobuf/descriptor.proto";
+
+message Config {
+  optional bool enabled = 1;
+}
+
+extend google.protobuf.FileOptions {
+  optional Config cfg = 50001;
+}
+
+option (cfg) = {
+  enabled: 2
+};

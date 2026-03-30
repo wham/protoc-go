@@ -1,0 +1,13 @@
+syntax = "proto2";
+
+package fieldstrconcat;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FieldOptions {
+  optional string my_label = 50001;
+}
+
+message Item {
+  optional string name = 1 [(my_label) = "hello" " " "world"];
+}

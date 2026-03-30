@@ -1,0 +1,23 @@
+syntax = "proto2";
+
+package trcomma;
+
+import "google/protobuf/descriptor.proto";
+
+message MyOpts {
+  repeated int32 values = 1;
+  optional string name = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional MyOpts opts = 50001;
+}
+
+option (opts) = {
+  values: [1, 2, 3,]
+  name: "test"
+};
+
+message Payload {
+  optional int32 id = 1;
+}

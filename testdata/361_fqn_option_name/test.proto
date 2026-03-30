@@ -1,0 +1,18 @@
+syntax = "proto2";
+
+package fqnopt;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional string my_label = 50001;
+}
+
+// Use a fully-qualified extension name with leading dot.
+// C++ protoc accepts this syntax; the leading dot prevents
+// relative-scope lookup and forces an absolute lookup.
+option (.fqnopt.my_label) = "absolute";
+
+message Msg {
+  optional int32 x = 1;
+}

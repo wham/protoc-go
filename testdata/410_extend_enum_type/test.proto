@@ -1,0 +1,13 @@
+syntax = "proto2";
+package test;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+}
+
+// Attempt to extend an enum type — should fail because only messages
+// can be extended.
+extend Status {
+  optional int32 extra_info = 100;
+}

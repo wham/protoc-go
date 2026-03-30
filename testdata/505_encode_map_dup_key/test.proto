@@ -1,0 +1,7 @@
+syntax = "proto3";
+package encmapdupkey;
+
+message Record {
+  map<string, int32> items = 1;
+  string label = 2;
+}

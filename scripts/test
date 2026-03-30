@@ -45,6 +45,11 @@ PROFILES=(
   "descriptor_set|descriptor|"
   "descriptor_set_src|descriptor|--include_source_info"
   "descriptor_set_full|descriptor|--include_imports --include_source_info"
+  "descriptor_set_retain|descriptor|--retain_options"
+  "multi_plugin|multi_plugin|"
+  "multi_opt|multi_opt|"
+  "plugin_descriptor|plugin_descriptor|"
+  "colon_param|colon_param|"
 )
 
 # -- helpers --------------------------------------------------------------
@@ -273,6 +278,332 @@ run_descriptor_test() {
   fi
 }
 
+# -- multi-plugin profile test ---------------------------------------------
+# Runs TWO plugins (dump + dump2, same binary) and compares both outputs.
+
+run_multi_plugin_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local profile_name="$3"
+  local full_name="${test_name}@${profile_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local expected1="$result_dir/expected1"
+  local actual1="$result_dir/actual1"
+  local expected2="$result_dir/expected2"
+  local actual2="$result_dir/actual2"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$expected1" "$actual1" "$expected2" "$actual2"
+
+  local proto_files proto_basenames
+  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
+  if [ -z "$proto_files" ]; then
+    echo "PASS 0 0" > "$result_file"
+    return
+  fi
+  proto_basenames=""
+  for f in $proto_files; do
+    proto_basenames="$proto_basenames $(basename "$f")"
+  done
+
+  # Run C++ protoc with two plugins
+  local cpp_ok=true
+  local cpp_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --plugin="protoc-gen-dump2=$PROTOC_GEN_DUMP" \
+    --dump_out="$expected1" --dump_opt="$expected1" \
+    --dump2_out="$expected2" --dump2_opt="$expected2" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/cpp_error.txt" || cpp_ok=false
+  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
+  echo "$cpp_ok" > "$result_dir/cpp_ok.txt"
+
+  # Run Go protoc-go with two plugins
+  local go_ok=true
+  local go_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC_GO" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --plugin="protoc-gen-dump2=$PROTOC_GEN_DUMP" \
+    --dump_out="$actual1" --dump_opt="$actual1" \
+    --dump2_out="$actual2" --dump2_opt="$actual2" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/go_error.txt" || go_ok=false
+  local go_elapsed=$(( $(now_ms) - go_start ))
+  echo "$go_ok" > "$result_dir/go_ok.txt"
+
+  compare_results "$result_dir" "$result_file" "$failure_file" "$cpp_elapsed" "$go_elapsed"
+
+  # If both succeeded, compare both plugin outputs
+  if [ -f "$result_dir/both_ok.txt" ]; then
+    local diff_output=""
+
+    # Compare plugin 1 (dump)
+    if [ -f "$expected1/request.pb" ] && [ -f "$actual1/request.pb" ]; then
+      if ! cmp -s "$expected1/request.pb" "$actual1/request.pb"; then
+        diff_output="Plugin 1 (dump) binary differs"
+      fi
+    fi
+
+    # Compare plugin 2 (dump2)
+    if [ -z "$diff_output" ] && [ -f "$expected2/request.pb" ] && [ -f "$actual2/request.pb" ]; then
+      if ! cmp -s "$expected2/request.pb" "$actual2/request.pb"; then
+        diff_output="Plugin 2 (dump2) binary differs"
+      fi
+    fi
+
+    if [ -z "$diff_output" ]; then
+      echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
+    else
+      echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
+      echo "$diff_output" > "$failure_file"
+    fi
+  fi
+}
+
+# -- multi-opt profile test ------------------------------------------------
+# Tests multiple --dump_opt flags to verify parameter accumulation.
+
+run_multi_opt_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local profile_name="$3"
+  local full_name="${test_name}@${profile_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local expected_dir="$result_dir/expected"
+  local actual_dir="$result_dir/actual"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$expected_dir" "$actual_dir"
+
+  local proto_files proto_basenames
+  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
+  if [ -z "$proto_files" ]; then
+    echo "PASS 0 0" > "$result_file"
+    return
+  fi
+  proto_basenames=""
+  for f in $proto_files; do
+    proto_basenames="$proto_basenames $(basename "$f")"
+  done
+
+  # Run C++ protoc with multiple --dump_opt flags
+  local cpp_ok=true
+  local cpp_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$expected_dir" \
+    --dump_opt="$expected_dir" \
+    --dump_opt=key1=val1 \
+    --dump_opt=key2=val2 \
+    --dump_opt=flag_only \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/cpp_error.txt" || cpp_ok=false
+  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
+  echo "$cpp_ok" > "$result_dir/cpp_ok.txt"
+
+  # Run Go protoc-go with multiple --dump_opt flags
+  local go_ok=true
+  local go_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC_GO" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$actual_dir" \
+    --dump_opt="$actual_dir" \
+    --dump_opt=key1=val1 \
+    --dump_opt=key2=val2 \
+    --dump_opt=flag_only \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/go_error.txt" || go_ok=false
+  local go_elapsed=$(( $(now_ms) - go_start ))
+  echo "$go_ok" > "$result_dir/go_ok.txt"
+
+  compare_results "$result_dir" "$result_file" "$failure_file" "$cpp_elapsed" "$go_elapsed"
+
+  if [ -f "$result_dir/both_ok.txt" ]; then
+    # Compare the request JSON to verify parameter field matches
+    # The parameter field should show comma-separated accumulated params
+    local diff_output=""
+    if [ -f "$expected_dir/request.pb" ] && [ -f "$actual_dir/request.pb" ]; then
+      if ! cmp -s "$expected_dir/request.pb" "$actual_dir/request.pb"; then
+        diff_output="Binary CodeGeneratorRequest differs (multi-opt)"
+      fi
+    fi
+
+    if [ -z "$diff_output" ]; then
+      echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
+    else
+      echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
+      echo "$diff_output" > "$failure_file"
+    fi
+  fi
+}
+
+# -- plugin + descriptor combined profile test -----------------------------
+# Runs both a plugin AND --descriptor_set_out in a single invocation.
+
+run_plugin_descriptor_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local profile_name="$3"
+  local full_name="${test_name}@${profile_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local expected_dir="$result_dir/expected"
+  local actual_dir="$result_dir/actual"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$expected_dir" "$actual_dir"
+
+  local proto_files proto_basenames
+  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
+  if [ -z "$proto_files" ]; then
+    echo "PASS 0 0" > "$result_file"
+    return
+  fi
+  proto_basenames=""
+  for f in $proto_files; do
+    proto_basenames="$proto_basenames $(basename "$f")"
+  done
+
+  # Run C++ protoc with plugin + descriptor_set_out
+  local cpp_ok=true
+  local cpp_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$expected_dir" --dump_opt="$expected_dir" \
+    --descriptor_set_out="$expected_dir/descriptor.pb" \
+    --include_imports --include_source_info \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/cpp_error.txt" || cpp_ok=false
+  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
+  echo "$cpp_ok" > "$result_dir/cpp_ok.txt"
+
+  # Run Go protoc-go with plugin + descriptor_set_out
+  local go_ok=true
+  local go_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC_GO" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$actual_dir" --dump_opt="$actual_dir" \
+    --descriptor_set_out="$actual_dir/descriptor.pb" \
+    --include_imports --include_source_info \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/go_error.txt" || go_ok=false
+  local go_elapsed=$(( $(now_ms) - go_start ))
+  echo "$go_ok" > "$result_dir/go_ok.txt"
+
+  compare_results "$result_dir" "$result_file" "$failure_file" "$cpp_elapsed" "$go_elapsed"
+
+  if [ -f "$result_dir/both_ok.txt" ]; then
+    local diff_output=""
+
+    # Compare plugin output
+    if [ -f "$expected_dir/request.pb" ] && [ -f "$actual_dir/request.pb" ]; then
+      if ! cmp -s "$expected_dir/request.pb" "$actual_dir/request.pb"; then
+        diff_output="Plugin request.pb differs"
+      fi
+    fi
+
+    # Compare descriptor set output
+    if [ -z "$diff_output" ] && [ -f "$expected_dir/descriptor.pb" ] && [ -f "$actual_dir/descriptor.pb" ]; then
+      if ! cmp -s "$expected_dir/descriptor.pb" "$actual_dir/descriptor.pb"; then
+        diff_output="Descriptor set differs"
+      fi
+    fi
+
+    if [ -z "$diff_output" ]; then
+      echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
+    else
+      echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
+      echo "$diff_output" > "$failure_file"
+    fi
+  fi
+}
+
+# -- colon param syntax profile test ---------------------------------------
+# Tests --X_out=PARAM:DIR syntax (parameter passed via _out flag).
+
+run_colon_param_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local profile_name="$3"
+  local full_name="${test_name}@${profile_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local expected_dir="$result_dir/expected"
+  local actual_dir="$result_dir/actual"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$expected_dir" "$actual_dir"
+
+  local proto_files proto_basenames
+  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
+  if [ -z "$proto_files" ]; then
+    echo "PASS 0 0" > "$result_file"
+    return
+  fi
+  proto_basenames=""
+  for f in $proto_files; do
+    proto_basenames="$proto_basenames $(basename "$f")"
+  done
+
+  # The colon syntax: --dump_out=colon_test_param:DIR
+  # This passes "colon_test_param" as the parameter to the plugin.
+  # protoc-gen-dump uses the parameter as output dir, so we also need --dump_opt
+  # to set the actual output dir. The colon param becomes part of the parameter.
+
+  # Run C++ protoc with colon syntax
+  local cpp_ok=true
+  local cpp_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="colon_test_param:$expected_dir" \
+    --dump_opt="$expected_dir" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/cpp_error.txt" || cpp_ok=false
+  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
+  echo "$cpp_ok" > "$result_dir/cpp_ok.txt"
+
+  # Run Go protoc-go with colon syntax
+  local go_ok=true
+  local go_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC_GO" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="colon_test_param:$actual_dir" \
+    --dump_opt="$actual_dir" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    $proto_basenames) 2>"$result_dir/go_error.txt" || go_ok=false
+  local go_elapsed=$(( $(now_ms) - go_start ))
+  echo "$go_ok" > "$result_dir/go_ok.txt"
+
+  compare_results "$result_dir" "$result_file" "$failure_file" "$cpp_elapsed" "$go_elapsed"
+
+  if [ -f "$result_dir/both_ok.txt" ]; then
+    local diff_output=""
+    if [ -f "$expected_dir/request.pb" ] && [ -f "$actual_dir/request.pb" ]; then
+      if ! cmp -s "$expected_dir/request.pb" "$actual_dir/request.pb"; then
+        diff_output="Binary CodeGeneratorRequest differs (colon param)"
+      fi
+    fi
+
+    if [ -z "$diff_output" ]; then
+      echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
+    else
+      echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
+      echo "$diff_output" > "$failure_file"
+    fi
+  fi
+}
+
 # -- CLI error tests -------------------------------------------------------
 
 run_cli_test() {
@@ -317,9 +648,9 @@ run_cli_test() {
     return
   fi
 
-  # Compare stderr (normalized)
+  # Compare stderr (normalized; strip GLOG prefixes from C++ protobuf LOG lines)
   local cpp_stderr go_stderr
-  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/^[EIWF][0-9][0-9][0-9][0-9] [0-9:.]* [0-9]* [^ ]*] //' | sed 's/[[:space:]]*$//' | sed '/^$/d')
   go_stderr=$(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
 
   if [ "$cpp_stderr" != "$go_stderr" ]; then
@@ -327,25 +658,25 @@ run_cli_test() {
     {
       echo "stderr mismatch (exit code=$cpp_exit)"
       diff -u \
-        <(cat "$result_dir/cpp_stderr.txt" | sed 's/[[:space:]]*$//') \
+        <(cat "$result_dir/cpp_stderr.txt" | sed 's/^[EIWF][0-9][0-9][0-9][0-9] [0-9:.]* [0-9]* [^ ]*] //' | sed 's/[[:space:]]*$//') \
         <(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//') \
         2>&1 || true
     } > "$failure_file"
     return
   fi
 
-  # Compare stdout (normalized)
+  # Compare stdout (normalized; use LC_ALL=C for binary-safe sed)
   local cpp_stdout go_stdout
-  cpp_stdout=$(cat "$result_dir/cpp_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
-  go_stdout=$(cat "$result_dir/go_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  cpp_stdout=$(LC_ALL=C cat "$result_dir/cpp_stdout.txt" | LC_ALL=C sed 's/[[:space:]]*$//' | LC_ALL=C sed '/^$/d')
+  go_stdout=$(LC_ALL=C cat "$result_dir/go_stdout.txt" | LC_ALL=C sed 's/[[:space:]]*$//' | LC_ALL=C sed '/^$/d')
 
   if [ "$cpp_stdout" != "$go_stdout" ]; then
     echo "FAIL 0 0" > "$result_file"
     {
       echo "stdout mismatch (exit code=$cpp_exit)"
       diff -u \
-        <(cat "$result_dir/cpp_stdout.txt" | sed 's/[[:space:]]*$//') \
-        <(cat "$result_dir/go_stdout.txt" | sed 's/[[:space:]]*$//') \
+        <(LC_ALL=C cat "$result_dir/cpp_stdout.txt" | LC_ALL=C sed 's/[[:space:]]*$//') \
+        <(LC_ALL=C cat "$result_dir/go_stdout.txt" | LC_ALL=C sed 's/[[:space:]]*$//') \
         2>&1 || true
     } > "$failure_file"
     return
@@ -374,6 +705,18 @@ for test_dir in "$TESTS_DIR"/*/; do
         descriptor)
           run_descriptor_test "$test_name" "$test_dir" "$profile_name" "$extra_flags" &
           ;;
+        multi_plugin)
+          run_multi_plugin_test "$test_name" "$test_dir" "$profile_name" &
+          ;;
+        multi_opt)
+          run_multi_opt_test "$test_name" "$test_dir" "$profile_name" &
+          ;;
+        plugin_descriptor)
+          run_plugin_descriptor_test "$test_name" "$test_dir" "$profile_name" &
+          ;;
+        colon_param)
+          run_colon_param_test "$test_name" "$test_dir" "$profile_name" &
+          ;;
       esac
 
       PIDS+=($!)
@@ -399,15 +742,118 @@ CLI_TESTS=(
   "descriptor_set_in|--descriptor_set_in=/tmp/descriptors.pb"
   "dependency_out|--dependency_out=/tmp/deps.txt -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "encode|--encode=foo.Message"
+  "encode_with_proto|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
+  "encode_bad_field|--encode=encerr.Foo -I testdata/472_encode_error testdata/472_encode_error/test.proto|bad_field: 42"
   "notices|--notices"
   "enable_codegen_trace|--enable_codegen_trace=true"
   "error_format_msvs|--error_format=msvs -I testdata/257_msvs_error --dump_out=/tmp/msvs_test_out testdata/257_msvs_error/test.proto"
+  "error_format_msvs_parse|--error_format=msvs -I testdata/437_msvs_parse_error --descriptor_set_out=/dev/null testdata/437_msvs_parse_error/test.proto"
   "error_format_unknown|--error_format=unknown"
   "decode_no_value|--decode"
+  "encode_no_proto|--encode=foo.Message"
+  "decode_no_proto|--decode=foo.Message"
+  "missing_plugin|--plugin=protoc-gen-fake=/nonexistent/plugin --fake_out=/tmp/test_missing_plugin -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "no_output_directive|-I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "output_bad_dir|--descriptor_set_out=/nonexistent/dir/out.pb -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "empty_proto|--descriptor_set_out=/tmp/test_empty.pb -I testdata/330_empty_proto testdata/330_empty_proto/empty.proto"
+  "dup_proto_path|--descriptor_set_out=/tmp/test_dup_path.pb -I testdata/01_basic_message -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "help|--help"
+  "decode_with_file|--decode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|x"
+  "direct_dependencies|--direct_dependencies= --descriptor_set_out=/dev/null -I testdata/443_direct_dependencies testdata/443_direct_dependencies/test.proto"
+  "fatal_warnings_ext|--fatal_warnings --descriptor_set_out=/dev/null -I testdata/445_fatal_warnings testdata/445_fatal_warnings/test.proto"
+  "experimental_allow_proto3_optional|--experimental_allow_proto3_optional --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "descriptor_set_in_import|--descriptor_set_in=testdata/474_descriptor_set_in/dep.pb --descriptor_set_out=/tmp/test_descsetin.pb -I testdata/474_descriptor_set_in/main testdata/474_descriptor_set_in/main/test.proto"
+  "encode_field_order|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: 42 name: \"Alice\""
+  "unused_import|--descriptor_set_out=/dev/null -I testdata/475_unused_import testdata/475_unused_import/test.proto"
+  "encode_oneof_conflict|--encode=oneofconflict.Foo -I testdata/476_encode_oneof_conflict testdata/476_encode_oneof_conflict/test.proto|name: \"hello\" id: 42 label: \"test\""
+  "encode_ext_order|--encode=encextord.Msg -I testdata/477_encode_ext_order testdata/477_encode_ext_order/test.proto|name: \"ab\" [encextord.extra]: 5"
+  "encode_invalid_utf8|--encode=encutf8.Record -I testdata/478_encode_invalid_utf8 testdata/478_encode_invalid_utf8/test.proto|text: \"hello\\377world\" id: 1"
+  "encode_map_order|--encode=encmapord.Config -I testdata/482_encode_map_order testdata/482_encode_map_order/test.proto|tags { key: \"c\" value: 3 } tags { key: \"a\" value: 1 } tags { key: \"b\" value: 2 } label: \"ok\""
+  "encode_bool_map_order|--encode=boolmapord.Settings -I testdata/483_encode_bool_map_order testdata/483_encode_bool_map_order/test.proto|flags { key: true value: \"yes\" } flags { key: false value: \"no\" }"
+  "encode_missing_colon|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name \"Alice\""
+  "dependency_out_bad_path|--dependency_out=/nonexistent_nelsontest_dir/deps.txt --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "encode_dup_field|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: 1 name: \"Alice\" id: 2"
+  "encode_nan|--encode=encnan.Sample -I testdata/487_encode_nan testdata/487_encode_nan/test.proto|dval: nan label: \"ok\""
+  "encode_map_nan|--encode=encmapnan.Sample -I testdata/488_encode_map_nan testdata/488_encode_map_nan/test.proto|values { key: \"x\" value: nan } label: \"ok\""
+  "decode_bad_type|--decode=basic.NoSuchType -I testdata/01_basic_message testdata/01_basic_message/basic.proto|x"
+  "encode_closed_enum|--encode=encclosed.Record -I testdata/490_encode_closed_enum testdata/490_encode_closed_enum/test.proto|s: 99 label: \"test\""
+  "encode_deterministic_map|--deterministic_output --encode=encmapord.Config -I testdata/482_encode_map_order testdata/482_encode_map_order/test.proto|tags { key: \"c\" value: 3 } tags { key: \"a\" value: 1 } tags { key: \"b\" value: 2 } label: \"ok\""
+  "encode_req_order|--encode=encreqord.Outer -I testdata/496_encode_req_order testdata/496_encode_req_order/test.proto|mid { deep { } }"
+  "version|--version"
+  "proto_path_mapping|--proto_path=vdir=testdata/491_proto_path_mapping/actual --descriptor_set_out=/dev/null vdir/test.proto"
+  "self_import|--descriptor_set_out=/dev/null -I testdata/492_self_import testdata/492_self_import/test.proto"
+  "encode_space_flag|--encode basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
+  "encode_group_missing_req|--encode=grouptest.SearchResponse -I testdata/28_proto2_group testdata/28_proto2_group/group.proto|Result { title: \"Test\" }"
+  "short_o_flag|-o/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "descriptor_set_in_multi|--descriptor_set_in=testdata/497_descriptor_set_in_multi/dep1.pb:testdata/497_descriptor_set_in_multi/dep2.pb --descriptor_set_out=/tmp/test_descsetin_multi.pb -I testdata/497_descriptor_set_in_multi/main testdata/497_descriptor_set_in_multi/main/test.proto"
+  "response_file|@testdata/498_response_file/args.txt"
   "out_space_sep|--dump_out /tmp/test_space_sep -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
   "descriptor_set_out_space|--descriptor_set_out /tmp/test_desc_space.pb -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
-  "proto_path_space|--proto_path testdata/01_basic_message --descriptor_set_out /tmp/test_proto_path_space.pb basic.proto"
-  "error_format_space|--error_format gcc"
+  "proto_path_space|--proto_path testdata/01_basic_message --descriptor_set_out=/dev/null testdata/01_basic_message/basic.proto"
+  "dso_space|--descriptor_set_out /dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "dsi_space|--descriptor_set_in testdata/474_descriptor_set_in/dep.pb --descriptor_set_out=/tmp/test_dsi_space.pb -I testdata/474_descriptor_set_in/main testdata/474_descriptor_set_in/main/test.proto"
+  "dup_dso|--descriptor_set_out=/dev/null --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "dependency_out_space|--dependency_out /dev/null --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "decode_encode_mutex|--decode=basic.Person --encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
+  "error_format_space|--error_format msvs --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "dup_dsi|--descriptor_set_in=testdata/474_descriptor_set_in/dep.pb --descriptor_set_in=testdata/474_descriptor_set_in/dep.pb --descriptor_set_out=/tmp/test_dup_dsi.pb -I testdata/474_descriptor_set_in/main testdata/474_descriptor_set_in/main/test.proto"
+  "dup_depout|--dependency_out=/dev/null --dependency_out=/dev/null --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "dup_encode|--encode=basic.Person --encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
+  "dup_direct_deps|--direct_dependencies=a --direct_dependencies=b --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "pfn_decode_mutex|--print_free_field_numbers --decode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
+  "json_name_conflict|--descriptor_set_out=/dev/null -I testdata/502_json_name_conflict testdata/502_json_name_conflict/test.proto"
+  "encode_neg_uint|--encode=encneguint.Record -I testdata/503_encode_neg_uint testdata/503_encode_neg_uint/test.proto|value: -1 label: \"ok\""
+  "encode_nested_neg_uint|--encode=encnestedneguint.Outer -I testdata/504_encode_nested_neg_uint testdata/504_encode_nested_neg_uint/test.proto|inner { count: -5 } label: \"ok\""
+  "dependency_out_stdout|--dependency_out=/dev/fd/1 --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "encode_map_dup_key|--encode=encmapdupkey.Record -I testdata/505_encode_map_dup_key testdata/505_encode_map_dup_key/test.proto|items { key: \"a\" value: 1 } items { key: \"a\" value: 2 } label: \"ok\""
+  "bare_i_flag|-I"
+  "direct_deps_space|--direct_dependencies basic.proto --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "plugin_space|--plugin protoc-gen-dump=tools/protoc-gen-dump/protoc-gen-dump --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "encode_field_num|--encode=encfieldnum.Record -I testdata/508_encode_field_num testdata/508_encode_field_num/test.proto|1: \"alice\""
+  "option_deps_space|--option_dependencies basic.proto --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "include_imports_warn|--include_imports --print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "include_source_info_warn|--include_source_info --print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "retain_options_warn|--retain_options --print_free_field_numbers -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "deterministic_no_encode|--deterministic_output --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "encode_nested_dup|--encode=encnestdup.Outer -I testdata/509_encode_nested_dup testdata/509_encode_nested_dup/test.proto|sub { name: \"first\" name: \"second\" } label: \"ok\""
+  "decode_with_dso|--decode=basic.Person --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
+  "encode_nested_closed_enum|--encode=nestedclosedenum.Outer -I testdata/511_encode_nested_closed_enum testdata/511_encode_nested_closed_enum/test.proto|inner { status: 99 label: \"test\" } name: \"ok\""
+  "encode_closed_enum_colon_brace|--encode=encclosedenumcolon.Outer -I testdata/530_encode_closed_enum_colon_brace testdata/530_encode_closed_enum_colon_brace/test.proto|sub: { priority: 99 label: \"test\" } name: \"ok\""
+  "encode_nested_oneof|--encode=encnestedoneof.Outer -I testdata/512_encode_nested_oneof testdata/512_encode_nested_oneof/test.proto|inner { name: \"hello\" id: 42 label: \"x\" } tag: \"ok\""
+  "pfn_dso_mutex|--print_free_field_numbers --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "pfn_plugin_mutex|--print_free_field_numbers --dump_out=/tmp/dump -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "decode_raw_plugin_mutex|--decode_raw --dump_out=/tmp/test_decode_raw_plugin -I testdata/01_basic_message testdata/01_basic_message/basic.proto| "
+  "encode_bool_TRUE|--encode=encboolerr.Record -I testdata/513_encode_bool_error testdata/513_encode_bool_error/test.proto|flag: TRUE label: \"ok\""
+  "encode_nested_unknown|--encode=encnestedunknown.Outer -I testdata/514_encode_nested_unknown testdata/514_encode_nested_unknown/test.proto|inner { bad_field: \"hello\" } name: \"test\""
+  "decode_dsi_no_proto|--decode=dep.Dep --descriptor_set_in=testdata/474_descriptor_set_in/dep.pb|x"
+  "encode_int_overflow|--encode=encintoverflow.Record -I testdata/516_encode_int_overflow testdata/516_encode_int_overflow/test.proto|val: 4294967296 label: \"ok\""
+  "encode_double_type_error|--encode=encdoubletypeerr.Record -I testdata/517_encode_double_type_error testdata/517_encode_double_type_error/test.proto|dval: \"not_a_number\" label: \"test\""
+  "encode_string_type_error|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: 42"
+  "encode_enum_type_error|--encode=encenumtypeerr.Record -I testdata/519_encode_enum_type_error testdata/519_encode_enum_type_error/test.proto|status: \"ACTIVE\" label: \"ok\""
+  "experimental_editions|--experimental_editions --descriptor_set_out=/dev/null -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "dsi_overlap|--descriptor_set_in=testdata/521_dsi_overlap/base.pb:testdata/521_dsi_overlap/main_with_imports.pb --decode=main.MainMsg| "
+  "encode_msg_type_error|--encode=encmsgtypeerr.Record -I testdata/522_encode_msg_type_error testdata/522_encode_msg_type_error/test.proto|inner: 42 label: \"ok\""
+  "encode_int_type_error|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: \"hello\""
+  "msvs_unused_import_warn|--error_format=msvs --descriptor_set_out=/dev/null -I testdata/475_unused_import testdata/475_unused_import/test.proto"
+  "encode_group_neg_uint|--encode=encgroupneg.Container -I testdata/523_encode_group_neg_uint testdata/523_encode_group_neg_uint/test.proto|Info { count: -5 label: \"test\" }"
+  "encode_comment_dup|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: \"hello\" # name: \"wrong\""
+  "encode_tab_dup|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: 1"$'\t'"id: 2"
+  "encode_bracket_value|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: [1]"
+  "encode_int_bracket_value|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|id: [1]"
+  "encode_nested_bracket_double|--encode=encnestedunexp.Outer -I testdata/526_encode_nested_unexpected testdata/526_encode_nested_unexpected/test.proto|inner { score: [ }"
+  "encode_truncated_msg|--encode=skipbrace.Outer -I testdata/527_encode_comment_brace testdata/527_encode_comment_brace/test.proto|inner: {"
+  "encode_dup_msg_field|--encode=dupmsgfield.Outer -I testdata/528_encode_dup_msg_field testdata/528_encode_dup_msg_field/test.proto|sub { value: 1 } sub { value: 2 } name: \"test\""
+  $'encode_neg_skip|--encode=negskip.Outer -I testdata/529_encode_neg_skip testdata/529_encode_neg_skip/test.proto|sub: { value: -5 }'
+  "encode_bracket_mismatch|--encode=encbracket.Outer -I testdata/531_encode_bracket_mismatch testdata/531_encode_bracket_mismatch/test.proto|sub < val: 1 }"
+  "encode_dup_ext_field|--encode=encextord.Msg -I testdata/477_encode_ext_order testdata/477_encode_ext_order/test.proto|[encextord.extra]: 5 [encextord.extra]: 10 name: \"ab\""
+  "encode_invalid_field_name|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|{"
+  "encode_unknown_ext|--encode=encextord.Msg -I testdata/477_encode_ext_order testdata/477_encode_ext_order/test.proto|[unknown.ext]: 5 name: \"test\""
+  "encode_ext_neg_uint|--encode=encextneg.Outer -I testdata/532_encode_ext_neg_uint testdata/532_encode_ext_neg_uint/test.proto|[encextneg.my_ext]: { count: -5 } label: \"ok\""
+  "encode_ext_closed_enum|--encode=encextcenum.Outer -I testdata/533_encode_ext_closed_enum testdata/533_encode_ext_closed_enum/test.proto|[encextcenum.my_ext] { priority: 999 } label: \"ok\""
+  "encode_ext_oneof_conflict|--encode=encextoneof.Outer -I testdata/534_encode_ext_oneof_conflict testdata/534_encode_ext_oneof_conflict/test.proto|[encextoneof.my_ext] { name: \"hello\" id: 42 } label: \"ok\""
+  "encode_dup_string_concat|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: \"hello\" \"world\" name: \"test\""
+  "encode_tab_column|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|"$'\t'"badfield: 42"
+  "encode_tab_int_type|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|"$'\t'"id: \"hello\""
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do
@@ -415,6 +861,383 @@ for cli_spec in "${CLI_TESTS[@]}"; do
   run_cli_test "$cli_name" "$cli_args" "$cli_stdin" &
   PIDS+=($!)
   TEST_NAMES+=("cli@${cli_name}")
+done
+
+# -- partial generation test -----------------------------------------------
+# Tests that only a subset of .proto files are listed for generation.
+
+run_partial_gen_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local gen_file="$3"
+  local full_name="partial@${test_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local expected_dir="$result_dir/expected"
+  local actual_dir="$result_dir/actual"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$expected_dir" "$actual_dir"
+
+  # Run C++ protoc — only gen_file listed for generation, but -I includes the dir
+  local cpp_ok=true
+  local cpp_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$expected_dir" --dump_opt="$expected_dir" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    "$gen_file") 2>"$result_dir/cpp_error.txt" || cpp_ok=false
+  local cpp_elapsed=$(( $(now_ms) - cpp_start ))
+  echo "$cpp_ok" > "$result_dir/cpp_ok.txt"
+
+  # Run Go protoc-go
+  local go_ok=true
+  local go_start=$(now_ms)
+  (cd "$test_dir" && "$PROTOC_GO" \
+    --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+    --dump_out="$actual_dir" --dump_opt="$actual_dir" \
+    -I"$PROTOC_INCLUDE" \
+    -I. \
+    "$gen_file") 2>"$result_dir/go_error.txt" || go_ok=false
+  local go_elapsed=$(( $(now_ms) - go_start ))
+  echo "$go_ok" > "$result_dir/go_ok.txt"
+
+  compare_results "$result_dir" "$result_file" "$failure_file" "$cpp_elapsed" "$go_elapsed"
+
+  if [ -f "$result_dir/both_ok.txt" ]; then
+    local diff_output=""
+
+    if [ -f "$expected_dir/summary.txt" ] && [ -f "$actual_dir/summary.txt" ]; then
+      diff_output=$(diff -u "$expected_dir/summary.txt" "$actual_dir/summary.txt" 2>&1) || true
+    fi
+
+    if [ -z "$diff_output" ] && [ -f "$expected_dir/request.pb" ] && [ -f "$actual_dir/request.pb" ]; then
+      if ! cmp -s "$expected_dir/request.pb" "$actual_dir/request.pb"; then
+        diff_output="Binary CodeGeneratorRequest differs (partial gen)"
+      fi
+    fi
+
+    if [ -z "$diff_output" ]; then
+      echo "PASS $cpp_elapsed $go_elapsed" > "$result_file"
+    else
+      echo "FAIL $cpp_elapsed $go_elapsed" > "$result_file"
+      echo "$diff_output" > "$failure_file"
+    fi
+  fi
+}
+
+# Test: generate only main.proto (dep.proto is a dependency, not a generation target)
+run_partial_gen_test "331_only_main" "$TESTS_DIR/331_partial_generation" "main.proto" &
+PIDS+=($!)
+TEST_NAMES+=("partial@331_only_main")
+
+# Test: generate only dep.proto (standalone, no imports needed)
+run_partial_gen_test "331_only_dep" "$TESTS_DIR/331_partial_generation" "dep.proto" &
+PIDS+=($!)
+TEST_NAMES+=("partial@331_only_dep")
+
+# -- stdin/stdout tests (decode_raw with real binary) ----------------------
+
+run_decode_raw_test() {
+  local test_name="$1"
+  local binary_hex="$2"
+  local full_name="stdin@${test_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$result_dir"
+
+  # Convert hex to binary
+  local binary_file="$result_dir/input.bin"
+  echo "$binary_hex" | xxd -r -p > "$binary_file"
+
+  # Run C++ protoc --decode_raw
+  local cpp_exit=0
+  "$PROTOC" --decode_raw < "$binary_file" >"$result_dir/cpp_stdout.txt" 2>"$result_dir/cpp_stderr.txt" || cpp_exit=$?
+
+  # Run Go protoc-go --decode_raw
+  local go_exit=0
+  "$PROTOC_GO" --decode_raw < "$binary_file" >"$result_dir/go_stdout.txt" 2>"$result_dir/go_stderr.txt" || go_exit=$?
+
+  if [ "$cpp_exit" != "$go_exit" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "exit code mismatch: C++ protoc=$cpp_exit, Go protoc-go=$go_exit"
+      echo "--- C++ stderr ---"
+      cat "$result_dir/cpp_stderr.txt"
+      echo "+++ Go stderr +++"
+      cat "$result_dir/go_stderr.txt"
+    } > "$failure_file"
+    return
+  fi
+
+  local cpp_stdout go_stdout
+  cpp_stdout=$(cat "$result_dir/cpp_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  go_stdout=$(cat "$result_dir/go_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+
+  if [ "$cpp_stdout" != "$go_stdout" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "stdout mismatch"
+      diff -u "$result_dir/cpp_stdout.txt" "$result_dir/go_stdout.txt" 2>&1 || true
+    } > "$failure_file"
+    return
+  fi
+
+  local cpp_stderr go_stderr
+  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  go_stderr=$(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+
+  if [ "$cpp_stderr" != "$go_stderr" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "stderr mismatch"
+      diff -u "$result_dir/cpp_stderr.txt" "$result_dir/go_stderr.txt" 2>&1 || true
+    } > "$failure_file"
+    return
+  fi
+
+  echo "PASS 0 0" > "$result_file"
+}
+
+# Hex-encoded protobuf binary data for decode_raw tests:
+#   simple: field 1 (string "hello"), field 2 (varint 42)
+#   nested: field 1 (string "outer"), field 2 (embedded msg with field 1 = "inner")
+#   multi_type: field 1 (varint 150), field 2 (string "test"), field 3 (fixed32 0x12345678), field 5 (fixed64)
+#   empty: empty input (zero bytes)
+#   corrupt: truncated varint
+#   single_quote: field 1 (string "'") — tests cEscape of single quote char
+STDIN_TESTS=(
+  "decode_raw_simple|0a0568656c6c6f102a"
+  "decode_raw_nested|0a056f7574657212070a05696e6e6572"
+  "decode_raw_multi_type|0896011204746573741d78563412"
+  "decode_raw_empty|"
+  "decode_raw_corrupt|08"
+  "decode_raw_single_quote|0a0127"
+  "decode_raw_group|0b0a0568656c6c6f0c"
+  "decode_raw_overflow_varint|0880808080808080808002"
+)
+
+for stdin_spec in "${STDIN_TESTS[@]}"; do
+  IFS='|' read -r stdin_name stdin_hex <<< "$stdin_spec"
+  run_decode_raw_test "$stdin_name" "$stdin_hex" &
+  PIDS+=($!)
+  TEST_NAMES+=("stdin@${stdin_name}")
+done
+
+# -- decode tests ----------------------------------------------------------
+# Compare --decode=TYPE output between C++ protoc and Go protoc-go.
+
+run_decode_test() {
+  local test_name="$1"
+  local proto_dir="$2"
+  local msg_type="$3"
+  local binary_hex="$4"
+  local full_name="decode@${test_name}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+
+  mkdir -p "$result_dir"
+
+  local binary_file="$result_dir/input.bin"
+  echo "$binary_hex" | xxd -r -p > "$binary_file"
+
+  local proto_files
+  proto_files=$(find "$proto_dir" -maxdepth 1 -name "*.proto" -exec basename {} \; | sort)
+
+  local cpp_exit=0
+  (cd "$proto_dir" && "$PROTOC" -I. --decode="$msg_type" $proto_files < "$binary_file") \
+    >"$result_dir/cpp_stdout.txt" 2>"$result_dir/cpp_stderr.txt" || cpp_exit=$?
+
+  local go_exit=0
+  (cd "$proto_dir" && "$PROTOC_GO" -I. --decode="$msg_type" $proto_files < "$binary_file") \
+    >"$result_dir/go_stdout.txt" 2>"$result_dir/go_stderr.txt" || go_exit=$?
+
+  if [ "$cpp_exit" != "$go_exit" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "exit code mismatch: C++ protoc=$cpp_exit, Go protoc-go=$go_exit"
+      echo "--- C++ stderr ---"
+      cat "$result_dir/cpp_stderr.txt"
+      echo "+++ Go stderr +++"
+      cat "$result_dir/go_stderr.txt"
+    } > "$failure_file"
+    return
+  fi
+
+  local cpp_stdout go_stdout
+  cpp_stdout=$(cat "$result_dir/cpp_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  go_stdout=$(cat "$result_dir/go_stdout.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+
+  if [ "$cpp_stdout" != "$go_stdout" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "stdout mismatch"
+      diff -u "$result_dir/cpp_stdout.txt" "$result_dir/go_stdout.txt" 2>&1 || true
+    } > "$failure_file"
+    return
+  fi
+
+  local cpp_stderr go_stderr
+  cpp_stderr=$(cat "$result_dir/cpp_stderr.txt" | sed 's/^[EIWF][0-9][0-9][0-9][0-9] [0-9:.]* [0-9]* [^ ]*] //' | sed 's/[[:space:]]*$//' | sed '/^$/d')
+  go_stderr=$(cat "$result_dir/go_stderr.txt" | sed 's/[[:space:]]*$//' | sed '/^$/d')
+
+  if [ "$cpp_stderr" != "$go_stderr" ]; then
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "stderr mismatch"
+      diff -u "$result_dir/cpp_stderr.txt" "$result_dir/go_stderr.txt" 2>&1 || true
+    } > "$failure_file"
+    return
+  fi
+
+  echo "PASS 0 0" > "$result_file"
+}
+
+# Decode tests: name|proto_dir|message_type|hex_data
+# 0801 = field 1 (varint) value 1 (COLOR_RED)
+# 120568656c6c6f = field 2 (string) "hello"
+DECODE_TESTS=(
+  "enum_value|testdata/448_decode_enum|decodeenumtest.Painted|08011205776f726c64"
+  "float_value|testdata/449_decode_float|decodefloat.Measurement|0dcdcccc3d1203666f6f"
+  "neg_int64|testdata/450_decode_int64|decodeint64.Record|08ffffffffffffffffff0112026f6b"
+  "double_integer|testdata/451_decode_double|decodedouble.Sample|09000000000000f03f12026f6b"
+  "float_integer|testdata/452_decode_float_int|decodefloatint.Sample|0d000000401203666f6f"
+  "packed_repeated|testdata/453_decode_packed|decodepacked.Numbers|0a0301020312026f6b"
+  "extension_field|testdata/454_decode_extension|decodeext.Base|0a026869a0062a"
+  "wrong_wire|testdata/455_decode_wrong_wire|decodewire.Record|0d2a00000012026f6b"
+  "map_sort|testdata/456_decode_map_sort|decodemapsort.Config|0a0b0a0774696d656f7574101e0a0b0a07726574726965731003120474657374"
+  "proto2_unknown_enum|testdata/457_decode_proto2_unknown_enum|decode_p2_enum.Record|086312026f6b"
+  "edition_open_enum|testdata/458_decode_edition_open_enum|decodeeditionenum.Record|086312026f6b"
+  "double_precision|testdata/459_decode_double_precision|decodedoubleprec.Sample|09020000000000004012026f6b"
+  "oneof_dedup|testdata/460_decode_oneof_dedup|oneofdedup.Msg|0a0568656c6c6f102a1a026f6b"
+  "dup_scalar|testdata/461_decode_dup_scalar|decodedup.Record|0801080212026f6b"
+  "group_merge|testdata/462_decode_group_merge|decodegroupmerge.Record|0b0a0568656c6c6f0c0b102a0c12026f6b"
+  "utf8_invalid|testdata/463_decode_utf8_invalid|decodeutf8.test.Record|082a12028081"
+  "missing_required|testdata/465_decode_missing_required|decodemissing.Record|1807"
+  "truncated|testdata/466_decode_truncated|decodetrunc.Record|0a0568"
+  "sint32_truncate|testdata/467_decode_sint32_truncate|decodesint.Record|08818080801012026f6b"
+  "map_unknown|testdata/468_decode_map_unknown|decodemapunk.Record|0a080a026869102a18011201 78"
+  "map_missing_key|testdata/480_decode_map_missing_key|decodemapkey.Record|0A02102A12026F6B"
+  "proto3_default|testdata/481_decode_proto3_default|decodep3def.Record|080012001a0020002a026f6b"
+  "edition_implicit_default|testdata/485_decode_edition_implicit|decodeedimplicit.Record|08001200180022026f6b"
+  "packed_enum_unknown|testdata/486_decode_packed_enum_unknown|decodepackedenum.Record|0a0300016312026f6b"
+  "nested_group|testdata/495_decode_nested_group|decodenestedgrp.Outer|0a0568656c6c6f130a04746573741b082a1c14"
+  "packed_trunc|testdata/499_decode_packed_trunc|decodepackedtrunc.Record|0a05010203040512026f6b"
+  "recursion_limit|testdata/525_decode_recursion_limit|decoderecurse.Nested|0af2010aef010aec010ae9010ae6010ae3010ae0010add010ada010ad7010ad4010ad1010ace010acb010ac8010ac5010ac2010abf010abc010ab9010ab6010ab3010ab0010aad010aaa010aa7010aa4010aa1010a9e010a9b010a98010a95010a92010a8f010a8c010a89010a86010a83010a80010a7e0a7c0a7a0a780a760a740a720a700a6e0a6c0a6a0a680a660a640a620a600a5e0a5c0a5a0a580a560a540a520a500a4e0a4c0a4a0a480a460a440a420a400a3e0a3c0a3a0a380a360a340a320a300a2e0a2c0a2a0a280a260a240a220a200a1e0a1c0a1a0a180a160a140a120a100a0e0a0c0a0a0a080a060a0412026869"
+)
+
+for decode_spec in "${DECODE_TESTS[@]}"; do
+  IFS='|' read -r decode_name decode_dir decode_type decode_hex <<< "$decode_spec"
+  run_decode_test "$decode_name" "$decode_dir" "$decode_type" "$decode_hex" &
+  PIDS+=($!)
+  TEST_NAMES+=("decode@${decode_name}")
+done
+
+# -- determinism tests -----------------------------------------------------
+# Run protoc-go multiple times on select cases and verify byte-identical output.
+
+run_determinism_test() {
+  local test_name="$1"
+  local test_dir="$2"
+  local mode="$3"
+  local full_name="determinism@${test_name}_${mode}"
+  local result_dir="$RESULTS_DIR/$full_name"
+  local result_file="$result_dir/result.txt"
+  local failure_file="$result_dir/failure.txt"
+  local iterations=5
+
+  mkdir -p "$result_dir"
+
+  local proto_files proto_basenames
+  proto_files=$(find "$test_dir" -maxdepth 1 -name "*.proto" | sort)
+  if [ -z "$proto_files" ]; then
+    echo "PASS 0 0" > "$result_file"
+    return
+  fi
+  proto_basenames=""
+  for f in $proto_files; do
+    proto_basenames="$proto_basenames $(basename "$f")"
+  done
+
+  # Run N times and collect outputs
+  for ((i=1; i<=iterations; i++)); do
+    local run_dir="$result_dir/run_${i}"
+    mkdir -p "$run_dir"
+
+    if [ "$mode" = "plugin" ]; then
+      (cd "$test_dir" && "$PROTOC_GO" \
+        --plugin="protoc-gen-dump=$PROTOC_GEN_DUMP" \
+        --dump_out="$run_dir" \
+        --dump_opt="$run_dir" \
+        -I"$PROTOC_INCLUDE" \
+        -I. \
+        $proto_basenames) 2>"$run_dir/stderr.txt" || true
+    else
+      (cd "$test_dir" && "$PROTOC_GO" \
+        --descriptor_set_out="$run_dir/output.pb" \
+        --include_imports --include_source_info \
+        -I"$PROTOC_INCLUDE" \
+        -I. \
+        $proto_basenames) 2>"$run_dir/stderr.txt" || true
+    fi
+  done
+
+  # Compare all runs against run_1
+  local ref_dir="$result_dir/run_1"
+  local mismatches=""
+
+  for ((i=2; i<=iterations; i++)); do
+    local run_dir="$result_dir/run_${i}"
+    if [ "$mode" = "plugin" ]; then
+      if [ -f "$ref_dir/request.pb" ] && [ -f "$run_dir/request.pb" ]; then
+        if ! cmp -s "$ref_dir/request.pb" "$run_dir/request.pb"; then
+          mismatches="$mismatches run_1 vs run_${i} (request.pb differs)"
+        fi
+      fi
+    else
+      if [ -f "$ref_dir/output.pb" ] && [ -f "$run_dir/output.pb" ]; then
+        if ! cmp -s "$ref_dir/output.pb" "$run_dir/output.pb"; then
+          mismatches="$mismatches run_1 vs run_${i} (output.pb differs)"
+        fi
+      fi
+    fi
+  done
+
+  if [ -z "$mismatches" ]; then
+    echo "PASS 0 0" > "$result_file"
+  else
+    echo "FAIL 0 0" > "$result_file"
+    {
+      echo "Non-deterministic output detected across $iterations runs:"
+      echo "$mismatches"
+    } > "$failure_file"
+  fi
+}
+
+# Run determinism tests on a selection of diverse test cases
+DETERMINISM_CASES=(
+  "01_basic_message"
+  "04_nested"
+  "06_map"
+  "11_import_public"
+  "16_comments"
+  "28_proto2_group"
+  "329_large_stress"
+)
+
+for det_case in "${DETERMINISM_CASES[@]}"; do
+  det_dir="$TESTS_DIR/$det_case"
+  if [ -d "$det_dir" ]; then
+    for det_mode in plugin descriptor; do
+      run_determinism_test "$det_case" "$det_dir" "$det_mode" &
+      PIDS+=($!)
+      TEST_NAMES+=("determinism@${det_case}_${det_mode}")
+    done
+  fi
 done
 
 # Wait for all tests to finish

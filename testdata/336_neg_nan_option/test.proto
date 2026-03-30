@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+import "google/protobuf/descriptor.proto";
+
+package negnanopt;
+
+extend google.protobuf.FileOptions {
+  optional double neg_nan_val = 50002;
+}
+
+option (neg_nan_val) = -nan;
+
+message Holder {
+  optional string name = 1;
+}

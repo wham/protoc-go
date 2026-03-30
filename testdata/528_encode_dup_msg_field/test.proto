@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package dupmsgfield;
+
+message Inner {
+  int32 value = 1;
+}
+
+message Outer {
+  Inner sub = 1;
+  string name = 2;
+}

@@ -1,0 +1,7 @@
+syntax = "proto2";
+
+package negextrange;
+
+message Msg {
+  extensions -1 to 10;
+}

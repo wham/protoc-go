@@ -1,0 +1,31 @@
+syntax = "proto2";
+
+package aggorder;
+
+import "google/protobuf/descriptor.proto";
+
+message Inner {
+  optional string data = 1;
+}
+
+message Config {
+  optional Inner child = 1;
+  optional int32 value = 2;
+}
+
+extend google.protobuf.FileOptions {
+  optional Config cfg = 50001;
+}
+
+// Value (field 2) listed before child (field 1) in the aggregate.
+// C++ protoc encodes fields in field-number order; Go encodes in source order.
+option (cfg) = {
+  value: 42
+  child {
+    data: "hello"
+  }
+};
+
+message Dummy {
+  optional int32 id = 1;
+}

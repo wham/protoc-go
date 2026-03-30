@@ -1,0 +1,14 @@
+syntax = "proto2";
+
+package decodepackedenum;
+
+enum Status {
+  UNKNOWN = 0;
+  ACTIVE = 1;
+  INACTIVE = 2;
+}
+
+message Record {
+  repeated Status s = 1 [packed = true];
+  optional string label = 2;
+}

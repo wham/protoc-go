@@ -1,0 +1,18 @@
+syntax = "proto2";
+
+package stroptint;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  optional string my_label = 50001;
+}
+
+// C++ protoc rejects integer value for string option:
+//   "Value must be quoted string for string option"
+// Go protoc-go accepts it and encodes "42" as the string value.
+option (my_label) = 42;
+
+message Dummy {
+  optional int32 id = 1;
+}

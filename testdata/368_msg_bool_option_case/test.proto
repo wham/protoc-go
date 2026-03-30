@@ -1,0 +1,18 @@
+syntax = "proto2";
+
+package msgboolcase;
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.MessageOptions {
+  optional bool msg_flag = 50001;
+}
+
+// Go accepts "True" (capital T) as a valid bool value for message-level
+// custom options because resolveCustomMessageOptions is missing bool
+// validation. C++ protoc only accepts lowercase "true" or "false".
+message Flagged {
+  option (msg_flag) = True;
+
+  optional string name = 1;
+}

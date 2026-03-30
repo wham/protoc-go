@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package grouptest;
+
+message Outer {
+  group Inner = 1 {
+    int32 value = 1;
+  }
+}

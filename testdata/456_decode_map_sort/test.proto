@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package decodemapsort;
+
+message Config {
+  map<string, int32> settings = 1;
+  string label = 2;
+}

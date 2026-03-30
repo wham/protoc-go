@@ -1,0 +1,7 @@
+edition = "2023";
+
+package msgencscalar;
+
+message Container {
+  int32 value = 1 [features.message_encoding = DELIMITED];
+}

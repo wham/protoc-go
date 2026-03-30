@@ -1,0 +1,12 @@
+edition = "2023";
+
+package edopenenum;
+
+enum Priority {
+  HIGH = 1;
+  LOW = 2;
+}
+
+message Msg {
+  Priority p = 1;
+}

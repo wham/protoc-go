@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package encnestedoneof;
+
+message Inner {
+  oneof choice {
+    string name = 1;
+    int32 id = 2;
+  }
+  string label = 3;
+}
+
+message Outer {
+  Inner inner = 1;
+  string tag = 2;
+}

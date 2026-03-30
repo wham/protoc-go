@@ -1,0 +1,12 @@
+edition = "2023";
+package test;
+
+// In editions, reserved names must be bare identifiers, not string literals.
+// C++ protoc rejects this with:
+//   "Reserved names must be identifiers in editions, not string literals."
+// Go protoc-go incorrectly accepts it.
+message Msg {
+  string name = 1;
+  int32 value = 2;
+  reserved "old_field";
+}
