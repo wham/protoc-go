@@ -18,7 +18,7 @@ jobs:
 
       - name: Install protoc
         run: |
-          PROTOC_VERSION=29.3
+          PROTOC_VERSION=33.4
           curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip" -o protoc.zip
           unzip -q protoc.zip -d /tmp/protoc-install
           echo "/tmp/protoc-install/bin" >> "$GITHUB_PATH"
