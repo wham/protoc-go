@@ -1,5 +1,8 @@
 # protoc-go
 
+> **Warning**
+> This is an experimental project under active development. It is **not ready for production use**. APIs may change without notice.
+
 A pure Go implementation of the Protocol Buffers compiler (`protoc`). Can be used as a **CLI tool** (drop-in replacement) or as a **Go library** embedded directly in your application.
 
 ## CLI Usage
