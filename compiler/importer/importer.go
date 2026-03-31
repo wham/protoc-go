@@ -4,6 +4,7 @@ package importer
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +21,12 @@ type Mapping struct {
 type SourceTree struct {
 	Roots    []string // Simple root directories (VirtualPath="")
 	Mappings []Mapping
+
+	// FallbackFS is an optional embedded filesystem used as a fallback
+	// when a file is not found on disk. This is used to bundle well-known
+	// types (e.g. google/protobuf/timestamp.proto) into the binary,
+	// mirroring how C++ protoc uses compiled-in descriptors.
+	FallbackFS fs.FS
 }
 
 // allMappings returns all mappings including those from Roots.
@@ -88,12 +95,21 @@ func IsVirtualPathInvalid(path string) bool {
 }
 
 // Open finds and reads a .proto file from the source tree.
+// If the file is not found on disk but a FallbackFS is configured,
+// it tries reading from the embedded filesystem (used for well-known types).
 func (st *SourceTree) Open(filename string) (string, error) {
 	if IsVirtualPathInvalid(filename) {
 		return "", &VirtualPathError{Filename: filename}
 	}
 	if diskPath, ok := st.findFile(filename); ok {
 		data, err := os.ReadFile(diskPath)
+		if err == nil {
+			return string(data), nil
+		}
+	}
+	// Fallback to embedded filesystem (e.g. bundled well-known types).
+	if st.FallbackFS != nil {
+		data, err := fs.ReadFile(st.FallbackFS, filename)
 		if err == nil {
 			return string(data), nil
 		}

@@ -16,6 +16,7 @@ import (
 	"github.com/wham/protoc-go/compiler/importer"
 	"github.com/wham/protoc-go/compiler/parser"
 	"github.com/wham/protoc-go/compiler/plugin"
+	"github.com/wham/protoc-go/compiler/wellknown"
 	"github.com/wham/protoc-go/io/tokenizer"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/encoding/protowire"
@@ -514,7 +515,7 @@ func Run(args []string) error {
 	}
 
 	// Build source tree
-	srcTree := &importer.SourceTree{Roots: cfg.protoPaths, Mappings: cfg.protoPathMappings}
+	srcTree := &importer.SourceTree{Roots: cfg.protoPaths, Mappings: cfg.protoPathMappings, FallbackFS: wellknown.ProtoFiles}
 
 	// Validate proto paths
 	hadWarnings := false
