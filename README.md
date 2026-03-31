@@ -72,6 +72,38 @@ c := protoc.New(
 result, err := c.Compile("schema.proto")
 ```
 
+### Run plugins as libraries (protoc-go extension)
+
+> **Note:** This is a proprietary protoc-go extension. Standard C++ protoc only supports plugins as external binaries communicating over stdin/stdout. This feature allows Go-based plugins to run in-process, eliminating subprocess overhead.
+
+Go plugins can implement the `protoc.Plugin` interface to run directly in the compiler process — no binary on `PATH`, no serialization, no subprocess:
+
+```go
+import (
+    "github.com/wham/protoc-go/protoc"
+    pluginpb "google.golang.org/protobuf/types/pluginpb"
+)
+
+// Define a plugin as a function
+myPlugin := protoc.PluginFunc(func(req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error) {
+    // req contains the same CodeGeneratorRequest a subprocess plugin receives
+    var files []*pluginpb.CodeGeneratorResponse_File
+    for _, f := range req.GetFileToGenerate() {
+        name := f + ".txt"
+        content := "// Generated from " + f
+        files = append(files, &pluginpb.CodeGeneratorResponse_File{
+            Name: &name, Content: &content,
+        })
+    }
+    return &pluginpb.CodeGeneratorResponse{File: files}, nil
+})
+
+result, _ := c.Compile("service.proto")
+files, err := result.RunLibraryPlugin(myPlugin, "")
+```
+
+Existing plugins that already use `protoc-gen-*` binaries continue to work with `RunPlugin`. Library plugins receive the identical `CodeGeneratorRequest`, so output is equivalent between the two modes.
+
 ### Thread safety
 
 `Compiler` is safe for concurrent use. Each `Compile()` call uses independent internal state — no mutexes, no shared mutable data. Create one `Compiler` and reuse it across goroutines.

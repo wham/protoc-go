@@ -12,6 +12,7 @@ import (
 	"github.com/wham/protoc-go/compiler/plugin"
 	"google.golang.org/protobuf/proto"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
+	pluginpb "google.golang.org/protobuf/types/pluginpb"
 )
 
 // CompileRequest specifies what to compile and how.
@@ -101,6 +102,48 @@ func (r *CompileResult) RunPlugin(pluginPath string, parameter string) ([]Genera
 
 	req := plugin.BuildCodeGeneratorRequest(co.relFiles, parameter, protoFiles, sourceFileDescriptors)
 	resp, err := plugin.RunPlugin(pluginPath, req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.GetError() != "" {
+		return nil, fmt.Errorf("plugin error: %s", resp.GetError())
+	}
+
+	var files []GeneratedFile
+	for _, f := range resp.GetFile() {
+		files = append(files, GeneratedFile{
+			Name:           f.GetName(),
+			Content:        f.GetContent(),
+			InsertionPoint: f.GetInsertionPoint(),
+		})
+	}
+	return files, nil
+}
+
+// LibraryPlugin is a protoc code generation plugin that runs in-process.
+//
+// This is the in-process equivalent of a protoc-gen-* binary. The plugin
+// receives the same CodeGeneratorRequest it would receive over stdin and
+// returns the same CodeGeneratorResponse it would write to stdout.
+type LibraryPlugin interface {
+	Generate(req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error)
+}
+
+// RunLibraryPlugin executes an in-process [LibraryPlugin] against the compiled
+// descriptors. It builds the same CodeGeneratorRequest that [RunPlugin] would
+// send to a subprocess, but calls the plugin directly in the current process.
+//
+// parameter is passed to the plugin as the code generation parameter
+// (e.g., "paths=source_relative").
+func (r *CompileResult) RunLibraryPlugin(p LibraryPlugin, parameter string) ([]GeneratedFile, error) {
+	co := r.co
+	protoFiles := co.buildProtoFiles()
+	sourceFileDescriptors := co.buildSourceFileDescriptors()
+
+	req := plugin.BuildCodeGeneratorRequest(co.relFiles, parameter, protoFiles, sourceFileDescriptors)
+
+	resp, err := p.Generate(req)
 	if err != nil {
 		return nil, err
 	}

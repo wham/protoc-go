@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/wham/protoc-go/protoc"
+	"github.com/wham/protoc-go/tools/protoc-gen-dump/dump"
+	pluginpb "google.golang.org/protobuf/types/pluginpb"
 )
 
 func TestCompileBasicMessage(t *testing.T) {
@@ -399,6 +401,126 @@ message Ping { string message = 1; }
 	}
 	if !strings.Contains(string(requestJSON), "Ping") {
 		t.Error("expected request.json to contain Ping message")
+	}
+}
+
+func TestRunLibraryPlugin(t *testing.T) {
+	c := protoc.New(
+		protoc.WithOverlay(map[string]string{
+			"test.proto": `syntax = "proto3";
+package test;
+message Ping { string message = 1; }
+`,
+		}),
+	)
+
+	result, err := c.Compile("test.proto")
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use protoc-gen-dump as an in-process library plugin
+	files, err := result.RunLibraryPlugin(dump.NewPlugin(), outDir)
+	if err != nil {
+		t.Fatalf("RunLibraryPlugin failed: %v", err)
+	}
+
+	// protoc-gen-dump returns an empty file list (writes to disk instead)
+	_ = files
+
+	// Verify the plugin received and processed the request correctly
+	requestJSON, err := os.ReadFile(filepath.Join(outDir, "request.json"))
+	if err != nil {
+		t.Fatalf("expected request.json to be written by plugin: %v", err)
+	}
+	if !strings.Contains(string(requestJSON), "test.proto") {
+		t.Error("expected request.json to reference test.proto")
+	}
+	if !strings.Contains(string(requestJSON), "Ping") {
+		t.Error("expected request.json to contain Ping message")
+	}
+
+	// Verify summary was also written
+	summary, err := os.ReadFile(filepath.Join(outDir, "summary.txt"))
+	if err != nil {
+		t.Fatalf("expected summary.txt to be written by plugin: %v", err)
+	}
+	if !strings.Contains(string(summary), "Ping") {
+		t.Error("expected summary.txt to contain Ping message")
+	}
+}
+
+func TestRunLibraryPluginFunc(t *testing.T) {
+	c := protoc.New(
+		protoc.WithOverlay(map[string]string{
+			"svc.proto": `syntax = "proto3";
+package svc;
+message Req { string id = 1; }
+message Resp { string data = 1; }
+service Greeter {
+  rpc Hello(Req) returns (Resp);
+}
+`,
+		}),
+	)
+
+	result, err := c.Compile("svc.proto")
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+
+	// Use a PluginFunc to generate a simple manifest listing all files,
+	// messages, and services.
+	manifest := protoc.PluginFunc(func(req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error) {
+		var lines []string
+		for _, f := range req.GetFileToGenerate() {
+			lines = append(lines, "file: "+f)
+		}
+		for _, pf := range req.GetProtoFile() {
+			for _, m := range pf.GetMessageType() {
+				lines = append(lines, "message: "+m.GetName())
+			}
+			for _, s := range pf.GetService() {
+				lines = append(lines, "service: "+s.GetName())
+			}
+		}
+		content := strings.Join(lines, "\n") + "\n"
+		name := "manifest.txt"
+		return &pluginpb.CodeGeneratorResponse{
+			File: []*pluginpb.CodeGeneratorResponse_File{
+				{Name: &name, Content: &content},
+			},
+		}, nil
+	})
+
+	files, err := result.RunLibraryPlugin(manifest, "")
+	if err != nil {
+		t.Fatalf("RunLibraryPlugin failed: %v", err)
+	}
+
+	if len(files) != 1 {
+		t.Fatalf("expected 1 generated file, got %d", len(files))
+	}
+	if files[0].Name != "manifest.txt" {
+		t.Errorf("expected manifest.txt, got %s", files[0].Name)
+	}
+	content := files[0].Content
+	if !strings.Contains(content, "file: svc.proto") {
+		t.Errorf("expected manifest to contain 'file: svc.proto', got:\n%s", content)
+	}
+	if !strings.Contains(content, "message: Req") {
+		t.Errorf("expected manifest to contain 'message: Req', got:\n%s", content)
+	}
+	if !strings.Contains(content, "message: Resp") {
+		t.Errorf("expected manifest to contain 'message: Resp', got:\n%s", content)
+	}
+	if !strings.Contains(content, "service: Greeter") {
+		t.Errorf("expected manifest to contain 'service: Greeter', got:\n%s", content)
 	}
 }
 
