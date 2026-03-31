@@ -519,8 +519,7 @@ func Run(args []string) error {
 
 	// Validate proto paths
 	hadWarnings := false
-	warnings := srcTree.ValidateRoots()
-	for _, w := range warnings {
+	for _, w := range srcTree.ValidateRoots() {
 		fmt.Fprintln(os.Stderr, w)
 		hadWarnings = true
 	}
@@ -545,259 +544,43 @@ func Run(args []string) error {
 		relFiles[i] = rel
 	}
 
-	// Parse all proto files
-	parsed := make(map[string]*descriptorpb.FileDescriptorProto)
-	explicitJsonNames := make(map[*descriptorpb.FieldDescriptorProto]bool)
-	parseResults := make(map[string]*parser.ParseResult)
-	var orderedFiles []string
-	var collectErrors []string
-
-	// Load --descriptor_set_in descriptors (colon-delimited list of files)
+	// Build compile input
+	in := &compileInput{
+		relFiles: relFiles,
+		srcTree:  srcTree,
+	}
 	if cfg.descriptorSetIn != "" {
-		for _, dsFile := range strings.Split(cfg.descriptorSetIn, ":") {
-			data, err := os.ReadFile(dsFile)
-			if err != nil {
-				return fmt.Errorf("%s: %s", dsFile, err.Error())
-			}
-			var fds descriptorpb.FileDescriptorSet
-			if err := proto.Unmarshal(data, &fds); err != nil {
-				return fmt.Errorf("%s: Unable to parse.", dsFile)
-			}
-			for _, fd := range fds.GetFile() {
-				if _, exists := parsed[fd.GetName()]; exists {
-					continue
-				}
-				parsed[fd.GetName()] = fd
-				orderedFiles = append(orderedFiles, fd.GetName())
-			}
-		}
+		in.descriptorSetIn = strings.Split(cfg.descriptorSetIn, ":")
 	}
-
-	for _, f := range relFiles {
-		ok, err := parseRecursive(f, srcTree, parsed, explicitJsonNames, parseResults, &orderedFiles, nil, &collectErrors)
-		if err != nil {
-			return err
-		}
-		_ = ok
-	}
-
-	if len(collectErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			collectErrors = formatErrorsMSVS(collectErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(collectErrors, "\n"))
-	}
-
-	// Enforce --direct_dependencies
 	if cfg.directDependenciesSet {
-		violationMsg := cfg.directDependenciesViolationMsg
-		if violationMsg == "" {
-			violationMsg = "File is imported but not declared in --direct_dependencies: %s"
-		}
-		var depErrors []string
-		for _, f := range relFiles {
-			fd := parsed[f]
-			if fd == nil {
-				continue
-			}
-			for _, dep := range fd.GetDependency() {
-				if !cfg.directDependencies[dep] {
-					msg := strings.ReplaceAll(violationMsg, "%s", dep)
-					depErrors = append(depErrors, fmt.Sprintf("%s: %s", f, msg))
-				}
-			}
-		}
-		if len(depErrors) > 0 {
-			return fmt.Errorf("%s", strings.Join(depErrors, "\n"))
-		}
+		in.directDepsSet = true
+		in.directDeps = cfg.directDependencies
+		in.directDepsViolationMsg = cfg.directDependenciesViolationMsg
 	}
 
-	// Resolve type references across all files (must happen after all files parsed)
-	var resolveErrors []string
-	for _, name := range orderedFiles {
-		resolveErrors = append(resolveErrors, parser.ResolveTypes(parsed[name], parsed)...)
-	}
-	if len(resolveErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			resolveErrors = formatErrorsMSVS(resolveErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(resolveErrors, "\n"))
-	}
+	// Run the compilation pipeline
+	co, err := compileInternal(in)
 
-	// Resolve custom options (parenthesized extension options)
-	customOptErrors, subFieldFileOptNums := resolveCustomFileOptions(orderedFiles, parsed, parseResults)
-	if len(customOptErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			customOptErrors = formatErrorsMSVS(customOptErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(customOptErrors, "\n"))
-	}
-
-	customFieldOptErrors, subFieldFieldOptNums := resolveCustomFieldOptions(orderedFiles, parsed, parseResults)
-	if len(customFieldOptErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			customFieldOptErrors = formatErrorsMSVS(customFieldOptErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(customFieldOptErrors, "\n"))
-	}
-
-	customMsgOptErrors, subFieldMsgOptNums := resolveCustomMessageOptions(orderedFiles, parsed, parseResults)
-	if len(customMsgOptErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			customMsgOptErrors = formatErrorsMSVS(customMsgOptErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(customMsgOptErrors, "\n"))
-	}
-
-	customSvcOptErrors, subFieldSvcOptNums := resolveCustomServiceOptions(orderedFiles, parsed, parseResults)
-	if len(customSvcOptErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			customSvcOptErrors = formatErrorsMSVS(customSvcOptErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(customSvcOptErrors, "\n"))
-	}
-
-	customMethodOptErrors, subFieldMethodOptNums := resolveCustomMethodOptions(orderedFiles, parsed, parseResults)
-	if len(customMethodOptErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			customMethodOptErrors = formatErrorsMSVS(customMethodOptErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(customMethodOptErrors, "\n"))
-	}
-
-	customEnumOptErrors, subFieldEnumOptNums := resolveCustomEnumOptions(orderedFiles, parsed, parseResults)
-	if len(customEnumOptErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			customEnumOptErrors = formatErrorsMSVS(customEnumOptErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(customEnumOptErrors, "\n"))
-	}
-
-	customEnumValOptErrors, subFieldEnumValOptNums := resolveCustomEnumValueOptions(orderedFiles, parsed, parseResults)
-	if len(customEnumValOptErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			customEnumValOptErrors = formatErrorsMSVS(customEnumValOptErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(customEnumValOptErrors, "\n"))
-	}
-
-	customOneofOptErrors, subFieldOneofOptNums := resolveCustomOneofOptions(orderedFiles, parsed, parseResults)
-	if len(customOneofOptErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			customOneofOptErrors = formatErrorsMSVS(customOneofOptErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(customOneofOptErrors, "\n"))
-	}
-
-	customExtRangeOptErrors, subFieldExtRangeOptNums := resolveCustomExtRangeOptions(orderedFiles, parsed, parseResults)
-	if len(customExtRangeOptErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			customExtRangeOptErrors = formatErrorsMSVS(customExtRangeOptErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(customExtRangeOptErrors, "\n"))
-	}
-
-	// Phase 1: Build/cross-link validation — accumulate errors (C++ protoc collects all)
-	var buildErrors []string
-	fieldHints := make(map[*descriptorpb.DescriptorProto]*messageHint)
-	buildErrors = append(buildErrors, validateMapKeyTypes(orderedFiles, parsed)...)
-	dupNameErrs := validateDuplicateNames(orderedFiles, parsed)
-	buildErrors = append(buildErrors, dupNameErrs...)
-	if len(dupNameErrs) > 0 {
-		buildErrors = append(buildErrors, validateMapEntryConflicts(orderedFiles, parsed)...)
-	}
-	buildErrors = append(buildErrors, validateExtRangePositive(orderedFiles, parsed, fieldHints)...)
-	buildErrors = append(buildErrors, validatePositiveFieldNumbers(orderedFiles, parsed, fieldHints)...)
-	buildErrors = append(buildErrors, validateMaxFieldNumbers(orderedFiles, parsed, fieldHints)...)
-	buildErrors = append(buildErrors, validateExtRangeMax(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateReservedFieldNumbers(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateReservedNumberConflicts(orderedFiles, parsed, fieldHints)...)
-	buildErrors = append(buildErrors, validateDuplicateReservedNames(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateReservedNameConflicts(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateDuplicateFieldNumbers(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateEmptyOneofs(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateEmptyEnums(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateDuplicateEnumValues(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateExtensionFieldConflicts(orderedFiles, parsed, fieldHints)...)
-	appendSuggestions(fieldHints, &buildErrors)
-	buildErrors = append(buildErrors, validateReservedRangeOverlaps(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateEnumReservedRangeOverlaps(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateEnumReservedValueConflicts(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateEnumReservedNameConflicts(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateExtensionRangeOverlaps(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateExtensionReservedOverlaps(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateExtensionRanges(orderedFiles, parsed)...)
-	dupExtErrors, dupExtWarnings := validateDuplicateExtensionNumbers(orderedFiles, parsed)
-	buildErrors = append(buildErrors, dupExtErrors...)
-	for _, w := range dupExtWarnings {
-		fmt.Fprintln(os.Stderr, mapErrorFilename(w, srcTree))
-		hadWarnings = true
-	}
-	buildErrors = append(buildErrors, validateRequiredExtensions(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateExtensionJsonName(orderedFiles, parsed, explicitJsonNames)...)
-	buildErrors = append(buildErrors, validateMessageSetFields(orderedFiles, parsed)...)
-	buildErrors = append(buildErrors, validateMessageSetExtensions(orderedFiles, parsed)...)
-	if len(buildErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			buildErrors = formatErrorsMSVS(buildErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(buildErrors, "\n"))
-	}
-
-	// Phase 2: Descriptor validation — only runs when no build errors (C++ had_errors_ gate)
-	var valErrors []string
-	if len(dupNameErrs) == 0 {
-		jsonErrs, jsonWarns := validateJsonNameConflicts(orderedFiles, parsed, explicitJsonNames)
-		valErrors = append(valErrors, jsonErrs...)
-		for _, w := range jsonWarns {
-			fmt.Fprintln(os.Stderr, mapErrorFilename(w, srcTree))
-			hadWarnings = true
-		}
-	}
-	valErrors = append(valErrors, validatePackedNonRepeated(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateLazyNonMessage(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateJstypeNonInt64(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateRepeatedDefault(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateMessageDefault(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateEnumDefaultValues(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateProto3(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateEditionGroups(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateEnumPrefixConflict(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateEditionOpenEnumZero(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateFileLevelLegacyRequired(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateRepeatedFieldEncoding(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateFieldPresenceRepeated(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateFieldPresenceOneof(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateMessageEncodingScalar(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateFieldPresenceExtension(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateRequiredExtensionEditions(orderedFiles, parsed)...)
-	valErrors = append(valErrors, validateUtf8ValidationNonString(orderedFiles, parsed)...)
-	featEditionErrs := validateFeaturesEditions(orderedFiles, parsed)
-	valErrors = append(valErrors, featEditionErrs...)
-	if len(featEditionErrs) == 0 {
-		valErrors = append(valErrors, validateFeatureTargets(orderedFiles, parsed)...)
-	}
-	if len(valErrors) > 0 {
-		if cfg.errorFormat == "msvs" {
-			valErrors = formatErrorsMSVS(valErrors, srcTree)
-		}
-		return fmt.Errorf("%s", strings.Join(valErrors, "\n"))
-	}
-
-	// Detect unused imports (warnings only, no errors)
-	unusedImportWarnings := detectUnusedImports(relFiles, orderedFiles, parsed, parseResults)
+	// Print warnings collected before any error (matching C++ protoc behavior)
 	if cfg.errorFormat == "msvs" {
-		unusedImportWarnings = formatErrorsMSVS(unusedImportWarnings, srcTree)
+		co.warnings = formatErrorsMSVS(co.warnings, srcTree)
 	}
-	for _, w := range unusedImportWarnings {
+	for _, w := range co.warnings {
 		fmt.Fprintln(os.Stderr, mapErrorFilename(w, srcTree))
 		hadWarnings = true
+	}
+
+	if err != nil {
+		if ce, ok := err.(*CompileErrors); ok && cfg.errorFormat == "msvs" {
+			ce.Errors = formatErrorsMSVS(ce.Errors, srcTree)
+		}
+		return err
 	}
 
 	// Handle --print_free_field_numbers mode
 	if cfg.printFreeFieldNumbers {
-		for _, f := range relFiles {
-			fd := parsed[f]
+		for _, f := range co.relFiles {
+			fd := co.parsed[f]
 			pkg := fd.GetPackage()
 			for _, msg := range fd.GetMessageType() {
 				fqn := msg.GetName()
@@ -812,83 +595,21 @@ func Run(args []string) error {
 
 	// Handle --decode mode
 	if cfg.decodeType != "" {
-		return runDecode(cfg.decodeType, parsed, orderedFiles)
+		return runDecode(cfg.decodeType, co.parsed, co.orderedFiles)
 	}
 
 	// Handle --encode mode
 	if cfg.encodeType != "" {
-		return runEncode(cfg.encodeType, parsed, orderedFiles, cfg.deterministicOutput)
+		return runEncode(cfg.encodeType, co.parsed, co.orderedFiles, cfg.deterministicOutput)
 	}
 
-	// Collect source-retention extension field numbers (grouped by extendee type)
-	srcRetentionFields := collectSourceRetentionFields(orderedFiles, parsed)
-
-	// Build ordered list of FileDescriptorProtos (strip source-retention options only for source files)
-	relFileSet := make(map[string]bool)
-	for _, name := range relFiles {
-		relFileSet[name] = true
-	}
-	var protoFiles []*descriptorpb.FileDescriptorProto
-	strippedMap := make(map[string]*descriptorpb.FileDescriptorProto)
-	for _, name := range orderedFiles {
-		fd := parsed[name]
-		if relFileSet[name] {
-			fd = stripSourceRetention(fd, srcRetentionFields)
-		}
-		// If the file has sub-field custom options, clone and merge unknown fields
-		// so proto_file has merged entries (matching C++ protoc's linked descriptors)
-		if pr := parseResults[name]; pr != nil && hasSubFieldCustomOpts(pr) {
-			fd = cloneWithMergedExtUnknowns(fd, subFieldFileOptNums[name], subFieldFieldOptNums[name], subFieldMsgOptNums[name], subFieldEnumOptNums[name], subFieldEnumValOptNums[name], subFieldSvcOptNums[name], subFieldMethodOptNums[name], subFieldOneofOptNums[name], subFieldExtRangeOptNums[name])
-		}
-		// Sort unknown fields by field number on Options (C++ proto_file order).
-		// Clone if fd still shares pointer with parsed to avoid modifying source_file_descriptors.
-		if hasOptionsUnknowns(fd) {
-			if fd == parsed[name] {
-				fd = proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
-			}
-			sortFDOptionsUnknownFields(fd)
-		}
-		protoFiles = append(protoFiles, fd)
-		strippedMap[name] = fd
-	}
+	// Build proto files for plugins (source-retention stripped for source files only)
+	protoFiles := co.buildProtoFiles()
 
 	// Handle descriptor set output
 	if cfg.descriptorSetOut != "" {
-		fds := &descriptorpb.FileDescriptorSet{}
-		if cfg.includeImports {
-			for _, name := range orderedFiles {
-				var fd *descriptorpb.FileDescriptorProto
-				if cfg.retainOptions {
-					fd = parsed[name]
-				} else {
-					fd = strippedMap[name]
-					if !relFileSet[name] {
-						fd = stripSourceRetention(parsed[name], srcRetentionFields)
-					}
-				}
-				fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
-				if !cfg.includeSourceInfo {
-					fdCopy.SourceCodeInfo = nil
-				}
-				fds.File = append(fds.File, fdCopy)
-			}
-		} else {
-			for _, name := range orderedFiles {
-				if relFileSet[name] {
-					var fd *descriptorpb.FileDescriptorProto
-					if cfg.retainOptions {
-						fd = parsed[name]
-					} else {
-						fd = strippedMap[name]
-					}
-					fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
-					if !cfg.includeSourceInfo {
-						fdCopy.SourceCodeInfo = nil
-					}
-					fds.File = append(fds.File, fdCopy)
-				}
-			}
-		}
+		dsFiles := co.buildDescriptorSetFiles(cfg.includeImports, cfg.retainOptions, cfg.includeSourceInfo)
+		fds := &descriptorpb.FileDescriptorSet{File: dsFiles}
 
 		data, err := proto.Marshal(fds)
 		if err != nil {
@@ -901,26 +622,15 @@ func Run(args []string) error {
 
 	// Handle dependency output
 	if cfg.dependencyOut != "" && cfg.descriptorSetOut != "" {
-		if err := writeDependencyOut(cfg.dependencyOut, cfg.descriptorSetOut, orderedFiles, srcTree); err != nil {
+		if err := writeDependencyOut(cfg.dependencyOut, cfg.descriptorSetOut, co.orderedFiles, srcTree); err != nil {
 			return err
 		}
 	}
 
 	// Handle plugin outputs
+	sourceFileDescriptors := co.buildSourceFileDescriptors()
 	for _, plug := range cfg.plugins {
-		// Build source file descriptors in dependency order (matching protoFile order)
-		relFileSet := make(map[string]bool)
-		for _, name := range relFiles {
-			relFileSet[name] = true
-		}
-		var sourceFileDescriptors []*descriptorpb.FileDescriptorProto
-		for _, name := range orderedFiles {
-			if relFileSet[name] {
-				sourceFileDescriptors = append(sourceFileDescriptors, parsed[name])
-			}
-		}
-
-		req := plugin.BuildCodeGeneratorRequest(relFiles, plug.parameter, protoFiles, sourceFileDescriptors)
+		req := plugin.BuildCodeGeneratorRequest(co.relFiles, plug.parameter, protoFiles, sourceFileDescriptors)
 
 		resp, err := plugin.RunPlugin(plug.path, req)
 		if err != nil {
