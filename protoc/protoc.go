@@ -23,6 +23,17 @@
 //	fds := result.AsFileDescriptorSet()
 //	data, _ := proto.Marshal(fds)
 //
+// # Running code generation plugins
+//
+// After compilation, you can run protoc plugins (e.g., protoc-gen-go) and
+// receive the generated files in memory, without writing to disk:
+//
+//	result, _ := c.Compile("service.proto")
+//	files, err := result.RunPlugin("/usr/local/bin/protoc-gen-go", "paths=source_relative")
+//	for _, f := range files {
+//	    fmt.Printf("%s: %d bytes\n", f.Name, len(f.Content))
+//	}
+//
 // # Working with in-memory sources
 //
 // For cases where .proto content comes from sources other than the filesystem
@@ -34,6 +45,17 @@
 //	    }),
 //	)
 //	result, err := c.Compile("api/v1/service.proto")
+//
+// # Thread safety
+//
+// A [Compiler] is safe for concurrent use by multiple goroutines. Each call
+// to [Compiler.Compile] operates on entirely independent internal state — no
+// mutable data is shared between concurrent compilations. The [Compiler]
+// struct itself is immutable after creation via [New].
+//
+// [CompileResult] methods (including [CompileResult.RunPlugin]) are also safe
+// to call concurrently on the same result, as they only read the compiled
+// descriptors and create independent plugin invocations.
 package protoc
 
 import (
@@ -48,6 +70,8 @@ import (
 
 // Compiler is a configured protocol buffer compiler.
 // Create one with [New] and reuse it across multiple [Compiler.Compile] calls.
+//
+// Compiler is safe for concurrent use — see package documentation.
 type Compiler struct {
 	protoPaths     []string
 	mappings       []importer.Mapping
@@ -62,6 +86,7 @@ type Compiler struct {
 type Option func(*Compiler)
 
 // New creates a new [Compiler] with the given options.
+// The returned Compiler is immutable and safe for concurrent use.
 func New(opts ...Option) *Compiler {
 	c := &Compiler{}
 	for _, opt := range opts {
@@ -148,7 +173,12 @@ func WithOverlay(files map[string]string) Option {
 }
 
 // Result contains the output of a successful [Compiler.Compile] call.
+// Use [Result.RunPlugin] to invoke code generation plugins on the compiled
+// descriptors.
 type Result = cli.CompileResult
+
+// GeneratedFile represents a single file produced by a protoc plugin.
+type GeneratedFile = cli.GeneratedFile
 
 // Compile parses and validates the given .proto files and returns their
 // compiled [descriptorpb.FileDescriptorProto] representations.
@@ -156,6 +186,9 @@ type Result = cli.CompileResult
 // The file paths should be relative to one of the configured proto paths.
 // All transitive imports are resolved and validated, but only the requested
 // files are included in the result unless [WithIncludeImports] was set.
+//
+// After a successful compile, call [Result.RunPlugin] to invoke code
+// generation plugins on the compiled descriptors.
 func (c *Compiler) Compile(protoFiles ...string) (*Result, error) {
 	if len(protoFiles) == 0 {
 		return nil, fmt.Errorf("protoc: no proto files specified")

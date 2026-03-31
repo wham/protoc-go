@@ -1,7 +1,5 @@
-// Package cli provides the core protocol buffer compilation pipeline.
-//
-// This file exports a Compile function that can be used as a library API,
-// separate from the CLI entry point in cli.go.
+// This file exports the compilation pipeline as a library API, separate from
+// the CLI entry point in cli.go.
 package cli
 
 import (
@@ -11,6 +9,7 @@ import (
 
 	"github.com/wham/protoc-go/compiler/importer"
 	"github.com/wham/protoc-go/compiler/parser"
+	"github.com/wham/protoc-go/compiler/plugin"
 	"google.golang.org/protobuf/proto"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 )
@@ -60,8 +59,11 @@ type CompileResult struct {
 	Files []*descriptorpb.FileDescriptorProto
 
 	// Warnings contains non-fatal warnings produced during compilation
-	// (e.g., unused imports).
+	// (e.g., unused imports, duplicate extension numbers).
 	Warnings []string
+
+	// co holds internal compilation state for RunPlugin.
+	co *compileOutput
 }
 
 // AsFileDescriptorSet returns the result as a FileDescriptorSet proto,
@@ -72,40 +74,118 @@ func (r *CompileResult) AsFileDescriptorSet() *descriptorpb.FileDescriptorSet {
 	}
 }
 
-// Compile runs the protocol buffer compilation pipeline on the given request.
-// It parses .proto files, resolves types and custom options, validates the
-// schema, and returns compiled FileDescriptorProtos.
+// GeneratedFile represents a single file produced by a protoc plugin.
+type GeneratedFile struct {
+	// Name is the output file path (relative to the output directory).
+	Name string
+
+	// Content is the file content.
+	Content string
+
+	// InsertionPoint, if non-empty, indicates this content should be merged
+	// into another generated file at the named insertion point.
+	InsertionPoint string
+}
+
+// RunPlugin executes a protoc code generation plugin against the compiled
+// descriptors and returns the generated files in memory.
 //
-// This is the library equivalent of running the protoc CLI with
-// --descriptor_set_out. It does not invoke any code generation plugins.
-func Compile(req *CompileRequest) (*CompileResult, error) {
-	if len(req.ProtoFiles) == 0 {
-		return nil, fmt.Errorf("no proto files specified")
+// pluginPath is the path to the plugin executable (e.g., "protoc-gen-go"
+// or "/usr/local/bin/protoc-gen-go").
+// parameter is passed to the plugin as the code generation parameter
+// (e.g., "paths=source_relative").
+func (r *CompileResult) RunPlugin(pluginPath string, parameter string) ([]GeneratedFile, error) {
+	co := r.co
+	protoFiles := co.buildProtoFiles()
+	sourceFileDescriptors := co.buildSourceFileDescriptors()
+
+	req := plugin.BuildCodeGeneratorRequest(co.relFiles, parameter, protoFiles, sourceFileDescriptors)
+	resp, err := plugin.RunPlugin(pluginPath, req)
+	if err != nil {
+		return nil, err
 	}
 
-	protoPaths := req.ProtoPaths
-	if len(protoPaths) == 0 && len(req.ProtoPathMappings) == 0 {
-		protoPaths = []string{"."}
+	if resp.GetError() != "" {
+		return nil, fmt.Errorf("plugin error: %s", resp.GetError())
 	}
 
-	srcTree := &importer.SourceTree{Roots: protoPaths, Mappings: req.ProtoPathMappings}
+	var files []GeneratedFile
+	for _, f := range resp.GetFile() {
+		files = append(files, GeneratedFile{
+			Name:           f.GetName(),
+			Content:        f.GetContent(),
+			InsertionPoint: f.GetInsertionPoint(),
+		})
+	}
+	return files, nil
+}
 
-	var warnings []string
-	for _, w := range srcTree.ValidateRoots() {
-		warnings = append(warnings, w)
+// CompileErrors is returned when the compilation pipeline encounters
+// validation or parse errors. It holds individual error strings that can
+// be reformatted (e.g., for MSVS error format in the CLI).
+type CompileErrors struct {
+	Errors []string
+}
+
+func (e *CompileErrors) Error() string {
+	return strings.Join(e.Errors, "\n")
+}
+
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
+
+// subFieldOptNums groups the per-file sub-field option numbers produced by
+// the custom option resolution passes.
+type subFieldOptNums struct {
+	file     map[string]map[int32]bool
+	field    map[string]map[int32]bool
+	msg      map[string]map[int32]bool
+	enum     map[string]map[int32]bool
+	enumVal  map[string]map[int32]bool
+	svc      map[string]map[int32]bool
+	method   map[string]map[int32]bool
+	oneof    map[string]map[int32]bool
+	extRange map[string]map[int32]bool
+}
+
+// compileOutput holds all intermediate state produced by the compilation
+// pipeline. It is always returned (even on error) so that callers can
+// access warnings collected before the error occurred.
+type compileOutput struct {
+	relFiles          []string
+	orderedFiles      []string
+	parsed            map[string]*descriptorpb.FileDescriptorProto
+	explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool
+	parseResults      map[string]*parser.ParseResult
+	warnings          []string
+	srcRetFields      sourceRetentionFields
+	subOpts           subFieldOptNums
+}
+
+// compileInput holds the parameters for compileInternal, after the caller
+// has set up the source tree and relativized the proto file paths.
+type compileInput struct {
+	relFiles               []string
+	srcTree                *importer.SourceTree
+	descriptorSetIn        []string
+	directDeps             map[string]bool
+	directDepsSet          bool
+	directDepsViolationMsg string
+}
+
+// ---------------------------------------------------------------------------
+// Core compilation pipeline
+// ---------------------------------------------------------------------------
+
+// compileInternal runs the parse → resolve → validate pipeline.
+// It always returns a non-nil *compileOutput (which may contain warnings
+// collected before the error point). On success error is nil.
+func compileInternal(in *compileInput) (*compileOutput, error) {
+	co := &compileOutput{
+		relFiles: in.relFiles,
 	}
 
-	// Make proto files relative to source tree
-	relFiles := make([]string, len(req.ProtoFiles))
-	for i, f := range req.ProtoFiles {
-		rel, err := srcTree.MakeRelative(f)
-		if err != nil {
-			return nil, err
-		}
-		relFiles[i] = rel
-	}
-
-	// Parse all proto files
 	parsed := make(map[string]*descriptorpb.FileDescriptorProto)
 	explicitJsonNames := make(map[*descriptorpb.FieldDescriptorProto]bool)
 	parseResults := make(map[string]*parser.ParseResult)
@@ -113,14 +193,14 @@ func Compile(req *CompileRequest) (*CompileResult, error) {
 	var collectErrors []string
 
 	// Load pre-compiled descriptor sets
-	for _, dsFile := range req.DescriptorSetIn {
-		data, err := readFileBytes(dsFile)
+	for _, dsFile := range in.descriptorSetIn {
+		data, err := os.ReadFile(dsFile)
 		if err != nil {
-			return nil, fmt.Errorf("%s: %s", dsFile, err.Error())
+			return co, fmt.Errorf("%s: %s", dsFile, err.Error())
 		}
 		var fds descriptorpb.FileDescriptorSet
 		if err := proto.Unmarshal(data, &fds); err != nil {
-			return nil, fmt.Errorf("%s: Unable to parse.", dsFile)
+			return co, fmt.Errorf("%s: Unable to parse.", dsFile)
 		}
 		for _, fd := range fds.GetFile() {
 			if _, exists := parsed[fd.GetName()]; exists {
@@ -131,92 +211,107 @@ func Compile(req *CompileRequest) (*CompileResult, error) {
 		}
 	}
 
-	for _, f := range relFiles {
-		ok, err := parseRecursive(f, srcTree, parsed, explicitJsonNames, parseResults, &orderedFiles, nil, &collectErrors)
+	// Parse all proto files recursively
+	for _, f := range in.relFiles {
+		ok, err := parseRecursive(f, in.srcTree, parsed, explicitJsonNames, parseResults, &orderedFiles, nil, &collectErrors)
 		if err != nil {
-			return nil, err
+			return co, err
 		}
 		_ = ok
 	}
-
 	if len(collectErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(collectErrors, "\n"))
+		return co, &CompileErrors{Errors: collectErrors}
 	}
 
 	// Enforce direct dependencies
-	if req.DirectDependencies != nil {
-		allowed := make(map[string]bool)
-		for _, d := range req.DirectDependencies {
-			allowed[d] = true
-		}
-		violationMsg := req.DirectDependenciesViolationMsg
+	if in.directDepsSet {
+		violationMsg := in.directDepsViolationMsg
 		if violationMsg == "" {
 			violationMsg = "File is imported but not declared in --direct_dependencies: %s"
 		}
 		var depErrors []string
-		for _, f := range relFiles {
+		for _, f := range in.relFiles {
 			fd := parsed[f]
 			if fd == nil {
 				continue
 			}
 			for _, dep := range fd.GetDependency() {
-				if !allowed[dep] {
+				if !in.directDeps[dep] {
 					msg := strings.ReplaceAll(violationMsg, "%s", dep)
 					depErrors = append(depErrors, fmt.Sprintf("%s: %s", f, msg))
 				}
 			}
 		}
 		if len(depErrors) > 0 {
-			return nil, fmt.Errorf("%s", strings.Join(depErrors, "\n"))
+			return co, &CompileErrors{Errors: depErrors}
 		}
 	}
 
-	// Resolve type references
+	// Resolve type references across all files
 	var resolveErrors []string
 	for _, name := range orderedFiles {
 		resolveErrors = append(resolveErrors, parser.ResolveTypes(parsed[name], parsed)...)
 	}
 	if len(resolveErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(resolveErrors, "\n"))
+		return co, &CompileErrors{Errors: resolveErrors}
 	}
 
-	// Resolve custom options
-	customOptErrors, subFieldFileOptNums := resolveCustomFileOptions(orderedFiles, parsed, parseResults)
-	if len(customOptErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(customOptErrors, "\n"))
+	// Resolve custom options (9 kinds)
+	var subOpts subFieldOptNums
+
+	errs, nums := resolveCustomFileOptions(orderedFiles, parsed, parseResults)
+	if len(errs) > 0 {
+		return co, &CompileErrors{Errors: errs}
 	}
-	customFieldOptErrors, subFieldFieldOptNums := resolveCustomFieldOptions(orderedFiles, parsed, parseResults)
-	if len(customFieldOptErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(customFieldOptErrors, "\n"))
+	subOpts.file = nums
+
+	errs, nums = resolveCustomFieldOptions(orderedFiles, parsed, parseResults)
+	if len(errs) > 0 {
+		return co, &CompileErrors{Errors: errs}
 	}
-	customMsgOptErrors, subFieldMsgOptNums := resolveCustomMessageOptions(orderedFiles, parsed, parseResults)
-	if len(customMsgOptErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(customMsgOptErrors, "\n"))
+	subOpts.field = nums
+
+	errs, nums = resolveCustomMessageOptions(orderedFiles, parsed, parseResults)
+	if len(errs) > 0 {
+		return co, &CompileErrors{Errors: errs}
 	}
-	customSvcOptErrors, subFieldSvcOptNums := resolveCustomServiceOptions(orderedFiles, parsed, parseResults)
-	if len(customSvcOptErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(customSvcOptErrors, "\n"))
+	subOpts.msg = nums
+
+	errs, nums = resolveCustomServiceOptions(orderedFiles, parsed, parseResults)
+	if len(errs) > 0 {
+		return co, &CompileErrors{Errors: errs}
 	}
-	customMethodOptErrors, subFieldMethodOptNums := resolveCustomMethodOptions(orderedFiles, parsed, parseResults)
-	if len(customMethodOptErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(customMethodOptErrors, "\n"))
+	subOpts.svc = nums
+
+	errs, nums = resolveCustomMethodOptions(orderedFiles, parsed, parseResults)
+	if len(errs) > 0 {
+		return co, &CompileErrors{Errors: errs}
 	}
-	customEnumOptErrors, subFieldEnumOptNums := resolveCustomEnumOptions(orderedFiles, parsed, parseResults)
-	if len(customEnumOptErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(customEnumOptErrors, "\n"))
+	subOpts.method = nums
+
+	errs, nums = resolveCustomEnumOptions(orderedFiles, parsed, parseResults)
+	if len(errs) > 0 {
+		return co, &CompileErrors{Errors: errs}
 	}
-	customEnumValOptErrors, subFieldEnumValOptNums := resolveCustomEnumValueOptions(orderedFiles, parsed, parseResults)
-	if len(customEnumValOptErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(customEnumValOptErrors, "\n"))
+	subOpts.enum = nums
+
+	errs, nums = resolveCustomEnumValueOptions(orderedFiles, parsed, parseResults)
+	if len(errs) > 0 {
+		return co, &CompileErrors{Errors: errs}
 	}
-	customOneofOptErrors, subFieldOneofOptNums := resolveCustomOneofOptions(orderedFiles, parsed, parseResults)
-	if len(customOneofOptErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(customOneofOptErrors, "\n"))
+	subOpts.enumVal = nums
+
+	errs, nums = resolveCustomOneofOptions(orderedFiles, parsed, parseResults)
+	if len(errs) > 0 {
+		return co, &CompileErrors{Errors: errs}
 	}
-	customExtRangeOptErrors, subFieldExtRangeOptNums := resolveCustomExtRangeOptions(orderedFiles, parsed, parseResults)
-	if len(customExtRangeOptErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(customExtRangeOptErrors, "\n"))
+	subOpts.oneof = nums
+
+	errs, nums = resolveCustomExtRangeOptions(orderedFiles, parsed, parseResults)
+	if len(errs) > 0 {
+		return co, &CompileErrors{Errors: errs}
 	}
+	subOpts.extRange = nums
 
 	// Phase 1: Build/cross-link validation
 	var buildErrors []string
@@ -250,13 +345,13 @@ func Compile(req *CompileRequest) (*CompileResult, error) {
 	buildErrors = append(buildErrors, validateExtensionRanges(orderedFiles, parsed)...)
 	dupExtErrors, dupExtWarnings := validateDuplicateExtensionNumbers(orderedFiles, parsed)
 	buildErrors = append(buildErrors, dupExtErrors...)
-	warnings = append(warnings, dupExtWarnings...)
+	co.warnings = append(co.warnings, dupExtWarnings...)
 	buildErrors = append(buildErrors, validateRequiredExtensions(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateExtensionJsonName(orderedFiles, parsed, explicitJsonNames)...)
 	buildErrors = append(buildErrors, validateMessageSetFields(orderedFiles, parsed)...)
 	buildErrors = append(buildErrors, validateMessageSetExtensions(orderedFiles, parsed)...)
 	if len(buildErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(buildErrors, "\n"))
+		return co, &CompileErrors{Errors: buildErrors}
 	}
 
 	// Phase 2: Descriptor validation
@@ -264,7 +359,7 @@ func Compile(req *CompileRequest) (*CompileResult, error) {
 	if len(dupNameErrs) == 0 {
 		jsonErrs, jsonWarns := validateJsonNameConflicts(orderedFiles, parsed, explicitJsonNames)
 		valErrors = append(valErrors, jsonErrs...)
-		warnings = append(warnings, jsonWarns...)
+		co.warnings = append(co.warnings, jsonWarns...)
 	}
 	valErrors = append(valErrors, validatePackedNonRepeated(orderedFiles, parsed)...)
 	valErrors = append(valErrors, validateLazyNonMessage(orderedFiles, parsed)...)
@@ -290,102 +385,186 @@ func Compile(req *CompileRequest) (*CompileResult, error) {
 		valErrors = append(valErrors, validateFeatureTargets(orderedFiles, parsed)...)
 	}
 	if len(valErrors) > 0 {
-		return nil, fmt.Errorf("%s", strings.Join(valErrors, "\n"))
+		return co, &CompileErrors{Errors: valErrors}
 	}
 
 	// Unused import warnings
-	unusedImportWarnings := detectUnusedImports(relFiles, orderedFiles, parsed, parseResults)
-	warnings = append(warnings, unusedImportWarnings...)
+	co.warnings = append(co.warnings, detectUnusedImports(in.relFiles, orderedFiles, parsed, parseResults)...)
 
-	// Build output descriptors
-	srcRetentionFields := collectSourceRetentionFields(orderedFiles, parsed)
+	// Collect source retention fields for output processing
+	co.srcRetFields = collectSourceRetentionFields(orderedFiles, parsed)
+
+	// Store all intermediate state
+	co.orderedFiles = orderedFiles
+	co.parsed = parsed
+	co.explicitJsonNames = explicitJsonNames
+	co.parseResults = parseResults
+	co.subOpts = subOpts
+
+	return co, nil
+}
+
+// ---------------------------------------------------------------------------
+// Output building helpers
+// ---------------------------------------------------------------------------
+
+// buildProtoFiles builds the ordered list of FileDescriptorProtos suitable for
+// plugin CodeGeneratorRequests (proto_file field). Source files have
+// source-retention options stripped; dependency files do not. All files have
+// custom options merged and unknown fields sorted.
+func (co *compileOutput) buildProtoFiles() []*descriptorpb.FileDescriptorProto {
 	relFileSet := make(map[string]bool)
-	for _, name := range relFiles {
+	for _, name := range co.relFiles {
 		relFileSet[name] = true
 	}
 
-	var resultFiles []*descriptorpb.FileDescriptorProto
-
-	if req.IncludeImports {
-		for _, name := range orderedFiles {
-			fd := buildOutputDescriptor(name, parsed, relFileSet, parseResults, srcRetentionFields,
-				req.RetainOptions, req.IncludeSourceInfo,
-				subFieldFileOptNums, subFieldFieldOptNums, subFieldMsgOptNums,
-				subFieldEnumOptNums, subFieldEnumValOptNums, subFieldSvcOptNums,
-				subFieldMethodOptNums, subFieldOneofOptNums, subFieldExtRangeOptNums)
-			resultFiles = append(resultFiles, fd)
+	var protoFiles []*descriptorpb.FileDescriptorProto
+	for _, name := range co.orderedFiles {
+		fd := co.parsed[name]
+		if relFileSet[name] {
+			fd = stripSourceRetention(fd, co.srcRetFields)
 		}
-	} else {
-		for _, name := range orderedFiles {
-			if relFileSet[name] {
-				fd := buildOutputDescriptor(name, parsed, relFileSet, parseResults, srcRetentionFields,
-					req.RetainOptions, req.IncludeSourceInfo,
-					subFieldFileOptNums, subFieldFieldOptNums, subFieldMsgOptNums,
-					subFieldEnumOptNums, subFieldEnumValOptNums, subFieldSvcOptNums,
-					subFieldMethodOptNums, subFieldOneofOptNums, subFieldExtRangeOptNums)
-				resultFiles = append(resultFiles, fd)
+		if pr := co.parseResults[name]; pr != nil && hasSubFieldCustomOpts(pr) {
+			fd = cloneWithMergedExtUnknowns(fd,
+				co.subOpts.file[name], co.subOpts.field[name], co.subOpts.msg[name],
+				co.subOpts.enum[name], co.subOpts.enumVal[name], co.subOpts.svc[name],
+				co.subOpts.method[name], co.subOpts.oneof[name], co.subOpts.extRange[name])
+		}
+		if hasOptionsUnknowns(fd) {
+			if fd == co.parsed[name] {
+				fd = proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
+			}
+			sortFDOptionsUnknownFields(fd)
+		}
+		protoFiles = append(protoFiles, fd)
+	}
+	return protoFiles
+}
+
+// buildSourceFileDescriptors returns the original (unstripped) descriptors
+// for the files being compiled, in dependency order. These are used for the
+// source_file_descriptors field in CodeGeneratorRequests.
+func (co *compileOutput) buildSourceFileDescriptors() []*descriptorpb.FileDescriptorProto {
+	relFileSet := make(map[string]bool)
+	for _, name := range co.relFiles {
+		relFileSet[name] = true
+	}
+	var result []*descriptorpb.FileDescriptorProto
+	for _, name := range co.orderedFiles {
+		if relFileSet[name] {
+			result = append(result, co.parsed[name])
+		}
+	}
+	return result
+}
+
+// buildDescriptorSetFiles builds descriptor set output files matching the
+// behavior of protoc's --descriptor_set_out flag.
+//
+// When includeImports is true, all transitive dependencies are included and
+// (unless retainOptions) have source-retention options stripped. When false,
+// only the requested source files are included.
+func (co *compileOutput) buildDescriptorSetFiles(includeImports, retainOptions, includeSourceInfo bool) []*descriptorpb.FileDescriptorProto {
+	relFileSet := make(map[string]bool)
+	for _, name := range co.relFiles {
+		relFileSet[name] = true
+	}
+
+	// Build the plugin-ready proto files (source files stripped, deps not stripped)
+	protoFiles := co.buildProtoFiles()
+	protoFileMap := make(map[string]*descriptorpb.FileDescriptorProto)
+	for i, name := range co.orderedFiles {
+		protoFileMap[name] = protoFiles[i]
+	}
+
+	var result []*descriptorpb.FileDescriptorProto
+
+	for _, name := range co.orderedFiles {
+		if !includeImports && !relFileSet[name] {
+			continue
+		}
+
+		var fd *descriptorpb.FileDescriptorProto
+		if retainOptions {
+			fd = co.parsed[name]
+		} else {
+			fd = protoFileMap[name]
+			// For includeImports, dependency files also need source-retention stripped
+			if includeImports && !relFileSet[name] {
+				fd = stripSourceRetention(co.parsed[name], co.srcRetFields)
 			}
 		}
+
+		fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
+		if !includeSourceInfo {
+			fdCopy.SourceCodeInfo = nil
+		}
+		result = append(result, fdCopy)
 	}
+
+	return result
+}
+
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
+
+// Compile runs the protocol buffer compilation pipeline on the given request.
+// It parses .proto files, resolves types and custom options, validates the
+// schema, and returns compiled FileDescriptorProtos.
+//
+// Compile is safe for concurrent use: each call operates on independent
+// internal state. The returned [CompileResult] supports running code
+// generation plugins via [CompileResult.RunPlugin].
+func Compile(req *CompileRequest) (*CompileResult, error) {
+	if len(req.ProtoFiles) == 0 {
+		return nil, fmt.Errorf("no proto files specified")
+	}
+
+	protoPaths := req.ProtoPaths
+	if len(protoPaths) == 0 && len(req.ProtoPathMappings) == 0 {
+		protoPaths = []string{"."}
+	}
+
+	srcTree := &importer.SourceTree{Roots: protoPaths, Mappings: req.ProtoPathMappings}
+
+	var rootWarnings []string
+	rootWarnings = append(rootWarnings, srcTree.ValidateRoots()...)
+
+	// Make proto files relative to source tree
+	relFiles := make([]string, len(req.ProtoFiles))
+	for i, f := range req.ProtoFiles {
+		rel, err := srcTree.MakeRelative(f)
+		if err != nil {
+			return nil, err
+		}
+		relFiles[i] = rel
+	}
+
+	in := &compileInput{
+		relFiles:        relFiles,
+		srcTree:         srcTree,
+		descriptorSetIn: req.DescriptorSetIn,
+	}
+	if req.DirectDependencies != nil {
+		in.directDepsSet = true
+		in.directDeps = make(map[string]bool)
+		for _, d := range req.DirectDependencies {
+			in.directDeps[d] = true
+		}
+		in.directDepsViolationMsg = req.DirectDependenciesViolationMsg
+	}
+
+	co, err := compileInternal(in)
+	if err != nil {
+		return nil, err
+	}
+
+	files := co.buildDescriptorSetFiles(req.IncludeImports, req.RetainOptions, req.IncludeSourceInfo)
 
 	return &CompileResult{
-		Files:    resultFiles,
-		Warnings: warnings,
+		Files:    files,
+		Warnings: append(rootWarnings, co.warnings...),
+		co:       co,
 	}, nil
-}
-
-// buildOutputDescriptor prepares a single FileDescriptorProto for output,
-// applying source-retention stripping, custom option merging, and unknown
-// field sorting as needed.
-func buildOutputDescriptor(
-	name string,
-	parsed map[string]*descriptorpb.FileDescriptorProto,
-	relFileSet map[string]bool,
-	parseResults map[string]*parser.ParseResult,
-	srcRetFields sourceRetentionFields,
-	retainOptions bool,
-	includeSourceInfo bool,
-	subFieldFileOptNums map[string]map[int32]bool,
-	subFieldFieldOptNums map[string]map[int32]bool,
-	subFieldMsgOptNums map[string]map[int32]bool,
-	subFieldEnumOptNums map[string]map[int32]bool,
-	subFieldEnumValOptNums map[string]map[int32]bool,
-	subFieldSvcOptNums map[string]map[int32]bool,
-	subFieldMethodOptNums map[string]map[int32]bool,
-	subFieldOneofOptNums map[string]map[int32]bool,
-	subFieldExtRangeOptNums map[string]map[int32]bool,
-) *descriptorpb.FileDescriptorProto {
-	fd := parsed[name]
-
-	if !retainOptions && relFileSet[name] {
-		fd = stripSourceRetention(fd, srcRetFields)
-	} else if !retainOptions && !relFileSet[name] {
-		fd = stripSourceRetention(parsed[name], srcRetFields)
-	}
-
-	if pr := parseResults[name]; pr != nil && hasSubFieldCustomOpts(pr) {
-		fd = cloneWithMergedExtUnknowns(fd, subFieldFileOptNums[name], subFieldFieldOptNums[name],
-			subFieldMsgOptNums[name], subFieldEnumOptNums[name], subFieldEnumValOptNums[name],
-			subFieldSvcOptNums[name], subFieldMethodOptNums[name], subFieldOneofOptNums[name],
-			subFieldExtRangeOptNums[name])
-	}
-
-	if hasOptionsUnknowns(fd) {
-		if fd == parsed[name] {
-			fd = proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
-		}
-		sortFDOptionsUnknownFields(fd)
-	}
-
-	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
-	if !includeSourceInfo {
-		fdCopy.SourceCodeInfo = nil
-	}
-
-	return fdCopy
-}
-
-// readFileBytes reads a file and returns its contents as bytes.
-func readFileBytes(path string) ([]byte, error) {
-	return os.ReadFile(path)
 }

@@ -1,7 +1,9 @@
 package protoc_test
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -346,5 +348,90 @@ message Foo {
 	}
 	if !strings.Contains(err.Error(), "name") {
 		t.Errorf("expected error about 'name', got: %v", err)
+	}
+}
+
+func TestRunPlugin(t *testing.T) {
+	// Build the protoc-gen-dump test plugin
+	tmpDir := t.TempDir()
+	dumpBin := filepath.Join(tmpDir, "protoc-gen-dump")
+	cmd := exec.Command("go", "build", "-o", dumpBin, "../tools/protoc-gen-dump")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building protoc-gen-dump: %v\n%s", err, out)
+	}
+
+	c := protoc.New(
+		protoc.WithOverlay(map[string]string{
+			"test.proto": `syntax = "proto3";
+package test;
+message Ping { string message = 1; }
+`,
+		}),
+	)
+
+	result, err := c.Compile("test.proto")
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+
+	// protoc-gen-dump writes files to disk (via its parameter), not via
+	// CodeGeneratorResponse. Pass the output dir as the plugin parameter.
+	outDir := filepath.Join(tmpDir, "out")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	files, err := result.RunPlugin(dumpBin, outDir)
+	if err != nil {
+		t.Fatalf("RunPlugin failed: %v", err)
+	}
+
+	// protoc-gen-dump returns an empty response (files written to disk instead)
+	_ = files
+
+	// Verify the plugin received and processed the request correctly
+	requestJSON, err := os.ReadFile(filepath.Join(outDir, "request.json"))
+	if err != nil {
+		t.Fatalf("expected request.json to be written by plugin: %v", err)
+	}
+	if !strings.Contains(string(requestJSON), "test.proto") {
+		t.Error("expected request.json to reference test.proto")
+	}
+	if !strings.Contains(string(requestJSON), "Ping") {
+		t.Error("expected request.json to contain Ping message")
+	}
+}
+
+func TestConcurrentCompile(t *testing.T) {
+	c := protoc.New(
+		protoc.WithProtoPaths("../testdata/01_basic_message"),
+	)
+
+	const goroutines = 10
+	errs := make(chan error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			result, err := c.Compile("basic.proto")
+			if err != nil {
+				errs <- err
+				return
+			}
+			if len(result.Files) != 1 {
+				errs <- fmt.Errorf("expected 1 file, got %d", len(result.Files))
+				return
+			}
+			if result.Files[0].GetMessageType()[0].GetName() != "Person" {
+				errs <- fmt.Errorf("expected Person message")
+				return
+			}
+			errs <- nil
+		}()
+	}
+
+	for i := 0; i < goroutines; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("goroutine %d: %v", i, err)
+		}
 	}
 }
