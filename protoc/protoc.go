@@ -66,6 +66,7 @@ import (
 	"github.com/wham/protoc-go/compiler/cli"
 	"github.com/wham/protoc-go/compiler/importer"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
+	pluginpb "google.golang.org/protobuf/types/pluginpb"
 )
 
 // Compiler is a configured protocol buffer compiler.
@@ -170,6 +171,27 @@ func WithOverlay(files map[string]string) Option {
 			c.overlay[k] = v
 		}
 	}
+}
+
+// Plugin is a protoc code generation plugin that runs in-process.
+//
+// This is the in-process equivalent of a protoc-gen-* binary. The plugin
+// receives the same [pluginpb.CodeGeneratorRequest] it would receive over
+// stdin and returns the same [pluginpb.CodeGeneratorResponse] it would write
+// to stdout.
+//
+// This is a protoc-go extension — standard protoc does not support in-process
+// plugins.
+type Plugin interface {
+	Generate(req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error)
+}
+
+// PluginFunc adapts a plain function into a [Plugin].
+type PluginFunc func(*pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error)
+
+// Generate implements [Plugin].
+func (f PluginFunc) Generate(req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error) {
+	return f(req)
 }
 
 // Result contains the output of a successful [Compiler.Compile] call.
