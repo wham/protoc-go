@@ -192,6 +192,34 @@ message Foo { string bar = 1; }
 	}
 }
 
+func TestCompileWithWellKnownTypes(t *testing.T) {
+	c := protoc.New(
+		protoc.WithOverlay(map[string]string{
+			"wkt.proto": `syntax = "proto3";
+package wkt;
+import "google/protobuf/timestamp.proto";
+message Event {
+  string name = 1;
+  google.protobuf.Timestamp created_at = 2;
+}
+`,
+		}),
+	)
+
+	result, err := c.Compile("wkt.proto")
+	if err != nil {
+		t.Fatalf("Compile failed (well-known type import should resolve via fallback): %v", err)
+	}
+
+	if len(result.Files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(result.Files))
+	}
+	fd := result.Files[0]
+	if len(fd.GetDependency()) != 1 || fd.GetDependency()[0] != "google/protobuf/timestamp.proto" {
+		t.Errorf("expected dependency on google/protobuf/timestamp.proto, got %v", fd.GetDependency())
+	}
+}
+
 func TestCompileError(t *testing.T) {
 	c := protoc.New(
 		protoc.WithOverlay(map[string]string{
