@@ -10,6 +10,7 @@ import (
 	"github.com/wham/protoc-go/compiler/importer"
 	"github.com/wham/protoc-go/compiler/parser"
 	"github.com/wham/protoc-go/compiler/plugin"
+	"github.com/wham/protoc-go/compiler/wellknown"
 	"google.golang.org/protobuf/proto"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 	pluginpb "google.golang.org/protobuf/types/pluginpb"
@@ -569,7 +570,7 @@ func Compile(req *CompileRequest) (*CompileResult, error) {
 		protoPaths = []string{"."}
 	}
 
-	srcTree := &importer.SourceTree{Roots: protoPaths, Mappings: req.ProtoPathMappings}
+	srcTree := &importer.SourceTree{Roots: protoPaths, Mappings: req.ProtoPathMappings, FallbackFS: wellknown.ProtoFiles}
 
 	var rootWarnings []string
 	rootWarnings = append(rootWarnings, srcTree.ValidateRoots()...)
