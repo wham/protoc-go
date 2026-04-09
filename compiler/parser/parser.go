@@ -7012,24 +7012,31 @@ func resolveTypeName(name string, scope string, types map[string]descriptorpb.Fi
 
 	s := scope
 	for s != "" {
-		firstCandidate := s + "." + firstPart
-		if tp, ok := types[firstCandidate]; ok {
-			if firstDot >= 0 {
-				// Compound name: first part found at this scope.
-				// C++ protoc commits to the innermost match regardless of type.
-				fullCandidate := s + "." + name
-				if tp == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
-					if _, ok := types[fullCandidate]; ok {
-						return fullCandidate, ""
-					}
-				}
-				// Shadowing: first part found but full compound doesn't exist
-				// (or first part is non-aggregate like an enum)
-				return "." + name, fullCandidate
-			} else {
-				// Simple name: found
-				return firstCandidate, ""
+		// For compound names, first check if the full compound name exists
+		// directly at this scope. This handles the case where the first
+		// component of the reference is a (sub-)package rather than a type:
+		// our types map only stores message/enum entries (not bare packages),
+		// so walking up by first-component alone would miss matches whose
+		// leading component is a package name. Checking the full compound
+		// here implements C++ protoc's package-hierarchy walk behavior.
+		if firstDot >= 0 {
+			if _, ok := types[s+"."+name]; ok {
+				return s + "." + name, ""
 			}
+		}
+
+		firstCandidate := s + "." + firstPart
+		if _, ok := types[firstCandidate]; ok {
+			if firstDot >= 0 {
+				// Compound name: first part found as a type at this scope
+				// but the full compound wasn't (we just checked above).
+				// C++ protoc commits to the innermost match regardless of
+				// whether firstPart is a message or an enum, so this is a
+				// type-shadowing error.
+				return "." + name, s + "." + name
+			}
+			// Simple name: found
+			return firstCandidate, ""
 		}
 		lastDot := strings.LastIndex(s, ".")
 		if lastDot < 0 {

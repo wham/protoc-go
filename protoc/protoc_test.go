@@ -10,6 +10,7 @@ import (
 
 	"github.com/wham/protoc-go/protoc"
 	"github.com/wham/protoc-go/tools/protoc-gen-dump/dump"
+	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 	pluginpb "google.golang.org/protobuf/types/pluginpb"
 )
 
@@ -217,6 +218,68 @@ message Event {
 	fd := result.Files[0]
 	if len(fd.GetDependency()) != 1 || fd.GetDependency()[0] != "google/protobuf/timestamp.proto" {
 		t.Errorf("expected dependency on google/protobuf/timestamp.proto, got %v", fd.GetDependency())
+	}
+}
+
+// TestCompileRelativeTypeRefAcrossNestedPackages regression-tests a bug in
+// resolveTypeName where relative type references failed to walk up the
+// package hierarchy when the first component of the reference was a
+// subpackage (not a message/enum). For example, a file in package
+// billing_platform.api.v1 referencing "base.BillingPeriod" should resolve
+// to .billing_platform.base.BillingPeriod, the same way C++ protoc does.
+func TestCompileRelativeTypeRefAcrossNestedPackages(t *testing.T) {
+	c := protoc.New(
+		protoc.WithOverlay(map[string]string{
+			"base.proto": `syntax = "proto3";
+package billing_platform.base;
+enum BillingPeriod {
+  BILLING_PERIOD_UNSPECIFIED = 0;
+  MONTHLY = 1;
+}
+message Key { string value = 1; }
+`,
+			"usage.proto": `syntax = "proto3";
+package billing_platform.api.v1;
+import "base.proto";
+message UsageRequest {
+  base.BillingPeriod period = 1;
+  base.Key key = 2;
+}
+`,
+		}),
+	)
+
+	result, err := c.Compile("usage.proto")
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+
+	if len(result.Files) < 1 {
+		t.Fatalf("expected at least 1 file, got %d", len(result.Files))
+	}
+
+	var usage *descriptorpb.FileDescriptorProto
+	for _, fd := range result.Files {
+		if fd.GetName() == "usage.proto" {
+			usage = fd
+			break
+		}
+	}
+	if usage == nil {
+		t.Fatalf("usage.proto not in result")
+	}
+	if len(usage.GetMessageType()) != 1 {
+		t.Fatalf("expected 1 message in usage.proto, got %d", len(usage.GetMessageType()))
+	}
+	fields := usage.GetMessageType()[0].GetField()
+	if len(fields) != 2 {
+		t.Fatalf("expected 2 fields, got %d", len(fields))
+	}
+	if got, want := fields[0].GetTypeName(), ".billing_platform.base.BillingPeriod"; got != want {
+		t.Errorf("field[0] type_name = %q, want %q", got, want)
+	}
+	if got, want := fields[1].GetTypeName(), ".billing_platform.base.Key"; got != want {
+		t.Errorf("field[1] type_name = %q, want %q", got, want)
 	}
 }
 
