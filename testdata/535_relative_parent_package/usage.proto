@@ -1,16 +1,14 @@
 syntax = "proto3";
 
-// This test exercises C++ protoc's relative type name resolution across
-// parent packages. A file in package billing_platform.api.v1 references
-// "base.BillingPeriod" and "base.Key", which are defined in the sibling
-// parent package billing_platform.base. The resolver must walk up the
-// package hierarchy (api.v1 -> api -> billing_platform) and find
-// .billing_platform.base.BillingPeriod at the billing_platform scope.
-package billing_platform.api.v1;
+// A file in package relparent.api.v1 references base.Color and base.Tag,
+// which live in the sibling parent package relparent.base. The resolver
+// must walk up the package hierarchy (api.v1 -> api -> relparent) and
+// find .relparent.base.Color at the relparent scope.
+package relparent.api.v1;
 
 import "base.proto";
 
-message UsageRequest {
-  base.BillingPeriod period = 1;
-  base.Key key = 2;
+message Item {
+  base.Color color = 1;
+  base.Tag tag = 2;
 }

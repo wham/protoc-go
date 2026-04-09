@@ -225,25 +225,25 @@ message Event {
 // resolveTypeName where relative type references failed to walk up the
 // package hierarchy when the first component of the reference was a
 // subpackage (not a message/enum). For example, a file in package
-// billing_platform.api.v1 referencing "base.BillingPeriod" should resolve
-// to .billing_platform.base.BillingPeriod, the same way C++ protoc does.
+// relparent.api.v1 referencing "base.Color" should resolve to
+// .relparent.base.Color, the same way C++ protoc does.
 func TestCompileRelativeTypeRefAcrossNestedPackages(t *testing.T) {
 	c := protoc.New(
 		protoc.WithOverlay(map[string]string{
 			"base.proto": `syntax = "proto3";
-package billing_platform.base;
-enum BillingPeriod {
-  BILLING_PERIOD_UNSPECIFIED = 0;
-  MONTHLY = 1;
+package relparent.base;
+enum Color {
+  COLOR_UNSPECIFIED = 0;
+  RED = 1;
 }
-message Key { string value = 1; }
+message Tag { string value = 1; }
 `,
 			"usage.proto": `syntax = "proto3";
-package billing_platform.api.v1;
+package relparent.api.v1;
 import "base.proto";
-message UsageRequest {
-  base.BillingPeriod period = 1;
-  base.Key key = 2;
+message Item {
+  base.Color color = 1;
+  base.Tag tag = 2;
 }
 `,
 		}),
@@ -275,10 +275,10 @@ message UsageRequest {
 	if len(fields) != 2 {
 		t.Fatalf("expected 2 fields, got %d", len(fields))
 	}
-	if got, want := fields[0].GetTypeName(), ".billing_platform.base.BillingPeriod"; got != want {
+	if got, want := fields[0].GetTypeName(), ".relparent.base.Color"; got != want {
 		t.Errorf("field[0] type_name = %q, want %q", got, want)
 	}
-	if got, want := fields[1].GetTypeName(), ".billing_platform.base.Key"; got != want {
+	if got, want := fields[1].GetTypeName(), ".relparent.base.Tag"; got != want {
 		t.Errorf("field[1] type_name = %q, want %q", got, want)
 	}
 }

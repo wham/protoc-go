@@ -1,13 +1,13 @@
 syntax = "proto3";
 
-package billing_platform.base;
+package relparent.base;
 
-enum BillingPeriod {
-  BILLING_PERIOD_UNSPECIFIED = 0;
-  MONTHLY = 1;
-  YEARLY = 2;
+enum Color {
+  COLOR_UNSPECIFIED = 0;
+  RED = 1;
+  BLUE = 2;
 }
 
-message Key {
+message Tag {
   string value = 1;
 }
