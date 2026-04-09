@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+// This test exercises C++ protoc's relative type name resolution across
+// parent packages. A file in package billing_platform.api.v1 references
+// "base.BillingPeriod" and "base.Key", which are defined in the sibling
+// parent package billing_platform.base. The resolver must walk up the
+// package hierarchy (api.v1 -> api -> billing_platform) and find
+// .billing_platform.base.BillingPeriod at the billing_platform scope.
+package billing_platform.api.v1;
+
+import "base.proto";
+
+message UsageRequest {
+  base.BillingPeriod period = 1;
+  base.Key key = 2;
+}

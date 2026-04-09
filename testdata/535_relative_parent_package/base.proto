@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package billing_platform.base;
+
+enum BillingPeriod {
+  BILLING_PERIOD_UNSPECIFIED = 0;
+  MONTHLY = 1;
+  YEARLY = 2;
+}
+
+message Key {
+  string value = 1;
+}
