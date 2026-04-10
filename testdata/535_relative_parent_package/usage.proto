@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+// A file in package relparent.api.v1 references base.Color and base.Tag,
+// which live in the sibling parent package relparent.base. The resolver
+// must walk up the package hierarchy (api.v1 -> api -> relparent) and
+// find .relparent.base.Color at the relparent scope.
+package relparent.api.v1;
+
+import "base.proto";
+
+message Item {
+  base.Color color = 1;
+  base.Tag tag = 2;
+}
