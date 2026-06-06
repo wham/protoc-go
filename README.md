@@ -120,6 +120,32 @@ scripts/test --summary
 
 Requires: Go 1.23+, C++ `protoc` installed (e.g. `brew install protobuf`) for the comparison test suite.
 
+### Performance comparison
+
+`scripts/bench` is the performance counterpart to `scripts/test`. It runs both
+compilers on a curated, size-scaled corpus — serial, warmed up, median-of-N —
+and reports per-case latency plus the Go/C++ ratio, separating compile
+throughput from process-startup cost.
+
+```bash
+scripts/bench                 # C++ protoc vs Go protoc-go, human table
+scripts/bench --summary       # table only; writes results-bench/bench.{json,md}
+```
+
+If `hyperfine` is installed it drives the timing for better statistics;
+otherwise a built-in median-of-N loop is used. C++ `protoc` is optional — when
+absent, only Go numbers are reported.
+
+For the in-process library core (no process-startup noise, plus `B/op` and
+`allocs/op`), use Go's native benchmarks:
+
+```bash
+go test ./protoc/ -run='^$' -bench=. -benchmem
+```
+
+The scaled corpus is generated on demand by `scripts/gen-large-stress <tier>`
+(`tiny`/`small`/`medium`/`large`/`xl`) into `testdata/bench/` (gitignored).
+
 ## How It Works
 
 A fake plugin (`protoc-gen-dump`) captures the `CodeGeneratorRequest` that protoc sends to plugins. The test harness runs both C++ protoc and Go protoc-go on the same `.proto` files, then diffs the captured requests. If they match, the port is correct.

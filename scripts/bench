@@ -1,0 +1,229 @@
+#!/bin/bash
+# Performance harness: C++ protoc vs Go protoc-go.
+#
+# This is the perf counterpart to scripts/test (which checks correctness). It
+# runs both compilers on the same curated, scaled corpus under controlled
+# conditions — serial, warmed up, repeated, median-of-N — and reports per-case
+# latency, the Go/C++ ratio, and a startup baseline so compile throughput can be
+# separated from process-startup cost.
+#
+# Usage:
+#   scripts/bench                 # default corpus + variants, human table
+#   scripts/bench --summary       # just the table, no per-case progress
+#   scripts/bench --runs 15       # measured runs per case (default 10)
+#   scripts/bench --warmup 3      # warmup runs per case (default 3)
+#   scripts/bench --sizes "tiny small medium large"   # which scaled tiers
+#
+# Outputs results-bench/bench.json (machine-readable) and results-bench/bench.md.
+#
+# Requires Go. C++ protoc is optional: if absent, only Go numbers are reported.
+# If `hyperfine` is on PATH it drives the CLI timing (better statistics);
+# otherwise a built-in median-of-N loop is used.
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+TESTS_DIR="$PROJECT_DIR/testdata"
+OUT_DIR="$PROJECT_DIR/results-bench"
+
+PROTOC_GO="$PROJECT_DIR/cmd/protoc-go/protoc-go"
+PROTOC_GEN_DUMP="$PROJECT_DIR/tools/protoc-gen-dump/protoc-gen-dump"
+
+# -- flags ----------------------------------------------------------------
+
+SUMMARY_ONLY=false
+RUNS=10
+WARMUP=3
+SIZES="tiny small medium"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --summary) SUMMARY_ONLY=true; shift ;;
+    --runs)    RUNS="$2"; shift 2 ;;
+    --warmup)  WARMUP="$2"; shift 2 ;;
+    --sizes)   SIZES="$2"; shift 2 ;;
+    *) echo "Unknown flag: $1" >&2; exit 2 ;;
+  esac
+done
+
+# -- locate C++ protoc (non-fatal; find-protoc exits hard, so detect inline) --
+
+PROTOC=""
+if [ -x "/tmp/protoc-install/bin/protoc" ]; then
+  PROTOC="/tmp/protoc-install/bin/protoc"
+elif command -v protoc >/dev/null 2>&1; then
+  PROTOC="$(command -v protoc)"
+fi
+
+PROTOC_INCLUDE=""
+for d in /opt/homebrew/include /usr/local/include /tmp/protoc-install/include /usr/include; do
+  if [ -d "$d/google/protobuf" ]; then PROTOC_INCLUDE="$d"; break; fi
+done
+INC_FLAG=""
+[ -n "$PROTOC_INCLUDE" ] && INC_FLAG="-I$PROTOC_INCLUDE"
+
+# -- setup ----------------------------------------------------------------
+
+echo "Building protoc-go..."
+(cd "$PROJECT_DIR" && go build -o "$PROTOC_GO" ./cmd/protoc-go/) || exit 1
+echo "Building protoc-gen-dump..."
+(cd "$PROJECT_DIR" && go build -o "$PROTOC_GEN_DUMP" ./tools/protoc-gen-dump/) || exit 1
+
+if [ -n "$PROTOC" ]; then
+  echo "C++ protoc: $PROTOC ($("$PROTOC" --version))"
+else
+  echo "C++ protoc: NOT FOUND — reporting Go protoc-go numbers only."
+fi
+if command -v hyperfine >/dev/null 2>&1; then
+  echo "Timing driver: hyperfine ($(hyperfine --version))"
+  USE_HYPERFINE=true
+else
+  echo "Timing driver: built-in median-of-${RUNS} (hyperfine not found)"
+  USE_HYPERFINE=false
+fi
+echo "Runs: $RUNS  Warmup: $WARMUP"
+echo ""
+
+# Ensure the scaled corpus exists (generated, gitignored).
+for size in $SIZES; do
+  if [ ! -f "$TESTS_DIR/bench/$size/test.proto" ]; then
+    echo "Generating corpus tier: $size"
+    "$SCRIPT_DIR/gen-large-stress" "$size" >/dev/null
+  fi
+done
+
+rm -rf "$OUT_DIR"
+mkdir -p "$OUT_DIR"
+JSON_TMP="$OUT_DIR/records.jsonl"
+: > "$JSON_TMP"
+
+# -- corpus ---------------------------------------------------------------
+# Format: case_label|directory
+# Mixes a couple of real fixtures with the scaled tiers so the report shows a
+# clean size→latency curve (where algorithmic differences surface).
+
+CASES=(
+  "startup_empty|$TESTS_DIR/330_empty_proto"
+  "01_basic_message|$TESTS_DIR/01_basic_message"
+)
+for size in $SIZES; do
+  CASES+=("bench_$size|$TESTS_DIR/bench/$size")
+done
+CASES+=("329_large_stress|$TESTS_DIR/329_large_stress")
+
+# Variants: how each compiler is invoked.
+#   descriptor — pure compile + serialize, no plugin/disk noise (primary metric)
+#   plugin     — adds the protoc-gen-dump subprocess round-trip
+VARIANTS="descriptor plugin"
+
+# -- timing helpers -------------------------------------------------------
+
+now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time()*1000'; }
+
+# median_of <cmd> — run WARMUP+RUNS times, echo the median wall-clock ms.
+# Uses the built-in loop. (hyperfine path handled separately.)
+median_of() {
+  local cmd="$1" i
+  for ((i=0; i<WARMUP; i++)); do eval "$cmd" >/dev/null 2>&1; done
+  local times=()
+  for ((i=0; i<RUNS; i++)); do
+    local s; s=$(now_ms)
+    eval "$cmd" >/dev/null 2>&1
+    times+=( $(( $(now_ms) - s )) )
+  done
+  printf '%s\n' "${times[@]}" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}'
+}
+
+# hyperfine_median <cmd> — echo median ms via hyperfine JSON export.
+hyperfine_median() {
+  local cmd="$1" jf="$OUT_DIR/.hf.json"
+  hyperfine --warmup "$WARMUP" --runs "$RUNS" --export-json "$jf" -N "$cmd" \
+    >/dev/null 2>&1 || { echo ""; return; }
+  # hyperfine reports seconds; convert median to integer ms.
+  jq -r '(.results[0].median * 1000) | floor' "$jf"
+}
+
+# measure <impl> <variant> <case> <cmd> — record one measurement, echo median ms.
+measure() {
+  local impl="$1" variant="$2" case="$3" cmd="$4" med
+  if [ "$USE_HYPERFINE" = true ]; then
+    med=$(hyperfine_median "$cmd")
+    [ -z "$med" ] && med=$(median_of "$cmd")
+  else
+    med=$(median_of "$cmd")
+  fi
+  printf '{"impl":"%s","variant":"%s","case":"%s","median_ms":%s,"runs":%s}\n' \
+    "$impl" "$variant" "$case" "$med" "$RUNS" >> "$JSON_TMP"
+  echo "$med"
+}
+
+# build_cmd <impl> <variant> <dir> <basenames> — emit the shell command string.
+build_cmd() {
+  local bin="$1" variant="$2" dir="$3" basenames="$4"
+  case "$variant" in
+    descriptor)
+      echo "(cd '$dir' && '$bin' --descriptor_set_out=/dev/null $INC_FLAG -I. $basenames)"
+      ;;
+    plugin)
+      local od="$OUT_DIR/dump_$(basename "$dir")_$(basename "$bin")"
+      mkdir -p "$od"
+      echo "(cd '$dir' && '$bin' --plugin=protoc-gen-dump='$PROTOC_GEN_DUMP' --dump_out='$od' --dump_opt='$od' $INC_FLAG -I. $basenames)"
+      ;;
+  esac
+}
+
+# -- run ------------------------------------------------------------------
+
+printf '%-20s %-11s %10s %10s %8s\n' "case" "variant" "cpp(ms)" "go(ms)" "go/cpp"
+printf '%-20s %-11s %10s %10s %8s\n' "----" "-------" "-------" "------" "------"
+
+ROWS=()  # markdown rows
+for spec in "${CASES[@]}"; do
+  IFS='|' read -r label dir <<< "$spec"
+  [ -d "$dir" ] || continue
+  basenames=$(cd "$dir" && ls *.proto 2>/dev/null | sort | tr '\n' ' ')
+  [ -n "$basenames" ] || continue
+
+  for variant in $VARIANTS; do
+    go_cmd=$(build_cmd "$PROTOC_GO" "$variant" "$dir" "$basenames")
+    go_ms=$(measure "go" "$variant" "$label" "$go_cmd")
+
+    cpp_ms="n/a"; ratio="n/a"
+    if [ -n "$PROTOC" ]; then
+      cpp_cmd=$(build_cmd "$PROTOC" "$variant" "$dir" "$basenames")
+      cpp_ms=$(measure "cpp" "$variant" "$label" "$cpp_cmd")
+      if [ "$cpp_ms" -gt 0 ] 2>/dev/null; then
+        ratio=$(awk "BEGIN{printf \"%.2f\", $go_ms/$cpp_ms}")
+      fi
+    fi
+
+    printf '%-20s %-11s %10s %10s %8s\n' "$label" "$variant" "$cpp_ms" "$go_ms" "$ratio"
+    ROWS+=("| $label | $variant | $cpp_ms | $go_ms | $ratio |")
+  done
+done
+
+# -- write machine-readable + markdown ------------------------------------
+
+jq -s '.' "$JSON_TMP" > "$OUT_DIR/bench.json"
+
+{
+  echo "# protoc-go performance: C++ protoc vs Go protoc-go"
+  echo ""
+  if [ -n "$PROTOC" ]; then
+    echo "- C++ protoc: \`$("$PROTOC" --version)\`"
+  else
+    echo "- C++ protoc: not available (Go-only run)"
+  fi
+  echo "- Go: \`$(go version | awk '{print $3, $4}')\`"
+  echo "- Driver: $([ "$USE_HYPERFINE" = true ] && echo hyperfine || echo "median-of-$RUNS"), warmup=$WARMUP"
+  echo ""
+  echo "Median wall-clock per invocation. \`go/cpp\` < 1.0 means Go is faster."
+  echo "The \`startup_empty\` row is the fixed per-process cost; subtract it from"
+  echo "the others to estimate compile-only throughput."
+  echo ""
+  echo "| case | variant | cpp (ms) | go (ms) | go/cpp |"
+  echo "| ---- | ------- | -------- | ------- | ------ |"
+  printf '%s\n' "${ROWS[@]}"
+} > "$OUT_DIR/bench.md"
+
+echo ""
+echo "Wrote $OUT_DIR/bench.json and $OUT_DIR/bench.md"

@@ -7,6 +7,10 @@ tools/protoc-bin/include/
 # Test results
 results/
 
+# Performance harness: generated corpus + results
+testdata/bench/
+results-bench/
+
 # OS files
 .DS_Store
 
