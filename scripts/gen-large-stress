@@ -1,16 +1,46 @@
 #!/bin/bash
-# Generates a large .proto file for stress testing.
-# Output: testdata/329_large_stress/test.proto
+# Generates .proto file(s) for stress / performance testing.
+#
+# Usage:
+#   gen-large-stress                 # default: original 500-message fixture
+#                                    #   -> testdata/329_large_stress/test.proto
+#   gen-large-stress SIZE            # named tier -> testdata/bench/SIZE/test.proto
+#   gen-large-stress SIZE OUTFILE    # named tier, custom output path
+#   gen-large-stress NUM  OUTFILE    # explicit message count, custom output path
+#
+# Named tiers (message count grows ~geometrically so the perf harness can plot
+# a scaling curve and expose algorithmic differences that tiny inputs hide):
+#   tiny small medium large xl
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-OUT="$SCRIPT_DIR/../testdata/329_large_stress/test.proto"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Defaults reproduce the original testdata/329_large_stress fixture byte-for-byte.
 NUM_MESSAGES=500
 FIELDS_PER_MSG=20
 NESTING_DEPTH=15
 NUM_ENUMS=50
 NUM_SERVICES=10
+OUT="$PROJECT_DIR/testdata/329_large_stress/test.proto"
+
+size="${1:-}"
+if [ -n "$size" ]; then
+  case "$size" in
+    tiny)   NUM_MESSAGES=10;    FIELDS_PER_MSG=8;  NESTING_DEPTH=4;  NUM_ENUMS=3;   NUM_SERVICES=2 ;;
+    small)  NUM_MESSAGES=100;   FIELDS_PER_MSG=15; NESTING_DEPTH=8;  NUM_ENUMS=10;  NUM_SERVICES=5 ;;
+    medium) NUM_MESSAGES=500;   FIELDS_PER_MSG=20; NESTING_DEPTH=15; NUM_ENUMS=50;  NUM_SERVICES=10 ;;
+    large)  NUM_MESSAGES=2000;  FIELDS_PER_MSG=25; NESTING_DEPTH=20; NUM_ENUMS=100; NUM_SERVICES=20 ;;
+    xl)     NUM_MESSAGES=10000; FIELDS_PER_MSG=30; NESTING_DEPTH=25; NUM_ENUMS=200; NUM_SERVICES=40 ;;
+    *[!0-9]*)
+      echo "Unknown size '$size' (use a tier: tiny small medium large xl, or a number)" >&2
+      exit 1 ;;
+    *) NUM_MESSAGES="$size" ;;  # explicit numeric message count
+  esac
+  OUT="${2:-$PROJECT_DIR/testdata/bench/$size/test.proto}"
+fi
+
+mkdir -p "$(dirname "$OUT")"
 
 cat > "$OUT" << 'HEADER'
 syntax = "proto3";

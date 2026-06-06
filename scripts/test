@@ -694,6 +694,11 @@ TEST_NAMES=()
 for test_dir in "$TESTS_DIR"/*/; do
   if [ -d "$test_dir" ]; then
     test_name="$(basename "$test_dir")"
+    # The performance harness (scripts/bench) generates a scaled corpus under
+    # testdata/bench/<tier>/. It is not a correctness fixture — skip it here.
+    if [ "$test_name" = "bench" ]; then
+      continue
+    fi
     for profile_spec in "${PROFILES[@]}"; do
       IFS='|' read -r profile_name profile_mode extra_flags <<< "$profile_spec"
       full_name="${test_name}@${profile_name}"

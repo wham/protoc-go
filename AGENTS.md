@@ -29,7 +29,9 @@ This is a port of the Protocol Buffers compiler (`protoc`) from C++ to Go. The G
 │   ├── protoc-gen-dump/    # Fake plugin that captures CodeGeneratorRequest
 │   └── protoc-bin/         # (reserved) Vendored C++ protoc if needed
 ├── scripts/
-│   ├── test                # Test harness — compares C++ protoc vs Go protoc-go
+│   ├── test                # Correctness harness — compares C++ protoc vs Go protoc-go
+│   ├── bench               # Performance harness — times C++ protoc vs Go protoc-go
+│   ├── gen-large-stress    # Generates scaled stress/bench corpus (tiers)
 │   └── find-protoc         # Locates system C++ protoc
 ├── RALPH.md                # Builder agent prompt (automated loop)
 ├── NELSON.md               # Adversarial tester prompt (automated loop)
@@ -45,6 +47,11 @@ scripts/test
 
 # Summary only (no diff output)
 scripts/test --summary
+
+# Performance comparison (C++ protoc vs Go protoc-go) on a scaled corpus
+scripts/bench --summary
+# In-process library core (ns/op, B/op, allocs/op)
+go test ./protoc/ -run='^$' -bench=. -benchmem
 ```
 
 The test harness:

@@ -25,3 +25,37 @@ jobs:
 
       - name: Run tests
         run: scripts/test --summary
+
+  benchmarks:
+    runs-on: ubuntu-latest
+    # Informational only — perf is environment-sensitive and must never block a
+    # merge. Kept separate from the correctness gate above.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Install protoc
+        run: |
+          PROTOC_VERSION=33.4
+          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip" -o protoc.zip
+          unzip -q protoc.zip -d /tmp/protoc-install
+          echo "/tmp/protoc-install/bin" >> "$GITHUB_PATH"
+
+      - name: CLI benchmark (C++ protoc vs Go protoc-go)
+        run: scripts/bench --summary --sizes "tiny small medium"
+
+      - name: In-process library benchmark
+        run: |
+          go build -o tools/protoc-gen-dump/protoc-gen-dump ./tools/protoc-gen-dump/
+          go test ./protoc/ -run='^$' -bench='BenchmarkCompile|BenchmarkPluginDispatch' \
+            -benchtime=5x -benchmem | tee results-bench/go-bench.txt
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: results-bench/
