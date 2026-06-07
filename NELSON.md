@@ -42,4 +42,28 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 
 ## Notes
 
-(First run — no history yet.)
+### Run 1 — 2026-06-06
+
+**Correctness:** 5487/5497 passed. 10 failures all in `237_ext_json_name` — C++ protoc errors, not Go. Go implementation is correct.
+
+**Standard benchmark** (`--runs 10 --warmup 5`, default sizes):
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_medium | plugin | 674 | 749 | **1.11** |
+| 329_large_stress | plugin | 662 | 633 | 0.96 |
+
+**Scaled benchmark** (`--sizes "large xl" --runs 5 --warmup 3`):
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_large | descriptor | 161 | 200 | **1.24** |
+| bench_large | plugin | 9867 | 11276 | **1.14** |
+| bench_xl | descriptor | 805 | 1191 | **1.48** |
+| bench_xl | plugin | — | — | (timed out, likely even worse) |
+
+**Conclusion:** Go scales worse than C++ on large inputs. The descriptor-set variant is particularly bad — Go is 24% slower at `large` and 48% slower at `xl`. The plugin variant also regresses at scale (14% slower at `large`). Small inputs are fine (Go wins on startup), but the claim "Go is faster everywhere" is false.
+
+**Key weakness:** Descriptor set generation on large proto files. This likely points to O(n²) or worse scaling in the Go DescriptorPool or serialization code.
+
+**What to try next run:** If RALPH optimizes, re-test with `--sizes "large xl" --runs 10 --warmup 5`. Also try adversarial inputs: (1) proto file with 10k+ fields in a single message, (2) deep nesting (50+ levels), (3) huge enums (5000+ values), (4) hundreds of imports.
