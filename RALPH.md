@@ -80,7 +80,11 @@ We use `google.golang.org/protobuf/types/descriptorpb` for the proto descriptor 
 
 ## Plan
 
-(Not yet started — first run should profile and populate this.)
+### COMPLETED ✅
+
+1. **findLocationByPath O(1) index** — The biggest bottleneck (71% of CPU). `findLocationByPath` did a linear scan of all source code info locations on every call, making it O(N×M) for N lookups × M locations. Added `locationIndex` type with a hash map for O(1) lookups, cached per `*SourceCodeInfo` pointer. Result: `329_large_stress@descriptor` went from 587ms → 46ms (12.7x speedup).
+
+2. **Pre-allocate tokenizer and parser slices** — Tokenizer `tokens` and `comments` slices grew via `append` from zero, causing O(N log N) allocation copies. Pre-allocated based on input size (~1 token per 6 bytes). Also cached single-byte symbol strings to avoid `string(ch)` allocations. Pre-allocated parser `locations` slice. Result: allocations dropped from 106MB → 74MB (30% reduction), ~10% additional speedup.
 
 ## Notes
 
@@ -101,9 +105,26 @@ bench_small          plugin              83         76     0.92
 329_large_stress     plugin             639       1179     1.85
 ```
 
-**Key insight**: Go is already faster for tiny/small inputs (lower startup cost). The problem is scaling — `329_large_stress` has 500 messages × 20 fields each, and Go is 11x slower on descriptor-only compilation. The plugin variant is only 1.85x slower because subprocess overhead dominates.
+### Final Benchmark (after optimization)
 
-**Focus area**: The `329_large_stress@descriptor` case is the primary target. Getting this below 1.0 will likely fix all other cases since smaller ones are already fast.
+```
+case                 variant        cpp(ms)     go(ms)   go/cpp
+----                 -------        -------     ------   ------
+startup_empty        descriptor          29          9     0.31
+startup_empty        plugin              32         12     0.38
+01_basic_message     descriptor          29          9     0.31
+01_basic_message     plugin              32         12     0.38
+bench_tiny           descriptor          30         10     0.33
+bench_tiny           plugin              36         16     0.44
+bench_small          descriptor          33         16     0.48
+bench_small          plugin              84         62     0.74
+bench_medium         descriptor          58         43     0.74
+bench_medium         plugin             654        611     0.93
+329_large_stress     descriptor          57         42     0.74
+329_large_stress     plugin             652        620     0.95
+```
+
+**ALL cases show go/cpp < 1.0. DONE.**
 
 ### Key Files
 - `io/tokenizer/tokenizer.go` — lexer
