@@ -226,6 +226,9 @@ type compileInput struct {
 // It always returns a non-nil *compileOutput (which may contain warnings
 // collected before the error point). On success error is nil.
 func compileInternal(in *compileInput) (*compileOutput, error) {
+	resetLocationCache()
+	defer clearLocationCache()
+
 	co := &compileOutput{
 		relFiles: in.relFiles,
 	}

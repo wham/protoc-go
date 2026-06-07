@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/wham/protoc-go/compiler/importer"
 	"github.com/wham/protoc-go/compiler/parser"
@@ -429,6 +430,9 @@ func expandResponseFiles(args []string) ([]string, error) {
 }
 
 func Run(args []string) error {
+	resetLocationCache()
+	defer clearLocationCache()
+
 	expandedArgs, err := expandResponseFiles(args[1:])
 	if err != nil {
 		return err
@@ -4604,10 +4608,73 @@ func clonePath(p []int32) []int32 {
 	return c
 }
 
+// locationIndex maps source-code-info paths to (line, col) for O(1) lookup.
+type locationIndex struct {
+	m map[string][2]int32
+}
+
+func buildLocationIndex(sci *descriptorpb.SourceCodeInfo) locationIndex {
+	locs := sci.GetLocation()
+	idx := locationIndex{m: make(map[string][2]int32, len(locs))}
+	for _, loc := range locs {
+		path := loc.GetPath()
+		span := loc.GetSpan()
+		if len(span) >= 2 && len(path) > 0 {
+			key := locationPathKey(path)
+			idx.m[key] = [2]int32{span[0] + 1, span[1] + 1}
+		}
+	}
+	return idx
+}
+
+func (idx locationIndex) lookup(target []int32) (int, int) {
+	if len(target) == 0 {
+		return 0, 0
+	}
+	b := unsafe.Slice((*byte)(unsafe.Pointer(&target[0])), len(target)*4)
+	if pos, ok := idx.m[string(b)]; ok {
+		return int(pos[0]), int(pos[1])
+	}
+	return 0, 0
+}
+
+func locationPathKey(path []int32) string {
+	if len(path) == 0 {
+		return ""
+	}
+	b := unsafe.Slice((*byte)(unsafe.Pointer(&path[0])), len(path)*4)
+	return string(b)
+}
+
+// locationCache maps SourceCodeInfo pointers to pre-built indexes.
+// Cleared at the start of each compilation via resetLocationCache.
+var locationCache map[*descriptorpb.SourceCodeInfo]locationIndex
+
+func resetLocationCache() {
+	locationCache = make(map[*descriptorpb.SourceCodeInfo]locationIndex)
+}
+
+func clearLocationCache() {
+	locationCache = nil
+}
+
+func getLocationIndex(sci *descriptorpb.SourceCodeInfo) locationIndex {
+	if idx, ok := locationCache[sci]; ok {
+		return idx
+	}
+	idx := buildLocationIndex(sci)
+	locationCache[sci] = idx
+	return idx
+}
+
 func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, int) {
 	if sci == nil {
 		return 0, 0
 	}
+	if locationCache != nil {
+		return getLocationIndex(sci).lookup(target)
+	}
+	// Fallback: linear scan (used outside compilation context)
 	for _, loc := range sci.GetLocation() {
 		path := loc.GetPath()
 		if len(path) != len(target) {
