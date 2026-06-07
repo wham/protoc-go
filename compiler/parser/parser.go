@@ -259,7 +259,21 @@ type ParseResult struct {
 
 // ParseFile parses a .proto file and returns a ParseResult.
 func ParseFile(filename string, content string) (*ParseResult, error) {
-	p := &parser{tok: tokenizer.New(content), filename: filename, syntax: "proto2", seenFileOptions: map[string]bool{}, seenImports: map[string]bool{}, explicitJsonNames: map[*descriptorpb.FieldDescriptorProto]bool{}}
+	tok := tokenizer.New(content)
+	// Pre-allocate locations based on token count (~1 location per 3 tokens)
+	estLocs := tok.Len() / 3
+	if estLocs < 64 {
+		estLocs = 64
+	}
+	p := &parser{
+		tok:               tok,
+		filename:          filename,
+		syntax:            "proto2",
+		seenFileOptions:   map[string]bool{},
+		seenImports:       map[string]bool{},
+		explicitJsonNames: map[*descriptorpb.FieldDescriptorProto]bool{},
+		locations:         make([]*descriptorpb.SourceCodeInfo_Location, 0, estLocs),
+	}
 
 	// If the tokenizer has errors, we still parse to collect parser errors too
 	// (C++ protoc interleaves tokenizer and parser errors)

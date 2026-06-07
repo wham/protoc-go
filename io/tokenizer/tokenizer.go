@@ -55,8 +55,26 @@ type Tokenizer struct {
 	Errors   []TokenError
 }
 
+// symbolStrings caches single-byte strings to avoid allocations in tokenize.
+var symbolStrings [128]string
+
+func init() {
+	for i := range symbolStrings {
+		symbolStrings[i] = string(rune(i))
+	}
+}
+
 func New(input string) *Tokenizer {
-	t := &Tokenizer{input: input}
+	// Pre-allocate slices based on input size (~1 token per 6 bytes)
+	est := len(input) / 6
+	if est < 64 {
+		est = 64
+	}
+	t := &Tokenizer{
+		input:    input,
+		tokens:   make([]Token, 0, est),
+		comments: make([]TokenComments, 0, est),
+	}
 	// Skip UTF-8 BOM if present (matching C++ protoc behavior).
 	// Keep in input so positions account for BOM bytes.
 	if len(input) >= 3 && input[0] == 0xEF && input[1] == 0xBB && input[2] == 0xBF {
@@ -108,7 +126,13 @@ func (t *Tokenizer) tokenize() {
 			if ch&0x80 != 0 {
 				t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: fmt.Sprintf("Interpreting non ascii codepoint %d.", ch)})
 			}
-			t.tokens = append(t.tokens, Token{Type: TokenSymbol, Value: string(ch), Line: t.line, Column: t.col})
+			var symStr string
+			if ch < 128 {
+				symStr = symbolStrings[ch]
+			} else {
+				symStr = string(ch)
+			}
+			t.tokens = append(t.tokens, Token{Type: TokenSymbol, Value: symStr, Line: t.line, Column: t.col})
 			t.advance()
 		}
 		prevTokenLine = t.tokens[len(t.tokens)-1].Line
@@ -616,6 +640,11 @@ func (t *Tokenizer) Peek() Token {
 		return t.tokens[t.idx]
 	}
 	return Token{Type: TokenEOF}
+}
+
+// Len returns the total number of tokens (including EOF).
+func (t *Tokenizer) Len() int {
+	return len(t.tokens)
 }
 
 // PeekAt returns the token at offset positions ahead without advancing.
