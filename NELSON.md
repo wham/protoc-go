@@ -67,3 +67,41 @@ You are running inside an automated loop. **Each invocation is stateless** — y
 **Key weakness:** Descriptor set generation on large proto files. This likely points to O(n²) or worse scaling in the Go DescriptorPool or serialization code.
 
 **What to try next run:** If RALPH optimizes, re-test with `--sizes "large xl" --runs 10 --warmup 5`. Also try adversarial inputs: (1) proto file with 10k+ fields in a single message, (2) deep nesting (50+ levels), (3) huge enums (5000+ values), (4) hundreds of imports.
+
+### Run 2 — 2026-06-07
+
+**Correctness:** 5487/5497 passed. Same 10 failures in `237_ext_json_name` (C++ protoc errors). Go is correct.
+
+**Standard benchmark** (`--runs 10 --warmup 5`, default sizes):
+All ratios < 1.0. Go wins on default tier.
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_medium | descriptor | 58 | 46 | 0.79 |
+| bench_medium | plugin | 676 | 633 | 0.94 |
+| 329_large_stress | plugin | 670 | 632 | 0.94 |
+
+**Scaled benchmark** (`--sizes "large" --runs 5 --warmup 3`):
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_large | descriptor | 150 | 181 | **1.21** |
+| bench_large | plugin | 9036 | 9046 | **1.00** |
+
+**Adversarial inputs** (median of 5 runs, descriptor_set_out):
+
+| test | description | cpp(ms) | go(ms) | go/cpp |
+|------|-------------|---------|--------|--------|
+| adversarial_fields | 10k fields in 1 message | 52 | 340 | **6.5x** |
+| adversarial_enum | 10 enums × 5000 values (50k total) | 97 | 4822 | **49.7x** |
+| adversarial_nesting | 30 levels, 20 fields each | 37 | 20 | 0.54 |
+| adversarial_imports | 200 imports, 20 fields each | 44 | 28 | 0.64 |
+
+**Conclusion:** Go is CATASTROPHICALLY slower on enum-heavy protos (~50x) and significantly slower on field-heavy single messages (~6.5x). The enum case almost certainly has O(n²) behavior in enum value validation — possibly duplicate-name checking or scope resolution using linear scans. The 10k fields case likely has similar linear-scan overhead in field number/name conflict detection.
+
+**Key weaknesses found:**
+1. **Enum values**: O(n²) scaling — the #1 priority fix. 50k enum values takes 4.8s in Go vs 97ms in C++.
+2. **Many fields per message**: 6.5x slower at 10k fields. Likely same root cause (linear scans for duplicate detection).
+3. **bench_large@descriptor**: Still 21% slower at the `large` tier.
+
+**What to try next run:** After RALPH fixes the O(n²) enum/field issues, re-run adversarial_enum and adversarial_fields. If those are fixed, try: (1) 20k+ enum values in a single enum, (2) proto files with many extensions and custom options, (3) files with huge string literals (stress tokenizer), (4) measure peak memory usage with `/usr/bin/time -l`.
