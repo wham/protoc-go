@@ -380,3 +380,101 @@ The core issue is **per-message-type descriptor building overhead**. 10k plain m
 - If RALPH reduces per-message allocs: re-test adversarial_wide_messages and bench_large
 - The wide_messages test (10k msgs, no oneofs, 1.32x) is the cleanest signal for per-message overhead
 - New ideas: (1) 20k+ messages to see if scaling is worse than linear, (2) messages with many nested type definitions (message-in-message), (3) profile allocs per message type to identify hot allocations
+
+### Run 7 — 2026-06-07
+
+**Correctness:** 5487/5497 passed. Same 10 failures in `237_ext_json_name` (C++ protoc errors). Go is correct.
+
+**Standard benchmark** (`--runs 10 --warmup 5`, default sizes):
+All ratios < 1.0. Go wins on default tier. Closest is bench_medium@plugin at 0.95.
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_medium | descriptor | 56 | 41 | 0.73 |
+| bench_medium | plugin | 632 | 599 | 0.95 |
+| 329_large_stress | descriptor | 56 | 43 | 0.77 |
+| 329_large_stress | plugin | 632 | 603 | 0.95 |
+
+**Scaled benchmark** (`--sizes "large" --runs 10 --warmup 5`):
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_large | descriptor | 159 | 194 | **1.22** |
+| bench_large | plugin | 8859 | 9141 | **1.03** |
+
+**Adversarial inputs** (median of 7 runs, descriptor_set_out):
+
+| test | description | cpp(ms) | go(ms) | go/cpp |
+|------|-------------|---------|--------|--------|
+| adversarial_mega_oneofs | 400 msgs × 20 oneofs × 100 fields | 1456 | 2143 | **1.47** |
+| adversarial_big_oneofs | 200 msgs × 20 oneofs × 100 fields | 737 | 1031 | **1.40** |
+| adversarial_wide_messages | 10k msgs × 10 fields | 208 | 276 | **1.33** |
+| adversarial_oneof_explosion | 300 msgs × 15 oneofs × 50 fields (NEW) | 404 | 524 | **1.30** |
+| adversarial_ultra_wide | 20k msgs × 5 fields (NEW) | 221 | 281 | **1.27** |
+| adversarial_wide_oneofs | 5k msgs × 2 oneofs × 5 fields | 161 | 195 | **1.21** |
+| adversarial_nested_types | 500 outer × 20 nested msgs (NEW) | 138 | 162 | **1.17** |
+| adversarial_combined | oneofs+maps+extensions | 83 | 88 | **1.06** |
+| adversarial_oneofs | many msgs with oneofs | 105 | 110 | **1.05** |
+| adversarial_group_heavy | 500 msgs × 10 groups (NEW) | 58 | 55 | 0.94 |
+| adversarial_many_types | 5000 small messages | 66 | 59 | 0.89 |
+| adversarial_wide_enums | 5000 enums × 10 values | 88 | 80 | 0.91 |
+| adversarial_enum | 10 enums × 5000 values | 84 | 74 | 0.88 |
+| adversarial_maps | many map fields | 46 | 42 | 0.92 |
+| adversarial_nested_oneofs | nested tree + oneofs | 81 | 69 | 0.85 |
+| adversarial_reserved | many reserved ranges/names | 55 | 39 | 0.72 |
+| adversarial_oneof_fields | 200 msgs × 10 oneofs × 10 fields | 56 | 42 | 0.76 |
+| adversarial_fields | 10k fields | 38 | 22 | 0.60 |
+| adversarial_xref_heavy | 500 msgs × 20 cross-refs each | 47 | 31 | 0.66 |
+| adversarial_xref | many cross-references | 40 | 24 | 0.61 |
+| adversarial_source_info | source info heavy | 97 | 44 | 0.46 |
+| adversarial_extensions | 5k extensions | 34 | 14 | 0.42 |
+| adversarial_imports | 200 imports | 29 | 13 | 0.44 |
+| adversarial_many_services | 500 services × 20 RPCs | 39 | 19 | 0.48 |
+| adversarial_deep_oneofs | 1 msg × 500 oneofs × 50 fields | 80 | 35 | 0.43 |
+| adversarial_strings | tokenizer stress | 29 | 10 | 0.36 |
+| adversarial_nesting | deep nesting | 22 | 5 | 0.21 |
+| adversarial_huge_strings | 1MB proto | 24 | 6 | 0.24 |
+| adversarial_mega_enum | 1 enum × 20k values | 47 | 33 | 0.70 |
+| adversarial_single_huge_enum | 1 enum × 20k values | 48 | 33 | 0.69 |
+
+**In-process benchmark data (bench_large):**
+- 167ms per compile, 378MB alloc, 4.17M allocs/op — unchanged from Runs 3–6.
+
+**Progress vs Run 6:** No improvement on any case — RALPH didn't optimize this round.
+- adversarial_mega_oneofs: 1.47x (unchanged)
+- adversarial_big_oneofs: 1.40x (unchanged)
+- adversarial_wide_messages: 1.33x (unchanged)
+- bench_large@descriptor: 1.22x (unchanged)
+- bench_large@plugin: 1.03x (unchanged)
+
+**New findings this run:**
+1. **adversarial_ultra_wide: 1.27x** — 20k messages (pure per-message overhead, no oneofs). Confirms the wide_messages finding scales linearly (10k→20k, ratio stays ~1.3x).
+2. **adversarial_oneof_explosion: 1.30x** — 300 msgs × 15 oneofs × 50 varied-type fields. Confirms oneof overhead.
+3. **adversarial_nested_types: 1.17x** — 500 outer × 20 nested messages. Nested type definitions add overhead.
+4. **adversarial_group_heavy: 0.94x** — groups are NOT a weakness. Go handles them fine.
+
+**Summary of ALL cases where go/cpp >= 1.0 (11 total):**
+1. adversarial_mega_oneofs: **1.47x** — worst case
+2. adversarial_big_oneofs: **1.40x**
+3. adversarial_wide_messages: **1.33x** — pure per-message overhead
+4. adversarial_oneof_explosion: **1.30x** — NEW
+5. adversarial_ultra_wide: **1.27x** — NEW, 20k messages
+6. bench_large@descriptor: **1.22x** — canonical benchmark
+7. adversarial_wide_oneofs: **1.21x**
+8. adversarial_nested_types: **1.17x** — NEW
+9. adversarial_combined: **1.06x**
+10. adversarial_oneofs: **1.05x**
+11. bench_large@plugin: **1.03x** — canonical benchmark
+
+**Root cause analysis (refined):**
+The core issue remains **per-message-type descriptor building overhead**. The evidence is now very clear:
+- 20k plain messages (ultra_wide) = 1.27x → per-message overhead is constant, not O(n²)
+- Adding oneofs to messages amplifies it to 1.4–1.5x
+- Adding nested type definitions adds to it (1.17x)
+- The 4.17M allocs/op on bench_large has been unchanged for 5 consecutive runs
+- Go uses 2.5x+ more CPU time than wall time (GC threads consuming CPU)
+
+**What to try next run:**
+- If RALPH reduces per-message allocs: re-test adversarial_ultra_wide, adversarial_wide_messages, bench_large
+- If allocs/op drops significantly in in-process benchmark, the ratios should improve
+- New ideas: (1) adversarial with 50k+ tiny messages (1-2 fields each) to push per-message overhead, (2) profile with `go tool pprof -alloc_objects` to identify the exact allocation sites, (3) test proto files where messages reference each other extensively (graph structure)
