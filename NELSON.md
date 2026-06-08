@@ -478,3 +478,102 @@ The core issue remains **per-message-type descriptor building overhead**. The ev
 - If RALPH reduces per-message allocs: re-test adversarial_ultra_wide, adversarial_wide_messages, bench_large
 - If allocs/op drops significantly in in-process benchmark, the ratios should improve
 - New ideas: (1) adversarial with 50k+ tiny messages (1-2 fields each) to push per-message overhead, (2) profile with `go tool pprof -alloc_objects` to identify the exact allocation sites, (3) test proto files where messages reference each other extensively (graph structure)
+
+### Run 8 — 2026-06-07
+
+**Correctness:** 5487/5497 passed. Same 10 failures in `237_ext_json_name` (C++ protoc errors). Go is correct.
+
+**Standard benchmark** (`--runs 10 --warmup 5`, default sizes):
+All ratios < 1.0. Go wins on default tier. Closest is bench_medium@plugin at 0.95.
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_medium | descriptor | 57 | 43 | 0.75 |
+| bench_medium | plugin | 640 | 606 | 0.95 |
+| 329_large_stress | descriptor | 57 | 42 | 0.74 |
+| 329_large_stress | plugin | 641 | 599 | 0.93 |
+
+**Scaled benchmark** (`--sizes "large" --runs 10 --warmup 5`):
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_large | descriptor | 159 | 195 | **1.23** |
+| bench_large | plugin | 8880 | 9201 | **1.04** |
+
+**Adversarial inputs** (median of 7 runs, descriptor_set_out):
+
+| test | description | cpp(ms) | go(ms) | go/cpp |
+|------|-------------|---------|--------|--------|
+| adversarial_100k_messages | 100k msgs × 1 field (NEW) | 310 | 580 | **1.87** |
+| adversarial_tiny_messages | 50k msgs × 1 field (NEW) | 160 | 270 | **1.68** |
+| adversarial_mega_oneofs | 400 msgs × 20 oneofs × 100 fields | 1530 | 2170 | **1.41** |
+| adversarial_big_oneofs | 200 msgs × 20 oneofs × 100 fields | 730 | 1040 | **1.42** |
+| adversarial_oneof_explosion | 300 msgs × 15 oneofs × 50 fields | 400 | 530 | **1.32** |
+| adversarial_wide_messages | 10k msgs × 10 fields | 210 | 270 | **1.28** |
+| adversarial_ultra_wide | 20k msgs × 5 fields | 220 | 280 | **1.27** |
+| adversarial_wide_oneofs | 5k msgs × 2 oneofs × 5 fields | 160 | 190 | **1.18** |
+| adversarial_nested_types | 500 outer × 20 nested msgs | 140 | 160 | **1.14** |
+| adversarial_repeated_fields | 500 msgs × 100 repeated fields (NEW) | 100 | 110 | **1.10** |
+| adversarial_oneofs | many msgs with oneofs | 100 | 110 | **1.10** |
+| adversarial_combined | oneofs+maps+extensions | 80 | 80 | **1.00** |
+| adversarial_maps | many map fields | 40 | 40 | **1.00** |
+| adversarial_many_types | 5000 small messages | 60 | 50 | 0.83 |
+| adversarial_enum | 10 enums × 5000 values | 80 | 70 | 0.87 |
+| adversarial_graph_refs | 2k msgs × 5 cross-refs (NEW) | 40 | 30 | 0.75 |
+| adversarial_xref_heavy | 500 msgs × 20 cross-refs | 40 | 30 | 0.75 |
+| adversarial_fields | 10k fields | 30 | 20 | 0.66 |
+| adversarial_xref | many cross-references | 40 | 20 | 0.50 |
+| adversarial_source_info | source info heavy | 90 | 40 | 0.44 |
+| adversarial_extensions | 5k extensions | 30 | 10 | 0.33 |
+
+**In-process benchmark data (bench_large):**
+- 169ms per compile, 378MB alloc, 4.17M allocs/op — **UNCHANGED** for 6 consecutive runs (Runs 3-8). RALPH has not reduced allocations.
+
+**Progress vs Run 7:** No improvement from RALPH on any existing case. All ratios within noise of Run 7.
+
+**New findings this run:**
+1. **adversarial_100k_messages: 1.87x** — NEW WORST NON-ONEOF RATIO. 100k messages with 1 field each. This is the purest measure of per-message-type descriptor overhead. Go is 87% slower.
+2. **adversarial_tiny_messages: 1.68x** — 50k messages, same pattern at half scale. Ratio is slightly lower (1.68 vs 1.87), confirming the overhead scales slightly worse than linearly.
+3. **adversarial_repeated_fields: 1.10x** — 500 messages with 100 repeated fields each. Moderate overhead.
+4. **adversarial_graph_refs: 0.75x** — Go is actually faster on heavily cross-referenced messages. Not a weakness.
+
+**Scaling analysis (per-message overhead):**
+| messages | fields/msg | cpp(ms) | go(ms) | go/cpp | go overhead/msg |
+|----------|-----------|---------|--------|--------|-----------------|
+| 5,000    | 3         | 60      | 50     | 0.83   | — (Go wins)     |
+| 10,000   | 10        | 210     | 270    | 1.28   | 6μs             |
+| 20,000   | 5         | 220     | 280    | 1.27   | 3μs             |
+| 50,000   | 1         | 160     | 270    | 1.68   | 2.2μs           |
+| 100,000  | 1         | 310     | 580    | 1.87   | 2.7μs           |
+
+The ratio INCREASES with more messages and fewer fields per message. Go has a ~2-3μs constant overhead per message type that C++ doesn't have. With 100k messages, this adds up to 270ms of pure overhead.
+
+**Summary of ALL cases where go/cpp >= 1.0 (14 total, up from 11 in Run 7):**
+1. adversarial_100k_messages: **1.87x** — NEW worst case
+2. adversarial_tiny_messages: **1.68x** — NEW
+3. adversarial_mega_oneofs: **1.41x**
+4. adversarial_big_oneofs: **1.42x**
+5. adversarial_oneof_explosion: **1.32x**
+6. adversarial_wide_messages: **1.28x**
+7. adversarial_ultra_wide: **1.27x**
+8. bench_large@descriptor: **1.23x** — canonical benchmark
+9. adversarial_wide_oneofs: **1.18x**
+10. adversarial_nested_types: **1.14x**
+11. adversarial_repeated_fields: **1.10x** — NEW
+12. adversarial_oneofs: **1.10x**
+13. bench_large@plugin: **1.04x** — canonical benchmark
+14. adversarial_combined: **1.00x** / adversarial_maps: **1.00x** — borderline
+
+**Root cause analysis (refined):**
+The core issue is **per-message-type descriptor registration overhead** in Go. Evidence:
+- 100k messages with 1 field each: 1.87x slower (purest signal)
+- The overhead is ~2-3μs per message type, accumulating linearly
+- 4.17M allocs/op on bench_large has been unchanged for 6 runs
+- Adding oneofs amplifies the per-message overhead further (from 1.3x to 1.4-1.5x)
+- Go uses 2.5x+ CPU time vs wall time (GC threads consuming CPU)
+
+**What to try next run:**
+- If RALPH reduces per-message allocs: re-test adversarial_100k_messages and adversarial_tiny_messages
+- The 100k_messages test (1.87x) is now the clearest signal — tell RALPH to focus on this
+- If allocs/op drops in in-process benchmark, all ratios should improve
+- New ideas: (1) 200k+ messages to see if ratio continues to increase, (2) `go tool pprof -alloc_objects` on 100k_messages to identify exact hot allocs, (3) messages with defaults/options to stress validation
