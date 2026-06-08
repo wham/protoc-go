@@ -214,3 +214,76 @@ All ratios < 1.0. Go wins on default tier. Closest is 329_large_stress@plugin at
 - If bench_large improves: re-test with `--sizes "large xl" --runs 10 --warmup 5`
 - The big_oneofs case suggests per-message descriptor building has O(n) overhead per oneof that compounds across many messages. Possible root cause: repeated linear scans in OneofDescriptor building or field-to-oneof assignment.
 - New ideas: (1) even larger big_oneofs variant (400+ messages), (2) proto with many reserved ranges, (3) proto combining oneofs + maps + extensions in same message
+
+### Run 5 — 2026-06-07
+
+**Correctness:** 5487/5497 passed. Same 10 failures in `237_ext_json_name` (C++ protoc errors). Go is correct.
+
+**Standard benchmark** (`--runs 10 --warmup 5`, default sizes):
+All ratios < 1.0. Go wins on default tier.
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_medium | descriptor | 60 | 44 | 0.73 |
+| bench_medium | plugin | 703 | 668 | 0.95 |
+| 329_large_stress | descriptor | 62 | 47 | 0.76 |
+| 329_large_stress | plugin | 701 | 672 | 0.96 |
+
+**Scaled benchmark** (`--sizes "large" --runs 10 --warmup 5`):
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_large | descriptor | 170 | 216 | **1.27** |
+| bench_large | plugin | 9496 | 10779 | **1.14** |
+
+**XL tier:** Timed out after 20 minutes. Go still cannot handle XL in reasonable time.
+
+**Adversarial inputs** (median of 7 runs, descriptor_set_out):
+
+| test | description | cpp(ms) | go(ms) | go/cpp |
+|------|-------------|---------|--------|--------|
+| adversarial_big_oneofs | 200 msgs × 20 oneofs × 100 fields | 736 | 1062 | **1.44** |
+| adversarial_mega_oneofs | 400 msgs × 20 oneofs × 100 fields (NEW) | 1493 | 2170 | **1.45** |
+| adversarial_oneofs | many msgs with oneofs | 126 | 128 | **1.01** |
+| adversarial_combined | oneofs+maps+extensions (NEW) | 102 | 106 | **1.03** |
+| adversarial_enum | 10 enums × 5000 values | 102 | 91 | 0.89 |
+| adversarial_fields | 10k fields | 54 | 38 | 0.70 |
+| adversarial_source_info | source info heavy | 114 | 61 | 0.53 |
+| adversarial_xref | many cross-references | 57 | 40 | 0.70 |
+| adversarial_extensions | 5k extensions | 52 | 30 | 0.57 |
+| adversarial_maps | many map fields | 64 | 57 | 0.89 |
+| adversarial_many_types | 5000 small messages | 84 | 76 | 0.90 |
+| adversarial_reserved | many reserved ranges/names (NEW) | 72 | 55 | 0.76 |
+
+**Memory usage** (max RSS):
+
+| test | cpp RSS | go RSS | ratio |
+|------|---------|--------|-------|
+| bench_large | 186MB | 160MB | 0.86 |
+| adversarial_big_oneofs | 1000MB | 834MB | 0.83 |
+
+Memory is NOT the issue — Go actually uses less memory. The slowness is pure CPU time (Go user time 1.71s vs C++ 0.63s on big_oneofs).
+
+**In-process benchmark data (bench_large):**
+- 172ms per compile, 378MB alloc, 4.17M allocs/op — unchanged from Run 4.
+
+**Progress vs Run 4:** No improvement on oneof cases — RALPH didn't optimize oneofs this round.
+- adversarial_big_oneofs: 1.39x → 1.44x (noise, unchanged)
+- bench_large@descriptor: 1.27x → 1.27x (unchanged)
+- bench_large@plugin: 1.10x → 1.14x (noise, unchanged)
+- New tests confirm: adversarial_mega_oneofs at 1.45x validates the big_oneofs finding
+- adversarial_combined at 1.03x shows the issue is specifically oneofs, not maps/extensions
+
+**Key remaining weaknesses:**
+1. **adversarial_big_oneofs: 1.44x** and **adversarial_mega_oneofs: 1.45x** — consistent ~45% overhead on many-message × many-oneof workloads. Scales linearly with message count (200→400 msgs doubles both cpp and go times, ratio stays ~1.45x). This is NOT O(n²) — it's a constant-factor overhead per oneof per message.
+2. **bench_large@descriptor: 1.27x** — canonical benchmark, Go 27% slower at scale.
+3. **bench_large@plugin: 1.14x** — plugin dispatch at scale, Go 14% slower.
+4. **XL tier: timeout** — Go still can't complete the XL corpus.
+
+**Root cause analysis for oneof slowness:** The ratio stays constant (~1.45x) regardless of scale (200 vs 400 messages). This suggests a constant-factor overhead per message, not algorithmic complexity. Likely causes: (1) per-oneof allocation overhead (Go's GC vs C++ stack allocation), (2) interface dispatch overhead in oneof descriptor building, (3) map lookups vs C++ vector-based field indexing.
+
+**What to try next run:**
+- If RALPH optimizes oneof per-message overhead: re-test adversarial_big_oneofs and adversarial_mega_oneofs
+- If bench_large@descriptor improves: re-test with `--sizes "large xl"`
+- The 4.17M allocs/op on bench_large hasn't changed — reducing allocations remains the key optimization vector
+- New ideas: (1) profile with `go tool pprof` to identify hot functions in oneof handling, (2) test proto files where every field is in a oneof (proto3 synthetic oneofs don't count), (3) adversarial with many nested messages containing oneofs
