@@ -813,3 +813,136 @@ The issue is definitively **per-message-type descriptor building overhead** in G
 - If bench_large allocs/op drops below 3M, expect meaningful ratio improvements
 - The many_maps test (1.85x) is a good proxy for real-world protos (gRPC services commonly use map fields)
 - New ideas: (1) profile with `go tool pprof -alloc_objects` on adversarial_500k_messages to find hot allocation sites, (2) test proto with deeply nested maps (map<string, map<string, ...>>), (3) try 1M messages
+
+### Run 11 — 2026-06-07
+
+**Correctness:** 5487/5497 passed. Same 10 failures in `237_ext_json_name` (C++ protoc errors). Go is correct.
+
+**Standard benchmark** (`--runs 10 --warmup 5`, default sizes):
+All ratios < 1.0. Go wins on default tier. Closest is bench_medium@plugin at 0.95.
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_medium | descriptor | 60 | 44 | 0.73 |
+| bench_medium | plugin | 640 | 611 | 0.95 |
+| 329_large_stress | descriptor | 58 | 44 | 0.76 |
+| 329_large_stress | plugin | 646 | 611 | 0.95 |
+
+**Scaled benchmark** (`--sizes "large" --runs 10 --warmup 5`):
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_large | descriptor | 163 | 203 | **1.25** |
+| bench_large | plugin | 9751 | 9898 | **1.02** |
+
+**XL tier** (median of 5 runs, descriptor_set_out):
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_xl | descriptor | 880 | 1330 | **1.51** |
+
+**Adversarial inputs** (median of 5-7 runs, descriptor_set_out):
+
+| test | description | cpp(ms) | go(ms) | go/cpp |
+|------|-------------|---------|--------|--------|
+| adversarial_1m_messages | 1M msgs × 1 field (NEW) | 3420 | 8180 | **2.39** |
+| adversarial_500k_messages | 500k msgs × 1 field | 1670 | 3970 | **2.37** |
+| adversarial_200k_messages | 200k msgs × 1 field | 620 | 1330 | **2.14** |
+| adversarial_100k_messages | 100k msgs × 1 field | 310 | 620 | **2.00** |
+| adversarial_deep_maps | 3k msgs × 10 maps (33k types) (NEW) | 160 | 310 | **1.93** |
+| adversarial_tiny_messages | 50k msgs × 1 field | 160 | 290 | **1.81** |
+| adversarial_many_maps | 2k msgs × 20 map fields | 200 | 330 | **1.65** |
+| adversarial_mega_oneofs | 400 msgs × 20 oneofs × 100 fields | 1510 | 2260 | **1.49** |
+| adversarial_big_oneofs | 200 msgs × 20 oneofs × 100 fields | 730 | 1080 | **1.47** |
+| adversarial_wide_messages | 10k msgs × 10 fields | 210 | 290 | **1.38** |
+| adversarial_ultra_wide | 20k msgs × 5 fields | 230 | 300 | **1.30** |
+| adversarial_wide_oneofs | 5k msgs × 2 oneofs × 5 fields | 160 | 200 | **1.25** |
+| adversarial_nested_types | 500 outer × 20 nested msgs | 140 | 170 | **1.21** |
+| adversarial_all_optional | 10k msgs × 5 optional (NEW) | 140 | 170 | **1.21** |
+| adversarial_json_names | 5k msgs × 10 json_name fields (NEW) | 160 | 190 | **1.18** |
+| adversarial_synthetic_oneofs | 5k msgs × 10 optional (proto3) | 140 | 160 | **1.14** |
+| adversarial_combined | oneofs+maps+extensions | 80 | 90 | **1.12** |
+| adversarial_repeated_fields | 500 msgs × 100 repeated fields | 110 | 120 | **1.09** |
+| adversarial_oneofs | many msgs with oneofs | 110 | 110 | **1.00** |
+| adversarial_many_types | 5000 small messages | 60 | 60 | **1.00** |
+| adversarial_enum | 10 enums × 5000 values | 80 | 70 | 0.87 |
+| adversarial_comments | tokenizer stress (many comments) (NEW) | 60 | 50 | 0.83 |
+| adversarial_long_names | 5k msgs × long names (NEW) | 110 | 90 | 0.81 |
+| adversarial_fields | 10k fields | 30 | 20 | 0.66 |
+| adversarial_extensions | 5k extensions | 30 | 10 | 0.33 |
+| adversarial_source_info | source info heavy | 90 | 40 | 0.44 |
+| adversarial_defaults | 5k msgs × default values (NEW) | 640 | 50 | **0.07** |
+
+**Memory & CPU profile** (1M messages, `/usr/bin/time -l`):
+
+| metric | C++ | Go | ratio |
+|--------|-----|-----|-------|
+| wall time | 3.40s | 8.09s | **2.38x** |
+| user CPU | 2.96s | 11.89s | **4.02x** |
+| max RSS | 4.9GB | 4.5GB | 0.92 |
+
+Go uses 4x more CPU time than C++ on 1M messages, but only 2.4x wall time — Go's multi-core GC hides the true overhead.
+
+**In-process benchmark data (bench_large):**
+- 178ms per compile, 378MB alloc, 4.17M allocs/op — **UNCHANGED** for 9 consecutive runs (Runs 3-11). RALPH has not reduced allocations.
+
+**Progress vs Run 10:** No improvement from RALPH. All ratios within noise of Run 10.
+
+**New findings this run:**
+1. **adversarial_1m_messages: 2.39x** — 1M messages plateaus around 2.4x (same as 500k at 2.37x). The superlinear scaling seen from 50k→500k appears to level off above 500k — the ratio stabilizes around 2.4x.
+2. **adversarial_deep_maps: 1.93x** — NEW. 3000 messages × 10 map fields creates 33k total message types via synthetic map entry messages. This is 1.93x slower — maps amplify per-message overhead.
+3. **adversarial_all_optional: 1.21x** — NEW. Proto3 optional fields (creating synthetic oneofs) add overhead, same mechanism.
+4. **adversarial_json_names: 1.18x** — NEW. json_name annotations add per-field overhead.
+5. **adversarial_comments: 0.83x** — Go tokenizer handles comments efficiently.
+6. **adversarial_defaults: 0.07x** — Go is 14x FASTER on default values! C++ does significantly more work processing default values.
+7. **CPU time ratio (4.02x)** on 1M messages confirms the overhead is pure computation, not I/O.
+
+**Scaling analysis (per-message overhead, updated with 1M):**
+| messages | fields/msg | cpp(ms) | go(ms) | go/cpp | trend |
+|----------|-----------|---------|--------|--------|-------|
+| 5,000 | 3 | 60 | 60 | 1.00 | break-even |
+| 10,000 | 10 | 210 | 290 | 1.38 | — |
+| 20,000 | 5 | 230 | 300 | 1.30 | — |
+| 50,000 | 1 | 160 | 290 | 1.81 | — |
+| 100,000 | 1 | 310 | 620 | 2.00 | — |
+| 200,000 | 1 | 620 | 1330 | 2.14 | — |
+| 500,000 | 1 | 1670 | 3970 | 2.37 | — |
+| 1,000,000 | 1 | 3420 | 8180 | **2.39** | plateauing |
+
+The ratio plateaus around 2.4x for very high message counts. This suggests the per-message overhead is a constant factor (~2.4x) that becomes dominant when per-message cost overwhelms startup/IO costs.
+
+**Summary of ALL cases where go/cpp >= 1.0 (20 total, up from 18 in Run 10):**
+1. adversarial_1m_messages: **2.39x** — NEW worst case
+2. adversarial_500k_messages: **2.37x**
+3. adversarial_200k_messages: **2.14x**
+4. adversarial_100k_messages: **2.00x**
+5. adversarial_deep_maps: **1.93x** — NEW
+6. adversarial_tiny_messages: **1.81x**
+7. adversarial_many_maps: **1.65x**
+8. bench_xl@descriptor: **1.51x**
+9. adversarial_mega_oneofs: **1.49x**
+10. adversarial_big_oneofs: **1.47x**
+11. adversarial_wide_messages: **1.38x**
+12. adversarial_ultra_wide: **1.30x**
+13. bench_large@descriptor: **1.25x** — canonical benchmark
+14. adversarial_wide_oneofs: **1.25x**
+15. adversarial_nested_types: **1.21x** / adversarial_all_optional: **1.21x** — NEW
+16. adversarial_json_names: **1.18x** — NEW
+17. adversarial_synthetic_oneofs: **1.14x**
+18. adversarial_combined: **1.12x**
+19. adversarial_repeated_fields: **1.09x**
+20. bench_large@plugin: **1.02x** — canonical benchmark
+
+**Root cause analysis (definitive):**
+The core issue is **per-message-type descriptor registration overhead** in Go — a ~2.4x constant factor per message type that becomes dominant at scale. Key evidence:
+1. 4.17M allocs/op on bench_large unchanged for 9 runs — allocation reduction is THE key optimization
+2. CPU time is 4x wall time on 1M messages — GC threads consume massive CPU
+3. Map fields amplify the overhead by creating synthetic message types (1.93x for deep_maps)
+4. The ratio plateaus at ~2.4x for pure message-count workloads
+5. Memory is NOT the issue — Go uses less RSS than C++
+
+**What to try next run:**
+- If RALPH reduces allocs/op below 3.5M: re-test adversarial_1m_messages, adversarial_deep_maps, bench_large
+- The deep_maps test (1.93x) is a realistic proxy for gRPC services with many map fields
+- The all_optional test (1.21x) is realistic for proto3 services using optional extensively
+- New ideas: (1) adversarial with many service definitions + streaming RPCs, (2) proto with many extension ranges in message options, (3) test with `GODEBUG=gctrace=1` to quantify GC pauses, (4) proto files mixing all expensive patterns (maps + oneofs + nested types + json_name)
