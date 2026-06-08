@@ -287,3 +287,96 @@ Memory is NOT the issue — Go actually uses less memory. The slowness is pure C
 - If bench_large@descriptor improves: re-test with `--sizes "large xl"`
 - The 4.17M allocs/op on bench_large hasn't changed — reducing allocations remains the key optimization vector
 - New ideas: (1) profile with `go tool pprof` to identify hot functions in oneof handling, (2) test proto files where every field is in a oneof (proto3 synthetic oneofs don't count), (3) adversarial with many nested messages containing oneofs
+
+### Run 6 — 2026-06-07
+
+**Correctness:** 5487/5497 passed. Same 10 failures in `237_ext_json_name` (C++ protoc errors). Go is correct.
+
+**Standard benchmark** (`--runs 10 --warmup 5`, default sizes):
+All ratios < 1.0. Go wins on default tier.
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_medium | descriptor | 56 | 41 | 0.73 |
+| bench_medium | plugin | 642 | 598 | 0.93 |
+| 329_large_stress | descriptor | 58 | 41 | 0.71 |
+| 329_large_stress | plugin | 646 | 598 | 0.93 |
+
+**Scaled benchmark** (`--sizes "large" --runs 10 --warmup 5`):
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_large | descriptor | 163 | 197 | **1.21** |
+| bench_large | plugin | 9093 | 9571 | **1.05** |
+
+**XL tier:** Timed out after 10+ minutes. Go still can't handle XL in reasonable time.
+
+**Adversarial inputs** (median of 7 runs, descriptor_set_out):
+
+| test | description | cpp(ms) | go(ms) | go/cpp |
+|------|-------------|---------|--------|--------|
+| adversarial_big_oneofs | 200 msgs × 20 oneofs × 100 fields | 739 | 1065 | **1.44** |
+| adversarial_mega_oneofs | 400 msgs × 20 oneofs × 100 fields | 1497 | 2203 | **1.47** |
+| adversarial_wide_messages | 10k messages × 10 fields (NEW) | 223 | 294 | **1.32** |
+| adversarial_wide_oneofs | 5k msgs × 2 oneofs × 5 fields (NEW) | 183 | 216 | **1.18** |
+| adversarial_combined | oneofs+maps+extensions | 99 | 106 | **1.07** |
+| adversarial_oneofs | many msgs with oneofs | 123 | 128 | **1.04** |
+| adversarial_nested_oneofs | 5 trees × depth 4, 3-way branch, oneofs (NEW) | 95 | 86 | 0.91 |
+| adversarial_many_types | 5000 small messages | 83 | 77 | 0.93 |
+| adversarial_maps | many map fields | 63 | 59 | 0.94 |
+| adversarial_enum | 10 enums × 5000 values | 102 | 93 | 0.91 |
+| adversarial_wide_enums | 5000 enums × 10 values (NEW) | 106 | 98 | 0.92 |
+| adversarial_oneof_fields | 200 msgs × 10 oneofs × 10 fields (NEW) | 69 | 57 | 0.83 |
+| adversarial_reserved | many reserved ranges/names | 71 | 56 | 0.79 |
+| adversarial_xref_heavy | 500 msgs × 20 cross-refs each (NEW) | 61 | 46 | 0.75 |
+| adversarial_fields | 10k fields | 53 | 39 | 0.74 |
+| adversarial_xref | many cross-references | 56 | 40 | 0.71 |
+| adversarial_extensions | 5k extensions | 50 | 30 | 0.60 |
+| adversarial_strings | tokenizer stress | 44 | 26 | 0.59 |
+| adversarial_deep_oneofs | 1 msg × 500 oneofs × 50 fields | 94 | 52 | 0.55 |
+| adversarial_source_info | source info heavy | 112 | 61 | 0.54 |
+| adversarial_nesting | deep nesting | 38 | 20 | 0.53 |
+| adversarial_huge_strings | 1MB proto | 40 | 21 | 0.53 |
+| adversarial_imports | 200 imports | 36 | 18 | 0.50 |
+| adversarial_many_services | 500 services × 20 RPCs | 56 | 35 | 0.62 |
+
+**Memory usage** (max RSS from `/usr/bin/time -l`):
+
+| test | cpp RSS | go RSS | ratio | notes |
+|------|---------|--------|-------|-------|
+| adversarial_wide_messages | 339MB | 277MB | 0.82 | Go uses less memory |
+| adversarial_big_oneofs | 1048MB | 875MB | 0.83 | Go uses less memory |
+
+Memory is NOT the issue — Go consistently uses ~18% less memory. The slowness is pure CPU: Go user time 1.68s vs C++ 0.63s on big_oneofs (2.67x CPU ratio, masked to 1.44x wall ratio by Go's multi-core GC).
+
+**In-process benchmark data (bench_large):**
+- 170ms per compile, 378MB alloc, 4.17M allocs/op — unchanged from Runs 3–5.
+
+**Progress vs Run 5:** No improvement on any case — RALPH didn't optimize this round.
+- adversarial_big_oneofs: 1.44x (unchanged)
+- bench_large@descriptor: 1.21x (slight improvement from 1.27x, within noise)
+- bench_large@plugin: 1.05x (improved from 1.14x, within noise)
+
+**New findings this run:**
+1. **adversarial_wide_messages: 1.32x** — 10k small messages (no oneofs!) is 32% slower. This isolates the per-message-type overhead from oneofs. The bottleneck is message descriptor building/registration, not oneof handling specifically.
+2. **adversarial_wide_oneofs: 1.18x** — confirms the interaction: many messages + oneofs amplifies the slowdown.
+3. **CPU vs wall time discrepancy**: Go uses 2.67x more CPU time than C++ on big_oneofs, but only 1.44x wall time. This means Go's GC is consuming significant CPU on background threads. The 4.17M allocs/op hasn't changed — allocation pressure remains the root cause.
+
+**Key remaining weaknesses (sorted by severity):**
+1. **adversarial_mega_oneofs: 1.47x** — worst case, consistent across runs
+2. **adversarial_big_oneofs: 1.44x** — same root cause
+3. **adversarial_wide_messages: 1.32x** — NEW: proves per-message overhead is the issue, not just oneofs
+4. **bench_large@descriptor: 1.21x** — canonical benchmark, Go 21% slower at scale
+5. **adversarial_wide_oneofs: 1.18x** — many messages + oneofs
+6. **adversarial_combined: 1.07x** — minor but consistent
+7. **bench_large@plugin: 1.05x** — plugin dispatch at scale
+8. **adversarial_oneofs: 1.04x** — barely above 1.0
+9. **XL tier: timeout** — Go can't complete the XL corpus
+
+**Root cause analysis:**
+The core issue is **per-message-type descriptor building overhead**. 10k plain messages (no oneofs) is already 1.32x slower. Adding oneofs makes it worse (1.44–1.47x). The 4.17M allocs/op on bench_large suggests heavy allocation in descriptor building. Go's GC uses 2x+ more CPU than wall time suggests, confirming allocation pressure.
+
+**What to try next run:**
+- If RALPH reduces per-message allocs: re-test adversarial_wide_messages and bench_large
+- The wide_messages test (10k msgs, no oneofs, 1.32x) is the cleanest signal for per-message overhead
+- New ideas: (1) 20k+ messages to see if scaling is worse than linear, (2) messages with many nested type definitions (message-in-message), (3) profile allocs per message type to identify hot allocations
