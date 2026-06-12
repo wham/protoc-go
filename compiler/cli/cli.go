@@ -3843,26 +3843,38 @@ func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgP
 		// C++ protoc omits line:col for duplicate oneof names
 		check(oFQN, oneof.GetName(), msgFQN, 0, 0, "")
 	}
-	for i, field := range msg.GetField() {
-		fqn := msgFQN + "." + field.GetName()
-		p := append(append([]int32{}, msgPath...), 2, int32(i), 1)
-		l, c := findLocationByPath(p, sci)
-		check(fqn, field.GetName(), msgFQN, l, c, "")
+	base := len(msgPath)
+	// findLocationByPath only reads its argument, so we can build paths into a
+	// scratch buffer (reset to msgPath each iteration) rather than allocating a
+	// fresh slice per field/extension/enum value.
+	if fields := msg.GetField(); len(fields) > 0 {
+		scratch := make([]int32, base, base+3)
+		copy(scratch, msgPath)
+		for i, field := range fields {
+			fqn := msgFQN + "." + field.GetName()
+			l, c := findLocationByPath(append(scratch, 2, int32(i), 1), sci)
+			check(fqn, field.GetName(), msgFQN, l, c, "")
+		}
 	}
-	for i, ext := range msg.GetExtension() {
-		eFQN := msgFQN + "." + ext.GetName()
-		p := append(append([]int32{}, msgPath...), 6, int32(i), 1)
-		l, c := findLocationByPath(p, sci)
-		check(eFQN, ext.GetName(), msgFQN, l, c, "")
+	if exts := msg.GetExtension(); len(exts) > 0 {
+		scratch := make([]int32, base, base+3)
+		copy(scratch, msgPath)
+		for i, ext := range exts {
+			eFQN := msgFQN + "." + ext.GetName()
+			l, c := findLocationByPath(append(scratch, 6, int32(i), 1), sci)
+			check(eFQN, ext.GetName(), msgFQN, l, c, "")
+		}
 	}
 	for i, enum := range msg.GetEnumType() {
 		eFQN := msgFQN + "." + enum.GetName()
+		scratch := make([]int32, base, base+5)
+		copy(scratch, msgPath)
 		for j, val := range enum.GetValue() {
 			vFQN := msgFQN + "." + val.GetName()
-			vl, vc := findLocationByPath(append(append([]int32{}, msgPath...), 4, int32(i), 2, int32(j), 1), sci)
+			vl, vc := findLocationByPath(append(scratch, 4, int32(i), 2, int32(j), 1), sci)
 			check(vFQN, val.GetName(), msgFQN, vl, vc, enum.GetName())
 		}
-		l, c := findLocationByPath(append(append([]int32{}, msgPath...), 4, int32(i), 1), sci)
+		l, c := findLocationByPath(append(scratch, 4, int32(i), 1), sci)
 		check(eFQN, enum.GetName(), msgFQN, l, c, "")
 	}
 	for i, nested := range msg.GetNestedType() {
