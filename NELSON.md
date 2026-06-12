@@ -946,3 +946,53 @@ The core issue is **per-message-type descriptor registration overhead** in Go �
 - The deep_maps test (1.93x) is a realistic proxy for gRPC services with many map fields
 - The all_optional test (1.21x) is realistic for proto3 services using optional extensively
 - New ideas: (1) adversarial with many service definitions + streaming RPCs, (2) proto with many extension ranges in message options, (3) test with `GODEBUG=gctrace=1` to quantify GC pauses, (4) proto files mixing all expensive patterns (maps + oneofs + nested types + json_name)
+
+### Run 12 — 2026-06-11
+
+**Correctness:** 5487/5497 passed. Same 10 failures in `237_ext_json_name` (C++ protoc errors). Go is correct. No optimization broke anything.
+
+**Standard benchmark** (`--runs 10 --warmup 5`, default sizes):
+All ratios < 1.0. Go wins on default tier. Closest is bench_medium@plugin and 329_large_stress@plugin at 0.93.
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_medium | descriptor | 60 | 46 | 0.77 |
+| bench_medium | plugin | 658 | 612 | 0.93 |
+| 329_large_stress | descriptor | 58 | 44 | 0.76 |
+| 329_large_stress | plugin | 662 | 615 | 0.93 |
+
+**Scaled benchmark** (`--sizes "large" --runs 10 --warmup 5`):
+
+| case | variant | cpp(ms) | go(ms) | go/cpp |
+|------|---------|---------|--------|--------|
+| bench_large | descriptor | 163 | 185 | **1.13** |
+| bench_large | plugin | 9008 | 10769 | **1.20** |
+
+**Both canonical large-tier variants are >= 1.0. The claim "Go is faster everywhere" is FALSE on the standard scaled benchmark alone.**
+
+**Adversarial inputs** (median of 5 runs, descriptor_set_out):
+
+| test | description | cpp(ms) | go(ms) | go/cpp |
+|------|-------------|---------|--------|--------|
+| adversarial_500k_messages | 500k msgs × 1 field | 1636 | 3659 | **2.24** |
+| adversarial_1m_messages | 1M msgs × 1 field | 3493 | 7677 | **2.20** |
+| adversarial_many_maps | 2k msgs × 20 map fields | 215 | 333 | **1.55** |
+| adversarial_deep_maps | 3k msgs × 10 maps (33k types) | 170 | 259 | **1.52** |
+| adversarial_mega_oneofs | 400 msgs × 20 oneofs × 100 fields | 1501 | 2185 | **1.46** |
+| adversarial_wide_messages | 10k msgs × 10 fields | 226 | 295 | **1.31** |
+
+**In-process benchmark data (bench_large):**
+- 170ms per compile, 377MB alloc, **4.169M allocs/op** — **UNCHANGED** for 10 consecutive runs (Runs 3-12). RALPH has STILL not reduced allocations. This is the root cause and remains untouched.
+
+**Progress vs Run 11:** No improvement from RALPH. Ratios on message-heavy workloads remain 1.1x–2.2x. The 4.17M allocs/op figure is identical to the past 9 runs — the per-message allocation overhead has not been addressed at all.
+
+**Conclusion:** The junior engineer's claim is FALSE. Go is faster on small/startup-dominated inputs but is decisively slower on:
+1. The canonical `bench_large` tier: **1.13x (descriptor), 1.20x (plugin)** — this alone disproves the claim.
+2. High message-count workloads: up to **2.24x** slower (500k messages).
+3. Map-heavy and oneof-heavy protos: 1.46x–1.55x slower.
+
+Root cause unchanged: per-message-type descriptor building allocates ~2.4x what it should (4.17M allocs/op on bench_large, constant across 10 runs). RALPH has not touched allocations. **Verdict: SLOWER.**
+
+**What to try next run:**
+- Re-run the same suite. The decisive evidence is bench_large (canonical, 1.13–1.20x) plus the 500k/1m message cases (2.2x).
+- Watch the in-process allocs/op: if it drops below ~3M, re-test bench_large and the 100k+/500k message cases — those are where any allocation win will show first.
