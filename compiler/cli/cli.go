@@ -5798,12 +5798,29 @@ type fileOptExtInfo struct {
 	pkg   string
 }
 
+// hasAnyCustomOpts reports whether any parsed file carries at least one custom
+// option of the kind selected by count. The resolveCustomXxxOptions passes build
+// several O(message-count) lookup maps before doing any work; when no file uses
+// that option kind there is nothing to resolve, so they can skip the map-building
+// entirely. This is a large win on schemas with many types but few/no options.
+func hasAnyCustomOpts(orderedFiles []string, parseResults map[string]*parser.ParseResult, count func(*parser.ParseResult) int) bool {
+	for _, name := range orderedFiles {
+		if pr := parseResults[name]; pr != nil && count(pr) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveCustomFileOptions resolves parenthesized custom file options against
 // extension definitions. It finds the matching extension field, encodes the
 // value, and sets it on the FileOptions proto as unknown (extension) fields.
 // It also returns a map from filename to the set of extension field numbers
 // that have sub-field options (needed to know which fields to merge in proto_file).
 func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomFileOptions) }) {
+		return nil, nil
+	}
 	// Build extension map: name → extension field for FileOptions extensions
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -6171,6 +6188,9 @@ func findFileOptionExtension(name string, currentPkg string, allExts []fileOptEx
 // resolveCustomFieldOptions resolves parenthesized custom options on fields
 // (e.g., [(my_ext) = "value"]) against extension definitions for FieldOptions.
 func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomFieldOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	// Build extension map for FieldOptions extensions
 	var allExts []fileOptExtInfo
@@ -6441,6 +6461,9 @@ func collectFieldOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN 
 // resolveCustomMessageOptions resolves parenthesized custom options on messages
 // (e.g., option (my_msg_label) = "primary";) against extension definitions for MessageOptions.
 func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomMessageOptions) }) {
+		return nil, nil
+	}
 	// Build extension map for MessageOptions extensions
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -6698,6 +6721,9 @@ func collectMessageOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQ
 // resolveCustomServiceOptions resolves parenthesized custom options on services
 // (e.g., option (service_label) = "primary";) against extensions of ServiceOptions.
 func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomServiceOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -6944,6 +6970,9 @@ func collectServiceOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQ
 // resolveCustomMethodOptions resolves parenthesized custom options on methods
 // (e.g., option (auth_role) = "admin";) against extensions of MethodOptions.
 func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomMethodOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -7190,6 +7219,9 @@ func collectMethodOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN
 // resolveCustomEnumOptions resolves parenthesized custom options on enums
 // (e.g., option (enum_label) = "status_tracker";) against extensions of EnumOptions.
 func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomEnumOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -7436,6 +7468,9 @@ func collectEnumOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN s
 // resolveCustomEnumValueOptions resolves parenthesized custom options on enum values
 // (e.g., HIGH = 1 [(display_name) = "High Priority"]) against extension definitions for EnumValueOptions.
 func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomEnumValueOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -7682,6 +7717,9 @@ func collectEnumValueOptionsExtensions(msg *descriptorpb.DescriptorProto, parent
 // resolveCustomOneofOptions resolves parenthesized custom options on oneofs
 // (e.g., option (oneof_label) = "primary";) against extensions of OneofOptions.
 func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomOneofOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -7928,6 +7966,9 @@ func collectOneofOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN 
 // resolveCustomExtRangeOptions resolves parenthesized custom options on extension ranges
 // (e.g., extensions 100 to 199 [(my_annotation) = "annotated"];) against extension definitions.
 func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomExtRangeOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
