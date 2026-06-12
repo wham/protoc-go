@@ -3738,8 +3738,15 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 		pkg := fd.GetPackage()
 		sci := fd.GetSourceCodeInfo()
 
-		check := func(fqn, shortName, scope string, line, col int, enumName string) {
+		check := func(fqn, shortName, scope string, path []int32, enumName string) {
 			if firstFile, exists := seen[fqn]; exists {
+				// Location is only needed to format the error, so compute it
+				// lazily here rather than for every symbol. A nil path means
+				// the location is intentionally omitted (e.g. oneof names).
+				line, col := 0, 0
+				if path != nil {
+					line, col = findLocationByPath(path, sci)
+				}
 				var errMsg string
 				if firstFile != fd.GetName() {
 					// Cross-file duplicate: use FQN and "in file" format
@@ -3789,8 +3796,7 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 				msgFQN = pkg + "." + msgFQN
 			}
 			collectDupNamesInMsg(msg, msgFQN, []int32{4, int32(i)}, sci, check)
-			line, col := findLocationByPath([]int32{4, int32(i), 1}, sci)
-			check(msgFQN, msg.GetName(), pkg, line, col, "")
+			check(msgFQN, msg.GetName(), pkg, []int32{4, int32(i), 1}, "")
 		}
 
 		for i, enum := range fd.GetEnumType() {
@@ -3803,11 +3809,9 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 				if pkg != "" {
 					valFQN = pkg + "." + valFQN
 				}
-				vl, vc := findLocationByPath([]int32{5, int32(i), 2, int32(j), 1}, sci)
-				check(valFQN, val.GetName(), pkg, vl, vc, enum.GetName())
+				check(valFQN, val.GetName(), pkg, []int32{5, int32(i), 2, int32(j), 1}, enum.GetName())
 			}
-			line, col := findLocationByPath([]int32{5, int32(i), 1}, sci)
-			check(enumFQN, enum.GetName(), pkg, line, col, "")
+			check(enumFQN, enum.GetName(), pkg, []int32{5, int32(i), 1}, "")
 		}
 
 		for i, svc := range fd.GetService() {
@@ -3817,11 +3821,9 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 			}
 			for j, method := range svc.GetMethod() {
 				mFQN := svcFQN + "." + method.GetName()
-				ml, mc := findLocationByPath([]int32{6, int32(i), 2, int32(j), 1}, sci)
-				check(mFQN, method.GetName(), svcFQN, ml, mc, "")
+				check(mFQN, method.GetName(), svcFQN, []int32{6, int32(i), 2, int32(j), 1}, "")
 			}
-			line, col := findLocationByPath([]int32{6, int32(i), 1}, sci)
-			check(svcFQN, svc.GetName(), pkg, line, col, "")
+			check(svcFQN, svc.GetName(), pkg, []int32{6, int32(i), 1}, "")
 		}
 
 		for i, ext := range fd.GetExtension() {
@@ -3829,31 +3831,29 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 			if pkg != "" {
 				extFQN = pkg + "." + extFQN
 			}
-			line, col := findLocationByPath([]int32{7, int32(i), 1}, sci)
-			check(extFQN, ext.GetName(), pkg, line, col, "")
+			check(extFQN, ext.GetName(), pkg, []int32{7, int32(i), 1}, "")
 		}
 	}
 	return errs
 }
 
-func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, check func(fqn, shortName, scope string, line, col int, enumName string)) {
+func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, check func(fqn, shortName, scope string, path []int32, enumName string)) {
 	// C++ protoc BuildMessage order: oneofs, fields, enums, nested_types, then AddSymbol for self.
 	for _, oneof := range msg.GetOneofDecl() {
 		oFQN := msgFQN + "." + oneof.GetName()
 		// C++ protoc omits line:col for duplicate oneof names
-		check(oFQN, oneof.GetName(), msgFQN, 0, 0, "")
+		check(oFQN, oneof.GetName(), msgFQN, nil, "")
 	}
 	base := len(msgPath)
-	// findLocationByPath only reads its argument, so we can build paths into a
-	// scratch buffer (reset to msgPath each iteration) rather than allocating a
-	// fresh slice per field/extension/enum value.
+	// check only consults the path when it detects a duplicate, and it does so
+	// synchronously, so we can build paths into a scratch buffer (reset to
+	// msgPath each iteration) rather than allocating a fresh slice per symbol.
 	if fields := msg.GetField(); len(fields) > 0 {
 		scratch := make([]int32, base, base+3)
 		copy(scratch, msgPath)
 		for i, field := range fields {
 			fqn := msgFQN + "." + field.GetName()
-			l, c := findLocationByPath(append(scratch, 2, int32(i), 1), sci)
-			check(fqn, field.GetName(), msgFQN, l, c, "")
+			check(fqn, field.GetName(), msgFQN, append(scratch, 2, int32(i), 1), "")
 		}
 	}
 	if exts := msg.GetExtension(); len(exts) > 0 {
@@ -3861,8 +3861,7 @@ func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgP
 		copy(scratch, msgPath)
 		for i, ext := range exts {
 			eFQN := msgFQN + "." + ext.GetName()
-			l, c := findLocationByPath(append(scratch, 6, int32(i), 1), sci)
-			check(eFQN, ext.GetName(), msgFQN, l, c, "")
+			check(eFQN, ext.GetName(), msgFQN, append(scratch, 6, int32(i), 1), "")
 		}
 	}
 	for i, enum := range msg.GetEnumType() {
@@ -3871,18 +3870,15 @@ func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgP
 		copy(scratch, msgPath)
 		for j, val := range enum.GetValue() {
 			vFQN := msgFQN + "." + val.GetName()
-			vl, vc := findLocationByPath(append(scratch, 4, int32(i), 2, int32(j), 1), sci)
-			check(vFQN, val.GetName(), msgFQN, vl, vc, enum.GetName())
+			check(vFQN, val.GetName(), msgFQN, append(scratch, 4, int32(i), 2, int32(j), 1), enum.GetName())
 		}
-		l, c := findLocationByPath(append(scratch, 4, int32(i), 1), sci)
-		check(eFQN, enum.GetName(), msgFQN, l, c, "")
+		check(eFQN, enum.GetName(), msgFQN, append(scratch, 4, int32(i), 1), "")
 	}
 	for i, nested := range msg.GetNestedType() {
 		nFQN := msgFQN + "." + nested.GetName()
 		np := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectDupNamesInMsg(nested, nFQN, np, sci, check)
-		l, c := findLocationByPath(append(append([]int32{}, np...), 1), sci)
-		check(nFQN, nested.GetName(), msgFQN, l, c, "")
+		check(nFQN, nested.GetName(), msgFQN, append(append([]int32{}, np...), 1), "")
 	}
 }
 
