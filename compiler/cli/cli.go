@@ -4616,11 +4616,25 @@ type locationIndex struct {
 func buildLocationIndex(sci *descriptorpb.SourceCodeInfo) locationIndex {
 	locs := sci.GetLocation()
 	idx := locationIndex{m: make(map[string][2]int32, len(locs))}
+
+	// Back all map keys with a single byte buffer. Each key is a string header
+	// pointing into buf (via unsafe.String), so we pay one allocation for buf
+	// instead of one string allocation per location. buf is pre-sized to its
+	// final length so append never reallocates and invalidates earlier keys.
+	total := 0
+	for _, loc := range locs {
+		total += len(loc.GetPath()) * 4
+	}
+	buf := make([]byte, 0, total)
+
 	for _, loc := range locs {
 		path := loc.GetPath()
 		span := loc.GetSpan()
 		if len(span) >= 2 && len(path) > 0 {
-			key := locationPathKey(path)
+			start := len(buf)
+			b := unsafe.Slice((*byte)(unsafe.Pointer(&path[0])), len(path)*4)
+			buf = append(buf, b...)
+			key := unsafe.String(&buf[start], len(b))
 			idx.m[key] = [2]int32{span[0] + 1, span[1] + 1}
 		}
 	}
@@ -4636,14 +4650,6 @@ func (idx locationIndex) lookup(target []int32) (int, int) {
 		return int(pos[0]), int(pos[1])
 	}
 	return 0, 0
-}
-
-func locationPathKey(path []int32) string {
-	if len(path) == 0 {
-		return ""
-	}
-	b := unsafe.Slice((*byte)(unsafe.Pointer(&path[0])), len(path)*4)
-	return string(b)
 }
 
 // locationCache maps SourceCodeInfo pointers to pre-built indexes.
