@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-MODEL="claude-opus-4.6"
+MODEL="claude-opus-4.8"
 PROMPT_FILE="RALPH.md"
 NELSON_FILE="NELSON.md"
 STATUS_FILE="status.txt"
