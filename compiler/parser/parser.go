@@ -61,6 +61,8 @@ func isBareHexPrefix(s string) bool {
 type parser struct {
 	tok       *tokenizer.Tokenizer
 	locations []*descriptorpb.SourceCodeInfo_Location
+	locArena  locArena
+	i32Arena  i32Arena
 	lastLine  int
 	lastCol   int
 	syntax              string // "proto2" or "proto3"
@@ -259,7 +261,21 @@ type ParseResult struct {
 
 // ParseFile parses a .proto file and returns a ParseResult.
 func ParseFile(filename string, content string) (*ParseResult, error) {
-	p := &parser{tok: tokenizer.New(content), filename: filename, syntax: "proto2", seenFileOptions: map[string]bool{}, seenImports: map[string]bool{}, explicitJsonNames: map[*descriptorpb.FieldDescriptorProto]bool{}}
+	tok := tokenizer.New(content)
+	// Pre-allocate locations based on token count (~1 location per 3 tokens)
+	estLocs := tok.Len() / 3
+	if estLocs < 64 {
+		estLocs = 64
+	}
+	p := &parser{
+		tok:               tok,
+		filename:          filename,
+		syntax:            "proto2",
+		seenFileOptions:   map[string]bool{},
+		seenImports:       map[string]bool{},
+		explicitJsonNames: map[*descriptorpb.FieldDescriptorProto]bool{},
+		locations:         make([]*descriptorpb.SourceCodeInfo_Location, 0, estLocs),
+	}
 
 	// If the tokenizer has errors, we still parse to collect parser errors too
 	// (C++ protoc interleaves tokenizer and parser errors)
@@ -433,7 +449,7 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 	}
 
 	// Update file-level span using first token start and last real token end
-	p.locations[fileLocIdx].Span = multiSpan(fileStartLine, fileStartCol, p.lastLine, p.lastCol)
+	p.locations[fileLocIdx].Span = p.multiSpan(fileStartLine, fileStartCol, p.lastLine, p.lastCol)
 
 	fd.SourceCodeInfo = &descriptorpb.SourceCodeInfo{
 		Location: p.locations,
@@ -844,7 +860,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 	p.trackEnd(endTok)
 
 	// Update message declaration span
-	p.locations[msgLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.locations[msgLocIdx].Span = p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 
 	// Fix extension range max when message_set_wire_format is set but extensions
 	// were parsed before the option (C++ protoc resolves max post-hoc).
@@ -1462,7 +1478,7 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 		// to match C++ ordering: field, extendee, label, type, name, number
 		extendeeLoc := &descriptorpb.SourceCodeInfo_Location{
 			Path: append(copyPath(fieldPath), 2),
-			Span: multiSpan(extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol),
+			Span: p.multiSpan(extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol),
 		}
 		insertIdx := locCountBefore + 1
 		p.locations = append(p.locations, nil)
@@ -1476,7 +1492,7 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 	p.trackEnd(endTok)
 
 	// Update extend block span
-	p.locations[blockLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.locations[blockLocIdx].Span = p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 
 	return nil
 }
@@ -1596,7 +1612,7 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 	p.trackEnd(endTok)
 
 	// Update field and nested type spans
-	groupSpan := multiSpan(labelTok.Line, labelTok.Column, endTok.Line, endTok.Column+1)
+	groupSpan := p.multiSpan(labelTok.Line, labelTok.Column, endTok.Line, endTok.Column+1)
 	p.locations[fieldLocIdx].Span = groupSpan
 	p.locations[nestedLocIdx].Span = groupSpan
 
@@ -1693,7 +1709,7 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 		// Insert extendee source code info right after field declaration span
 		extendeeLoc := &descriptorpb.SourceCodeInfo_Location{
 			Path: append(copyPath(fieldPath), 2),
-			Span: multiSpan(extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol),
+			Span: p.multiSpan(extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol),
 		}
 		insertIdx := locCountBefore + 1
 		p.locations = append(p.locations, nil)
@@ -1708,7 +1724,7 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 	p.trackEnd(endTok)
 
 	// Update extend block span
-	p.locations[blockLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.locations[blockLocIdx].Span = p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 
 	return nil
 }
@@ -1816,7 +1832,7 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 
 		// SCI: [msgPath..., 7] for options statement, [msgPath..., 7, 0, ...] placeholder
 		optPath := append(copyPath(msgPath), 7)
-		span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
 			Span: span,
@@ -1967,7 +1983,7 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 			}
 			// SCI: [msgPath..., 7] for options statement, [msgPath..., 7, 12, featFieldNum] for specific feature
 			optPath := append(copyPath(msgPath), 7)
-			span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+			span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 				Path: optPath,
 				Span: span,
@@ -1984,7 +2000,7 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 
 	// Source code info: [msgPath..., 7] for options, [msgPath..., 7, fieldNum] for specific option
 	optPath := append(copyPath(msgPath), 7)
-	span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 		Path: optPath,
 		Span: span,
@@ -2259,7 +2275,7 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	p.trackEnd(endTok)
 
 	// Update field and nested type spans
-	groupSpan := multiSpan(groupTok.Line, groupTok.Column, endTok.Line, endTok.Column+1)
+	groupSpan := p.multiSpan(groupTok.Line, groupTok.Column, endTok.Line, endTok.Column+1)
 	p.locations[fieldLocIdx].Span = groupSpan
 	p.locations[nestedLocIdx].Span = groupSpan
 
@@ -2374,7 +2390,7 @@ func (p *parser) parseGroupFieldNoLabelInExtend(fieldPath, nestedPath []int32, e
 	p.trackEnd(endTok)
 
 	// Update field and nested type spans
-	groupSpan := multiSpan(groupTok.Line, groupTok.Column, endTok.Line, endTok.Column+1)
+	groupSpan := p.multiSpan(groupTok.Line, groupTok.Column, endTok.Line, endTok.Column+1)
 	p.locations[fieldLocIdx].Span = groupSpan
 	p.locations[nestedLocIdx].Span = groupSpan
 
@@ -2649,7 +2665,7 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 	p.trackEnd(endTok)
 
 	// Update field and nested type spans
-	groupSpan := multiSpan(labelTok.Line, labelTok.Column, endTok.Line, endTok.Column+1)
+	groupSpan := p.multiSpan(labelTok.Line, labelTok.Column, endTok.Line, endTok.Column+1)
 	p.locations[fieldLocIdx].Span = groupSpan
 	p.locations[nestedLocIdx].Span = groupSpan
 
@@ -2846,7 +2862,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 
 					custOpt.SCILoc = &descriptorpb.SourceCodeInfo_Location{
 						Path: []int32{0}, // placeholder path, updated during SCI emission
-						Span: multiSpan(optNameTok.Line, optNameTok.Column, optEndLine, optEndCol),
+						Span: p.multiSpan(optNameTok.Line, optNameTok.Column, optEndLine, optEndCol),
 					}
 
 					pendingCustEnumValOpts = append(pendingCustEnumValOpts, custOpt)
@@ -3052,7 +3068,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		// Source code info for enum value
 		valuePath := append(copyPath(path), 2, valueIdx)
 		valueLocIdx := p.addLocationPlaceholder(valuePath)
-		p.locations[valueLocIdx].Span = multiSpan(valNameTok.Line, valNameTok.Column, endValTok.Line, endValTok.Column+1)
+		p.locations[valueLocIdx].Span = p.multiSpan(valNameTok.Line, valNameTok.Column, endValTok.Line, endValTok.Column+1)
 		p.attachComments(valueLocIdx, valFirstIdx)
 		// Value name - path [1]
 		p.addLocationSpan(append(copyPath(valuePath), 1),
@@ -3130,7 +3146,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 	}
 
 	// Update enum declaration span
-	p.locations[enumLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.locations[enumLocIdx].Span = p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 
 	p.attachComments(enumLocIdx, firstIdx)
 
@@ -3242,7 +3258,7 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 
 		// SCI: [enumPath..., 3] for options statement, [enumPath..., 3, 0] placeholder
 		optPath := append(copyPath(enumPath), 3)
-		span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
 			Span: span,
@@ -3384,7 +3400,7 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 			}
 			// SCI: [enumPath..., 3] for options statement, [enumPath..., 3, 7, featFieldNum] for specific feature
 			optPath := append(copyPath(enumPath), 3)
-			span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+			span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 				Path: optPath,
 				Span: span,
@@ -3401,7 +3417,7 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 
 	// Source code info: [enumPath..., 3] for options, [enumPath..., 3, fieldNum] for specific option
 	optPath := append(copyPath(enumPath), 3)
-	span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 		Path: optPath,
 		Span: span,
@@ -3648,7 +3664,7 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 	p.trackEnd(endTok)
 
 	// Update service declaration span
-	p.locations[svcLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.locations[svcLocIdx].Span = p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 
 	return svc, nil
 }
@@ -3753,7 +3769,7 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 		}
 
 		optPath := append(copyPath(svcPath), 3)
-		span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
 			Span: span,
@@ -3876,7 +3892,7 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 			}
 			optPath := append(copyPath(svcPath), 3)
-			span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+			span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 				Path: optPath,
 				Span: span,
@@ -3892,7 +3908,7 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 	}
 
 	optPath := append(copyPath(svcPath), 3)
-	span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 		Path: optPath,
 		Span: span,
@@ -4006,7 +4022,7 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 		}
 
 		optPath := append(copyPath(methodPath), 4)
-		span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
 			Span: span,
@@ -4145,7 +4161,7 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 			}
 			optPath := append(copyPath(methodPath), 4)
-			span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+			span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 				Path: optPath,
 				Span: span,
@@ -4161,7 +4177,7 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 	}
 
 	optPath := append(copyPath(methodPath), 4)
-	span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 		Path: optPath,
 		Span: span,
@@ -4322,7 +4338,7 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 	p.trackEnd(endTok)
 
 	// Update method declaration span
-	p.locations[methodLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.locations[methodLocIdx].Span = p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.attachComments(methodLocIdx, firstIdx)
 
 	return method, nil
@@ -4409,7 +4425,7 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32, ne
 	p.trackEnd(endTok)
 
 	// Update oneof declaration span
-	p.locations[oneofLocIdx].Span = multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	p.locations[oneofLocIdx].Span = p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.attachComments(oneofLocIdx, firstIdx)
 
 	return fields, nestedTypes, decl, nil
@@ -4515,7 +4531,7 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 
 		// SCI: [oneofPath..., 2] for options statement, [oneofPath..., 2, 0] placeholder
 		optPath := append(copyPath(oneofPath), 2)
-		span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
 			Span: span,
@@ -4619,7 +4635,7 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 		}
 		// SCI: [oneofPath..., 2] for options statement, [oneofPath..., 2, 1, featFieldNum] for specific feature
 		optPath := append(copyPath(oneofPath), 2)
-		span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
 			Span: span,
@@ -4877,7 +4893,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 			fd.Options = &descriptorpb.FileOptions{}
 		}
 
-		span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: []int32{8},
 			Span: span,
@@ -5155,7 +5171,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 			}
 			// SCI: [8] for option statement, [8, 50, featFieldNum] for specific feature
-			span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+			span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 				Path: []int32{8},
 				Span: span,
@@ -5171,7 +5187,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 	}
 
 	// Source code info: [8] for the option statement, [8, fieldNum] for the specific option
-	span := multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+	span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 		Path: []int32{8},
 		Span: span,
@@ -5635,7 +5651,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 	addLoc := func(path []int32, startLine, startCol, endLine, endCol int) {
 		optLocs = append(optLocs, &descriptorpb.SourceCodeInfo_Location{
 			Path: path,
-			Span: multiSpan(startLine, startCol, endLine, endCol),
+			Span: p.multiSpan(startLine, startCol, endLine, endCol),
 		})
 	}
 
@@ -5743,7 +5759,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			}
 			sciLoc := &descriptorpb.SourceCodeInfo_Location{
 				Path: sciPath,
-				Span: multiSpan(optNameTok.Line, optNameTok.Column, optEndLine, optEndCol),
+				Span: p.multiSpan(optNameTok.Line, optNameTok.Column, optEndLine, optEndCol),
 			}
 			optLocs = append(optLocs, sciLoc)
 			custOpt.SCILoc = sciLoc
@@ -6254,7 +6270,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 	// Options container span [fieldPath..., 8]
 	containerLoc := &descriptorpb.SourceCodeInfo_Location{
 		Path: append(copyPath(fieldPath), 8),
-		Span: multiSpan(bracketTok.Line, bracketTok.Column, closeTok.Line, closeTok.Column+1),
+		Span: p.multiSpan(bracketTok.Line, bracketTok.Column, closeTok.Line, closeTok.Column+1),
 	}
 	result = append(result, containerLoc)
 
@@ -6591,23 +6607,69 @@ func (p *parser) addLocationPlaceholder(path []int32) int {
 }
 
 func (p *parser) addLocationSpan(path []int32, startLine, startCol, endLine, endCol int) {
-	pathCopy := make([]int32, len(path))
-	copy(pathCopy, path)
-	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
-		Path: pathCopy,
-		Span: multiSpan(startLine, startCol, endLine, endCol),
-	})
+	loc := p.locArena.alloc()
+	loc.Path = p.i32Arena.copyOf(path)
+	loc.Span = p.multiSpan(startLine, startCol, endLine, endCol)
+	p.locations = append(p.locations, loc)
 }
 
 func (p *parser) addLocationSpanReturn(path []int32, startLine, startCol, endLine, endCol int) *descriptorpb.SourceCodeInfo_Location {
-	pathCopy := make([]int32, len(path))
-	copy(pathCopy, path)
-	loc := &descriptorpb.SourceCodeInfo_Location{
-		Path: pathCopy,
-		Span: multiSpan(startLine, startCol, endLine, endCol),
-	}
+	loc := p.locArena.alloc()
+	loc.Path = p.i32Arena.copyOf(path)
+	loc.Span = p.multiSpan(startLine, startCol, endLine, endCol)
 	p.locations = append(p.locations, loc)
 	return loc
+}
+
+// locArena hands out *SourceCodeInfo_Location values from fixed-size blocks so
+// that the millions of locations produced for large files cost one allocation
+// per block rather than one per location. Pointers remain valid because blocks
+// are never grown or moved once allocated.
+type locArena struct {
+	cur []descriptorpb.SourceCodeInfo_Location
+	idx int
+}
+
+const locBlockSize = 1024
+
+func (a *locArena) alloc() *descriptorpb.SourceCodeInfo_Location {
+	if a.idx >= len(a.cur) {
+		a.cur = make([]descriptorpb.SourceCodeInfo_Location, locBlockSize)
+		a.idx = 0
+	}
+	l := &a.cur[a.idx]
+	a.idx++
+	return l
+}
+
+// i32Arena sub-allocates small []int32 slices (paths and spans) from shared
+// backing blocks. Returned slices have cap == len so callers appending to them
+// would not corrupt neighbours.
+type i32Arena struct {
+	cur []int32
+	idx int
+}
+
+const i32BlockSize = 8192
+
+func (a *i32Arena) get(n int) []int32 {
+	if a.idx+n > len(a.cur) {
+		size := i32BlockSize
+		if n > size {
+			size = n
+		}
+		a.cur = make([]int32, size)
+		a.idx = 0
+	}
+	s := a.cur[a.idx : a.idx+n : a.idx+n]
+	a.idx += n
+	return s
+}
+
+func (a *i32Arena) copyOf(src []int32) []int32 {
+	s := a.get(len(src))
+	copy(s, src)
+	return s
 }
 
 // attachComments attaches leading/trailing/detached comments to a location.
@@ -6653,11 +6715,15 @@ func (p *parser) trackEnd(tok tokenizer.Token) {
 	}
 }
 
-func multiSpan(startLine, startCol, endLine, endCol int) []int32 {
+func (p *parser) multiSpan(startLine, startCol, endLine, endCol int) []int32 {
 	if startLine == endLine {
-		return []int32{int32(startLine), int32(startCol), int32(endCol)}
+		s := p.i32Arena.get(3)
+		s[0], s[1], s[2] = int32(startLine), int32(startCol), int32(endCol)
+		return s
 	}
-	return []int32{int32(startLine), int32(startCol), int32(endLine), int32(endCol)}
+	s := p.i32Arena.get(4)
+	s[0], s[1], s[2], s[3] = int32(startLine), int32(startCol), int32(endLine), int32(endCol)
+	return s
 }
 
 func copyPath(path []int32) []int32 {

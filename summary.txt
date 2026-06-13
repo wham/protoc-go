@@ -1,6 +1,6 @@
 files_to_generate: [basic.proto]
 parameter: ""
-compiler_version: major:6 minor:33 patch:4 suffix:""
+compiler_version: major:6  minor:33  patch:4  suffix:""
 proto_file_count: 1
 source_file_descriptor_count: 1
 

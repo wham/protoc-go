@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/wham/protoc-go/compiler/importer"
 	"github.com/wham/protoc-go/compiler/parser"
@@ -429,6 +430,9 @@ func expandResponseFiles(args []string) ([]string, error) {
 }
 
 func Run(args []string) error {
+	resetLocationCache()
+	defer clearLocationCache()
+
 	expandedArgs, err := expandResponseFiles(args[1:])
 	if err != nil {
 		return err
@@ -3734,8 +3738,15 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 		pkg := fd.GetPackage()
 		sci := fd.GetSourceCodeInfo()
 
-		check := func(fqn, shortName, scope string, line, col int, enumName string) {
+		check := func(fqn, shortName, scope string, path []int32, enumName string) {
 			if firstFile, exists := seen[fqn]; exists {
+				// Location is only needed to format the error, so compute it
+				// lazily here rather than for every symbol. A nil path means
+				// the location is intentionally omitted (e.g. oneof names).
+				line, col := 0, 0
+				if path != nil {
+					line, col = findLocationByPath(path, sci)
+				}
 				var errMsg string
 				if firstFile != fd.GetName() {
 					// Cross-file duplicate: use FQN and "in file" format
@@ -3785,8 +3796,7 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 				msgFQN = pkg + "." + msgFQN
 			}
 			collectDupNamesInMsg(msg, msgFQN, []int32{4, int32(i)}, sci, check)
-			line, col := findLocationByPath([]int32{4, int32(i), 1}, sci)
-			check(msgFQN, msg.GetName(), pkg, line, col, "")
+			check(msgFQN, msg.GetName(), pkg, []int32{4, int32(i), 1}, "")
 		}
 
 		for i, enum := range fd.GetEnumType() {
@@ -3799,11 +3809,9 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 				if pkg != "" {
 					valFQN = pkg + "." + valFQN
 				}
-				vl, vc := findLocationByPath([]int32{5, int32(i), 2, int32(j), 1}, sci)
-				check(valFQN, val.GetName(), pkg, vl, vc, enum.GetName())
+				check(valFQN, val.GetName(), pkg, []int32{5, int32(i), 2, int32(j), 1}, enum.GetName())
 			}
-			line, col := findLocationByPath([]int32{5, int32(i), 1}, sci)
-			check(enumFQN, enum.GetName(), pkg, line, col, "")
+			check(enumFQN, enum.GetName(), pkg, []int32{5, int32(i), 1}, "")
 		}
 
 		for i, svc := range fd.GetService() {
@@ -3813,11 +3821,9 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 			}
 			for j, method := range svc.GetMethod() {
 				mFQN := svcFQN + "." + method.GetName()
-				ml, mc := findLocationByPath([]int32{6, int32(i), 2, int32(j), 1}, sci)
-				check(mFQN, method.GetName(), svcFQN, ml, mc, "")
+				check(mFQN, method.GetName(), svcFQN, []int32{6, int32(i), 2, int32(j), 1}, "")
 			}
-			line, col := findLocationByPath([]int32{6, int32(i), 1}, sci)
-			check(svcFQN, svc.GetName(), pkg, line, col, "")
+			check(svcFQN, svc.GetName(), pkg, []int32{6, int32(i), 1}, "")
 		}
 
 		for i, ext := range fd.GetExtension() {
@@ -3825,48 +3831,54 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 			if pkg != "" {
 				extFQN = pkg + "." + extFQN
 			}
-			line, col := findLocationByPath([]int32{7, int32(i), 1}, sci)
-			check(extFQN, ext.GetName(), pkg, line, col, "")
+			check(extFQN, ext.GetName(), pkg, []int32{7, int32(i), 1}, "")
 		}
 	}
 	return errs
 }
 
-func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, check func(fqn, shortName, scope string, line, col int, enumName string)) {
+func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, check func(fqn, shortName, scope string, path []int32, enumName string)) {
 	// C++ protoc BuildMessage order: oneofs, fields, enums, nested_types, then AddSymbol for self.
 	for _, oneof := range msg.GetOneofDecl() {
 		oFQN := msgFQN + "." + oneof.GetName()
 		// C++ protoc omits line:col for duplicate oneof names
-		check(oFQN, oneof.GetName(), msgFQN, 0, 0, "")
+		check(oFQN, oneof.GetName(), msgFQN, nil, "")
 	}
-	for i, field := range msg.GetField() {
-		fqn := msgFQN + "." + field.GetName()
-		p := append(append([]int32{}, msgPath...), 2, int32(i), 1)
-		l, c := findLocationByPath(p, sci)
-		check(fqn, field.GetName(), msgFQN, l, c, "")
+	base := len(msgPath)
+	// check only consults the path when it detects a duplicate, and it does so
+	// synchronously, so we can build paths into a scratch buffer (reset to
+	// msgPath each iteration) rather than allocating a fresh slice per symbol.
+	if fields := msg.GetField(); len(fields) > 0 {
+		scratch := make([]int32, base, base+3)
+		copy(scratch, msgPath)
+		for i, field := range fields {
+			fqn := msgFQN + "." + field.GetName()
+			check(fqn, field.GetName(), msgFQN, append(scratch, 2, int32(i), 1), "")
+		}
 	}
-	for i, ext := range msg.GetExtension() {
-		eFQN := msgFQN + "." + ext.GetName()
-		p := append(append([]int32{}, msgPath...), 6, int32(i), 1)
-		l, c := findLocationByPath(p, sci)
-		check(eFQN, ext.GetName(), msgFQN, l, c, "")
+	if exts := msg.GetExtension(); len(exts) > 0 {
+		scratch := make([]int32, base, base+3)
+		copy(scratch, msgPath)
+		for i, ext := range exts {
+			eFQN := msgFQN + "." + ext.GetName()
+			check(eFQN, ext.GetName(), msgFQN, append(scratch, 6, int32(i), 1), "")
+		}
 	}
 	for i, enum := range msg.GetEnumType() {
 		eFQN := msgFQN + "." + enum.GetName()
+		scratch := make([]int32, base, base+5)
+		copy(scratch, msgPath)
 		for j, val := range enum.GetValue() {
 			vFQN := msgFQN + "." + val.GetName()
-			vl, vc := findLocationByPath(append(append([]int32{}, msgPath...), 4, int32(i), 2, int32(j), 1), sci)
-			check(vFQN, val.GetName(), msgFQN, vl, vc, enum.GetName())
+			check(vFQN, val.GetName(), msgFQN, append(scratch, 4, int32(i), 2, int32(j), 1), enum.GetName())
 		}
-		l, c := findLocationByPath(append(append([]int32{}, msgPath...), 4, int32(i), 1), sci)
-		check(eFQN, enum.GetName(), msgFQN, l, c, "")
+		check(eFQN, enum.GetName(), msgFQN, append(scratch, 4, int32(i), 1), "")
 	}
 	for i, nested := range msg.GetNestedType() {
 		nFQN := msgFQN + "." + nested.GetName()
 		np := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectDupNamesInMsg(nested, nFQN, np, sci, check)
-		l, c := findLocationByPath(append(append([]int32{}, np...), 1), sci)
-		check(nFQN, nested.GetName(), msgFQN, l, c, "")
+		check(nFQN, nested.GetName(), msgFQN, append(append([]int32{}, np...), 1), "")
 	}
 }
 
@@ -4279,7 +4291,7 @@ func validateExtensionJsonName(orderedFiles []string, parsed map[string]*descrip
 		for i, ext := range fd.GetExtension() {
 			if explicitJsonNames[ext] {
 				path := []int32{7, int32(i), 10}
-				line, col := findLocationByPath(path, sci)
+				line, col := findFirstLocationByPath(path, sci)
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: option json_name is not allowed on extension fields.",
 					fd.GetName(), line, col))
 			}
@@ -4296,7 +4308,7 @@ func collectExtensionJsonNameErrors(filename string, msg *descriptorpb.Descripto
 	for i, ext := range msg.GetExtension() {
 		if explicitJsonNames[ext] {
 			path := append(append([]int32{}, msgPath...), 6, int32(i), 10)
-			line, col := findLocationByPath(path, sci)
+			line, col := findFirstLocationByPath(path, sci)
 			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: option json_name is not allowed on extension fields.",
 				filename, line, col))
 		}
@@ -4604,7 +4616,107 @@ func clonePath(p []int32) []int32 {
 	return c
 }
 
+// locationIndex maps source-code-info paths to (line, col) for O(1) lookup.
+type locationIndex struct {
+	m map[string][2]int32
+}
+
+func buildLocationIndex(sci *descriptorpb.SourceCodeInfo) locationIndex {
+	locs := sci.GetLocation()
+	idx := locationIndex{m: make(map[string][2]int32, len(locs))}
+
+	// Back all map keys with a single byte buffer. Each key is a string header
+	// pointing into buf (via unsafe.String), so we pay one allocation for buf
+	// instead of one string allocation per location. buf is pre-sized to its
+	// final length so append never reallocates and invalidates earlier keys.
+	total := 0
+	for _, loc := range locs {
+		total += len(loc.GetPath()) * 4
+	}
+	buf := make([]byte, 0, total)
+
+	for _, loc := range locs {
+		path := loc.GetPath()
+		span := loc.GetSpan()
+		if len(span) >= 2 && len(path) > 0 {
+			start := len(buf)
+			b := unsafe.Slice((*byte)(unsafe.Pointer(&path[0])), len(path)*4)
+			buf = append(buf, b...)
+			key := unsafe.String(&buf[start], len(b))
+			idx.m[key] = [2]int32{span[0] + 1, span[1] + 1}
+		}
+	}
+	return idx
+}
+
+func (idx locationIndex) lookup(target []int32) (int, int) {
+	if len(target) == 0 {
+		return 0, 0
+	}
+	b := unsafe.Slice((*byte)(unsafe.Pointer(&target[0])), len(target)*4)
+	if pos, ok := idx.m[string(b)]; ok {
+		return int(pos[0]), int(pos[1])
+	}
+	return 0, 0
+}
+
+// locationCache maps SourceCodeInfo pointers to pre-built indexes.
+// Cleared at the start of each compilation via resetLocationCache.
+var locationCache map[*descriptorpb.SourceCodeInfo]locationIndex
+
+func resetLocationCache() {
+	locationCache = make(map[*descriptorpb.SourceCodeInfo]locationIndex)
+}
+
+func clearLocationCache() {
+	locationCache = nil
+}
+
+func getLocationIndex(sci *descriptorpb.SourceCodeInfo) locationIndex {
+	if idx, ok := locationCache[sci]; ok {
+		return idx
+	}
+	idx := buildLocationIndex(sci)
+	locationCache[sci] = idx
+	return idx
+}
+
 func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if sci == nil {
+		return 0, 0
+	}
+	if locationCache != nil {
+		return getLocationIndex(sci).lookup(target)
+	}
+	// Fallback: linear scan (used outside compilation context)
+	for _, loc := range sci.GetLocation() {
+		path := loc.GetPath()
+		if len(path) != len(target) {
+			continue
+		}
+		match := true
+		for i := range path {
+			if path[i] != target[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			span := loc.GetSpan()
+			if len(span) >= 2 {
+				return int(span[0]) + 1, int(span[1]) + 1
+			}
+		}
+	}
+	return 0, 0
+}
+
+// findFirstLocationByPath returns the span of the FIRST location matching the
+// path, unlike findLocationByPath which (via the cache) returns the last. This
+// matters for fields like json_name that record two locations for the same
+// path (option name keyword, then option value); C++ protoc's OPTION_NAME
+// legacy location corresponds to the first (keyword) entry.
+func findFirstLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, int) {
 	if sci == nil {
 		return 0, 0
 	}
@@ -5713,12 +5825,29 @@ type fileOptExtInfo struct {
 	pkg   string
 }
 
+// hasAnyCustomOpts reports whether any parsed file carries at least one custom
+// option of the kind selected by count. The resolveCustomXxxOptions passes build
+// several O(message-count) lookup maps before doing any work; when no file uses
+// that option kind there is nothing to resolve, so they can skip the map-building
+// entirely. This is a large win on schemas with many types but few/no options.
+func hasAnyCustomOpts(orderedFiles []string, parseResults map[string]*parser.ParseResult, count func(*parser.ParseResult) int) bool {
+	for _, name := range orderedFiles {
+		if pr := parseResults[name]; pr != nil && count(pr) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveCustomFileOptions resolves parenthesized custom file options against
 // extension definitions. It finds the matching extension field, encodes the
 // value, and sets it on the FileOptions proto as unknown (extension) fields.
 // It also returns a map from filename to the set of extension field numbers
 // that have sub-field options (needed to know which fields to merge in proto_file).
 func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomFileOptions) }) {
+		return nil, nil
+	}
 	// Build extension map: name → extension field for FileOptions extensions
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -6086,6 +6215,9 @@ func findFileOptionExtension(name string, currentPkg string, allExts []fileOptEx
 // resolveCustomFieldOptions resolves parenthesized custom options on fields
 // (e.g., [(my_ext) = "value"]) against extension definitions for FieldOptions.
 func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomFieldOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	// Build extension map for FieldOptions extensions
 	var allExts []fileOptExtInfo
@@ -6356,6 +6488,9 @@ func collectFieldOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN 
 // resolveCustomMessageOptions resolves parenthesized custom options on messages
 // (e.g., option (my_msg_label) = "primary";) against extension definitions for MessageOptions.
 func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomMessageOptions) }) {
+		return nil, nil
+	}
 	// Build extension map for MessageOptions extensions
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -6613,6 +6748,9 @@ func collectMessageOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQ
 // resolveCustomServiceOptions resolves parenthesized custom options on services
 // (e.g., option (service_label) = "primary";) against extensions of ServiceOptions.
 func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomServiceOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -6859,6 +6997,9 @@ func collectServiceOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQ
 // resolveCustomMethodOptions resolves parenthesized custom options on methods
 // (e.g., option (auth_role) = "admin";) against extensions of MethodOptions.
 func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomMethodOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -7105,6 +7246,9 @@ func collectMethodOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN
 // resolveCustomEnumOptions resolves parenthesized custom options on enums
 // (e.g., option (enum_label) = "status_tracker";) against extensions of EnumOptions.
 func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomEnumOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -7351,6 +7495,9 @@ func collectEnumOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN s
 // resolveCustomEnumValueOptions resolves parenthesized custom options on enum values
 // (e.g., HIGH = 1 [(display_name) = "High Priority"]) against extension definitions for EnumValueOptions.
 func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomEnumValueOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -7597,6 +7744,9 @@ func collectEnumValueOptionsExtensions(msg *descriptorpb.DescriptorProto, parent
 // resolveCustomOneofOptions resolves parenthesized custom options on oneofs
 // (e.g., option (oneof_label) = "primary";) against extensions of OneofOptions.
 func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomOneofOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -7843,6 +7993,9 @@ func collectOneofOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN 
 // resolveCustomExtRangeOptions resolves parenthesized custom options on extension ranges
 // (e.g., extensions 100 to 199 [(my_annotation) = "annotated"];) against extension definitions.
 func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomExtRangeOptions) }) {
+		return nil, nil
+	}
 	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {

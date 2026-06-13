@@ -226,6 +226,9 @@ type compileInput struct {
 // It always returns a non-nil *compileOutput (which may contain warnings
 // collected before the error point). On success error is nil.
 func compileInternal(in *compileInput) (*compileOutput, error) {
+	resetLocationCache()
+	defer clearLocationCache()
+
 	co := &compileOutput{
 		relFiles: in.relFiles,
 	}
@@ -539,14 +542,40 @@ func (co *compileOutput) buildDescriptorSetFiles(includeImports, retainOptions, 
 			}
 		}
 
-		fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
-		if !includeSourceInfo {
-			fdCopy.SourceCodeInfo = nil
+		// The result is only marshaled or read by callers (never mutated), so
+		// a deep clone is wasteful. When source info is retained we can use the
+		// file as-is; otherwise a shallow field-copy with SourceCodeInfo nilled
+		// is sufficient and avoids deep-copying every descriptor.
+		if includeSourceInfo {
+			result = append(result, fd)
+		} else {
+			result = append(result, shallowFileWithoutSourceInfo(fd))
 		}
-		result = append(result, fdCopy)
 	}
 
 	return result
+}
+
+// shallowFileWithoutSourceInfo returns a new FileDescriptorProto that shares all
+// nested descriptors with fd but has SourceCodeInfo cleared. It avoids the cost
+// of a deep proto.Clone; the returned value is only safe to read/marshal, not to
+// mutate, which matches how descriptor-set output is consumed.
+func shallowFileWithoutSourceInfo(fd *descriptorpb.FileDescriptorProto) *descriptorpb.FileDescriptorProto {
+	return &descriptorpb.FileDescriptorProto{
+		Name:             fd.Name,
+		Package:          fd.Package,
+		Dependency:       fd.Dependency,
+		PublicDependency: fd.PublicDependency,
+		WeakDependency:   fd.WeakDependency,
+		MessageType:      fd.MessageType,
+		EnumType:         fd.EnumType,
+		Service:          fd.Service,
+		Extension:        fd.Extension,
+		Options:          fd.Options,
+		SourceCodeInfo:   nil,
+		Syntax:           fd.Syntax,
+		Edition:          fd.Edition,
+	}
 }
 
 // ---------------------------------------------------------------------------

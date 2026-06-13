@@ -5,6 +5,7 @@ package plugin
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,7 +67,7 @@ func RunPlugin(pluginPath string, req *pluginpb.CodeGeneratorRequest) (*pluginpb
 	}
 	stdinPipe.Close()
 
-	respBytes, err := readAll(stdoutPipe)
+	respBytes, err := io.ReadAll(stdoutPipe)
 	if err != nil {
 		return nil, fmt.Errorf("reading plugin stdout: %w", err)
 	}
@@ -84,24 +85,6 @@ func RunPlugin(pluginPath string, req *pluginpb.CodeGeneratorRequest) (*pluginpb
 	}
 
 	return &resp, nil
-}
-
-func readAll(r interface{ Read([]byte) (int, error) }) ([]byte, error) {
-	var result []byte
-	buf := make([]byte, 4096)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			result = append(result, buf[:n]...)
-		}
-		if err != nil {
-			if err.Error() == "EOF" {
-				break
-			}
-			return result, err
-		}
-	}
-	return result, nil
 }
 
 // BuildCodeGeneratorRequest builds a CodeGeneratorRequest from parsed file descriptors.
