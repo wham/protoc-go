@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-MODEL="claude-opus-4.8"
+MODEL="claude-opus-4.6"
 PROMPT_FILE="RALPH.md"
 NELSON_FILE="NELSON.md"
 STATUS_FILE="status.txt"
@@ -21,11 +21,11 @@ fi
 for ((i=1; i<=MAX_LOOPS; i++)); do
     echo "=== Loop $i/$MAX_LOOPS ==="
 
-    # Check status.txt
+    # Check if status.txt contains "DONE"
     if [[ -f "$STATUS_FILE" ]]; then
         status=$(cat "$STATUS_FILE" | tr -d '\r\n' | tr -d '[:space:]')
         if [[ "$status" == "DONE" ]]; then
-            echo "Status is 'DONE'. Running NELSON.md benchmark audit..."
+            echo "Status is 'DONE'. Running NELSON.md task..."
 
             # Run NELSON.md task
             nelson_prompt=$(cat "$NELSON_FILE")
@@ -38,14 +38,10 @@ for ((i=1; i<=MAX_LOOPS; i++)); do
             if [[ -f "$STATUS_FILE" ]]; then
                 status=$(cat "$STATUS_FILE" | tr -d '\r\n' | tr -d '[:space:]')
                 if [[ "$status" == "DONE" ]]; then
-                    echo "Go is faster than C++ on all benchmarks. Verified by NELSON. Exiting."
+                    echo "Status is still 'DONE' after NELSON task. Exiting."
                     exit 0
-                elif [[ "$status" == "BROKEN" ]]; then
-                    echo "NELSON found correctness regression! Continuing with RALPH.md to fix..."
-                elif [[ "$status" == "SLOWER" ]]; then
-                    echo "NELSON found cases where Go is still slower. Continuing with RALPH.md..."
                 else
-                    echo "Status changed to '$status' after NELSON task. Continuing with RALPH.md..."
+                    echo "Status changed after NELSON task. Continuing with RALPH.md..."
                 fi
             else
                 echo "Status file removed after NELSON task. Continuing with RALPH.md..."
