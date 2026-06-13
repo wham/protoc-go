@@ -7,6 +7,13 @@ tools/protoc-bin/include/
 # Test results
 results/
 
+# Stray protoc-gen-dump artifacts written into testdata case subdirs
+# (e.g. testdata/<case>/<dump_opt>/). These belong in results/ and must
+# never be committed. Legit examples live directly in testdata/<case>/.
+testdata/*/*/request.json
+testdata/*/*/request.pb
+testdata/*/*/summary.txt
+
 # Performance harness: generated corpus + results
 testdata/bench/
 results-bench/
