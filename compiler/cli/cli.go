@@ -4291,7 +4291,7 @@ func validateExtensionJsonName(orderedFiles []string, parsed map[string]*descrip
 		for i, ext := range fd.GetExtension() {
 			if explicitJsonNames[ext] {
 				path := []int32{7, int32(i), 10}
-				line, col := findLocationByPath(path, sci)
+				line, col := findFirstLocationByPath(path, sci)
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: option json_name is not allowed on extension fields.",
 					fd.GetName(), line, col))
 			}
@@ -4308,7 +4308,7 @@ func collectExtensionJsonNameErrors(filename string, msg *descriptorpb.Descripto
 	for i, ext := range msg.GetExtension() {
 		if explicitJsonNames[ext] {
 			path := append(append([]int32{}, msgPath...), 6, int32(i), 10)
-			line, col := findLocationByPath(path, sci)
+			line, col := findFirstLocationByPath(path, sci)
 			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: option json_name is not allowed on extension fields.",
 				filename, line, col))
 		}
@@ -4689,6 +4689,37 @@ func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, 
 		return getLocationIndex(sci).lookup(target)
 	}
 	// Fallback: linear scan (used outside compilation context)
+	for _, loc := range sci.GetLocation() {
+		path := loc.GetPath()
+		if len(path) != len(target) {
+			continue
+		}
+		match := true
+		for i := range path {
+			if path[i] != target[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			span := loc.GetSpan()
+			if len(span) >= 2 {
+				return int(span[0]) + 1, int(span[1]) + 1
+			}
+		}
+	}
+	return 0, 0
+}
+
+// findFirstLocationByPath returns the span of the FIRST location matching the
+// path, unlike findLocationByPath which (via the cache) returns the last. This
+// matters for fields like json_name that record two locations for the same
+// path (option name keyword, then option value); C++ protoc's OPTION_NAME
+// legacy location corresponds to the first (keyword) entry.
+func findFirstLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if sci == nil {
+		return 0, 0
+	}
 	for _, loc := range sci.GetLocation() {
 		path := loc.GetPath()
 		if len(path) != len(target) {
