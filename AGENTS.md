@@ -62,6 +62,41 @@ The test harness:
 5. Test names: `<case>@<profile>` (e.g., `01_basic_message@plugin`, `cli@no_args`)
 6. Reports pass/fail with diffs
 
+### Performance harness
+
+`scripts/bench` is the performance counterpart to `scripts/test`. It runs both
+compilers on a curated, size-scaled corpus — serial, warmed up, median-of-N —
+and reports per-case latency plus the Go/C++ ratio, separating compile
+throughput from process-startup cost.
+
+```bash
+scripts/bench                 # C++ protoc vs Go protoc-go, human table
+scripts/bench --summary       # table only; writes results-bench/bench.{json,md}
+```
+
+If `hyperfine` is installed it drives the timing for better statistics;
+otherwise a built-in median-of-N loop is used. C++ `protoc` is optional — when
+absent, only Go numbers are reported. For the in-process library core (no
+process-startup noise, plus `B/op` and `allocs/op`), use Go's native
+benchmarks:
+
+```bash
+go test ./protoc/ -run='^$' -bench=. -benchmem
+```
+
+The scaled corpus is generated on demand by `scripts/gen-large-stress <tier>`
+(`tiny`/`small`/`medium`/`large`/`xl`) into `testdata/bench/` (gitignored).
+
+## Automated Development Loop
+
+```bash
+./ralph.sh          # start the RALPH/NELSON adversarial loop
+```
+
+- **RALPH** (builder) fixes failing tests one at a time.
+- **NELSON** (adversarial tester) creates new tests to find bugs.
+- The loop continues until NELSON can't break it.
+
 ## Key Design Decisions
 
 - **Comparison surface**: We compare CodeGeneratorRequest payloads sent to plugins. If both compilers send identical requests, the port is correct.
