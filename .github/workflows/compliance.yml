@@ -1,0 +1,234 @@
+name: Compliance
+
+# Weekly proof that the Go compiler still matches the C++ one, published to the
+# README. Kept separate from tests.yml: that workflow gates merges, this one
+# publishes evidence and must never be able to make a PR look red.
+
+on:
+  schedule:
+    # Mondays, 06:17 UTC. Off the hour on purpose — scheduled runs at :00 queue
+    # behind everyone else's cron.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Commit the results to README.md"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: compliance
+  cancel-in-progress: false
+
+jobs:
+  # Verifies against the exact C++ release protoc-go claims to mirror, and
+  # publishes that result. The target is read from the binary itself
+  # (`protoc-go --version`) rather than pinned here, so there is one source of
+  # truth and CI cannot drift from what the compiler advertises.
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Resolve target protoc version
+        id: target
+        run: |
+          go build -o /tmp/protoc-go ./cmd/protoc-go/
+          version=$(/tmp/protoc-go --version | awk '{print $2}')
+          if [ -z "$version" ]; then
+            echo "could not read target version from protoc-go --version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "protoc-go targets C++ protoc $version"
+
+      - name: Install protoc ${{ steps.target.outputs.version }}
+        # Downloads go to /tmp: anything landing in the workspace would show up
+        # as an unexpected change in the commit guard below.
+        run: |
+          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${{ steps.target.outputs.version }}/protoc-${{ steps.target.outputs.version }}-linux-x86_64.zip" -o /tmp/protoc.zip
+          unzip -q /tmp/protoc.zip -d /tmp/protoc-install
+          echo "/tmp/protoc-install/bin" >> "$GITHUB_PATH"
+
+      - name: Install hyperfine
+        # Without it scripts/bench falls back to a ~1ms timer whose numbers
+        # cannot resolve the sub-30ms cases. Non-fatal: the harness marks the
+        # results unreliable and the renderer publishes them without verdicts.
+        continue-on-error: true
+        run: |
+          curl -fsSL "https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb" -o /tmp/hyperfine.deb
+          sudo dpkg -i /tmp/hyperfine.deb
+
+      - name: Correctness — Go protoc-go vs C++ protoc
+        run: scripts/test --summary --json results/summary.json
+
+      - name: Performance — Go protoc-go vs C++ protoc
+        # Perf is environment-sensitive and never blocks publishing; if this
+        # step fails there is simply no bench section in the README.
+        continue-on-error: true
+        run: scripts/bench --summary --sizes "tiny small medium large"
+
+      - name: Render README
+        run: |
+          scripts/render-readme \
+            --summary results/summary.json \
+            --bench results-bench/bench.json \
+            --badge docs/badge.json \
+            --history docs/history.jsonl
+
+      - name: Upload raw results
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-results
+          path: |
+            results/summary.json
+            results-bench/bench.json
+            results-bench/bench.md
+          retention-days: 90
+
+      - name: Commit results
+        if: github.event_name == 'schedule' || inputs.publish
+        run: |
+          # The renderer only rewrites the marked region and the docs/ outputs;
+          # a tracked file changing anywhere else means something went wrong,
+          # so bail out rather than committing it.
+          unexpected=$(git diff --name-only -- . ':!README.md' ':!docs/badge.json' ':!docs/history.jsonl')
+          if [ -n "$unexpected" ]; then
+            echo "unexpected changes, refusing to commit:" >&2
+            echo "$unexpected" >&2
+            exit 1
+          fi
+
+          if [ -z "$(git status --porcelain -- README.md docs/)" ]; then
+            echo "results unchanged, nothing to commit"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md docs/badge.json docs/history.jsonl
+          git commit -m "Published weekly compliance results [skip ci]"
+
+          for attempt in 1 2 3 4; do
+            git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            echo "push failed, retrying in $((2 ** attempt))s"
+            sleep $((2 ** attempt))
+          done
+          exit 1
+
+  # Watches for new upstream releases. This one is allowed to be red: it says
+  # how far protoc-go is from a protoc release it does not claim to support
+  # yet, which is a to-do list, not a compliance failure. Its results are
+  # never published to the README.
+  upstream-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Compare target against latest upstream release
+        id: check
+        run: |
+          go build -o /tmp/protoc-go ./cmd/protoc-go/
+          target=$(/tmp/protoc-go --version | awk '{print $2}')
+          latest=$(curl -fsSL \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://api.github.com/repos/protocolbuffers/protobuf/releases/latest \
+            | jq -r '.tag_name' | sed 's/^v//')
+
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          if [ "$target" = "$latest" ]; then
+            echo "drifted=false" >> "$GITHUB_OUTPUT"
+            echo "Up to date with protoc $latest"
+          else
+            echo "drifted=true" >> "$GITHUB_OUTPUT"
+            echo "protoc $latest is out; protoc-go targets $target"
+          fi
+
+      - name: Install protoc ${{ steps.check.outputs.latest }}
+        if: steps.check.outputs.drifted == 'true'
+        run: |
+          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${{ steps.check.outputs.latest }}/protoc-${{ steps.check.outputs.latest }}-linux-x86_64.zip" -o protoc.zip
+          unzip -q protoc.zip -d /tmp/protoc-install
+          echo "/tmp/protoc-install/bin" >> "$GITHUB_PATH"
+
+      - name: Measure the gap
+        id: gap
+        if: steps.check.outputs.drifted == 'true'
+        continue-on-error: true
+        run: scripts/test --summary --json results/drift.json
+
+      - name: Report the gap
+        if: steps.check.outputs.drifted == 'true'
+        uses: actions/github-script@v7
+        env:
+          TARGET: ${{ steps.check.outputs.target }}
+          LATEST: ${{ steps.check.outputs.latest }}
+        with:
+          script: |
+            const fs = require('fs');
+            const { TARGET, LATEST } = process.env;
+
+            let detail = 'The suite did not complete against the new release.';
+            try {
+              const s = JSON.parse(fs.readFileSync('results/drift.json', 'utf8'));
+              detail = `Against protoc ${LATEST}: **${s.pass}/${s.total}** comparisons still match` +
+                (s.fail ? `, ${s.fail} now differ.` : '.');
+              if (s.failing?.length) {
+                detail += `\n\n<details><summary>First differences</summary>\n\n` +
+                  s.failing.slice(0, 30).map(f => `- \`${f}\``).join('\n') +
+                  `\n\n</details>`;
+              }
+            } catch (e) {}
+
+            const title = `Upstream protoc ${LATEST} released (protoc-go targets ${TARGET})`;
+            const body = [
+              `C++ protoc \`${LATEST}\` is now the latest release; protoc-go targets \`${TARGET}\`.`,
+              ``,
+              detail,
+              ``,
+              `Bumping the target means updating the version string in \`compiler/cli/cli.go\`,`,
+              `closing any differences above, and cutting a release.`,
+              ``,
+              `---`,
+              `_Generated by [Claude Code](https://claude.ai/code)_`,
+            ].join('\n');
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'upstream-drift',
+            });
+
+            const match = existing.data.find(i => i.title === title);
+            if (match) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: match.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['upstream-drift'],
+              });
+            }

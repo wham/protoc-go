@@ -1,0 +1,238 @@
+#!/bin/bash
+# Renders the compliance block in README.md from harness output.
+#
+# The block between the BEGIN/END COMPLIANCE markers is machine-owned; every
+# other line of the README stays hand-written. Inputs are the machine-readable
+# outputs of the two harnesses -- never their human-readable text:
+#
+#   results/summary.json       scripts/test --json
+#   results-bench/bench.json   scripts/bench           (optional)
+#
+# Honesty rules baked in here, because a published number nobody can audit is
+# not proof:
+#   * A summary with status "error" (the run never produced a verdict) is
+#     REFUSED. It must not be rendered as a pass, and it must not quietly
+#     overwrite the previous block either -- the caller is expected to fail.
+#   * status "fail" renders normally, in red, listing what failed. The block
+#     has to be able to show bad news or it is worthless as evidence.
+#   * Every block carries the commit, both compiler versions, the runner, the
+#     UTC timestamp and a link to the run that produced it.
+#   * Performance verdicts are only shown when the bench run was timed by
+#     hyperfine (reliable=true). Otherwise the numbers are printed as
+#     informational, because the fallback timer cannot resolve them.
+#
+# Usage:
+#   scripts/render-readme                       # render into README.md
+#   scripts/render-readme --check               # exit 1 if README is stale
+#   scripts/render-readme --summary X --bench Y --readme Z
+#   scripts/render-readme --badge results/badge.json --history docs/history.jsonl
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+SUMMARY_JSON="$PROJECT_DIR/results/summary.json"
+BENCH_JSON="$PROJECT_DIR/results-bench/bench.json"
+README="$PROJECT_DIR/README.md"
+BADGE_JSON=""
+HISTORY_JSONL=""
+CHECK_ONLY=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --summary) SUMMARY_JSON="$2"; shift ;;
+    --bench)   BENCH_JSON="$2"; shift ;;
+    --readme)  README="$2"; shift ;;
+    --badge)   BADGE_JSON="$2"; shift ;;
+    --history) HISTORY_JSONL="$2"; shift ;;
+    --check)   CHECK_ONLY=true ;;
+    *) echo "error: unknown flag: $1" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
+
+BEGIN_MARK='<!-- BEGIN COMPLIANCE -->'
+END_MARK='<!-- END COMPLIANCE -->'
+
+# -- validate inputs ------------------------------------------------------
+
+if [ ! -f "$SUMMARY_JSON" ]; then
+  echo "error: $SUMMARY_JSON not found -- the test run produced no verdict" >&2
+  exit 1
+fi
+
+if ! jq -e . "$SUMMARY_JSON" >/dev/null 2>&1; then
+  echo "error: $SUMMARY_JSON is not valid JSON" >&2
+  exit 1
+fi
+
+STATUS=$(jq -r '.status' "$SUMMARY_JSON")
+if [ "$STATUS" = "error" ]; then
+  echo "error: summary status is \"error\" -- refusing to publish a run that" >&2
+  echo "       never produced a verdict. README left untouched." >&2
+  exit 1
+fi
+if [ "$STATUS" != "pass" ] && [ "$STATUS" != "fail" ]; then
+  echo "error: unexpected summary status: $STATUS" >&2
+  exit 1
+fi
+
+grep -qF "$BEGIN_MARK" "$README" || { echo "error: $BEGIN_MARK not found in $README" >&2; exit 1; }
+grep -qF "$END_MARK" "$README" || { echo "error: $END_MARK not found in $README" >&2; exit 1; }
+
+# -- build the block ------------------------------------------------------
+
+BLOCK=$(mktemp)
+trap 'rm -f "$BLOCK"' EXIT
+
+jq -r '
+  "**" + (.pass | tostring) + " / " + (.total | tostring) +
+    " comparisons produce byte-identical output to C++ protoc " + .protoc_version + "**" +
+    (if .status == "pass" then "" else " — **" + (.fail | tostring) + " failing**" end),
+  "",
+  "Last verified " + (.utc | sub("T.*"; "")) +
+    " · commit `" + (.commit[0:7]) + "`" +
+    " · Go " + (.go_version | sub("^go"; "")) + " on " + .runner +
+    (if .run_url == "" then "" else " · [run log](" + .run_url + ")" end),
+  ""
+' "$SUMMARY_JSON" >> "$BLOCK"
+
+# The version protoc-go advertises must track the C++ release it was verified
+# against; if it drifts, say so rather than hiding it.
+jq -r '
+  if .protoc_go_reports != .protoc_version and .protoc_go_reports != "" then
+    "> **Version drift:** `protoc-go --version` reports libprotoc " + .protoc_go_reports +
+    ", but this run was verified against C++ protoc " + .protoc_version + ".\n"
+  else empty end
+' "$SUMMARY_JSON" >> "$BLOCK"
+
+{
+  echo "| suite | comparisons | result |"
+  echo "| --- | ---: | --- |"
+} >> "$BLOCK"
+
+jq -r '
+  .by_group | to_entries | sort_by(.key)[] |
+  "| `" + .key + "` | " + (.value.total | tostring) + " | " +
+    (if .value.fail == 0 then "all match" else (.value.fail | tostring) + " failing" end) + " |"
+' "$SUMMARY_JSON" >> "$BLOCK"
+
+echo "" >> "$BLOCK"
+
+if [ "$STATUS" = "fail" ]; then
+  {
+    echo "<details><summary>Failing comparisons</summary>"
+    echo ""
+  } >> "$BLOCK"
+  jq -r '.failing[] | "- `" + . + "`"' "$SUMMARY_JSON" >> "$BLOCK"
+  jq -r 'if .failing_truncated > 0 then "\n…and " + (.failing_truncated | tostring) + " more." else empty end' \
+    "$SUMMARY_JSON" >> "$BLOCK"
+  {
+    echo ""
+    echo "</details>"
+    echo ""
+  } >> "$BLOCK"
+fi
+
+# -- performance ----------------------------------------------------------
+
+if [ -f "$BENCH_JSON" ] && jq -e 'length > 0' "$BENCH_JSON" >/dev/null 2>&1; then
+  RELIABLE=$(jq -r '[.[].reliable] | any' "$BENCH_JSON")
+
+  {
+    echo "<details><summary>Performance vs C++ protoc</summary>"
+    echo ""
+  } >> "$BLOCK"
+
+  if [ "$RELIABLE" != "true" ]; then
+    {
+      echo "> Timed with the built-in fallback timer (~1ms resolution), not hyperfine."
+      echo "> These numbers are informational; no winner is claimed."
+      echo ""
+    } >> "$BLOCK"
+  else
+    jq -r '
+      [.[] | select(.informational | not) | select(.verdict != "n/a")] as $rows |
+      ($rows | length) as $n |
+      if $n == 0 then empty else
+        "Across " + ($n | tostring) + " compile cases: Go faster on " +
+        (($rows | map(select(.verdict == "go")) | length) | tostring) + ", C++ faster on " +
+        (($rows | map(select(.verdict == "cpp")) | length) | tostring) + ", tie on " +
+        (($rows | map(select(.verdict == "tie")) | length) | tostring) +
+        ". A gap smaller than both the run-to-run noise and the tie margin counts as a tie, not a win.\n"
+      end
+    ' "$BENCH_JSON" >> "$BLOCK"
+  fi
+
+  {
+    echo "| case | variant | C++ ms | Go ms | go/cpp | verdict |"
+    echo "| --- | --- | ---: | ---: | ---: | --- |"
+  } >> "$BLOCK"
+
+  jq -r --arg reliable "$RELIABLE" '
+    .[] |
+    "| " + .case + " | " + .variant + " | " +
+    (if .cpp_ms == null then "n/a" else (.cpp_ms | tostring) + "±" + (.cpp_sd | tostring) end) + " | " +
+    ((.go_ms | tostring) + "±" + (.go_sd | tostring)) + " | " +
+    (if .ratio == null then "n/a" else (.ratio | tostring) end) + " | " +
+    (if .informational then "informational"
+     elif $reliable != "true" then "unreliable"
+     else .verdict end) + " |"
+  ' "$BENCH_JSON" >> "$BLOCK"
+
+  {
+    echo ""
+    echo "\`startup_empty\` is process launch cost, not compilation, and is excluded"
+    echo "from the tally. Timings come from the run above, on a shared machine —"
+    echo "read them as a trend, not a lab result."
+    echo ""
+    echo "</details>"
+  } >> "$BLOCK"
+fi
+
+# -- splice into the README ----------------------------------------------
+
+RENDERED=$(mktemp)
+trap 'rm -f "$BLOCK" "$RENDERED"' EXIT
+
+awk -v begin_mark="$BEGIN_MARK" -v end_mark="$END_MARK" -v block="$BLOCK" '
+  index($0, begin_mark) { print; while ((getline line < block) > 0) print line; skip = 1; next }
+  index($0, end_mark)   { skip = 0 }
+  !skip { print }
+' "$README" > "$RENDERED"
+
+if [ "$CHECK_ONLY" = true ]; then
+  if cmp -s "$README" "$RENDERED"; then
+    echo "README compliance block is up to date"
+    exit 0
+  fi
+  echo "error: README compliance block is stale; run scripts/render-readme" >&2
+  diff -u "$README" "$RENDERED" || true
+  exit 1
+fi
+
+cp "$RENDERED" "$README"
+echo "Rendered compliance block into $README"
+
+# -- badge + history ------------------------------------------------------
+
+if [ -n "$BADGE_JSON" ]; then
+  mkdir -p "$(dirname "$BADGE_JSON")"
+  jq '{
+    schemaVersion: 1,
+    label: ("protoc " + .protoc_version + " compliance"),
+    message: ((.pass | tostring) + "/" + (.total | tostring)),
+    color: (if .status == "pass" then "brightgreen" else "red" end)
+  }' "$SUMMARY_JSON" > "$BADGE_JSON"
+  echo "Wrote $BADGE_JSON"
+fi
+
+if [ -n "$HISTORY_JSONL" ]; then
+  mkdir -p "$(dirname "$HISTORY_JSONL")"
+  jq -c '{utc, commit, protoc_version, go_version, runner, status, total, pass, fail}' \
+    "$SUMMARY_JSON" >> "$HISTORY_JSONL"
+  echo "Appended to $HISTORY_JSONL"
+fi

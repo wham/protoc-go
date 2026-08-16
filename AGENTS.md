@@ -31,6 +31,7 @@ This is a port of the Protocol Buffers compiler (`protoc`) from C++ to Go. The G
 ├── scripts/
 │   ├── test                # Correctness harness — compares C++ protoc vs Go protoc-go
 │   ├── bench               # Performance harness — times C++ protoc vs Go protoc-go
+│   ├── render-readme       # Renders harness output into the README compliance block
 │   ├── gen-large-stress    # Generates scaled stress/bench corpus (tiers)
 │   └── find-protoc         # Locates system C++ protoc
 ├── RALPH.md                # Builder agent prompt (automated loop)
@@ -48,6 +49,9 @@ scripts/test
 # Summary only (no diff output)
 scripts/test --summary
 
+# Machine-readable summary (for publishing; requires jq)
+scripts/test --summary --json results/summary.json
+
 # Performance comparison (C++ protoc vs Go protoc-go) on a scaled corpus
 scripts/bench --summary
 # In-process library core (ns/op, B/op, allocs/op)
@@ -61,6 +65,11 @@ The test harness:
 4. Also runs CLI error tests (no args, missing files, bad flags)
 5. Test names: `<case>@<profile>` (e.g., `01_basic_message@plugin`, `cli@no_args`)
 6. Reports pass/fail with diffs
+
+A registered test that writes no verdict (usually a missing tool — `xxd` drives
+the `stdin@`/`decode@` suites) is reported as a `no_result` warning and is NOT
+counted as a pass. `--json` marks such a run `"error"` so it cannot be
+published: a suite that silently shrinks must never read as all-match.
 
 ### Performance harness
 
@@ -82,6 +91,36 @@ benchmarks:
 
 ```bash
 go test ./protoc/ -run='^$' -bench=. -benchmem
+```
+
+### Published compliance results
+
+`.github/workflows/compliance.yml` runs both harnesses weekly and publishes the
+result to the README, so the compliance claim on the home page is evidence
+rather than assertion. The chain is deliberately machine-readable end to end —
+nothing parses human output:
+
+```
+scripts/test --json  → results/summary.json  ┐
+scripts/bench        → results-bench/bench.json ┼→ scripts/render-readme → README block
+                                                │                        → docs/badge.json
+                                                └                        → docs/history.jsonl
+```
+
+`scripts/render-readme` rewrites only the region between the
+`<!-- BEGIN COMPLIANCE -->` / `<!-- END COMPLIANCE -->` markers; the rest of the
+README is hand-written and must stay that way. It refuses to render a summary
+whose status is `error`, renders `fail` honestly in red, and drops performance
+verdicts when the bench run was not timed by hyperfine.
+
+The C++ version to verify against is not pinned in the workflow — it is read
+from `protoc-go --version`, so the compiler itself declares its target and CI
+cannot drift from it. A second job compares that target against the newest
+upstream release and, when they differ, opens an `upstream-drift` issue
+reporting how many comparisons still match on the new release.
+
+```bash
+scripts/render-readme --check   # fail if the committed block is stale
 ```
 
 The scaled corpus is generated on demand by `scripts/gen-large-stress <tier>`
