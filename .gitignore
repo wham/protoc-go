@@ -14,6 +14,15 @@ testdata/*/*/request.json
 testdata/*/*/request.pb
 testdata/*/*/summary.txt
 
+# Same artifacts, written into the repo root by scripts/test. Their contents
+# shift whenever the binary is rebuilt (prototext varies its spacing on
+# purpose), so tracking them makes the compliance workflow's "unexpected
+# changes" guard fail at random.
+/request.json
+/request.pb
+/summary.txt
+/cpp_stderr.tmp
+
 # Performance harness: generated corpus + results
 testdata/bench/
 results-bench/
