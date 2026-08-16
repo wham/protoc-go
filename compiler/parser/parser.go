@@ -6314,11 +6314,18 @@ func (p *parser) parseMessageLiteralFieldOption(optName string, field *descripto
 
 	case "feature_support":
 		fs := &descriptorpb.FieldOptions_FeatureSupport{}
-		for p.tok.Peek().Value != "}" {
+		for p.tok.Peek().Value != "}" && p.tok.Peek().Type != tokenizer.TokenEOF {
 			keyTok := p.tok.Next()
 			key := keyTok.Value
 			p.tok.Next() // consume ":"
 			valTok := p.tok.Next()
+			// Adjacent string concatenation
+			if valTok.Type == tokenizer.TokenString {
+				for p.tok.Peek().Type == tokenizer.TokenString {
+					next := p.tok.Next()
+					valTok.Value += next.Value
+				}
+			}
 			switch key {
 			case "edition_introduced":
 				if v, ok := descriptorpb.Edition_value[valTok.Value]; ok {
@@ -6334,6 +6341,8 @@ func (p *parser) parseMessageLiteralFieldOption(optName string, field *descripto
 				if v, ok := descriptorpb.Edition_value[valTok.Value]; ok {
 					fs.EditionRemoved = descriptorpb.Edition(v).Enum()
 				}
+			case "removal_error":
+				fs.RemovalError = proto.String(valTok.Value)
 			}
 			// consume optional comma/semicolon
 			if p.tok.Peek().Value == "," || p.tok.Peek().Value == ";" {

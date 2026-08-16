@@ -48,6 +48,9 @@ Parse PROTO_FILES and generate output based on the options given:
                               deterministically ordered. Note that this order
                               is not canonical, and changes across builds or
                               releases of protoc.
+  --unsafe_allow_out_dir_escape
+                              Allow output files to use ".." to escape the
+                              output directory. Use with caution.
   --decode=MESSAGE_TYPE       Read a binary message of the given type from
                               standard input and write it in text format
                               to standard output.  The message type must
@@ -121,6 +124,7 @@ Parse PROTO_FILES and generate output based on the options given:
   --php_out=OUT_DIR           Generate PHP source file.
   --pyi_out=OUT_DIR           Generate python pyi stub.
   --python_out=OUT_DIR        Generate Python source file.
+  --rbs_out=OUT_DIR           Generate RBS type definition.
   --ruby_out=OUT_DIR          Generate Ruby source file.
   --rust_out=OUT_DIR          Generate Rust sources.
   @<filename>                 Read options and filenames from file. If a
@@ -1156,7 +1160,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--version" {
-			fmt.Println("libprotoc 33.4")
+			fmt.Println("libprotoc 35.1")
 			os.Exit(0)
 		}
 

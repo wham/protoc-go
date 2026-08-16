@@ -16,12 +16,11 @@ jobs:
         with:
           go-version: "1.23"
 
-      - name: Install protoc
-        run: |
-          PROTOC_VERSION=33.4
-          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip" -o protoc.zip
-          unzip -q protoc.zip -d /tmp/protoc-install
-          echo "/tmp/protoc-install/bin" >> "$GITHUB_PATH"
+      # The version is read from the binary (`protoc-go --version`) rather than
+      # pinned here, so bumping the target in one place cannot leave the gate
+      # comparing against the release protoc-go no longer claims to mirror.
+      - name: Install target protoc
+        run: .github/install-target-protoc.sh
 
       - name: Run tests
         run: scripts/test --summary
@@ -38,12 +37,8 @@ jobs:
         with:
           go-version: "1.23"
 
-      - name: Install protoc
-        run: |
-          PROTOC_VERSION=33.4
-          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip" -o protoc.zip
-          unzip -q protoc.zip -d /tmp/protoc-install
-          echo "/tmp/protoc-install/bin" >> "$GITHUB_PATH"
+      - name: Install target protoc
+        run: .github/install-target-protoc.sh
 
       - name: CLI benchmark (C++ protoc vs Go protoc-go)
         run: scripts/bench --summary --sizes "tiny small medium"

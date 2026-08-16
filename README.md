@@ -117,7 +117,7 @@ The two numbers answer different questions:
 - **The Go module version** (`v0.x.y`) describes this project's own API and
   fixes, and follows semver.
 
-So `protoc-go v0.4.0` may report `libprotoc 33.4`: our release, verified against
+So `protoc-go v0.4.0` may report `libprotoc 35.1`: our release, verified against
 that C++ release. We deliberately don't renumber the module to match upstream —
 protoc majors land roughly yearly, and following them would force a new import
 path (`/v33`, `/v34`, …) on everyone for releases containing none of our changes.
