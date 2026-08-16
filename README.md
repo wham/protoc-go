@@ -20,7 +20,7 @@ below are written by that run; nothing here is typed by hand.
 <!-- BEGIN COMPLIANCE -->
 **5497 / 5497 comparisons produce byte-identical output to C++ protoc 33.4**
 
-Last verified 2026-08-16 · commit `eaf7803` · Go 1.24.7 on linux-x86_64
+Last verified 2026-08-16 · commit `7e132a9` · Go 1.24.7 on ubuntu24 · [run log](https://github.com/wham/protoc-go/actions/runs/31973401049)
 
 | suite | comparisons | result |
 | --- | ---: | --- |
@@ -42,22 +42,24 @@ Last verified 2026-08-16 · commit `eaf7803` · Go 1.24.7 on linux-x86_64
 
 <details><summary>Performance vs C++ protoc</summary>
 
-Across 10 compile cases: Go faster on 2, C++ faster on 1, tie on 7. A gap smaller than both the run-to-run noise and the tie margin counts as a tie, not a win.
+Across 12 compile cases: Go faster on 6, C++ faster on 2, tie on 4. A gap smaller than both the run-to-run noise and the tie margin counts as a tie, not a win.
 
 | case | variant | C++ ms | Go ms | go/cpp | verdict |
 | --- | --- | ---: | ---: | ---: | --- |
-| startup_empty | descriptor | 8.00±0.63 | 9.00±0.70 | 1.12 | informational |
-| startup_empty | plugin | 11.00±0.53 | 12.00±0.48 | 1.09 | informational |
-| 01_basic_message | descriptor | 8.00±0.52 | 9.00±0.53 | 1.12 | tie |
-| 01_basic_message | plugin | 12.00±0.47 | 14.00±0.52 | 1.17 | cpp |
-| bench_tiny | descriptor | 10.00±0.95 | 11.00±3.20 | 1.10 | tie |
-| bench_tiny | plugin | 24.00±1.07 | 24.00±0.88 | 1.00 | tie |
-| bench_small | descriptor | 20.00±1.10 | 19.00±0.97 | 0.95 | tie |
-| bench_small | plugin | 250.00±17.71 | 228.00±16.50 | 0.91 | tie |
-| bench_medium | descriptor | 100.00±2.88 | 64.00±1.65 | 0.64 | go |
-| bench_medium | plugin | 3144.00±105.20 | 3112.00±93.64 | 0.99 | tie |
-| 329_large_stress | descriptor | 103.00±4.08 | 63.00±2.23 | 0.61 | go |
-| 329_large_stress | plugin | 3166.00±118.68 | 2983.00±127.44 | 0.94 | tie |
+| startup_empty | descriptor | 6.00±0.47 | 7.00±0.57 | 1.17 | informational |
+| startup_empty | plugin | 8.00±0.57 | 9.00±17.68 | 1.12 | informational |
+| 01_basic_message | descriptor | 6.00±0.42 | 7.00±0.32 | 1.17 | cpp |
+| 01_basic_message | plugin | 9.00±0.42 | 10.00±0.74 | 1.11 | tie |
+| bench_tiny | descriptor | 7.00±0.42 | 8.00±0.32 | 1.14 | cpp |
+| bench_tiny | plugin | 17.00±111.43 | 17.00±24.84 | 1.00 | tie |
+| bench_small | descriptor | 16.00±0.53 | 13.00±0.52 | 0.81 | go |
+| bench_small | plugin | 142.00±2.95 | 130.00±4.52 | 0.92 | go |
+| bench_medium | descriptor | 72.00±2.21 | 39.00±1.45 | 0.54 | go |
+| bench_medium | plugin | 2278.00±34.41 | 2279.00±131.51 | 1.00 | tie |
+| bench_large | descriptor | 376.00±11.69 | 156.00±2.30 | 0.41 | go |
+| bench_large | plugin | 30758.00±518.56 | 30008.00±490.12 | 0.98 | tie |
+| 329_large_stress | descriptor | 69.00±1.77 | 36.00±1.16 | 0.52 | go |
+| 329_large_stress | plugin | 2280.00±33.60 | 2145.00±34.99 | 0.94 | go |
 
 `startup_empty` is process launch cost, not compilation, and is excluded
 from the tally. Timings come from the run above, on a shared machine —
