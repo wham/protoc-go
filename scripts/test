@@ -15,11 +15,27 @@ PROTOC_GEN_DUMP="$PROJECT_DIR/tools/protoc-gen-dump/protoc-gen-dump"
 
 # Parse flags
 SUMMARY_ONLY=false
-for arg in "$@"; do
-  case "$arg" in
+JSON_OUT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --summary) SUMMARY_ONLY=true ;;
+    --json)
+      if [ $# -lt 2 ]; then
+        echo "error: --json requires a path" >&2
+        exit 2
+      fi
+      JSON_OUT="$2"
+      shift
+      ;;
+    --json=*) JSON_OUT="${1#--json=}" ;;
   esac
+  shift
 done
+
+if [ -n "$JSON_OUT" ] && ! command -v jq >/dev/null 2>&1; then
+  echo "error: --json requires jq" >&2
+  exit 2
+fi
 
 # -- setup ---------------------------------------------------------------
 
@@ -1258,17 +1274,38 @@ ERRORS=""
 CPP_TOTAL_MS=0
 GO_TOTAL_MS=0
 
+# One row per test: name<TAB>group<TAB>status. Aggregated into JSON below.
+TESTS_TSV="$RESULTS_DIR/.tests.tsv"
+: > "$TESTS_TSV"
+
+# Registered tests that never wrote a verdict — usually a missing tool (xxd,
+# jq) killing a whole suite. Counting these as "not failing" would let the
+# suite quietly shrink while still reporting all-match, so they are tracked
+# separately and make the JSON summary unpublishable.
+NO_RESULT=0
+NO_RESULT_NAMES=""
+
 for test_name in $(echo "${TEST_NAMES[@]}" | tr ' ' '\n' | sort); do
   result_file="$RESULTS_DIR/$test_name/result.txt"
   failure_file="$RESULTS_DIR/$test_name/failure.txt"
 
   if [ ! -f "$result_file" ]; then
+    NO_RESULT=$((NO_RESULT + 1))
+    NO_RESULT_NAMES="$NO_RESULT_NAMES $test_name"
     continue
   fi
 
   read -r status cpp_ms go_ms < "$result_file"
   CPP_TOTAL_MS=$(( CPP_TOTAL_MS + cpp_ms ))
   GO_TOTAL_MS=$(( GO_TOTAL_MS + go_ms ))
+
+  # Most names are <case>@<profile>, so the profile is the reporting group.
+  # The special suites (cli@, stdin@, ...) group under their prefix instead.
+  case "${test_name%%@*}" in
+    cli|stdin|decode|partial|determinism) group="${test_name%%@*}" ;;
+    *) group="${test_name#*@}" ;;
+  esac
+  printf '%s\t%s\t%s\n' "$test_name" "$group" "$status" >> "$TESTS_TSV"
 
   if [ "$status" = "PASS" ]; then
     PASS=$((PASS + 1))
@@ -1296,10 +1333,91 @@ TOTAL=$((PASS + FAIL))
 echo ""
 echo "Results: $PASS/$TOTAL passed, $FAIL/$TOTAL failed"
 
+if [ "$NO_RESULT" -gt 0 ]; then
+  echo ""
+  echo "WARNING: $NO_RESULT registered test(s) produced no result and are NOT counted"
+  echo "         above. This usually means a required tool is missing (xxd, jq)."
+  echo "        $(echo "$NO_RESULT_NAMES" | tr ' ' '\n' | sed 's/@.*//' | sort -u | tr '\n' ' ')"
+fi
+
 if [ "$CPP_TOTAL_MS" -gt 0 ] && [ "$GO_TOTAL_MS" -gt 0 ]; then
   CPP_SEC=$(echo "scale=1; $CPP_TOTAL_MS / 1000" | bc)
   GO_SEC=$(echo "scale=1; $GO_TOTAL_MS / 1000" | bc)
   echo "Performance: C++ protoc ${CPP_SEC}s, Go protoc-go ${GO_SEC}s"
+fi
+
+# -- machine-readable summary ---------------------------------------------
+# Written last so that anything which aborts the run (build failure, missing
+# protoc) leaves no file behind: consumers must treat "absent" as "unknown",
+# never as "passed".
+
+if [ -n "$JSON_OUT" ]; then
+  # "error" means the run itself is not a verdict: no tests were collected, or
+  # part of the suite never reported, so the totals understate what was checked.
+  if [ "$TOTAL" -eq 0 ] || [ "$NO_RESULT" -gt 0 ]; then
+    RUN_STATUS="error"
+  elif [ "$FAIL" -gt 0 ]; then
+    RUN_STATUS="fail"
+  else
+    RUN_STATUS="pass"
+  fi
+
+  # Both compilers report "libprotoc X.Y"; keep the bare version.
+  CPP_VER=$("$PROTOC" --version 2>/dev/null | awk '{print $2}')
+  GO_REPORTS=$("$PROTOC_GO" --version 2>/dev/null | awk '{print $2}')
+
+  RUN_URL=""
+  if [ -n "${GITHUB_RUN_ID:-}" ]; then
+    RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID}"
+  fi
+
+  mkdir -p "$(dirname "$JSON_OUT")"
+  jq -n \
+    --arg status "$RUN_STATUS" \
+    --arg cpp_version "$CPP_VER" \
+    --arg go_reports "$GO_REPORTS" \
+    --arg go_version "$(go version | awk '{print $3}')" \
+    --arg commit "$(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)" \
+    --arg runner "${ImageOS:-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)}" \
+    --arg run_url "$RUN_URL" \
+    --arg utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson cpp_ms "$CPP_TOTAL_MS" \
+    --argjson go_ms "$GO_TOTAL_MS" \
+    --argjson no_result "$NO_RESULT" \
+    --rawfile rows "$TESTS_TSV" \
+    '
+    ($rows | split("\n") | map(select(length > 0) | split("\t"))) as $r |
+    ($r | map(select(.[2] == "FAIL") | .[0])) as $failing |
+    {
+      status: $status,
+      total: ($r | length),
+      pass: ($r | map(select(.[2] == "PASS")) | length),
+      fail: ($failing | length),
+      by_group: (
+        $r | group_by(.[1]) | map({
+          key: .[0][1],
+          value: {
+            total: length,
+            pass: (map(select(.[2] == "PASS")) | length),
+            fail: (map(select(.[2] == "FAIL")) | length)
+          }
+        }) | from_entries
+      ),
+      failing: $failing[0:100],
+      failing_truncated: (($failing | length) - ($failing[0:100] | length)),
+      no_result: $no_result,
+      protoc_version: $cpp_version,
+      protoc_go_reports: $go_reports,
+      go_version: $go_version,
+      commit: $commit,
+      runner: $runner,
+      run_url: $run_url,
+      elapsed_ms: { cpp: $cpp_ms, go: $go_ms },
+      utc: $utc
+    }
+    ' > "$JSON_OUT"
+
+  echo "Wrote $JSON_OUT"
 fi
 
 if [ "$FAIL" -gt 0 ]; then
