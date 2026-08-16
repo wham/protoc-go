@@ -39,25 +39,10 @@ jobs:
         with:
           go-version: "1.23"
 
-      - name: Resolve target protoc version
-        id: target
-        run: |
-          go build -o /tmp/protoc-go ./cmd/protoc-go/
-          version=$(/tmp/protoc-go --version | awk '{print $2}')
-          if [ -z "$version" ]; then
-            echo "could not read target version from protoc-go --version" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "protoc-go targets C++ protoc $version"
-
-      - name: Install protoc ${{ steps.target.outputs.version }}
-        # Downloads go to /tmp: anything landing in the workspace would show up
-        # as an unexpected change in the commit guard below.
-        run: |
-          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${{ steps.target.outputs.version }}/protoc-${{ steps.target.outputs.version }}-linux-x86_64.zip" -o /tmp/protoc.zip
-          unzip -q /tmp/protoc.zip -d /tmp/protoc-install
-          echo "/tmp/protoc-install/bin" >> "$GITHUB_PATH"
+      # Shared with tests.yml so the gate and the published claim can never
+      # disagree about which C++ release they verified against.
+      - name: Install target protoc
+        run: .github/install-target-protoc.sh
 
       - name: Install hyperfine
         # Without it scripts/bench falls back to a ~1ms timer whose numbers
