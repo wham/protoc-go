@@ -515,9 +515,9 @@
     }
   ],
   "compilerVersion":  {
-    "major":  6,
-    "minor":  33,
-    "patch":  4,
+    "major":  7,
+    "minor":  35,
+    "patch":  1,
     "suffix":  ""
   }
 }
