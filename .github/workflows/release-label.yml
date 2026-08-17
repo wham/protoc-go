@@ -66,7 +66,7 @@ jobs:
                 core.notice(
                   `This repository has no "release: ..." labels yet, so nothing is enforced. ` +
                   `Create "release: major", "release: minor", "release: patch" and ` +
-                  `"release: none" to turn this check on. See RELEASING.md.`);
+                  `"release: none" to turn this check on. See Versioning in the README.`);
                 return;
               }
             }

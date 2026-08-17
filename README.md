@@ -125,7 +125,11 @@ path (`/v33`, `/v34`, …) on everyone for releases containing none of our chang
 The compliance table above is the compatibility claim; the version number never
 was one.
 
-How releases get cut, and when they don't, is in [RELEASING.md](RELEASING.md).
+Releases are cut by a `release: major|minor|patch|none` label on the pull
+request, so a change nobody can observe never mints a version — unlabelled work
+rides along in the next release that happens. Every tag re-runs the comparison
+suite on the tree it points at, and moving the mirrored protoc release is always
+at least a minor.
 
 ## Build & test
 
