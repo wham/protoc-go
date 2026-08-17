@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +29,32 @@ import (
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
+
+// upstreamVersion is the C++ protoc release protoc-go reproduces. Bumping the
+// target is a one-line change here: --version reports it, and CI reads that
+// output back (.github/install-target-protoc.sh) to pick the C++ release to
+// verify against, so there is exactly one source of truth.
+const upstreamVersion = "35.1"
+
+// moduleVersion is protoc-go's own version, stamped at release time with
+// -X github.com/wham/protoc-go/compiler/cli.moduleVersion=v0.1.0. Left empty
+// for ordinary builds so protocGoVersion can fall back to the module version
+// the go tool records.
+var moduleVersion = ""
+
+// protocGoVersion answers --protoc_go_version. Release archives are stamped via
+// ldflags; a `go install github.com/wham/protoc-go/cmd/protoc-go@v0.1.0` binary
+// is not, but the go tool records the module version in the build info, so that
+// path reports the right number for free. Anything else is a local build.
+func protocGoVersion() string {
+	if moduleVersion != "" {
+		return moduleVersion
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return "dev"
+}
 
 const usageText = `Usage: protoc [OPTION] PROTO_FILES
 Parse PROTO_FILES and generate output based on the options given:
@@ -1160,7 +1187,17 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--version" {
-			fmt.Println("libprotoc 35.1")
+			fmt.Println("libprotoc " + upstreamVersion)
+			os.Exit(0)
+		}
+
+		// protoc-go's own version lives behind its own flag, and is absent from
+		// usageText on purpose: the cli suite in scripts/test compares both
+		// --version and --help byte-for-byte against C++ protoc, and the README
+		// promises tooling can parse --version as protoc's answer. Neither
+		// output may carry our number.
+		if arg == "--protoc_go_version" {
+			fmt.Printf("protoc-go %s (libprotoc %s)\n", protocGoVersion(), upstreamVersion)
 			os.Exit(0)
 		}
 

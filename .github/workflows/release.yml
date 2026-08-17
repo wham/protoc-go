@@ -1,0 +1,224 @@
+name: Release
+
+# Cuts a tag and publishes binaries. The release decision is not made here: it
+# is made in the pull request, by the `release: <size>` label that
+# release-label.yml requires on every code change. This workflow only reads
+# those labels back and acts on them.
+#
+# On a push to main it looks at every pull request merged since the last tag
+# and takes the largest sizing label among them. All `release: none` (docs, CI,
+# refactors, the weekly compliance publish) means no tag: those changes are not
+# dropped, they simply ride along in whatever release comes next. That is the
+# whole point -- a version number should mark a change a user can observe, not
+# count merges.
+#
+# Everything runs in one job on purpose. Tags pushed with GITHUB_TOKEN do not
+# trigger workflows, so a separate tag-triggered publish job would never fire;
+# the tag and the build have to happen in the same run.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Force a release of this size, ignoring labels"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history and tags: the bump is computed from the range between
+          # the last tag and HEAD, and neither exists in a shallow checkout.
+          fetch-depth: 0
+
+      # Decides whether this push releases anything, and how big the bump is.
+      # Every later step is skipped when the answer is "nothing".
+      - name: Decide the bump
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCED: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+
+          LAST=$(scripts/next-version current)
+          if [ -n "$LAST" ]; then
+            RANGE="${LAST}..HEAD"
+            echo "last release: $LAST"
+          else
+            # No tags yet. The label scan below would find nothing to act on
+            # (the labels post-date every merged pull request), so the first
+            # release is cut by hand with workflow_dispatch.
+            RANGE="HEAD"
+            echo "no previous release"
+          fi
+          echo "last=$LAST" >> "$GITHUB_OUTPUT"
+          echo "range=$RANGE" >> "$GITHUB_OUTPUT"
+
+          rank() {
+            case "$1" in
+              major) echo 3 ;;
+              minor) echo 2 ;;
+              patch) echo 1 ;;
+              *)     echo 0 ;;
+            esac
+          }
+
+          if [ -n "$FORCED" ]; then
+            echo "forced by workflow_dispatch: $FORCED"
+            echo "bump=$FORCED" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # One API call per commit rather than parsing "(#NN)" out of subject
+          # lines: squash merges do carry that suffix, but a subject is prose
+          # and a release must not hinge on prose. Ranges here are short --
+          # squash merging means roughly one commit per pull request.
+          BEST=0
+          BEST_NAME=none
+          for sha in $(git rev-list "$RANGE"); do
+            for pr in $(gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}/pulls" \
+                          --jq '.[].number' 2>/dev/null); do
+              for label in $(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" \
+                               --jq '.labels[].name | select(startswith("release: ")) | sub("release: "; "")' \
+                               2>/dev/null); do
+                r=$(rank "$label")
+                echo "  #${pr}: release: ${label}"
+                if [ "$r" -gt "$BEST" ]; then
+                  BEST=$r
+                  BEST_NAME=$label
+                fi
+              done
+            done
+          done
+
+          echo "bump=$BEST_NAME" >> "$GITHUB_OUTPUT"
+          if [ "$BEST_NAME" = "none" ]; then
+            echo "nothing release-worthy since ${LAST:-the beginning}; not tagging"
+          else
+            echo "bump: $BEST_NAME"
+          fi
+
+      # A sizing label on a change that ships nothing is a mislabel, and a tag
+      # containing only docs is worse than no tag. Fail loudly rather than
+      # publishing an empty release.
+      #
+      # "Ships" is defined here exactly as release-label.yml defines it, so the
+      # check that demands a label and the check that honours one can never
+      # disagree about what counts.
+      - name: Guard against an empty release
+        if: steps.decide.outputs.bump != 'none' && steps.decide.outputs.last != ''
+        run: |
+          set -euo pipefail
+          shipped=$(git diff --name-only "${{ steps.decide.outputs.range }}" \
+            | grep -vE '^testdata/' \
+            | grep -E '\.go$|^go\.(mod|sum)$|^\.goreleaser\.yml$' || true)
+          if [ -z "$shipped" ]; then
+            echo "no shipped code changed since ${{ steps.decide.outputs.last }}," >&2
+            echo "but a release label asks for a ${{ steps.decide.outputs.bump }} release. Refusing." >&2
+            exit 1
+          fi
+          echo "changed files that ship:"
+          echo "$shipped"
+
+      # Changing the mirrored C++ release changes --version output and the
+      # descriptors we emit. Nobody should get that in a patch, whatever the
+      # label said, so the floor is raised here instead of relying on a human
+      # to remember the rule.
+      - name: Raise a target bump to at least a minor
+        id: bump
+        if: steps.decide.outputs.bump != 'none'
+        run: |
+          set -euo pipefail
+          bump="${{ steps.decide.outputs.bump }}"
+          read_upstream() { sed -n 's/.*upstreamVersion = "\([^"]*\)".*/\1/p' | head -n1; }
+
+          curr=$(read_upstream < compiler/cli/cli.go)
+          prev=""
+          if [ -n "${{ steps.decide.outputs.last }}" ]; then
+            prev=$(git show "${{ steps.decide.outputs.last }}:compiler/cli/cli.go" 2>/dev/null | read_upstream || true)
+          fi
+
+          if [ -n "$prev" ] && [ "$prev" != "$curr" ] && [ "$bump" = "patch" ]; then
+            echo "target moved $prev -> $curr; raising patch to minor"
+            bump=minor
+          fi
+          echo "bump=$bump" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        if: steps.decide.outputs.bump != 'none'
+        with:
+          go-version: "1.23"
+
+      - name: Install target protoc
+        if: steps.decide.outputs.bump != 'none'
+        run: .github/install-target-protoc.sh
+
+      # The suite is run here, now, on the exact tree being tagged -- not
+      # trusted from the `test` check on the merge. A tag is a compliance
+      # claim; it has to be earned by the commit it points at.
+      - name: Verify against C++ protoc
+        if: steps.decide.outputs.bump != 'none'
+        run: scripts/test --summary --json results/summary.json
+
+      - name: Tag
+        id: tag
+        if: steps.decide.outputs.bump != 'none'
+        run: |
+          set -euo pipefail
+          tag=$(scripts/next-version "${{ steps.bump.outputs.bump }}")
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "${tag} already exists" >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "protoc-go $tag"
+
+          for attempt in 1 2 3 4; do
+            git push origin "refs/tags/${tag}" && break
+            if [ "$attempt" = 4 ]; then
+              exit 1
+            fi
+            echo "push failed, retrying in $((2 ** attempt))s"
+            sleep $((2 ** attempt))
+          done
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Render release notes header
+        id: notes
+        if: steps.decide.outputs.bump != 'none'
+        run: |
+          set -euo pipefail
+          {
+            echo "RELEASE_HEADER<<RELEASE_HEADER_EOF"
+            scripts/release-notes "${{ steps.tag.outputs.tag }}"
+            echo "RELEASE_HEADER_EOF"
+          } >> "$GITHUB_ENV"
+
+      # GoReleaser builds the six binaries, writes checksums.txt, and asks
+      # GitHub for the changelog. The header above goes in front of it.
+      - uses: goreleaser/goreleaser-action@v6
+        if: steps.decide.outputs.bump != 'none'
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
