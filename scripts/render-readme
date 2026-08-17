@@ -91,7 +91,7 @@ trap 'rm -f "$BLOCK"' EXIT
 jq -r '
   "**" + (.pass | tostring) + " / " + (.total | tostring) +
     " comparisons produce byte-identical output to C++ protoc " + .protoc_version + "**" +
-    (if .status == "pass" then "" else " — **" + (.fail | tostring) + " failing**" end),
+    (if .status == "pass" then "" else ", **" + (.fail | tostring) + " failing**" end),
   "",
   "Last verified " + (.utc | sub("T.*"; "")) +
     " · commit `" + (.commit[0:7]) + "`" +
@@ -110,6 +110,8 @@ jq -r '
 ' "$SUMMARY_JSON" >> "$BLOCK"
 
 {
+  echo "<details><summary>Per-suite results</summary>"
+  echo ""
   echo "| suite | comparisons | result |"
   echo "| --- | ---: | --- |"
 } >> "$BLOCK"
@@ -120,7 +122,11 @@ jq -r '
     (if .value.fail == 0 then "all match" else (.value.fail | tostring) + " failing" end) + " |"
 ' "$SUMMARY_JSON" >> "$BLOCK"
 
-echo "" >> "$BLOCK"
+{
+  echo ""
+  echo "</details>"
+  echo ""
+} >> "$BLOCK"
 
 if [ "$STATUS" = "fail" ]; then
   {
@@ -186,7 +192,7 @@ if [ -f "$BENCH_JSON" ] && jq -e 'length > 0' "$BENCH_JSON" >/dev/null 2>&1; the
   {
     echo ""
     echo "\`startup_empty\` is process launch cost, not compilation, and is excluded"
-    echo "from the tally. Timings come from the run above, on a shared machine —"
+    echo "from the tally. Timings come from the run above, on a shared machine, so"
     echo "read them as a trend, not a lab result."
     echo ""
     echo "</details>"
