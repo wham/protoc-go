@@ -113,6 +113,16 @@ README is hand-written and must stay that way. It refuses to render a summary
 whose status is `error`, renders `fail` honestly in red, and drops performance
 verdicts when the bench run was not timed by hyperfine.
 
+The rendered results are published as a pull request from the disposable
+`compliance/results` branch, not pushed straight to main: main's ruleset
+requires the `test` status check, which a direct push has no way to satisfy.
+That branch is force-pushed every run, so an already-open pull request is
+updated in place rather than piling up. The default `GITHUB_TOKEN` cannot
+trigger workflows, so the pull request it opens sits without CI and needs a
+manual merge; setting a `COMPLIANCE_TOKEN` secret (fine-grained PAT or GitHub
+App token, contents and pull-requests write) makes tests.yml run on it and the
+whole loop self-service.
+
 The C++ version to verify against is not pinned in the workflow — it is read
 from `protoc-go --version`, so the compiler itself declares its target and CI
 cannot drift from it. A second job compares that target against the newest

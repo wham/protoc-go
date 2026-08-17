@@ -3,6 +3,10 @@ name: Compliance
 # Weekly proof that the Go compiler still matches the C++ one, published to the
 # README. Kept separate from tests.yml: that workflow gates merges, this one
 # publishes evidence and must never be able to make a PR look red.
+#
+# Results are published as a pull request rather than a push to main, because
+# main's ruleset requires the `test` status check and a direct push can never
+# carry one.
 
 on:
   schedule:
@@ -12,12 +16,13 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Commit the results to README.md"
+        description: "Open a pull request with the results"
         type: boolean
         default: true
 
 permissions:
   contents: write
+  pull-requests: write
   issues: write
 
 concurrency:
@@ -34,6 +39,10 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          # See the Publish results step for why the default token is not
+          # enough to get the results merged on its own.
+          token: ${{ secrets.COMPLIANCE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-go@v5
         with:
@@ -80,8 +89,20 @@ jobs:
             results-bench/bench.md
           retention-days: 90
 
-      - name: Commit results
+      # Published as a pull request, not a push: main requires the `test` status
+      # check, and a direct push carries no check to satisfy it.
+      #
+      # With the default GITHUB_TOKEN the pull request opens but stays blocked —
+      # branches pushed and pull requests opened with that token do not trigger
+      # workflows, so tests.yml never runs on it. Set a COMPLIANCE_TOKEN secret
+      # (a fine-grained PAT or GitHub App token with contents and pull-requests
+      # write) and the pull request arrives with CI already running, ready to
+      # merge on its own.
+      - name: Publish results
         if: github.event_name == 'schedule' || inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.COMPLIANCE_TOKEN || secrets.GITHUB_TOKEN }}
+          BRANCH: compliance/results
         run: |
           # The renderer only rewrites the marked region and the docs/ outputs;
           # a tracked file changing anywhere else means something went wrong,
@@ -94,21 +115,42 @@ jobs:
           fi
 
           if [ -z "$(git status --porcelain -- README.md docs/)" ]; then
-            echo "results unchanged, nothing to commit"
+            echo "results unchanged, nothing to publish"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${BRANCH}"
           git add README.md docs/badge.json docs/history.jsonl
-          git commit -m "Published weekly compliance results [skip ci]"
+          # No [skip ci] here, unlike the old direct push: the pull request needs
+          # tests.yml to run before it can be merged.
+          git commit -m "Published weekly compliance results"
 
+          # The branch is disposable — recreated from the current base every run
+          # and only ever carrying the newest results — so a force push is the
+          # intended update rather than lost history.
           for attempt in 1 2 3 4; do
-            git pull --rebase origin "${GITHUB_REF_NAME}" && git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            git push --force origin "HEAD:refs/heads/${BRANCH}" && break
+            if [ "${attempt}" = 4 ]; then
+              exit 1
+            fi
             echo "push failed, retrying in $((2 ** attempt))s"
             sleep $((2 ** attempt))
           done
-          exit 1
+
+          # The force push already refreshed any open pull request for the
+          # branch; only open a new one when there is none.
+          open=$(gh pr list --head "${BRANCH}" --base "${GITHUB_REF_NAME}" \
+            --state open --json number --jq '.[].number')
+          if [ -n "$open" ]; then
+            echo "updated existing pull request #${open}"
+            exit 0
+          fi
+
+          gh pr create --base "${GITHUB_REF_NAME}" --head "${BRANCH}" \
+            --title "Published weekly compliance results" \
+            --body "Weekly compliance run, published by [\`compliance.yml\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). The README block, badge and history are written by \`scripts/render-readme\`; nothing here is typed by hand."
 
   # Watches for new upstream releases. This one is allowed to be red: it says
   # how far protoc-go is from a protoc release it does not claim to support
