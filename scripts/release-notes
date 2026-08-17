@@ -1,0 +1,82 @@
+#!/bin/bash
+# Renders the header that goes above the generated changelog on a GitHub
+# release, from the harness output of the run that is cutting that release.
+#
+# A protoc drop-in's release notes have one job before listing changes: say
+# which C++ protoc this build reproduces, and how thoroughly that was checked.
+# So the header is generated from results/summary.json -- the same machine
+# output scripts/render-readme publishes to the README -- and never typed.
+#
+# Usage:
+#   scripts/release-notes v0.1.0                       # reads results/summary.json
+#   scripts/release-notes v0.1.0 --summary path.json
+#
+# Writes markdown to stdout. Refuses a summary that did not produce a verdict,
+# and refuses one that failed: release.yml runs the suite itself and stops
+# before ever getting here, so reaching this script with a red summary means
+# something upstream went wrong and the release must not be described as
+# verified.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+SUMMARY_JSON="$PROJECT_DIR/results/summary.json"
+TAG=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --summary)
+        SUMMARY_JSON="$2"
+        shift 2
+        ;;
+    -*)
+        echo "unknown flag: $1" >&2
+        exit 2
+        ;;
+    *)
+        TAG="$1"
+        shift
+        ;;
+    esac
+done
+
+if [ -z "$TAG" ]; then
+    echo "Usage: scripts/release-notes <tag> [--summary results/summary.json]" >&2
+    exit 2
+fi
+
+if [ ! -f "$SUMMARY_JSON" ]; then
+    echo "no summary at $SUMMARY_JSON -- run scripts/test --json first" >&2
+    exit 1
+fi
+
+STATUS=$(jq -r '.status' "$SUMMARY_JSON")
+if [ "$STATUS" != "pass" ]; then
+    echo "summary status is '$STATUS'; refusing to write release notes claiming compliance" >&2
+    exit 1
+fi
+
+PASS=$(jq -r '.pass' "$SUMMARY_JSON")
+TOTAL=$(jq -r '.total' "$SUMMARY_JSON")
+PROTOC=$(jq -r '.protoc_version' "$SUMMARY_JSON")
+GO=$(jq -r '.go_version' "$SUMMARY_JSON")
+RUNNER=$(jq -r '.runner' "$SUMMARY_JSON")
+RUN_URL=$(jq -r '.run_url // ""' "$SUMMARY_JSON")
+
+VERIFIED="Verified on ${RUNNER} with ${GO}"
+if [ -n "$RUN_URL" ]; then
+    VERIFIED="${VERIFIED} · [run log](${RUN_URL})"
+fi
+
+cat <<EOF
+**protoc-go ${TAG} reproduces C++ protoc ${PROTOC}** — ${PASS} / ${TOTAL} comparisons byte-identical.
+
+${VERIFIED}. The suite was run against protoc ${PROTOC} on the exact commit this
+tag points at; see [Compliance](https://github.com/wham/protoc-go#compliance)
+for what is compared.
+
+\`protoc-go --version\` reports \`libprotoc ${PROTOC}\`, because tooling parses it
+and expects protoc's answer. \`protoc-go --protoc_go_version\` reports ${TAG}.
+EOF

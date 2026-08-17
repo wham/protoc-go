@@ -5,6 +5,7 @@
 - Don't commit changes to `status.txt` — it's managed by ralph.sh.
 - Use past tense in commit messages (e.g., "Fix bug" → "Fixed bug").
 - Keep pull-request descriptions minimal — a single sentence, no bullet lists, no markdown headers.
+- Put exactly one `release:` label on every PR that changes shipped code (`.go`, `go.mod`, `go.sum`, `.goreleaser.yml`). `release: none` is the usual answer; a sizing label cuts a release on merge. See [RELEASING.md](RELEASING.md).
 - After a PR is merged, always reset the branch to latest main before starting new work. Never push additional commits to a branch whose PR is already merged — create a fresh branch or reset the existing one.
 - When I prompt you to make changes that are radically different from what's documented here, please update this file accordingly.
 
@@ -32,8 +33,11 @@ This is a port of the Protocol Buffers compiler (`protoc`) from C++ to Go. The G
 │   ├── test                # Correctness harness — compares C++ protoc vs Go protoc-go
 │   ├── bench               # Performance harness — times C++ protoc vs Go protoc-go
 │   ├── render-readme       # Renders harness output into the README compliance block
+│   ├── release-notes       # Renders the compliance header for a GitHub release
+│   ├── next-version        # Semver arithmetic over existing tags
 │   ├── gen-large-stress    # Generates scaled stress/bench corpus (tiers)
 │   └── find-protoc         # Locates system C++ protoc
+├── RELEASING.md            # How releases are cut (label-gated) — read before tagging
 ├── RALPH.md                # Builder agent prompt (automated loop)
 ├── NELSON.md               # Adversarial tester prompt (automated loop)
 ├── ralph.sh                # Loop orchestrator

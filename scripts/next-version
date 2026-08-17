@@ -1,0 +1,52 @@
+#!/bin/bash
+# Computes the next release tag from the highest existing one.
+#
+# Lives here rather than inline in release.yml so the version arithmetic is
+# readable and can be run by hand:
+#
+#   scripts/next-version patch     # v0.3.1 -> v0.3.2
+#   scripts/next-version minor     # v0.3.1 -> v0.4.0
+#   scripts/next-version current   # prints the highest existing tag, or nothing
+#
+# Nothing here talks to GitHub or pushes anything; it only reads local tags, so
+# a shallow checkout without tags will happily tell you the next version is
+# v0.0.1. Callers that care (release.yml does) must fetch tags first.
+
+set -euo pipefail
+
+usage() {
+    echo "Usage: scripts/next-version <patch|minor|major|current>" >&2
+    exit 2
+}
+
+[ $# -eq 1 ] || usage
+BUMP="$1"
+
+# Highest semver tag, not the most recently created one: a patch cut from an
+# older branch must not make the next release go backwards.
+LATEST=$(git tag -l 'v[0-9]*' --sort=-v:refname | head -n1)
+
+if [ "$BUMP" = "current" ]; then
+    echo "$LATEST"
+    exit 0
+fi
+
+if [ -z "$LATEST" ]; then
+    LATEST="v0.0.0"
+fi
+
+# Tolerate (and drop) any pre-release or build suffix; we do not publish them,
+# but a stray v0.3.0-rc1 tag must not corrupt the arithmetic.
+VERSION="${LATEST#v}"
+VERSION="${VERSION%%-*}"
+VERSION="${VERSION%%+*}"
+IFS='.' read -r MAJOR MINOR PATCH <<<"$VERSION"
+
+case "$BUMP" in
+major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+patch) PATCH=$((PATCH + 1)) ;;
+*) usage ;;
+esac
+
+echo "v${MAJOR}.${MINOR}.${PATCH}"

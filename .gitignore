@@ -27,6 +27,9 @@ testdata/*/*/summary.txt
 testdata/bench/
 results-bench/
 
+# GoReleaser output
+dist/
+
 # OS files
 .DS_Store
 

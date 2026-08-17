@@ -1,0 +1,76 @@
+name: Release label
+
+# Every pull request that changes shipped code must say what it does to the
+# version, by carrying exactly one `release: major|minor|patch|none` label.
+#
+# The point is not which label -- `release: none` is a perfectly good answer and
+# the common one -- but that somebody chose. Left to a post-merge decision made
+# from memory, the version number degrades into a merge counter, and docs
+# changes start minting patch releases.
+#
+# Failing closed is deliberate: a forgotten label costs a red check on a pull
+# request, never a spurious tag on main.
+#
+# Kept out of tests.yml so that labelling a pull request re-runs this check in
+# seconds instead of re-running the whole comparison suite.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  release-label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const number = context.payload.pull_request.number;
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner, repo, pull_number: number, per_page: 100,
+            });
+
+            // Anything that ends up in the binary or the module's API. Docs,
+            // CI, and the .proto corpus are not shipped, so a pull request
+            // touching only those needs no label at all.
+            const ships = files.some(f =>
+              !f.filename.startsWith('testdata/') &&
+              (f.filename.endsWith('.go') ||
+               f.filename === 'go.mod' ||
+               f.filename === 'go.sum' ||
+               f.filename === '.goreleaser.yml'));
+
+            const labels = context.payload.pull_request.labels
+              .map(l => l.name)
+              .filter(n => n.startsWith('release: '));
+
+            if (!ships) {
+              core.info(`No shipped code changed in #${number}; no release label needed.`);
+              if (labels.length) {
+                core.info(`Carrying ${labels.join(', ')} anyway, which is fine.`);
+              }
+              return;
+            }
+
+            if (labels.length === 0) {
+              core.setFailed(
+                `#${number} changes shipped code, so it needs exactly one of ` +
+                `"release: major", "release: minor", "release: patch" or "release: none".\n\n` +
+                `"release: none" is the right answer for a refactor, a test-only change, ` +
+                `or anything else a user cannot observe. A sizing label cuts a release on ` +
+                `merge, covering this pull request and everything unreleased before it.`);
+              return;
+            }
+
+            if (labels.length > 1) {
+              core.setFailed(`#${number} carries ${labels.join(' and ')}; exactly one is allowed.`);
+              return;
+            }
+
+            core.info(`#${number} is labelled ${labels[0]}.`);

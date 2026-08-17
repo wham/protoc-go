@@ -115,7 +115,8 @@ The two numbers answer different questions:
   build reproduces. Tooling parses that string and expects protoc's answer, so
   it has to be protoc's answer.
 - **The Go module version** (`v0.x.y`) describes this project's own API and
-  fixes, and follows semver.
+  fixes, and follows semver. `protoc-go --protoc_go_version` prints it alongside
+  the upstream one, e.g. `protoc-go v0.1.0 (libprotoc 35.1)`.
 
 So `protoc-go v0.4.0` may report `libprotoc 35.1`: our release, verified against
 that C++ release. We deliberately don't renumber the module to match upstream —
@@ -123,6 +124,8 @@ protoc majors land roughly yearly, and following them would force a new import
 path (`/v33`, `/v34`, …) on everyone for releases containing none of our changes.
 The compliance table above is the compatibility claim; the version number never
 was one.
+
+How releases get cut, and when they don't, is in [RELEASING.md](RELEASING.md).
 
 ## Build & test
 
