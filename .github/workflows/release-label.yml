@@ -21,6 +21,9 @@ on:
 
 permissions:
   pull-requests: read
+  # Repository labels live under the issues scope, and are read to tell an
+  # unconfigured repository apart from an unlabelled pull request.
+  issues: read
 
 jobs:
   release-label:
@@ -49,6 +52,24 @@ jobs:
             const labels = context.payload.pull_request.labels
               .map(l => l.name)
               .filter(n => n.startsWith('release: '));
+
+            // Before the labels exist on the repository there is nothing to
+            // demand, and failing every pull request until somebody creates
+            // them by hand would be a poor way to say so. Pass with a notice
+            // instead; the check starts enforcing the moment they exist. Same
+            // courtesy applies to a fresh fork.
+            if (!labels.length) {
+              const defined = await github.paginate(github.rest.issues.listLabelsForRepo, {
+                owner, repo, per_page: 100,
+              });
+              if (!defined.some(l => l.name.startsWith('release: '))) {
+                core.notice(
+                  `This repository has no "release: ..." labels yet, so nothing is enforced. ` +
+                  `Create "release: major", "release: minor", "release: patch" and ` +
+                  `"release: none" to turn this check on. See RELEASING.md.`);
+                return;
+              }
+            }
 
             if (!ships) {
               core.info(`No shipped code changed in #${number}; no release label needed.`);
