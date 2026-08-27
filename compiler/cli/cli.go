@@ -1,3 +1,7 @@
+// Package cli implements the protoc command line interface: flag parsing,
+// compilation, plugin invocation and output writing.
+// This mirrors C++ google::protobuf::compiler::CommandLineInterface from
+// compiler/command_line_interface.cc.
 package cli
 
 import (

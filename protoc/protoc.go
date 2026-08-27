@@ -53,7 +53,7 @@
 // mutable data is shared between concurrent compilations. The [Compiler]
 // struct itself is immutable after creation via [New].
 //
-// [CompileResult] methods (including [CompileResult.RunPlugin]) are also safe
+// [Result] methods (including [Result.RunPlugin]) are also safe
 // to call concurrently on the same result, as they only read the compiled
 // descriptors and create independent plugin invocations.
 package protoc
