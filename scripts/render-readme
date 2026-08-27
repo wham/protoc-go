@@ -8,8 +8,15 @@
 #   results/summary.json       scripts/test --json
 #   results-bench/bench.json   scripts/bench           (optional)
 #
+# When the suite was sharded across runners (scripts/test --shard i/N), each
+# shard summary is marked partial and must be reassembled by
+# scripts/merge-summaries before it can be rendered.
+#
 # Honesty rules baked in here, because a published number nobody can audit is
 # not proof:
+#   * A partial summary -- one shard of a distributed run -- is REFUSED. Its
+#     totals describe a slice of the suite and would publish as if they were
+#     the whole one.
 #   * A summary with status "error" (the run never produced a verdict) is
 #     REFUSED. It must not be rendered as a pass, and it must not quietly
 #     overwrite the previous block either -- the caller is expected to fail.
@@ -66,6 +73,16 @@ fi
 
 if ! jq -e . "$SUMMARY_JSON" >/dev/null 2>&1; then
   echo "error: $SUMMARY_JSON is not valid JSON" >&2
+  exit 1
+fi
+
+# A --shard run only saw part of the suite. Publishing one would understate the
+# totals while looking exactly like a whole run; scripts/merge-summaries is the
+# only supported way to turn a set of them back into a verdict.
+if jq -e '.partial == true' "$SUMMARY_JSON" >/dev/null 2>&1; then
+  echo "error: $SUMMARY_JSON is shard $(jq -r '.shard.index' "$SUMMARY_JSON") of" >&2
+  echo "       $(jq -r '.shard.total' "$SUMMARY_JSON") -- it covers part of the suite." >&2
+  echo "       Merge every shard with scripts/merge-summaries first." >&2
   exit 1
 fi
 

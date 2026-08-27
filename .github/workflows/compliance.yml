@@ -7,6 +7,18 @@ name: Compliance
 # Results are published as a pull request rather than a push to main, because
 # main's ruleset requires the `test` status check and a direct push can never
 # carry one.
+#
+# Shape of the run — three stages, only the last of which is serial:
+#
+#   correctness (N runners, sharded)  ─┐
+#   performance (1 runner)            ─┴→ publish (merge → render → PR)
+#
+# Correctness and performance measure different things and share no state, so
+# they have no reason to queue behind each other; correctness is then split
+# across runners with `scripts/test --shard i/N`. The two harnesses no longer
+# share a machine either, which is the right way round for the perf numbers:
+# they are measured on a runner that has not just spent minutes saturating
+# every core with the correctness suite.
 
 on:
   schedule:
@@ -20,32 +32,37 @@ on:
         type: boolean
         default: true
 
+# Read-only by default; only the jobs that write anything ask for more.
 permissions:
-  contents: write
-  pull-requests: write
-  issues: write
-  # Lets the Publish results step ask tests.yml to run against the results
-  # branch. See that step for why the run has to be requested by hand.
-  actions: write
+  contents: read
 
 concurrency:
   group: compliance
   cancel-in-progress: false
 
 jobs:
-  # Verifies against the exact C++ release protoc-go claims to mirror, and
-  # publishes that result. The target is read from the binary itself
-  # (`protoc-go --version`) rather than pinned here, so there is one source of
-  # truth and CI cannot drift from what the compiler advertises.
-  verify:
+  # Verifies against the exact C++ release protoc-go claims to mirror. The
+  # target is read from the binary itself (`protoc-go --version`) rather than
+  # pinned here, so there is one source of truth and CI cannot drift from what
+  # the compiler advertises.
+  #
+  # The suite is ~5,500 comparisons, each spawning both compilers, so it is
+  # split across the runners below. `strategy.job-total` is the shard count, so
+  # adding or removing an entry from `shard` is the only edit needed to change
+  # the width — and scripts/merge-summaries fails loudly if the two ever
+  # disagree rather than publishing a suite with a hole in it.
+  correctness:
+    name: Correctness ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
+    strategy:
+      # One shard finding a difference must not cancel the others: the whole
+      # point of the run is to report every difference, not the first one.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
-        with:
-          # GITHUB_TOKEN is enough; COMPLIANCE_TOKEN is honoured if set, which
-          # saves the explicit tests.yml dispatch in the Publish results step.
-          token: ${{ secrets.COMPLIANCE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-go@v7
         with:
@@ -53,6 +70,45 @@ jobs:
 
       # Shared with tests.yml so the gate and the published claim can never
       # disagree about which C++ release they verified against.
+      - name: Install target protoc
+        run: .github/install-target-protoc.sh
+
+      - name: Correctness — Go protoc-go vs C++ protoc
+        # A shard that finds real differences exits non-zero, and that is a
+        # result worth publishing: render-readme prints `fail` in red. Letting
+        # it fail the job here would abandon the run instead, leaving the README
+        # showing the last green week forever. A shard that never produces a
+        # summary is a different matter — the merge below refuses that outright.
+        continue-on-error: true
+        run: |
+          scripts/test --summary \
+            --shard "${{ matrix.shard }}/${{ strategy.job-total }}" \
+            --json "results/shard-${{ matrix.shard }}.json"
+
+      - name: Upload shard summary
+        uses: actions/upload-artifact@v7
+        with:
+          name: compliance-shard-${{ matrix.shard }}
+          path: results/shard-${{ matrix.shard }}.json
+          # An empty upload would look the same as a shard that ran and found
+          # nothing. Fail here instead, where the cause is still visible.
+          if-no-files-found: error
+          retention-days: 90
+
+  # Perf is environment-sensitive and never blocks publishing; if this job fails
+  # there is simply no bench section in the README.
+  performance:
+    name: Performance
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.23"
+
       - name: Install target protoc
         run: .github/install-target-protoc.sh
 
@@ -65,14 +121,63 @@ jobs:
           curl -fsSL "https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb" -o /tmp/hyperfine.deb
           sudo dpkg -i /tmp/hyperfine.deb
 
-      - name: Correctness — Go protoc-go vs C++ protoc
-        run: scripts/test --summary --json results/summary.json
-
       - name: Performance — Go protoc-go vs C++ protoc
-        # Perf is environment-sensitive and never blocks publishing; if this
-        # step fails there is simply no bench section in the README.
-        continue-on-error: true
         run: scripts/bench --summary --sizes "tiny small medium large"
+
+      - name: Upload bench results
+        uses: actions/upload-artifact@v7
+        with:
+          name: compliance-bench
+          path: |
+            results-bench/bench.json
+            results-bench/bench.md
+          retention-days: 90
+
+  # Reassembles the shards into one verdict, renders it, and opens the pull
+  # request. Runs even when a shard reported differences or the bench job fell
+  # over — a run that found bad news still has news to publish. It does not run
+  # on a cancelled workflow, where the shards are simply missing.
+  publish:
+    name: Publish
+    needs: [correctness, performance]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      # Lets the Publish results step ask tests.yml to run against the results
+      # branch. See that step for why the run has to be requested by hand.
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # GITHUB_TOKEN is enough; COMPLIANCE_TOKEN is honoured if set, which
+          # saves the explicit tests.yml dispatch in the Publish results step.
+          token: ${{ secrets.COMPLIANCE_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Download shard summaries
+        uses: actions/download-artifact@v7
+        with:
+          pattern: compliance-shard-*
+          merge-multiple: true
+          path: results
+
+      - name: Download bench results
+        # Optional by design: the README simply loses its performance section.
+        continue-on-error: true
+        uses: actions/download-artifact@v7
+        with:
+          name: compliance-bench
+          path: results-bench
+
+      # Refuses to merge unless every shard is present exactly once and they all
+      # agree on what they measured, so a shard that died cannot quietly shrink
+      # the published total.
+      - name: Merge shard summaries
+        run: |
+          scripts/merge-summaries --out results/summary.json results/shard-*.json
+          cat results/summary.json
 
       - name: Render README
         run: |
@@ -88,6 +193,7 @@ jobs:
           name: compliance-results
           path: |
             results/summary.json
+            results/shard-*.json
             results-bench/bench.json
             results-bench/bench.md
           retention-days: 90
@@ -180,6 +286,9 @@ jobs:
   upstream-drift:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v7
 
