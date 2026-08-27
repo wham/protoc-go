@@ -15,6 +15,21 @@ import (
 	pluginpb "google.golang.org/protobuf/types/pluginpb"
 )
 
+// The C++ protoc release protoc-go reproduces. It is reported by --version and
+// sent to plugins as CodeGeneratorRequest.compiler_version, so it is written
+// out once here rather than kept in step by hand in two places. Bumping the
+// target is this edit alone: CI reads --version back
+// (.github/install-target-protoc.sh) to pick the C++ release to verify against.
+const (
+	upstreamMajor = 7
+	upstreamMinor = 36
+	upstreamPatch = 0
+)
+
+// UpstreamVersion is that release as protoc --version reports it, e.g. "36.0".
+// The libprotoc major is not part of it; protoc prints only minor and patch.
+var UpstreamVersion = fmt.Sprintf("%d.%d", upstreamMinor, upstreamPatch)
+
 // PluginStartError indicates that a plugin could not be started.
 type PluginStartError struct {
 	Path string
@@ -36,12 +51,24 @@ func (e *PluginExitError) Error() string {
 
 // RunPlugin executes a protoc plugin with the given CodeGeneratorRequest.
 func RunPlugin(pluginPath string, req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error) {
+	return RunPluginCommand([]string{pluginPath}, req)
+}
+
+// RunPluginCommand is [RunPlugin] over a full command line, whose last token is
+// the plugin. A --<lang>_prefix wrapper supplies the tokens before it, so the
+// plugin runs as "COMMAND <plugin>" rather than being executed directly.
+func RunPluginCommand(argv []string, req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error) {
+	if len(argv) == 0 {
+		return nil, fmt.Errorf("no plugin command given")
+	}
+	pluginPath := argv[len(argv)-1]
+
 	reqBytes, err := proto.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
 
-	cmd := exec.Command(pluginPath)
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin = nil
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
@@ -57,9 +84,9 @@ func RunPlugin(pluginPath string, req *pluginpb.CodeGeneratorRequest) (*pluginpb
 	if err := cmd.Start(); err != nil {
 		// Match C++ protoc error format from subprocess.cc:
 		// The child process writes these two lines to stderr and exits with code 1.
-		fmt.Fprintf(os.Stderr, "%s: program not found or is not executable\n", pluginPath)
+		fmt.Fprintf(os.Stderr, "%s: program not found or is not executable\n", argv[0])
 		fmt.Fprintf(os.Stderr, "Please specify a program using absolute path or make sure the program is available in your PATH system variable\n")
-		return nil, &PluginStartError{Path: pluginPath}
+		return nil, &PluginStartError{Path: argv[0]}
 	}
 
 	if _, err := stdinPipe.Write(reqBytes); err != nil {
@@ -99,9 +126,9 @@ func BuildCodeGeneratorRequest(
 		ProtoFile:             protoFiles,
 		SourceFileDescriptors: sourceFileDescriptors,
 		CompilerVersion: &pluginpb.Version{
-			Major:  proto.Int32(7),
-			Minor:  proto.Int32(35),
-			Patch:  proto.Int32(1),
+			Major:  proto.Int32(upstreamMajor),
+			Minor:  proto.Int32(upstreamMinor),
+			Patch:  proto.Int32(upstreamPatch),
 			Suffix: proto.String(""),
 		},
 	}

@@ -928,6 +928,13 @@ CLI_TESTS=(
   "encode_dup_string_concat|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|name: \"hello\" \"world\" name: \"test\""
   "encode_tab_column|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|"$'\t'"badfield: 42"
   "encode_tab_int_type|--encode=basic.Person -I testdata/01_basic_message testdata/01_basic_message/basic.proto|"$'\t'"id: \"hello\""
+  "plugin_prefix|--plugin=protoc-gen-dump=tools/protoc-gen-dump/protoc-gen-dump --dump_prefix=env --dump_out=/tmp/test_plugin_prefix:/tmp -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "plugin_prefix_empty|--dump_prefix= --dump_out=/tmp -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "plugin_prefix_dup|--dump_prefix=env --dump_prefix=env --dump_out=/tmp -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "plugin_prefix_no_value|--dump_prefix"
+  "plugin_prefix_unmatched|--dump_prefix=env -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "plugin_prefix_bad_command|--plugin=protoc-gen-fake=/nonexistent/plugin --fake_prefix=/nonexistent/wrapper --fake_out=/tmp -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
+  "plugin_no_output|--plugin=protoc-gen-fake=/nonexistent/plugin -I testdata/01_basic_message testdata/01_basic_message/basic.proto"
 )
 
 for cli_spec in "${CLI_TESTS[@]}"; do

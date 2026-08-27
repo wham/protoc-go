@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history and tags: the bump is computed from the range between
           # the last tag and HEAD, and neither exists in a shallow checkout.
@@ -160,7 +160,7 @@ jobs:
           fi
           echo "bump=$bump" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         if: steps.decide.outputs.bump != 'none'
         with:
           go-version: "1.23"
@@ -215,7 +215,7 @@ jobs:
 
       # GoReleaser builds the six binaries, writes checksums.txt, and asks
       # GitHub for the changelog. The header above goes in front of it.
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         if: steps.decide.outputs.bump != 'none'
         with:
           version: "~> v2"
