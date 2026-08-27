@@ -30,12 +30,6 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
-// upstreamVersion is the C++ protoc release protoc-go reproduces. Bumping the
-// target is a one-line change here: --version reports it, and CI reads that
-// output back (.github/install-target-protoc.sh) to pick the C++ release to
-// verify against, so there is exactly one source of truth.
-const upstreamVersion = "35.1"
-
 // moduleVersion is protoc-go's own version, stamped at release time with
 // -X github.com/wham/protoc-go/compiler/cli.moduleVersion=v0.1.0. Left empty
 // for ordinary builds so protocGoVersion can fall back to the module version
@@ -143,6 +137,14 @@ Parse PROTO_FILES and generate output based on the options given:
                               NAME=PATH, in which case the given plugin name
                               is mapped to the given executable even if
                               the executable's own name differs.
+  --<lang>_prefix=COMMAND     Runs the plugin used by --<lang>_out via
+                              COMMAND. protoc executes "COMMAND <plugin>"
+                              instead of invoking the plugin binary directly.
+                              COMMAND's first token is resolved via the
+                              search path (PATH). The value is split into
+                              argv tokens on whitespace; quotes are not
+                              supported. Use a wrapper script for more
+                              complex invocations.
   --cpp_out=OUT_DIR           Generate C++ header and source.
   --csharp_out=OUT_DIR        Generate C# source file.
   --java_out=OUT_DIR          Generate Java source file.
@@ -410,6 +412,10 @@ type pluginSpec struct {
 	path      string
 	outputDir string
 	parameter string
+	// Set by --<lang>_out. A plugin named only by --plugin or --<lang>_opt is
+	// not an output directive and is never run. Tracked separately from
+	// outputDir because --<lang>_out= is a directive with an empty directory.
+	hasOutput bool
 }
 
 type config struct {
@@ -434,6 +440,20 @@ type config struct {
 	fatalWarnings                   bool
 	retainOptions                   bool
 	dependencyOut                   string
+
+	// Kept out of plugins: a --<lang>_prefix with no matching --<lang>_out is
+	// ignored, so it must not register a plugin or count as an output directive.
+	pluginPrefixes map[string][]string
+}
+
+// hasPluginOutput reports whether any plugin was given an --<lang>_out.
+func (c *config) hasPluginOutput() bool {
+	for _, plug := range c.plugins {
+		if plug.hasOutput {
+			return true
+		}
+	}
+	return false
 }
 
 // Run executes the protocol buffer compiler with the given command-line arguments.
@@ -536,7 +556,7 @@ func Run(args []string) error {
 	}
 
 	// Validate we have output directives
-	if len(cfg.plugins) == 0 && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers && cfg.decodeType == "" && cfg.encodeType == "" {
+	if !cfg.hasPluginOutput() && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers && cfg.decodeType == "" && cfg.encodeType == "" {
 		return fmt.Errorf("Missing output directives.")
 	}
 
@@ -665,9 +685,12 @@ func Run(args []string) error {
 	// Handle plugin outputs
 	sourceFileDescriptors := co.buildSourceFileDescriptors()
 	for _, plug := range cfg.plugins {
+		if !plug.hasOutput {
+			continue
+		}
 		req := plugin.BuildCodeGeneratorRequest(co.relFiles, plug.parameter, protoFiles, sourceFileDescriptors)
 
-		resp, err := plugin.RunPlugin(plug.path, req)
+		resp, err := plugin.RunPluginCommand(append(append([]string{}, cfg.pluginPrefixes[plug.name]...), plug.path), req)
 		if err != nil {
 			var startErr *plugin.PluginStartError
 			var exitErr *plugin.PluginExitError
@@ -1175,7 +1198,8 @@ func parseArgs(args []string) (*config, error) {
 	}
 
 	cfg := &config{
-		plugins: make(map[string]*pluginSpec),
+		plugins:        make(map[string]*pluginSpec),
+		pluginPrefixes: make(map[string][]string),
 	}
 
 	for i := 0; i < len(args); i++ {
@@ -1187,7 +1211,7 @@ func parseArgs(args []string) (*config, error) {
 		}
 
 		if arg == "--version" {
-			fmt.Println("libprotoc " + upstreamVersion)
+			fmt.Println("libprotoc " + plugin.UpstreamVersion)
 			os.Exit(0)
 		}
 
@@ -1197,7 +1221,7 @@ func parseArgs(args []string) (*config, error) {
 		// promises tooling can parse --version as protoc's answer. Neither
 		// output may carry our number.
 		if arg == "--protoc_go_version" {
-			fmt.Printf("protoc-go %s (libprotoc %s)\n", protocGoVersion(), upstreamVersion)
+			fmt.Printf("protoc-go %s (libprotoc %s)\n", protocGoVersion(), plugin.UpstreamVersion)
 			os.Exit(0)
 		}
 
@@ -1581,6 +1605,7 @@ func parseArgs(args []string) (*config, error) {
 					cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
 				}
 				cfg.plugins[pluginName].outputDir = outputDir
+				cfg.plugins[pluginName].hasOutput = true
 				if cfg.plugins[pluginName].path == "" {
 					cfg.plugins[pluginName].path = "protoc-gen-" + pluginName
 				}
@@ -1597,6 +1622,7 @@ func parseArgs(args []string) (*config, error) {
 					cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
 				}
 				cfg.plugins[pluginName].outputDir = outputDir
+				cfg.plugins[pluginName].hasOutput = true
 				if cfg.plugins[pluginName].path == "" {
 					cfg.plugins[pluginName].path = "protoc-gen-" + pluginName
 				}
@@ -1635,6 +1661,39 @@ func parseArgs(args []string) (*config, error) {
 				} else {
 					cfg.plugins[pluginName].parameter = param
 				}
+				continue
+			}
+		}
+
+		// --X_prefix=COMMAND or --X_prefix COMMAND
+		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "_prefix") {
+			withoutDashes := arg[2:]
+			pluginName := ""
+			command := ""
+			matched := false
+			if eqIdx := strings.Index(withoutDashes, "_prefix="); eqIdx >= 0 {
+				pluginName = withoutDashes[:eqIdx]
+				command = withoutDashes[eqIdx+len("_prefix="):]
+				matched = true
+			} else if strings.HasSuffix(withoutDashes, "_prefix") {
+				pluginName = withoutDashes[:len(withoutDashes)-len("_prefix")]
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("Missing value for flag: %s", arg)
+				}
+				i++
+				command = args[i]
+				matched = true
+			}
+			if matched {
+				if _, ok := cfg.pluginPrefixes[pluginName]; ok {
+					return nil, fmt.Errorf("--%s_prefix may only be passed once.", pluginName)
+				}
+				// Whitespace is the only separator; quoting is not supported.
+				tokens := strings.Fields(command)
+				if len(tokens) == 0 {
+					return nil, fmt.Errorf("--%s_prefix requires a non-empty value.", pluginName)
+				}
+				cfg.pluginPrefixes[pluginName] = tokens
 				continue
 			}
 		}
