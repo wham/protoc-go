@@ -32,6 +32,7 @@ This is a port of the Protocol Buffers compiler (`protoc`) from C++ to Go. The G
 ├── scripts/
 │   ├── test                # Correctness harness — compares C++ protoc vs Go protoc-go
 │   ├── bench               # Performance harness — times C++ protoc vs Go protoc-go
+│   ├── merge-summaries     # Reassembles sharded `scripts/test` runs into one verdict
 │   ├── render-readme       # Renders harness output into the README compliance block
 │   ├── release-notes       # Renders the compliance header for a GitHub release
 │   ├── next-version        # Semver arithmetic over existing tags
@@ -55,6 +56,9 @@ scripts/test --summary
 # Machine-readable summary (for publishing; requires jq)
 scripts/test --summary --json results/summary.json
 
+# One slice of the suite, for splitting it across machines (see Sharding below)
+scripts/test --summary --shard 2/4 --json results/shard-2.json
+
 # Performance comparison (C++ protoc vs Go protoc-go) on a scaled corpus
 scripts/bench --summary
 # In-process library core (ns/op, B/op, allocs/op)
@@ -73,6 +77,29 @@ A registered test that writes no verdict (usually a missing tool — `xxd` drive
 the `stdin@`/`decode@` suites) is reported as a `no_result` warning and is NOT
 counted as a pass. `--json` marks such a run `"error"` so it cannot be
 published: a suite that silently shrinks must never read as all-match.
+
+### Sharding the correctness suite
+
+`scripts/test --shard i/N` runs slice `i` of `N`. Every test registers through
+one `launch()` helper in a fixed, machine-independent order (the testdata glob
+is sorted; every other suite is a literal array), and a shard keeps the entries
+whose position is its own. So the shards partition the suite exactly — no
+coordination, no shared list, no case counted twice — and adding a test case
+reshuffles the slices without any of them needing to be told.
+
+A shard's `--json` output describes its slice only, and is marked
+`"partial": true`; `scripts/render-readme` refuses it. `scripts/merge-summaries`
+is the only way back to a publishable verdict, and it refuses to merge unless
+every index `1..N` is present exactly once and all shards agree on the commit,
+the C++ protoc, the protoc-go build and the Go toolchain — so a shard that died
+cannot quietly shrink the published total.
+
+```bash
+scripts/test --summary --shard 1/4 --json results/shard-1.json   # ×4, in parallel
+scripts/merge-summaries --out results/summary.json results/shard-*.json
+```
+
+An unsharded run is just `--shard 1/1` and needs no merge.
 
 ### Performance harness
 
@@ -104,17 +131,49 @@ rather than assertion. The chain is deliberately machine-readable end to end —
 nothing parses human output:
 
 ```
-scripts/test --json  → results/summary.json  ┐
-scripts/bench        → results-bench/bench.json ┼→ scripts/render-readme → README block
-                                                │                        → docs/badge.json
-                                                └                        → docs/history.jsonl
+correctness ×4 (sharded)                     ┐
+  scripts/test --shard i/4 --json            │
+    → results/shard-i.json                   │
+    → scripts/merge-summaries                │
+      → results/summary.json  ───────────────┼→ scripts/render-readme → README block
+                                             │                        → docs/badge.json
+performance ×1                               │                        → docs/history.jsonl
+  scripts/bench → results-bench/bench.json  ─┘
 ```
+
+Correctness and performance share no state and no longer queue behind each
+other; correctness is split four ways with `--shard`, and the shard count is
+`strategy.job-total`, so changing the `shard:` matrix is the only edit needed to
+change the width. Perf gets a runner that has *not* just spent minutes
+saturating every core with the correctness suite, which is the right way round
+for the numbers.
+
+Shape and rough cost of a weekly run (measured on a 4-core box):
+
+| leg | wall | note |
+| --- | ---: | --- |
+| correctness, per shard | ~35s | ~1,370 of 5,497 comparisons |
+| performance | ~20min | `bench_large`/`plugin` alone is ~17min of it |
+
+The performance leg is the critical path and sharding it does not help: one row
+(`bench_large` × `plugin`, 13 timed invocations of each compiler at ~40s each)
+sets the floor. Splitting a compiler's timing across machines is not an option —
+the go-vs-cpp comparison in a row is only meaningful when both halves ran on the
+same machine — so the only levers there are `--runs` or dropping the `large`
+tier from the weekly `--sizes`, both of which weaken the published evidence.
+
+A shard that finds real differences does not abort the run: `scripts/test` exits
+non-zero, the step is `continue-on-error`, and the merged `fail` status is
+published in red. Abandoning the run instead would leave the README showing the
+last green week indefinitely. A shard that produces *no* summary is the opposite
+case and is refused outright by the merge.
 
 `scripts/render-readme` rewrites only the region between the
 `<!-- BEGIN COMPLIANCE -->` / `<!-- END COMPLIANCE -->` markers; the rest of the
 README is hand-written and must stay that way. It refuses to render a summary
-whose status is `error`, renders `fail` honestly in red, and drops performance
-verdicts when the bench run was not timed by hyperfine.
+whose status is `error` or that is one unmerged shard of a distributed run,
+renders `fail` honestly in red, and drops performance verdicts when the bench
+run was not timed by hyperfine.
 
 The rendered results are published as a pull request from the disposable
 `compliance/results` branch, not pushed straight to main: main's ruleset

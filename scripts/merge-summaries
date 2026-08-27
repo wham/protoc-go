@@ -1,0 +1,157 @@
+#!/bin/bash
+# Merges the per-shard summaries of a distributed `scripts/test` run back into
+# one verdict.
+#
+# `scripts/test --shard i/N` splits the suite across N machines. Each shard
+# writes a summary describing only its own slice, marked `"partial": true` so
+# scripts/render-readme refuses to publish it. This script is the only way back
+# to a publishable summary, and it is deliberately strict about what it will
+# reassemble, because a merge that quietly drops a shard would publish a
+# smaller suite as if it were the whole one:
+#
+#   * Every index 1..N must be present exactly once. A missing or duplicated
+#     shard is a hard error, not a smaller total.
+#   * All shards must agree on what they measured — same commit, same C++
+#     protoc, same Go toolchain. Disagreement means the runners drifted apart
+#     and the numbers cannot be added up.
+#   * `no_result` and `error` are contagious: if any shard failed to report,
+#     the merged run is an "error" and render-readme will refuse it.
+#
+# Usage:
+#   scripts/merge-summaries --out results/summary.json results/shard-*.json
+
+set -euo pipefail
+
+OUT=""
+INPUTS=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --out)
+      if [ $# -lt 2 ]; then
+        echo "error: --out requires a path" >&2
+        exit 2
+      fi
+      OUT="$2"
+      shift
+      ;;
+    --out=*) OUT="${1#--out=}" ;;
+    -*) echo "error: unknown flag: $1" >&2; exit 2 ;;
+    *) INPUTS+=("$1") ;;
+  esac
+  shift
+done
+
+command -v jq >/dev/null 2>&1 || { echo "error: jq is required" >&2; exit 2; }
+
+if [ -z "$OUT" ]; then
+  echo "error: --out is required" >&2
+  exit 2
+fi
+
+if [ "${#INPUTS[@]}" -eq 0 ]; then
+  echo "error: no shard summaries given" >&2
+  exit 2
+fi
+
+for f in "${INPUTS[@]}"; do
+  if [ ! -f "$f" ]; then
+    echo "error: shard summary not found: $f" >&2
+    echo "       A shard that produced no summary did not run; refusing to" >&2
+    echo "       merge a partial suite into a full-looking result." >&2
+    exit 2
+  fi
+  if ! jq -e . "$f" >/dev/null 2>&1; then
+    echo "error: not valid JSON: $f" >&2
+    exit 2
+  fi
+done
+
+# -- structural checks ----------------------------------------------------
+# Done in jq over all inputs at once so the error message can name what is
+# actually inconsistent rather than just failing the arithmetic later.
+
+PROBLEM=$(jq -s -r '
+  def distinct(f): map(f) | unique;
+
+  (map(.shard.total // 1) | unique) as $totals |
+  if ($totals | length) != 1 then
+    "shards disagree on how many shards there are: " + ($totals | tostring)
+  else
+    ($totals[0]) as $n |
+    (map(.shard.index // 1) | sort) as $seen |
+    if $seen != [range(1; $n + 1)] then
+      "expected shards 1..\($n), got \($seen)"
+    elif (distinct(.commit) | length) != 1 then
+      "shards ran different commits: " + (distinct(.commit) | tostring)
+    elif (distinct(.protoc_version) | length) != 1 then
+      "shards used different C++ protoc: " + (distinct(.protoc_version) | tostring)
+    elif (distinct(.protoc_go_reports) | length) != 1 then
+      "shards built different protoc-go: " + (distinct(.protoc_go_reports) | tostring)
+    elif (distinct(.go_version) | length) != 1 then
+      "shards used different Go toolchains: " + (distinct(.go_version) | tostring)
+    else "" end
+  end
+' "${INPUTS[@]}")
+
+if [ -n "$PROBLEM" ]; then
+  echo "error: $PROBLEM" >&2
+  echo "       Refusing to merge. Nothing was written to $OUT." >&2
+  exit 2
+fi
+
+# -- merge ----------------------------------------------------------------
+
+mkdir -p "$(dirname "$OUT")"
+
+jq -s '
+  (map(.shard.total // 1) | first) as $shards |
+  (map(.failing) | add | sort) as $all_failing |
+  ($all_failing[0:100]) as $failing |
+  (map(.no_result) | add) as $no_result |
+  (map(.status) | unique) as $statuses |
+  {
+    status: (
+      if ($statuses | index("error")) or $no_result > 0 then "error"
+      elif ($statuses | index("fail")) then "fail"
+      else "pass" end
+    ),
+    total: (map(.total) | add),
+    pass:  (map(.pass)  | add),
+    fail:  (map(.fail)  | add),
+    by_group: (
+      map(.by_group | to_entries) | add | group_by(.key) | map({
+        key: .[0].key,
+        value: {
+          total: (map(.value.total) | add),
+          pass:  (map(.value.pass)  | add),
+          fail:  (map(.value.fail)  | add)
+        }
+      }) | from_entries
+    ),
+    failing: $failing,
+    failing_truncated: (
+      (map(.failing_truncated) | add) + (($all_failing | length) - ($failing | length))
+    ),
+    no_result: $no_result,
+    shards: $shards,
+    protoc_version:    (map(.protoc_version)    | first),
+    protoc_go_reports: (map(.protoc_go_reports) | first),
+    go_version:        (map(.go_version)        | first),
+    commit:            (map(.commit)            | first),
+    runner:  (map(.runner) | unique | join(", ")),
+    run_url: (map(.run_url) | map(select(. != "")) | first // ""),
+    elapsed_ms: {
+      cpp: (map(.elapsed_ms.cpp) | add),
+      go:  (map(.elapsed_ms.go)  | add)
+    },
+    utc: (map(.utc) | max)
+  }
+' "${INPUTS[@]}" > "$OUT"
+
+jq -r '
+  "Merged \(.shards) shard(s): \(.pass)/\(.total) passed, \(.fail) failed" +
+  (if .no_result > 0 then ", \(.no_result) with no result" else "" end) +
+  " → status \(.status)"
+' "$OUT"
+echo "Wrote $OUT"

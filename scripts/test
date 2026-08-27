@@ -16,6 +16,25 @@ PROTOC_GEN_DUMP="$PROJECT_DIR/tools/protoc-gen-dump/protoc-gen-dump"
 # Parse flags
 SUMMARY_ONLY=false
 JSON_OUT=""
+SHARD_INDEX=1
+SHARD_TOTAL=1
+
+parse_shard() {
+  case "$1" in
+    */*) ;;
+    *) echo "error: --shard wants INDEX/TOTAL, got: $1" >&2; exit 2 ;;
+  esac
+  SHARD_INDEX="${1%%/*}"
+  SHARD_TOTAL="${1##*/}"
+  case "$SHARD_INDEX$SHARD_TOTAL" in
+    *[!0-9]*|"") echo "error: --shard wants numbers, got: $1" >&2; exit 2 ;;
+  esac
+  if [ "$SHARD_TOTAL" -lt 1 ] || [ "$SHARD_INDEX" -lt 1 ] || [ "$SHARD_INDEX" -gt "$SHARD_TOTAL" ]; then
+    echo "error: --shard $1 is out of range" >&2
+    exit 2
+  fi
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --summary) SUMMARY_ONLY=true ;;
@@ -28,6 +47,15 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --json=*) JSON_OUT="${1#--json=}" ;;
+    --shard)
+      if [ $# -lt 2 ]; then
+        echo "error: --shard requires INDEX/TOTAL" >&2
+        exit 2
+      fi
+      parse_shard "$2"
+      shift
+      ;;
+    --shard=*) parse_shard "${1#--shard=}" ;;
   esac
   shift
 done
@@ -706,6 +734,34 @@ run_cli_test() {
 PIDS=()
 TEST_NAMES=()
 
+# Every test in the suite is registered through launch(), in an order that does
+# not depend on the machine: the testdata glob is sorted, and every other suite
+# is a literal array. That fixed order is what makes --shard safe — each shard
+# walks the whole registration list and keeps only the entries whose position
+# is its own, so the shards partition the suite without talking to each other
+# and without any of them holding a list of what the others took.
+#
+# A shard therefore reports on its slice only. Its --json output is marked
+# partial and cannot be published on its own; scripts/merge-summaries turns a
+# full set of shard summaries back into one verdict.
+SHARD_SEQ=0
+
+# launch <full_name> <command> [args...]
+launch() {
+  local full_name="$1"
+  shift
+
+  SHARD_SEQ=$((SHARD_SEQ + 1))
+  if [ "$SHARD_TOTAL" -gt 1 ] &&
+     [ $(( (SHARD_SEQ - 1) % SHARD_TOTAL )) -ne $(( SHARD_INDEX - 1 )) ]; then
+    return 0
+  fi
+
+  "$@" &
+  PIDS+=($!)
+  TEST_NAMES+=("$full_name")
+}
+
 # Proto file tests: each testdata dir × each profile
 for test_dir in "$TESTS_DIR"/*/; do
   if [ -d "$test_dir" ]; then
@@ -721,27 +777,24 @@ for test_dir in "$TESTS_DIR"/*/; do
 
       case "$profile_mode" in
         plugin)
-          run_plugin_test "$test_name" "$test_dir" "$profile_name" "$extra_flags" &
+          launch "$full_name" run_plugin_test "$test_name" "$test_dir" "$profile_name" "$extra_flags"
           ;;
         descriptor)
-          run_descriptor_test "$test_name" "$test_dir" "$profile_name" "$extra_flags" &
+          launch "$full_name" run_descriptor_test "$test_name" "$test_dir" "$profile_name" "$extra_flags"
           ;;
         multi_plugin)
-          run_multi_plugin_test "$test_name" "$test_dir" "$profile_name" &
+          launch "$full_name" run_multi_plugin_test "$test_name" "$test_dir" "$profile_name"
           ;;
         multi_opt)
-          run_multi_opt_test "$test_name" "$test_dir" "$profile_name" &
+          launch "$full_name" run_multi_opt_test "$test_name" "$test_dir" "$profile_name"
           ;;
         plugin_descriptor)
-          run_plugin_descriptor_test "$test_name" "$test_dir" "$profile_name" &
+          launch "$full_name" run_plugin_descriptor_test "$test_name" "$test_dir" "$profile_name"
           ;;
         colon_param)
-          run_colon_param_test "$test_name" "$test_dir" "$profile_name" &
+          launch "$full_name" run_colon_param_test "$test_name" "$test_dir" "$profile_name"
           ;;
       esac
-
-      PIDS+=($!)
-      TEST_NAMES+=("$full_name")
     done
   fi
 done
@@ -879,9 +932,7 @@ CLI_TESTS=(
 
 for cli_spec in "${CLI_TESTS[@]}"; do
   IFS='|' read -r cli_name cli_args cli_stdin <<< "$cli_spec"
-  run_cli_test "$cli_name" "$cli_args" "$cli_stdin" &
-  PIDS+=($!)
-  TEST_NAMES+=("cli@${cli_name}")
+  launch "cli@${cli_name}" run_cli_test "$cli_name" "$cli_args" "$cli_stdin"
 done
 
 # -- partial generation test -----------------------------------------------
@@ -949,14 +1000,10 @@ run_partial_gen_test() {
 }
 
 # Test: generate only main.proto (dep.proto is a dependency, not a generation target)
-run_partial_gen_test "331_only_main" "$TESTS_DIR/331_partial_generation" "main.proto" &
-PIDS+=($!)
-TEST_NAMES+=("partial@331_only_main")
+launch "partial@331_only_main" run_partial_gen_test "331_only_main" "$TESTS_DIR/331_partial_generation" "main.proto"
 
 # Test: generate only dep.proto (standalone, no imports needed)
-run_partial_gen_test "331_only_dep" "$TESTS_DIR/331_partial_generation" "dep.proto" &
-PIDS+=($!)
-TEST_NAMES+=("partial@331_only_dep")
+launch "partial@331_only_dep" run_partial_gen_test "331_only_dep" "$TESTS_DIR/331_partial_generation" "dep.proto"
 
 # -- stdin/stdout tests (decode_raw with real binary) ----------------------
 
@@ -1043,9 +1090,7 @@ STDIN_TESTS=(
 
 for stdin_spec in "${STDIN_TESTS[@]}"; do
   IFS='|' read -r stdin_name stdin_hex <<< "$stdin_spec"
-  run_decode_raw_test "$stdin_name" "$stdin_hex" &
-  PIDS+=($!)
-  TEST_NAMES+=("stdin@${stdin_name}")
+  launch "stdin@${stdin_name}" run_decode_raw_test "$stdin_name" "$stdin_hex"
 done
 
 # -- decode tests ----------------------------------------------------------
@@ -1153,9 +1198,7 @@ DECODE_TESTS=(
 
 for decode_spec in "${DECODE_TESTS[@]}"; do
   IFS='|' read -r decode_name decode_dir decode_type decode_hex <<< "$decode_spec"
-  run_decode_test "$decode_name" "$decode_dir" "$decode_type" "$decode_hex" &
-  PIDS+=($!)
-  TEST_NAMES+=("decode@${decode_name}")
+  launch "decode@${decode_name}" run_decode_test "$decode_name" "$decode_dir" "$decode_type" "$decode_hex"
 done
 
 # -- determinism tests -----------------------------------------------------
@@ -1254,9 +1297,7 @@ for det_case in "${DETERMINISM_CASES[@]}"; do
   det_dir="$TESTS_DIR/$det_case"
   if [ -d "$det_dir" ]; then
     for det_mode in plugin descriptor; do
-      run_determinism_test "$det_case" "$det_dir" "$det_mode" &
-      PIDS+=($!)
-      TEST_NAMES+=("determinism@${det_case}_${det_mode}")
+      launch "determinism@${det_case}_${det_mode}" run_determinism_test "$det_case" "$det_dir" "$det_mode"
     done
   fi
 done
@@ -1331,7 +1372,12 @@ done
 
 TOTAL=$((PASS + FAIL))
 echo ""
-echo "Results: $PASS/$TOTAL passed, $FAIL/$TOTAL failed"
+if [ "$SHARD_TOTAL" -gt 1 ]; then
+  echo "Results (shard $SHARD_INDEX/$SHARD_TOTAL): $PASS/$TOTAL passed, $FAIL/$TOTAL failed"
+  echo "         This is one slice of the suite, not the whole verdict."
+else
+  echo "Results: $PASS/$TOTAL passed, $FAIL/$TOTAL failed"
+fi
 
 if [ "$NO_RESULT" -gt 0 ]; then
   echo ""
@@ -1384,6 +1430,8 @@ if [ -n "$JSON_OUT" ]; then
     --argjson cpp_ms "$CPP_TOTAL_MS" \
     --argjson go_ms "$GO_TOTAL_MS" \
     --argjson no_result "$NO_RESULT" \
+    --argjson shard_index "$SHARD_INDEX" \
+    --argjson shard_total "$SHARD_TOTAL" \
     --rawfile rows "$TESTS_TSV" \
     '
     ($rows | split("\n") | map(select(length > 0) | split("\t"))) as $r |
@@ -1406,6 +1454,8 @@ if [ -n "$JSON_OUT" ]; then
       failing: $failing[0:100],
       failing_truncated: (($failing | length) - ($failing[0:100] | length)),
       no_result: $no_result,
+      shard: { index: $shard_index, total: $shard_total },
+      partial: ($shard_total > 1),
       protoc_version: $cpp_version,
       protoc_go_reports: $go_reports,
       go_version: $go_version,
