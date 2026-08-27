@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Lets compliance.yml get a `test` check onto the results branch it pushes.
+  # Workflows cannot be woken by anything GITHUB_TOKEN does except a dispatch,
+  # so the compliance run asks for this one by name.
+  workflow_dispatch:
 
 jobs:
   test:

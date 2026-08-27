@@ -120,11 +120,22 @@ The rendered results are published as a pull request from the disposable
 `compliance/results` branch, not pushed straight to main: main's ruleset
 requires the `test` status check, which a direct push has no way to satisfy.
 That branch is force-pushed every run, so an already-open pull request is
-updated in place rather than piling up. The default `GITHUB_TOKEN` cannot
-trigger workflows, so the pull request it opens sits without CI and needs a
-manual merge; setting a `COMPLIANCE_TOKEN` secret (fine-grained PAT or GitHub
-App token, contents and pull-requests write) makes tests.yml run on it and the
-whole loop self-service.
+updated in place rather than piling up.
+
+Two things have to be true for that pull request to open and merge on its own.
+"Allow GitHub Actions to create and approve pull requests" (Settings → Actions →
+General) must be on, or the create call is rejected and the results never leave
+the branch. And because no workflow run is created for events the default
+`GITHUB_TOKEN` causes, neither the push nor the pull request wakes tests.yml,
+which would leave the required `test` check unreported forever; `workflow_dispatch`
+is the one event that token may raise, so the publish step asks tests.yml to run
+against the results branch by name. That run reports `test` on the results commit
+just as a `pull_request` run would, which is why tests.yml carries a
+`workflow_dispatch` trigger it is otherwise never invoked through.
+
+Setting a `COMPLIANCE_TOKEN` secret (fine-grained PAT or GitHub App token,
+contents and pull-requests write) sidesteps both: its pull request arrives with
+CI already running and the dispatch is redundant.
 
 The C++ version to verify against is not pinned in the workflow — it is read
 from `protoc-go --version`, so the compiler itself declares its target and CI
