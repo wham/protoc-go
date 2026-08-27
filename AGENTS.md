@@ -1,10 +1,10 @@
 ## Guidelines
 
 - See below for how to run and test.
-- Be sparse with code comments. Comment only what is genuinely tricky or surprising, and keep it to a line. Never narrate what the code already says.
+- Only add code comments for really tricky parts; otherwise keep it clean.
 - Don't commit changes to `status.txt` — it's managed by ralph.sh.
 - Use past tense in commit messages (e.g., "Fix bug" → "Fixed bug").
-- Keep pull-request descriptions to a couple of sentences: what changed and why, nothing else. No bullet lists, no markdown headers, no test plans, no summary of the diff; the diff is right there.
+- Keep pull-request descriptions extremely short — one sentence, and stop. No bullet lists, no markdown headers, no summary of the diff; the diff is right there.
 - Put exactly one `release:` label on every PR that changes shipped code (`.go`, `go.mod`, `go.sum`, `.goreleaser.yml`). `release: none` is the usual answer; a sizing label cuts a release on merge. See [Versioning](README.md#versioning).
 - After a PR is merged, always reset the branch to latest main before starting new work. Never push additional commits to a branch whose PR is already merged — create a fresh branch or reset the existing one.
 - When I prompt you to make changes that are radically different from what's documented here, please update this file accordingly.
