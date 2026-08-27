@@ -2,7 +2,6 @@
 
 [![compliance](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fwham%2Fprotoc-go%2Fmain%2Fdocs%2Fbadge.json)](#compliance)
 [![tests](https://github.com/wham/protoc-go/actions/workflows/tests.yml/badge.svg)](https://github.com/wham/protoc-go/actions/workflows/tests.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/wham/protoc-go.svg)](https://pkg.go.dev/github.com/wham/protoc-go/protoc)
 
 A pure Go implementation of the Protocol Buffers compiler (`protoc`). Use it as a CLI drop-in replacement, or embed it as a library directly in your Go program, with no `protoc` binary and no subprocess.
 
@@ -38,13 +37,10 @@ for _, f := range files {
 }
 ```
 
-You can also:
+That is the whole idea. In-memory sources, `FileDescriptorSet` output, in-process
+Go plugins and the concurrency guarantees are all in the reference:
 
-- compile in-memory sources with `protoc.WithOverlay(map[string]string{...})`,
-- serialize a `FileDescriptorSet` via `result.AsFileDescriptorSet()`,
-- run Go plugins in-process (no subprocess) with `result.RunLibraryPlugin`; they receive the same `CodeGeneratorRequest` a subprocess plugin would.
-
-`Compiler` is safe for concurrent use: create one and reuse it across goroutines.
+[![Go Reference](https://pkg.go.dev/badge/github.com/wham/protoc-go.svg)](https://pkg.go.dev/github.com/wham/protoc-go/protoc)
 
 ## Compliance
 
