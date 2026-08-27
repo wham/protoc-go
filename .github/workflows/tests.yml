@@ -5,14 +5,18 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Lets compliance.yml get a `test` check onto the results branch it pushes.
+  # Workflows cannot be woken by anything GITHUB_TOKEN does except a dispatch,
+  # so the compliance run asks for this one by name.
+  workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.23"
 
@@ -31,9 +35,9 @@ jobs:
     # merge. Kept separate from the correctness gate above.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.23"
 
@@ -50,7 +54,7 @@ jobs:
             -benchtime=5x -benchmem | tee results-bench/go-bench.txt
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: benchmark-results
           path: results-bench/

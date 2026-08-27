@@ -24,6 +24,9 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  # Lets the Publish results step ask tests.yml to run against the results
+  # branch. See that step for why the run has to be requested by hand.
+  actions: write
 
 concurrency:
   group: compliance
@@ -38,13 +41,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
-          # See the Publish results step for why the default token is not
-          # enough to get the results merged on its own.
+          # GITHUB_TOKEN is enough; COMPLIANCE_TOKEN is honoured if set, which
+          # saves the explicit tests.yml dispatch in the Publish results step.
           token: ${{ secrets.COMPLIANCE_TOKEN || secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.23"
 
@@ -80,7 +83,7 @@ jobs:
             --history docs/history.jsonl
 
       - name: Upload raw results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: compliance-results
           path: |
@@ -92,12 +95,17 @@ jobs:
       # Published as a pull request, not a push: main requires the `test` status
       # check, and a direct push carries no check to satisfy it.
       #
-      # With the default GITHUB_TOKEN the pull request opens but stays blocked —
-      # branches pushed and pull requests opened with that token do not trigger
-      # workflows, so tests.yml never runs on it. Set a COMPLIANCE_TOKEN secret
-      # (a fine-grained PAT or GitHub App token with contents and pull-requests
-      # write) and the pull request arrives with CI already running, ready to
-      # merge on its own.
+      # Opening that pull request needs "Allow GitHub Actions to create and
+      # approve pull requests" (Settings → Actions → General); without it the
+      # create call is rejected outright and the results never leave the branch.
+      #
+      # GITHUB_TOKEN then opens the pull request but cannot start CI on it: no
+      # workflow run is created for events that token causes, so neither the
+      # push nor the pull request wakes tests.yml and the `test` check stays
+      # unreported. workflow_dispatch is the documented exception, so the run is
+      # requested explicitly below. A COMPLIANCE_TOKEN secret (fine-grained PAT
+      # or GitHub App token, contents + pull-requests write) skips all of this —
+      # its pull request arrives with CI already running.
       - name: Publish results
         if: github.event_name == 'schedule' || inputs.publish
         env:
@@ -145,12 +153,25 @@ jobs:
             --state open --json number --jq '.[].number')
           if [ -n "$open" ]; then
             echo "updated existing pull request #${open}"
-            exit 0
+          else
+            gh pr create --base "${GITHUB_REF_NAME}" --head "${BRANCH}" \
+              --title "Published weekly compliance results" \
+              --body "Weekly compliance run, published by [\`compliance.yml\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). The README block, badge and history are written by \`scripts/render-readme\`; nothing here is typed by hand."
           fi
 
-          gh pr create --base "${GITHUB_REF_NAME}" --head "${BRANCH}" \
-            --title "Published weekly compliance results" \
-            --body "Weekly compliance run, published by [\`compliance.yml\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). The README block, badge and history are written by \`scripts/render-readme\`; nothing here is typed by hand."
+          # Nothing above triggered a workflow run, so the pull request has no
+          # `test` check and cannot merge. Ask tests.yml for one against the
+          # results commit: the run reports `test` on that SHA exactly as a
+          # pull_request-triggered run would, so the gate is still tests.yml
+          # running the real suite rather than a status minted here.
+          #
+          # Not fatal — the results are pushed and the pull request is open by
+          # this point, and both survive a failed dispatch. Closing and
+          # reopening the pull request is the manual way to get the same run.
+          if ! gh workflow run tests.yml --ref "${BRANCH}"; then
+            echo "::warning::could not dispatch tests.yml against ${BRANCH};" \
+              "the pull request will sit without a \`test\` check until one runs"
+          fi
 
   # Watches for new upstream releases. This one is allowed to be red: it says
   # how far protoc-go is from a protoc release it does not claim to support
@@ -160,9 +181,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: "1.23"
 
@@ -201,7 +222,7 @@ jobs:
 
       - name: Report the gap
         if: steps.check.outputs.drifted == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           TARGET: ${{ steps.check.outputs.target }}
           LATEST: ${{ steps.check.outputs.latest }}
