@@ -167,6 +167,12 @@ scripts/bench                 # C++ protoc vs Go protoc-go, human table
 scripts/bench --summary       # table only; writes results-bench/bench.{json,md}
 ```
 
+Each timed row also reports peak memory (max RSS, median of `--mem-runs` runs,
+default 3) for both compilers, read from the kernel's rusage accounting via
+GNU/BSD `time` or a python3 fallback — the plugin variant includes the plugin
+subprocess on both sides. Memory is informational only: verdicts stay
+wall-clock, and rows read `n/a` when no reader is available.
+
 If `hyperfine` is installed it drives the timing for better statistics;
 otherwise a built-in median-of-N loop is used. C++ `protoc` is optional — when
 absent, only Go numbers are reported. For the in-process library core (no

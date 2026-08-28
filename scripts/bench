@@ -26,6 +26,12 @@
 #     resolution, which is unreliable for the sub-30ms rows; verdicts from it
 #     should not be trusted (and scripts that certify a winner, e.g. lisa.sh,
 #     require hyperfine).
+#   * Each timed row also reports peak memory (max RSS) for both compilers,
+#     read from the kernel's rusage accounting — GNU/BSD time when available,
+#     otherwise a python3 getrusage fallback reading the same counter. It
+#     covers the whole invocation, so the plugin variant includes the
+#     protoc-gen-dump subprocess on both sides (same binary, so still fair).
+#     Memory is informational only: verdicts stay wall-clock.
 #
 # Usage:
 #   scripts/bench                 # default corpus + variants, human table
@@ -34,9 +40,10 @@
 #   scripts/bench --warmup 3      # warmup runs per case (default 3)
 #   scripts/bench --margin 0.03   # relative "tie" margin (default 0.03 = 3%)
 #   scripts/bench --sizes "tiny small medium large"   # which scaled tiers
+#   scripts/bench --mem-runs 3    # peak-RSS runs per case (default 3, 0 = off)
 #
 # Outputs results-bench/bench.json (machine-readable, one object per
-# case/variant with verdict + stddev) and results-bench/bench.md.
+# case/variant with verdict + stddev + peak RSS) and results-bench/bench.md.
 #
 # Requires Go. C++ protoc is optional: if absent, only Go numbers are reported.
 # If `hyperfine` is on PATH it drives the CLI timing (better statistics);
@@ -58,13 +65,15 @@ RUNS=10
 WARMUP=3
 MARGIN=0.03
 SIZES="tiny small medium"
+MEM_RUNS=3
 while [ $# -gt 0 ]; do
   case "$1" in
-    --summary) SUMMARY_ONLY=true; shift ;;
-    --runs)    RUNS="$2"; shift 2 ;;
-    --warmup)  WARMUP="$2"; shift 2 ;;
-    --margin)  MARGIN="$2"; shift 2 ;;
-    --sizes)   SIZES="$2"; shift 2 ;;
+    --summary)  SUMMARY_ONLY=true; shift ;;
+    --runs)     RUNS="$2"; shift 2 ;;
+    --warmup)   WARMUP="$2"; shift 2 ;;
+    --margin)   MARGIN="$2"; shift 2 ;;
+    --sizes)    SIZES="$2"; shift 2 ;;
+    --mem-runs) MEM_RUNS="$2"; shift 2 ;;
     *) echo "Unknown flag: $1" >&2; exit 2 ;;
   esac
 done
@@ -84,6 +93,24 @@ for d in /opt/homebrew/include /usr/local/include /tmp/protoc-install/include /u
 done
 INC_FLAG=""
 [ -n "$PROTOC_INCLUDE" ] && INC_FLAG="-I$PROTOC_INCLUDE"
+
+# -- locate a peak-RSS reader (non-fatal; columns read n/a without one) ----
+# All three read the same kernel counter (ru_maxrss via wait4), which folds in
+# every waited-for descendant — so the plugin variant includes the plugin
+# subprocess. GNU time reports kbytes, BSD time bytes, python3 whatever
+# getrusage says for the platform (KB on Linux, bytes on macOS).
+
+MEM_TOOL=""
+TIME_BIN=""
+for tb in /usr/bin/time /opt/homebrew/bin/gtime /usr/local/bin/gtime; do
+  [ -x "$tb" ] || continue
+  if "$tb" -v true >/dev/null 2>&1; then MEM_TOOL="gnu-time"; TIME_BIN="$tb"; break; fi
+  if "$tb" -l true >/dev/null 2>&1; then MEM_TOOL="bsd-time"; TIME_BIN="$tb"; break; fi
+done
+if [ -z "$MEM_TOOL" ] && command -v python3 >/dev/null 2>&1; then
+  MEM_TOOL="python3-rusage"
+fi
+[ "$MEM_RUNS" -gt 0 ] || MEM_TOOL=""
 
 # -- setup ----------------------------------------------------------------
 
@@ -111,6 +138,11 @@ else
   echo "         rows are unreliable — a 'tie' or 'go'/'cpp' call there is noise."
   echo "         Install hyperfine before trusting any verdict (and before using"
   echo "         this harness to certify that one compiler beats the other)."
+fi
+if [ -n "$MEM_TOOL" ]; then
+  echo "Memory driver: $MEM_TOOL (peak RSS, median of $MEM_RUNS runs)"
+else
+  echo "Memory driver: none — peak-RSS columns will read n/a"
 fi
 echo "Runs: $RUNS  Warmup: $WARMUP  Tie margin: $MARGIN"
 echo ""
@@ -213,6 +245,48 @@ stats() {
   echo "$out"
 }
 
+# peak_rss_kb_once <cmd> — one run, echo peak RSS in KB (nothing on failure).
+# The command's own output is discarded inside the inner shell so that only the
+# measuring tool's report reaches the pipe.
+peak_rss_kb_once() {
+  local cmd="$1"
+  case "$MEM_TOOL" in
+    gnu-time)
+      "$TIME_BIN" -v sh -c "$cmd >/dev/null 2>&1" 2>&1 >/dev/null \
+        | awk '/Maximum resident set size/ {print $NF}'
+      ;;
+    bsd-time)
+      "$TIME_BIN" -l sh -c "$cmd >/dev/null 2>&1" 2>&1 >/dev/null \
+        | awk '/maximum resident set size/ {print int($1/1024)}'
+      ;;
+    python3-rusage)
+      # The forked shell starts out sharing python's resident pages, so the
+      # smallest rows read a few MB high under this fallback. Fine for an
+      # informational column, but GNU/BSD time is preferred for that reason.
+      python3 - "$cmd" <<'PY'
+import resource, subprocess, sys
+subprocess.run(["sh", "-c", sys.argv[1] + " >/dev/null 2>&1"])
+kb = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+print(kb // 1024 if sys.platform == "darwin" else kb)
+PY
+      ;;
+  esac
+}
+
+# peak_rss_kb <cmd> — median peak RSS in KB over MEM_RUNS runs, or "" when
+# memory cannot be measured. Peak RSS is far more stable than wall-clock, so a
+# short median is enough to shrug off a one-off outlier.
+peak_rss_kb() {
+  local cmd="$1" i kb vals=()
+  [ -n "$MEM_TOOL" ] || { echo ""; return; }
+  for ((i=0; i<MEM_RUNS; i++)); do
+    kb=$(peak_rss_kb_once "$cmd")
+    [[ "$kb" =~ ^[0-9]+$ ]] && vals+=("$kb")
+  done
+  [ "${#vals[@]}" -gt 0 ] || { echo ""; return; }
+  printf '%s\n' "${vals[@]}" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}'
+}
+
 # verdict <go_med> <go_sd> <cpp_med> <cpp_sd> — echo go|cpp|tie.
 # "tie" unless the medians differ by more than BOTH the combined stddev
 # (run-to-run noise) AND a relative margin. This refuses to call noise a win.
@@ -250,8 +324,8 @@ compiles_ok() {
 
 # -- run ------------------------------------------------------------------
 
-printf '%-18s %-11s %14s %14s %7s %5s\n' "case" "variant" "cpp ms(±sd)" "go ms(±sd)" "go/cpp" "verd"
-printf '%-18s %-11s %14s %14s %7s %5s\n' "----" "-------" "-----------" "----------" "------" "----"
+printf '%-18s %-11s %14s %14s %7s %5s %9s %9s %7s\n' "case" "variant" "cpp ms(±sd)" "go ms(±sd)" "go/cpp" "verd" "cpp MB" "go MB" "mem"
+printf '%-18s %-11s %14s %14s %7s %5s %9s %9s %7s\n' "----" "-------" "-----------" "----------" "------" "----" "------" "-----" "---"
 
 ROWS_MD=()
 FALLBACK_ROWS=0
@@ -279,12 +353,31 @@ for spec in "${CASES[@]}"; do
     fi
     if [ -n "$skip_why" ]; then
       SKIPPED_ROWS+=("$label/$variant: $skip_why")
-      printf '%-18s %-11s %14s %14s %7s %5s\n' "$label" "$variant" "-" "-" "-" "skip"
+      printf '%-18s %-11s %14s %14s %7s %5s %9s %9s %7s\n' "$label" "$variant" "-" "-" "-" "skip" "-" "-" "-"
       continue
     fi
 
     read -r go_med go_sd go_mean go_driver <<< "$(stats "$go_cmd")"
     go_disp=$(awk -v m="$go_med" -v s="$go_sd" 'BEGIN{printf "%d±%d", m+0.5, s+0.5}')
+
+    go_mem_kb=$(peak_rss_kb "$go_cmd")
+    go_mem_disp="n/a"; go_mem_json=null
+    if [ -n "$go_mem_kb" ]; then
+      go_mem_disp=$(awk -v k="$go_mem_kb" 'BEGIN{printf "%.1f", k/1024}')
+      go_mem_json=$go_mem_kb
+    fi
+    cpp_mem_kb=""
+    [ -n "$PROTOC" ] && cpp_mem_kb=$(peak_rss_kb "$cpp_cmd")
+    cpp_mem_disp="n/a"; cpp_mem_json=null
+    if [ -n "$cpp_mem_kb" ]; then
+      cpp_mem_disp=$(awk -v k="$cpp_mem_kb" 'BEGIN{printf "%.1f", k/1024}')
+      cpp_mem_json=$cpp_mem_kb
+    fi
+    mem_ratio_disp="n/a"; mem_ratio_json=null
+    if [ -n "$go_mem_kb" ] && [ -n "$cpp_mem_kb" ] && [ "$cpp_mem_kb" -gt 0 ]; then
+      mem_ratio_json=$(awk -v g="$go_mem_kb" -v c="$cpp_mem_kb" 'BEGIN{printf "%.2f", g/c}')
+      mem_ratio_disp=$mem_ratio_json
+    fi
 
     if [ -n "$PROTOC" ]; then
       read -r cpp_med cpp_sd cpp_mean cpp_driver <<< "$(stats "$cpp_cmd")"
@@ -299,8 +392,8 @@ for spec in "${CASES[@]}"; do
         row_driver="builtin-median-$RUNS"; row_reliable=false
         FALLBACK_ROWS=$((FALLBACK_ROWS + 1))
       fi
-      printf '{"case":"%s","variant":"%s","informational":%s,"cpp_ms":%.2f,"cpp_sd":%.2f,"go_ms":%.2f,"go_sd":%.2f,"ratio":%s,"verdict":"%s","driver":"%s","reliable":%s,"runs":%s}\n' \
-        "$label" "$variant" "$info" "$cpp_med" "$cpp_sd" "$go_med" "$go_sd" "$ratio" "$verd" "$row_driver" "$row_reliable" "$RUNS" >> "$ROWS_JSONL"
+      printf '{"case":"%s","variant":"%s","informational":%s,"cpp_ms":%.2f,"cpp_sd":%.2f,"go_ms":%.2f,"go_sd":%.2f,"ratio":%s,"verdict":"%s","driver":"%s","reliable":%s,"runs":%s,"cpp_peak_kb":%s,"go_peak_kb":%s,"mem_ratio":%s}\n' \
+        "$label" "$variant" "$info" "$cpp_med" "$cpp_sd" "$go_med" "$go_sd" "$ratio" "$verd" "$row_driver" "$row_reliable" "$RUNS" "$cpp_mem_json" "$go_mem_json" "$mem_ratio_json" >> "$ROWS_JSONL"
     else
       cpp_disp="n/a"; ratio="n/a"; verd="n/a"
       if [ "$go_driver" = "hyperfine" ]; then
@@ -309,12 +402,12 @@ for spec in "${CASES[@]}"; do
         row_driver="builtin-median-$RUNS"; row_reliable=false
         [ "$USE_HYPERFINE" = true ] && FALLBACK_ROWS=$((FALLBACK_ROWS + 1))
       fi
-      printf '{"case":"%s","variant":"%s","informational":%s,"cpp_ms":null,"cpp_sd":null,"go_ms":%.2f,"go_sd":%.2f,"ratio":null,"verdict":"n/a","driver":"%s","reliable":%s,"runs":%s}\n' \
-        "$label" "$variant" "$info" "$go_med" "$go_sd" "$row_driver" "$row_reliable" "$RUNS" >> "$ROWS_JSONL"
+      printf '{"case":"%s","variant":"%s","informational":%s,"cpp_ms":null,"cpp_sd":null,"go_ms":%.2f,"go_sd":%.2f,"ratio":null,"verdict":"n/a","driver":"%s","reliable":%s,"runs":%s,"cpp_peak_kb":null,"go_peak_kb":%s,"mem_ratio":null}\n' \
+        "$label" "$variant" "$info" "$go_med" "$go_sd" "$row_driver" "$row_reliable" "$RUNS" "$go_mem_json" >> "$ROWS_JSONL"
     fi
 
-    printf '%-18s %-11s %14s %14s %7s %5s\n' "$label" "$variant" "$cpp_disp" "$go_disp" "$ratio" "$verd"
-    ROWS_MD+=("| $label | $variant | $cpp_disp | $go_disp | $ratio | $verd |")
+    printf '%-18s %-11s %14s %14s %7s %5s %9s %9s %7s\n' "$label" "$variant" "$cpp_disp" "$go_disp" "$ratio" "$verd" "$cpp_mem_disp" "$go_mem_disp" "$mem_ratio_disp"
+    ROWS_MD+=("| $label | $variant | $cpp_disp | $go_disp | $ratio | $verd | $cpp_mem_disp | $go_mem_disp | $mem_ratio_disp |")
   done
 done
 
@@ -332,6 +425,11 @@ jq -s '.' "$ROWS_JSONL" > "$OUT_DIR/bench.json"
   fi
   echo "- Go: \`$(go version | awk '{print $3, $4}')\`"
   echo "- Driver: $DRIVER, warmup=$WARMUP, runs=$RUNS, tie-margin=$MARGIN"
+  if [ -n "$MEM_TOOL" ]; then
+    echo "- Memory: peak RSS via $MEM_TOOL, median of $MEM_RUNS runs"
+  else
+    echo "- Memory: not measured (no GNU/BSD time or python3 found)"
+  fi
   if [ "$RELIABLE" != true ]; then
     echo "- **WARNING:** built-in ~1ms timer — verdicts on sub-30ms rows are noise."
   fi
@@ -341,9 +439,12 @@ jq -s '.' "$ROWS_JSONL" > "$OUT_DIR/bench.json"
   echo "only \`go\`/\`cpp\` when the gap exceeds both the combined stddev and the"
   echo "tie margin; otherwise it is a \`tie\`. The \`startup_empty\` row is process"
   echo "launch cost, not compilation, and is excluded from any win/loss tally."
+  echo "\`peak MB\` is the median peak resident set size of the whole invocation"
+  echo "(the plugin variant includes the protoc-gen-dump subprocess on both"
+  echo "sides); it is informational and never decides a verdict."
   echo ""
-  echo "| case | variant | cpp ms(±sd) | go ms(±sd) | go/cpp | verdict |"
-  echo "| ---- | ------- | ----------- | ---------- | ------ | ------- |"
+  echo "| case | variant | cpp ms(±sd) | go ms(±sd) | go/cpp | verdict | cpp peak MB | go peak MB | mem go/cpp |"
+  echo "| ---- | ------- | ----------- | ---------- | ------ | ------- | ----------- | ---------- | ---------- |"
   printf '%s\n' "${ROWS_MD[@]}"
   if [ "${#SKIPPED_ROWS[@]}" -gt 0 ]; then
     echo ""

@@ -121,6 +121,13 @@ jobs:
           curl -fsSL "https://github.com/sharkdp/hyperfine/releases/download/v1.19.0/hyperfine_1.19.0_amd64.deb" -o /tmp/hyperfine.deb
           sudo dpkg -i /tmp/hyperfine.deb
 
+      - name: Install GNU time
+        # Peak-RSS reader for scripts/bench. Non-fatal: without it the harness
+        # falls back to a python3 getrusage reader that reads the smallest rows
+        # a few MB high.
+        continue-on-error: true
+        run: sudo apt-get install -y time
+
       - name: Performance — Go protoc-go vs C++ protoc
         run: scripts/bench --summary --sizes "tiny small medium large"
 
