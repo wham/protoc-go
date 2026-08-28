@@ -2,10 +2,12 @@
 # Performance harness: C++ protoc vs Go protoc-go.
 #
 # This is the perf counterpart to scripts/test (which checks correctness). It
-# runs both compilers on the same curated, scaled corpus under controlled
-# conditions — serial, warmed up, repeated — and reports per-case latency WITH
-# its spread (±stddev), the Go/C++ ratio, and a noise-aware verdict so that
-# run-to-run jitter is never mistaken for a real win.
+# runs both compilers on the same corpus — the size-scaled generated tiers plus
+# the vendored upstream protobuf corpus, which is what real-world .proto
+# actually looks like — under controlled conditions (serial, warmed up,
+# repeated) and reports per-case latency with its spread (±stddev), the Go/C++
+# ratio, and a noise-aware verdict so that run-to-run jitter is never mistaken
+# for a real win.
 #
 # Fairness rules baked into this harness:
 #   * Every measurement reports stddev, not just a point estimate.
@@ -16,6 +18,10 @@
 #   * The startup_empty row measures pure process-launch cost, not compilation,
 #     so it is flagged "informational" and excluded from win/loss aggregation.
 #     Starting up faster is not the same as compiling faster.
+#   * A row is timed only when both compilers compile it cleanly. A failed
+#     compile is not a measurement of compiling, and the two give up at
+#     different points, so a failing row would time two error paths against
+#     each other. Rows that cannot compile are dropped and reported.
 #   * hyperfine is strongly preferred. The built-in fallback timer has ~1ms
 #     resolution, which is unreliable for the sub-30ms rows; verdicts from it
 #     should not be trusted (and scripts that certify a winner, e.g. lisa.sh,
@@ -123,7 +129,8 @@ ROWS_JSONL="$OUT_DIR/rows.jsonl"
 : > "$ROWS_JSONL"
 
 # -- corpus ---------------------------------------------------------------
-# Format: case_label|directory
+# Format: case_label|directory|sources (sources optional, default *.proto —
+# a glob relative to the directory, so a case may be a whole tree)
 # Mixes a couple of real fixtures with the scaled tiers so the report shows a
 # clean size→latency curve (where algorithmic differences surface).
 
@@ -135,6 +142,17 @@ for size in $SIZES; do
   CASES+=("bench_$size|$TESTS_DIR/bench/$size")
 done
 CASES+=("329_large_stress|$TESTS_DIR/329_large_stress")
+
+# The vendored upstream corpus (testdata/google/, see AGENTS.md) compiled in a
+# single invocation: 53 real .proto files written by the protobuf maintainers,
+# not by this project or its generator. It is the one row here whose shape —
+# a dependency graph of imports and public imports, custom options, extensions,
+# editions, generic services — is what a real project hands a compiler, so it is
+# the row that says something about real-world performance. It needs the C++
+# protoc include directory (four files import google/protobuf/cpp_features.proto
+# or java_features.proto), and the guard below drops the row rather than time a
+# failed compile when that is missing.
+CASES+=("google_corpus|$TESTS_DIR/google|google/protobuf/*.proto")
 
 # Variants: how each compiler is invoked.
 #   descriptor — pure compile + serialize, no plugin/disk noise
@@ -207,19 +225,27 @@ verdict() {
   }'
 }
 
-# build_cmd <impl> <variant> <dir> <basenames> — emit the shell command string.
+# build_cmd <impl> <variant> <dir> <sources> — emit the shell command string.
 build_cmd() {
-  local bin="$1" variant="$2" dir="$3" basenames="$4"
+  local bin="$1" variant="$2" dir="$3" sources="$4"
   case "$variant" in
     descriptor)
-      echo "(cd '$dir' && '$bin' --descriptor_set_out=/dev/null $INC_FLAG -I. $basenames)"
+      echo "(cd '$dir' && '$bin' --descriptor_set_out=/dev/null $INC_FLAG -I. $sources)"
       ;;
     plugin)
       local od="$OUT_DIR/dump_$(basename "$dir")_$(basename "$bin")"
       mkdir -p "$od"
-      echo "(cd '$dir' && '$bin' --plugin=protoc-gen-dump='$PROTOC_GEN_DUMP' --dump_out='$od' --dump_opt='$od' $INC_FLAG -I. $basenames)"
+      echo "(cd '$dir' && '$bin' --plugin=protoc-gen-dump='$PROTOC_GEN_DUMP' --dump_out='$od' --dump_opt='$od' $INC_FLAG -I. $sources)"
       ;;
   esac
+}
+
+# compiles_ok <cmd> — run the command once and report whether it exited 0.
+# Every timed row is gated on this for both compilers: a failed compile is not
+# a measurement of compiling, and the two give up at different points, so a
+# failing row would be timing two different error paths against each other.
+compiles_ok() {
+  eval "$1" >/dev/null 2>&1
 }
 
 # -- run ------------------------------------------------------------------
@@ -229,22 +255,39 @@ printf '%-18s %-11s %14s %14s %7s %5s\n' "----" "-------" "-----------" "-------
 
 ROWS_MD=()
 FALLBACK_ROWS=0
+SKIPPED_ROWS=()
 for spec in "${CASES[@]}"; do
-  IFS='|' read -r label dir <<< "$spec"
+  IFS='|' read -r label dir sources_glob <<< "$spec"
   [ -d "$dir" ] || continue
-  basenames=$(cd "$dir" && ls *.proto 2>/dev/null | sort | tr '\n' ' ')
-  [ -n "$basenames" ] || continue
+  sources=$(cd "$dir" && ls ${sources_glob:-*.proto} 2>/dev/null | sort | tr '\n' ' ')
+  [ -n "$sources" ] || continue
 
   # startup_empty measures process launch, not compilation: informational only.
   info=false
   [ "$label" = "startup_empty" ] && info=true
 
   for variant in $VARIANTS; do
-    read -r go_med go_sd go_mean go_driver <<< "$(stats "$(build_cmd "$PROTOC_GO" "$variant" "$dir" "$basenames")")"
+    go_cmd=$(build_cmd "$PROTOC_GO" "$variant" "$dir" "$sources")
+    cpp_cmd=""
+    [ -n "$PROTOC" ] && cpp_cmd=$(build_cmd "$PROTOC" "$variant" "$dir" "$sources")
+
+    # Gate on a clean compile before spending any time measuring one.
+    skip_why=""
+    compiles_ok "$go_cmd" || skip_why="Go protoc-go exits non-zero"
+    if [ -z "$skip_why" ] && [ -n "$cpp_cmd" ] && ! compiles_ok "$cpp_cmd"; then
+      skip_why="C++ protoc exits non-zero"
+    fi
+    if [ -n "$skip_why" ]; then
+      SKIPPED_ROWS+=("$label/$variant: $skip_why")
+      printf '%-18s %-11s %14s %14s %7s %5s\n' "$label" "$variant" "-" "-" "-" "skip"
+      continue
+    fi
+
+    read -r go_med go_sd go_mean go_driver <<< "$(stats "$go_cmd")"
     go_disp=$(awk -v m="$go_med" -v s="$go_sd" 'BEGIN{printf "%d±%d", m+0.5, s+0.5}')
 
     if [ -n "$PROTOC" ]; then
-      read -r cpp_med cpp_sd cpp_mean cpp_driver <<< "$(stats "$(build_cmd "$PROTOC" "$variant" "$dir" "$basenames")")"
+      read -r cpp_med cpp_sd cpp_mean cpp_driver <<< "$(stats "$cpp_cmd")"
       cpp_disp=$(awk -v m="$cpp_med" -v s="$cpp_sd" 'BEGIN{printf "%d±%d", m+0.5, s+0.5}')
       ratio=$(awk -v g="$go_med" -v c="$cpp_med" 'BEGIN{ if(c>0) printf "%.2f", g/c; else print "n/a" }')
       verd=$(verdict "$go_med" "$go_sd" "$cpp_med" "$cpp_sd")
@@ -302,6 +345,12 @@ jq -s '.' "$ROWS_JSONL" > "$OUT_DIR/bench.json"
   echo "| case | variant | cpp ms(±sd) | go ms(±sd) | go/cpp | verdict |"
   echo "| ---- | ------- | ----------- | ---------- | ------ | ------- |"
   printf '%s\n' "${ROWS_MD[@]}"
+  if [ "${#SKIPPED_ROWS[@]}" -gt 0 ]; then
+    echo ""
+    echo "Not measured (a compile that fails is not a measurement of compiling):"
+    echo ""
+    printf -- '- %s\n' "${SKIPPED_ROWS[@]}"
+  fi
 } > "$OUT_DIR/bench.md"
 
 echo ""
@@ -310,5 +359,9 @@ if [ "$USE_HYPERFINE" = true ] && [ "$FALLBACK_ROWS" -gt 0 ]; then
   echo "         hyperfine failed to run the command. Those rows are marked"
   echo "         driver=builtin/reliable=false in bench.json and their verdicts"
   echo "         should not be trusted or published."
+fi
+if [ "${#SKIPPED_ROWS[@]}" -gt 0 ]; then
+  echo "WARNING: ${#SKIPPED_ROWS[@]} row(s) skipped — they did not compile cleanly:"
+  printf '         %s\n' "${SKIPPED_ROWS[@]}"
 fi
 echo "Wrote $OUT_DIR/bench.json and $OUT_DIR/bench.md"
