@@ -170,11 +170,10 @@ scripts/bench --summary       # table only; writes results-bench/bench.{json,md}
 Each timed row also reports peak memory (max RSS, median of `--mem-runs` runs,
 default 3) for both compilers, read from the kernel's rusage accounting via
 GNU/BSD `time` or a python3 fallback — the plugin variant includes the plugin
-subprocess on both sides. Memory carries its own go/cpp ratio and verdict
-column, separate from the wall-clock one, since the two can disagree; its tie
-margin is wider (`--mem-margin`, default 10%) to absorb the Go GC's run-to-run
-swing. The wall-clock verdict remains the one the win/loss tally and lisa.sh
-consume, and memory rows read `n/a` when no reader is available.
+subprocess on both sides. The tables show raw go/cpp ratios for time and
+memory rather than verdict columns; the noise-aware wall-clock verdict is
+still computed into `bench.json` per row, where lisa.sh and the README tally
+consume it. Memory rows read `n/a` when no reader is available.
 
 `tests.yml` runs this harness (tiny/small/medium tiers) on every pull request
 and posts `bench.md` as a sticky comment on the pull request, updated in place
