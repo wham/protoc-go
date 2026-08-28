@@ -41,6 +41,4 @@ dist/
 *.swp
 *~
 
-# Status file is tracked
-!status.txt
 bin/

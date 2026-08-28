@@ -21,10 +21,10 @@
 # "Won" means: no real row is a significant regression, and at least one real
 # row is a significant Go win.
 #
-# Unlike the Ralph/Nelson correctness loop, there is no builder + tester split
-# and no status.txt handshake. This script embeds its own prompt, uses git
-# history as the agent's memory, and decides for itself when it's done by
-# running `scripts/bench` and reading its verdicts from results-bench/bench.json.
+# There is no builder + tester split and no status-file handshake. This script
+# embeds its own prompt, uses git history as the agent's memory, and decides for
+# itself when it's done by running `scripts/bench` and reading its verdicts from
+# results-bench/bench.json.
 #
 # Usage:
 #   ./lisa.sh                 # loop until Go is fairly faster on the default tiers
