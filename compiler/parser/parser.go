@@ -64,6 +64,7 @@ type parser struct {
 	locations []*descriptorpb.SourceCodeInfo_Location
 	locArena  locArena
 	i32Arena  i32Arena
+	pathBuf   []int32 // scratch for spanPath
 	lastLine  int
 	lastCol   int
 	syntax              string // "proto2" or "proto3"
@@ -266,7 +267,9 @@ type ParseResult struct {
 func ParseFile(filename string, content string) (*ParseResult, error) {
 	tok := tokenizer.New(content)
 	// Pre-allocate locations based on token count (~1 location per 3 tokens)
-	estLocs := tok.Len() / 3
+	// Real files produce ~0.7-0.75 locations per token, so size for that;
+	// undershooting repays the estimate in slice regrowth and arena refills.
+	estLocs := tok.Len() * 3 / 4
 	if estLocs < 64 {
 		estLocs = 64
 	}
@@ -831,7 +834,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 	// Add message declaration and name spans BEFORE child spans (matches C++ order)
 	msgLocIdx := p.addLocationPlaceholder(path)
 	p.attachComments(msgLocIdx, firstIdx)
-	p.addLocationSpan(append(copyPath(path), 1),
+	p.addLocationSpan(p.spanPath(path, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	var fieldIdx, nestedMsgIdx, nestedEnumIdx, oneofIdx int32
@@ -1031,7 +1034,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 			msg.ReservedName = append(msg.ReservedName, nameVal)
 
 			// Source code info for individual reserved name
-			p.addLocationSpan(append(copyPath(stmtPath), *nameIdx),
+			p.addLocationSpan(p.spanPath(stmtPath, *nameIdx),
 				nameTok.Line, nameTok.Column, nameEndLine, nameEndCol)
 			*nameIdx++
 
@@ -1064,7 +1067,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 			msg.ReservedName = append(msg.ReservedName, nameVal)
 
 			// Source code info for individual reserved name
-			p.addLocationSpan(append(copyPath(stmtPath), *nameIdx),
+			p.addLocationSpan(p.spanPath(stmtPath, *nameIdx),
 				nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 			*nameIdx++
 
@@ -1157,9 +1160,9 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 			// Range span covers from start number to end number
 			p.addLocationSpan(rangePath, numTok.Line, numTok.Column, endSpanLine, endSpanCol)
 			// Start field (1) — spans just the start number token
-			p.addLocationSpan(append(copyPath(rangePath), 1), numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+			p.addLocationSpan(p.spanPath(rangePath, 1), numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
 			// End field (2) — spans just the end number token
-			p.addLocationSpan(append(copyPath(rangePath), 2), endNumLine, endNumCol, endNumLine, endNumCol+endNumLen)
+			p.addLocationSpan(p.spanPath(rangePath, 2), endNumLine, endNumCol, endNumLine, endNumCol+endNumLen)
 			*rangeIdx++
 
 			if p.tok.Peek().Value == "," {
@@ -1248,8 +1251,8 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 
 		rangePath := append(copyPath(stmtPath), *rangeIdx)
 		p.addLocationSpan(rangePath, numTok.Line, numTok.Column, endSpanLine, endSpanCol)
-		p.addLocationSpan(append(copyPath(rangePath), 1), numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
-		p.addLocationSpan(append(copyPath(rangePath), 2), endNumLine, endNumCol, endNumLine, endNumCol+endNumLen)
+		p.addLocationSpan(p.spanPath(rangePath, 1), numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
+		p.addLocationSpan(p.spanPath(rangePath, 2), endNumLine, endNumCol, endNumLine, endNumCol+endNumLen)
 		*rangeIdx++
 
 		if p.tok.Peek().Value == "," {
@@ -1690,23 +1693,23 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
 
 	// SCI: extendee (right after field span)
-	p.addLocationSpan(append(copyPath(fieldPath), 2),
+	p.addLocationSpan(p.spanPath(fieldPath, 2),
 		extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
 
 	// SCI: label
-	p.addLocationSpan(append(copyPath(fieldPath), 4),
+	p.addLocationSpan(p.spanPath(fieldPath, 4),
 		labelTok.Line, labelTok.Column, labelTok.Line, labelTok.Column+len(labelTok.Value))
 
 	// SCI: type ("group" keyword)
-	p.addLocationSpan(append(copyPath(fieldPath), 5),
+	p.addLocationSpan(p.spanPath(fieldPath, 5),
 		groupTok.Line, groupTok.Column, groupTok.Line, groupTok.Column+len(groupTok.Value))
 
 	// SCI: name
-	p.addLocationSpan(append(copyPath(fieldPath), 1),
+	p.addLocationSpan(p.spanPath(fieldPath, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// SCI: number
-	p.addLocationSpan(append(copyPath(fieldPath), 3),
+	p.addLocationSpan(p.spanPath(fieldPath, 3),
 		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
 
 	// Append deferred option SCI locations after number span
@@ -1717,11 +1720,11 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 	p.attachComments(nestedLocIdx, firstIdx)
 
 	// SCI: nested message name
-	p.addLocationSpan(append(copyPath(nestedPath), 1),
+	p.addLocationSpan(p.spanPath(nestedPath, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// SCI: type_name
-	p.addLocationSpan(append(copyPath(fieldPath), 6),
+	p.addLocationSpan(p.spanPath(fieldPath, 6),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// Parse group body (full message body: fields, enums, nested messages, etc.)
@@ -2237,7 +2240,7 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 
 	// Label span (for any explicit label keyword)
 	if labelTok != nil {
-		p.addLocationSpan(append(copyPath(path), 4),
+		p.addLocationSpan(p.spanPath(path, 4),
 			labelTok.Line, labelTok.Column, labelTok.Line, labelTok.Column+len(labelTok.Value))
 	}
 
@@ -2245,20 +2248,20 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	if field.TypeName != nil {
 		// path [6] = type_name
 		typeNameEnd := typeEndTok.Column + len(typeEndTok.Value)
-		p.addLocationSpan(append(copyPath(path), 6),
+		p.addLocationSpan(p.spanPath(path, 6),
 			typeStartLine, typeStartCol, typeEndTok.Line, typeNameEnd)
 	} else {
 		// path [5] = type
-		p.addLocationSpan(append(copyPath(path), 5),
+		p.addLocationSpan(p.spanPath(path, 5),
 			typeStartLine, typeStartCol, typeTok.Line, typeStartCol+len(typeTok.Value))
 	}
 
 	// Name span - path [1] = name
-	p.addLocationSpan(append(copyPath(path), 1),
+	p.addLocationSpan(p.spanPath(path, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// Number span - path [3] = number
-	p.addLocationSpan(append(copyPath(path), 3),
+	p.addLocationSpan(p.spanPath(path, 3),
 		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
 
 	// Option source code info (after number, matching C++ order)
@@ -2338,15 +2341,15 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	// No label span for oneof group fields
 
 	// Type span (the "group" keyword) — path [5] = type
-	p.addLocationSpan(append(copyPath(fieldPath), 5),
+	p.addLocationSpan(p.spanPath(fieldPath, 5),
 		groupTok.Line, groupTok.Column, groupTok.Line, groupTok.Column+len(groupTok.Value))
 
 	// Name span — path [1] = name
-	p.addLocationSpan(append(copyPath(fieldPath), 1),
+	p.addLocationSpan(p.spanPath(fieldPath, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// Number span — path [3] = number
-	p.addLocationSpan(append(copyPath(fieldPath), 3),
+	p.addLocationSpan(p.spanPath(fieldPath, 3),
 		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
 
 	// Append deferred option SCI locations after number span
@@ -2357,11 +2360,11 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	p.attachComments(nestedLocIdx, firstIdx)
 
 	// Nested type name span
-	p.addLocationSpan(append(copyPath(nestedPath), 1),
+	p.addLocationSpan(p.spanPath(nestedPath, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// Type name span — path [6] = type_name (same span as group name)
-	p.addLocationSpan(append(copyPath(fieldPath), 6),
+	p.addLocationSpan(p.spanPath(fieldPath, 6),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// Parse group body (full message body: fields, enums, nested messages, etc.)
@@ -2447,21 +2450,21 @@ func (p *parser) parseGroupFieldNoLabelInExtend(fieldPath, nestedPath []int32, e
 	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
 
 	// SCI: extendee (right after field span)
-	p.addLocationSpan(append(copyPath(fieldPath), 2),
+	p.addLocationSpan(p.spanPath(fieldPath, 2),
 		extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
 
 	// No label span for label-less group fields
 
 	// SCI: type ("group" keyword)
-	p.addLocationSpan(append(copyPath(fieldPath), 5),
+	p.addLocationSpan(p.spanPath(fieldPath, 5),
 		groupTok.Line, groupTok.Column, groupTok.Line, groupTok.Column+len(groupTok.Value))
 
 	// SCI: name
-	p.addLocationSpan(append(copyPath(fieldPath), 1),
+	p.addLocationSpan(p.spanPath(fieldPath, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// SCI: number
-	p.addLocationSpan(append(copyPath(fieldPath), 3),
+	p.addLocationSpan(p.spanPath(fieldPath, 3),
 		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
 
 	// Append deferred option SCI locations after number span
@@ -2472,11 +2475,11 @@ func (p *parser) parseGroupFieldNoLabelInExtend(fieldPath, nestedPath []int32, e
 	p.attachComments(nestedLocIdx, firstIdx)
 
 	// SCI: nested message name
-	p.addLocationSpan(append(copyPath(nestedPath), 1),
+	p.addLocationSpan(p.spanPath(nestedPath, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// SCI: type_name
-	p.addLocationSpan(append(copyPath(fieldPath), 6),
+	p.addLocationSpan(p.spanPath(fieldPath, 6),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// Parse group body
@@ -2724,19 +2727,19 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 	fieldLocIdx := p.addLocationPlaceholder(fieldPath)
 
 	// Label span
-	p.addLocationSpan(append(copyPath(fieldPath), 4),
+	p.addLocationSpan(p.spanPath(fieldPath, 4),
 		labelTok.Line, labelTok.Column, labelTok.Line, labelTok.Column+len(labelTok.Value))
 
 	// Type span (the "group" keyword) — path [5] = type
-	p.addLocationSpan(append(copyPath(fieldPath), 5),
+	p.addLocationSpan(p.spanPath(fieldPath, 5),
 		groupTok.Line, groupTok.Column, groupTok.Line, groupTok.Column+len(groupTok.Value))
 
 	// Name span — path [1] = name (points to the group name in source, e.g., "Result")
-	p.addLocationSpan(append(copyPath(fieldPath), 1),
+	p.addLocationSpan(p.spanPath(fieldPath, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// Number span — path [3] = number
-	p.addLocationSpan(append(copyPath(fieldPath), 3),
+	p.addLocationSpan(p.spanPath(fieldPath, 3),
 		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
 
 	// Append deferred option SCI locations after number span
@@ -2747,11 +2750,11 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 	p.attachComments(nestedLocIdx, firstIdx)
 
 	// Nested type name span
-	p.addLocationSpan(append(copyPath(nestedPath), 1),
+	p.addLocationSpan(p.spanPath(nestedPath, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// Type name span — path [6] = type_name (same span as group name)
-	p.addLocationSpan(append(copyPath(fieldPath), 6),
+	p.addLocationSpan(p.spanPath(fieldPath, 6),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	// Parse group body (full message body: fields, enums, nested messages, etc.)
@@ -2791,7 +2794,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 
 	// Add enum declaration and name spans BEFORE values (C++ order)
 	enumLocIdx := p.addLocationPlaceholder(path)
-	p.addLocationSpan(append(copyPath(path), 1),
+	p.addLocationSpan(p.spanPath(path, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	var valueIdx int32
@@ -3199,7 +3202,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		p.locations[valueLocIdx].Span = p.multiSpan(valNameTok.Line, valNameTok.Column, endValTok.Line, endValTok.Column+1)
 		p.attachComments(valueLocIdx, valFirstIdx)
 		// Value name - path [1]
-		p.addLocationSpan(append(copyPath(valuePath), 1),
+		p.addLocationSpan(p.spanPath(valuePath, 1),
 			valNameTok.Line, valNameTok.Column, valNameTok.Line, valNameTok.Column+len(valNameTok.Value))
 		// Value number - path [2]
 		numStartLine := valNumTok.Line
@@ -3208,7 +3211,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 			numStartLine = minusTok.Line
 			numStartCol = minusTok.Column
 		}
-		p.addLocationSpan(append(copyPath(valuePath), 2),
+		p.addLocationSpan(p.spanPath(valuePath, 2),
 			numStartLine, numStartCol, valNumTok.Line, valNumTok.Column+len(valNumTok.Value))
 
 		// Source code info for enum value options
@@ -3220,10 +3223,10 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 				if !entry.isCustom {
 					oi := parsedEnumValOpts[entry.index]
 					if oi.featFieldNum != 0 {
-						p.addLocationSpan(append(copyPath(optPath), oi.fieldNum, oi.featFieldNum),
+						p.addLocationSpan(p.spanPath(optPath, oi.fieldNum, oi.featFieldNum),
 							oi.nameStartLine, oi.nameStartCol, oi.endLine, oi.endCol)
 					} else {
-						p.addLocationSpan(append(copyPath(optPath), oi.fieldNum),
+						p.addLocationSpan(p.spanPath(optPath, oi.fieldNum),
 							oi.nameStartLine, oi.nameStartCol, oi.endLine, oi.endCol)
 					}
 				} else {
@@ -3541,7 +3544,7 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 			}
 			e.ReservedName = append(e.ReservedName, nameVal)
 
-			p.addLocationSpan(append(copyPath(stmtPath), *nameIdx),
+			p.addLocationSpan(p.spanPath(stmtPath, *nameIdx),
 				nameTok.Line, nameTok.Column, nameEndLine, nameEndCol)
 			*nameIdx++
 
@@ -3581,7 +3584,7 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 			for {
 				nameTok := p.tok.Next()
 				e.ReservedName = append(e.ReservedName, nameTok.Value)
-				p.addLocationSpan(append(copyPath(namePath), *nameIdx),
+				p.addLocationSpan(p.spanPath(namePath, *nameIdx),
 					nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 				*nameIdx++
 
@@ -3700,8 +3703,8 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 
 			rangePath := append(copyPath(stmtPath), *rangeIdx)
 			p.addLocationSpan(rangePath, spanStartLine, spanStartCol, endSpanLine, endSpanCol)
-			p.addLocationSpan(append(copyPath(rangePath), 1), spanStartLine, spanStartCol, numTok.Line, numTok.Column+len(numTok.Value))
-			p.addLocationSpan(append(copyPath(rangePath), 2), endNumLine, endNumCol, endNumLine, endNumCol+endNumLen)
+			p.addLocationSpan(p.spanPath(rangePath, 1), spanStartLine, spanStartCol, numTok.Line, numTok.Column+len(numTok.Value))
+			p.addLocationSpan(p.spanPath(rangePath, 2), endNumLine, endNumCol, endNumLine, endNumCol+endNumLen)
 			*rangeIdx++
 
 			if p.tok.Peek().Value == "," {
@@ -3745,7 +3748,7 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 	// Add service declaration and name spans BEFORE methods (C++ order)
 	svcLocIdx := p.addLocationPlaceholder(path)
 	p.attachComments(svcLocIdx, firstIdx)
-	p.addLocationSpan(append(copyPath(path), 1),
+	p.addLocationSpan(p.spanPath(path, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	seenServiceOptions := map[string]bool{}
@@ -4305,19 +4308,19 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 
 	// Source code info — ordered by position in source (before options)
 	methodLocIdx := p.addLocationPlaceholder(path)
-	p.addLocationSpan(append(copyPath(path), 1),
+	p.addLocationSpan(p.spanPath(path, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 	if clientStreaming {
-		p.addLocationSpan(append(copyPath(path), 5),
+		p.addLocationSpan(p.spanPath(path, 5),
 			clientStreamTok.Line, clientStreamTok.Column, clientStreamTok.Line, clientStreamTok.Column+len("stream"))
 	}
-	p.addLocationSpan(append(copyPath(path), 2),
+	p.addLocationSpan(p.spanPath(path, 2),
 		inputTok.Line, inputTok.Column, inputEndTok.Line, inputEndCol)
 	if serverStreaming {
-		p.addLocationSpan(append(copyPath(path), 6),
+		p.addLocationSpan(p.spanPath(path, 6),
 			serverStreamTok.Line, serverStreamTok.Column, serverStreamTok.Line, serverStreamTok.Column+len("stream"))
 	}
-	p.addLocationSpan(append(copyPath(path), 3),
+	p.addLocationSpan(p.spanPath(path, 3),
 		outputTok.Line, outputTok.Column, outputEndTok.Line, outputEndCol)
 
 	var endTok tokenizer.Token
@@ -4373,7 +4376,7 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32, ne
 
 	// Add oneof declaration and name spans BEFORE fields (C++ order)
 	oneofLocIdx := p.addLocationPlaceholder(oneofPath)
-	p.addLocationSpan(append(copyPath(oneofPath), 1),
+	p.addLocationSpan(p.spanPath(oneofPath, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	decl := &descriptorpb.OneofDescriptorProto{
@@ -4761,11 +4764,11 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 	p.addLocationSpan(fieldPath, startLine, startCol, endTok.Line, endTok.Column+1)
 	fieldLocIdx := len(p.locations) - 1
 	p.attachComments(fieldLocIdx, firstIdx)
-	p.addLocationSpan(append(copyPath(fieldPath), 6),
+	p.addLocationSpan(p.spanPath(fieldPath, 6),
 		startLine, startCol, gtTok.Line, typeNameEndCol)
-	p.addLocationSpan(append(copyPath(fieldPath), 1),
+	p.addLocationSpan(p.spanPath(fieldPath, 1),
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
-	p.addLocationSpan(append(copyPath(fieldPath), 3),
+	p.addLocationSpan(p.spanPath(fieldPath, 3),
 		numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
 
 	// Option source code info (after number, matching C++ order)
@@ -6568,6 +6571,17 @@ func (p *parser) addLocationPlaceholder(path []int32) int {
 	return idx
 }
 
+// spanPath builds path+elems in a scratch buffer owned by the parser. The
+// result is only valid until the next spanPath call, so it must be consumed
+// immediately — addLocationSpan and addLocationSpanReturn copy the path into
+// the arena before returning, which is what makes this safe.
+func (p *parser) spanPath(path []int32, elems ...int32) []int32 {
+	b := append(p.pathBuf[:0], path...)
+	b = append(b, elems...)
+	p.pathBuf = b
+	return b
+}
+
 func (p *parser) addLocationSpan(path []int32, startLine, startCol, endLine, endCol int) {
 	loc := p.locArena.alloc()
 	loc.Path = p.i32Arena.copyOf(path)
@@ -6590,14 +6604,17 @@ func (p *parser) addLocationSpanReturn(path []int32, startLine, startCol, endLin
 // estimate of the whole file's needs, so small files pay for what they use)
 // and grow geometrically up to a cap.
 type locArena struct {
-	cur  []descriptorpb.SourceCodeInfo_Location
-	idx  int
-	next int
+	cur    []descriptorpb.SourceCodeInfo_Location
+	idx    int
+	next   int
+	seeded bool
 }
 
 const (
 	locBlockMin = 64
-	locBlockMax = 1024
+	// The block cap only matters when the per-file estimate is wildly off;
+	// clamping a well-seeded block just turns one allocation into dozens.
+	locBlockMax = 1 << 16
 )
 
 func (a *locArena) alloc() *descriptorpb.SourceCodeInfo_Location {
@@ -6609,7 +6626,15 @@ func (a *locArena) alloc() *descriptorpb.SourceCodeInfo_Location {
 			n = locBlockMax
 		}
 		a.cur = make([]descriptorpb.SourceCodeInfo_Location, n)
-		a.next = n * 4
+		// The first block carries the whole-file estimate; refills only mop
+		// up estimation error, so restart small and regrow rather than
+		// doubling down on a block that was already nearly right.
+		if a.seeded {
+			a.next = n * 2
+		} else {
+			a.seeded = true
+			a.next = locBlockMin
+		}
 		a.idx = 0
 	}
 	l := &a.cur[a.idx]
@@ -6621,14 +6646,15 @@ func (a *locArena) alloc() *descriptorpb.SourceCodeInfo_Location {
 // backing blocks. Returned slices have cap == len so callers appending to them
 // would not corrupt neighbours.
 type i32Arena struct {
-	cur  []int32
-	idx  int
-	next int
+	cur    []int32
+	idx    int
+	next   int
+	seeded bool
 }
 
 const (
 	i32BlockMin = 256
-	i32BlockMax = 8192
+	i32BlockMax = 1 << 19
 )
 
 func (a *i32Arena) get(n int) []int32 {
@@ -6643,7 +6669,12 @@ func (a *i32Arena) get(n int) []int32 {
 			size = n
 		}
 		a.cur = make([]int32, size)
-		a.next = size * 4
+		if a.seeded {
+			a.next = size * 2
+		} else {
+			a.seeded = true
+			a.next = i32BlockMin
+		}
 		a.idx = 0
 	}
 	s := a.cur[a.idx : a.idx+n : a.idx+n]

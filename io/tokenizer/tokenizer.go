@@ -75,8 +75,10 @@ func init() {
 }
 
 func New(input string) *Tokenizer {
-	// Pre-allocate slices based on input size (~1 token per 6 bytes)
-	est := len(input) / 6
+	// Pre-allocate the token slice for the densest realistic input (~4 bytes
+	// per token): one slightly generous allocation beats growing a multi-MB
+	// slice, which copies the whole prefix each step.
+	est := len(input) / 4
 	if est < 64 {
 		est = 64
 	}
@@ -764,9 +766,40 @@ func hexVal(ch byte) byte {
 
 // ToJSONName converts a proto field name to its JSON name using proto3 camelCase rules.
 func ToJSONName(name string) string {
+	// Without an underscore the JSON name is the field name itself; skip the
+	// copy. Field names are identifiers, so this is the common case.
+	i := strings.IndexByte(name, '_')
+	if i < 0 {
+		return name
+	}
 	var result strings.Builder
+	result.Grow(len(name))
+	result.WriteString(name[:i])
 	upper := false
-	for _, r := range name {
+	for ; i < len(name); i++ {
+		c := name[i]
+		if c == '_' {
+			upper = true
+			continue
+		}
+		if c >= utf8.RuneSelf {
+			return toJSONNameSlow(&result, name[i:], upper)
+		}
+		if upper {
+			if 'a' <= c && c <= 'z' {
+				c -= 'a' - 'A'
+			}
+			upper = false
+		}
+		result.WriteByte(c)
+	}
+	return result.String()
+}
+
+// toJSONNameSlow finishes ToJSONName rune by rune from the first non-ASCII
+// byte, preserving the original unicode.ToUpper behaviour.
+func toJSONNameSlow(result *strings.Builder, rest string, upper bool) string {
+	for _, r := range rest {
 		if r == '_' {
 			upper = true
 			continue

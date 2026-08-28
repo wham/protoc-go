@@ -68,8 +68,10 @@ fi
 
 # -- setup ---------------------------------------------------------------
 
+# Same flags as the release build (.goreleaser.yml), so correctness is verified
+# on the binary configuration users actually run.
 echo "Building protoc-go..."
-(cd "$PROJECT_DIR" && go build -o "$PROTOC_GO" ./cmd/protoc-go/)
+(cd "$PROJECT_DIR" && go build -trimpath -ldflags='-s -w' -o "$PROTOC_GO" ./cmd/protoc-go/)
 
 echo "Building protoc-gen-dump..."
 (cd "$PROJECT_DIR" && go build -o "$PROTOC_GEN_DUMP" ./tools/protoc-gen-dump/)

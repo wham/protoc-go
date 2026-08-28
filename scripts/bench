@@ -114,8 +114,10 @@ fi
 
 # -- setup ----------------------------------------------------------------
 
+# Same flags as the release build (.goreleaser.yml), so the binary being timed
+# is the binary users run: -s -w cuts the mapped image and shaves startup.
 echo "Building protoc-go..."
-(cd "$PROJECT_DIR" && go build -o "$PROTOC_GO" ./cmd/protoc-go/) || exit 1
+(cd "$PROJECT_DIR" && go build -trimpath -ldflags='-s -w' -o "$PROTOC_GO" ./cmd/protoc-go/) || exit 1
 echo "Building protoc-gen-dump..."
 (cd "$PROJECT_DIR" && go build -o "$PROTOC_GEN_DUMP" ./tools/protoc-gen-dump/) || exit 1
 
