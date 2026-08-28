@@ -146,7 +146,8 @@ VARIANTS="descriptor plugin"
 
 now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time()*1000'; }
 
-# stats_builtin <cmd> — run WARMUP+RUNS times, echo "median stddev mean" (ms).
+# stats_builtin <cmd> — run WARMUP+RUNS times,
+# echo "median stddev mean driver" (ms).
 stats_builtin() {
   local cmd="$1" i s
   for ((i=0; i<WARMUP; i++)); do eval "$cmd" >/dev/null 2>&1; done
@@ -156,27 +157,33 @@ stats_builtin() {
     eval "$cmd" >/dev/null 2>&1
     times+=( $(( $(now_ms) - s )) )
   done
-  printf '%s\n' "${times[@]}" | sort -n | awk '
+  printf '%s\n' "${times[@]}" | sort -n | awk -v runs="$RUNS" '
     {a[NR]=$1; sum+=$1}
     END{
       n=NR; med=a[int((n+1)/2)]; mean=sum/n; ss=0;
       for(i=1;i<=n;i++){d=a[i]-mean; ss+=d*d}
       sd=(n>1)?sqrt(ss/(n-1)):0;
-      printf "%.2f %.2f %.2f\n", med, sd, mean
+      printf "%.2f %.2f %.2f builtin-median-%d\n", med, sd, mean, runs
     }'
 }
 
-# stats_hyperfine <cmd> — echo "median stddev mean" (ms) via hyperfine JSON,
-# or "" on failure so the caller can fall back.
+# stats_hyperfine <cmd> — echo "median stddev mean driver" (ms) via hyperfine
+# JSON, or "" on failure so the caller can fall back. The command string uses
+# shell syntax (subshell, cd, &&) so hyperfine must run it through a shell:
+# -N/--shell=none would fail to exec it at all, and that failure used to be
+# swallowed by the fallback while the row stayed labeled "hyperfine".
+# hyperfine measures and subtracts the shell-spawn overhead itself.
 stats_hyperfine() {
   local cmd="$1" jf="$OUT_DIR/.hf.json"
-  hyperfine --warmup "$WARMUP" --runs "$RUNS" --export-json "$jf" -N "$cmd" \
+  hyperfine --warmup "$WARMUP" --runs "$RUNS" --export-json "$jf" "$cmd" \
     >/dev/null 2>&1 || { echo ""; return; }
   jq -r '.results[0] | [ (.median*1000), (.stddev*1000), (.mean*1000) ] | @tsv' "$jf" \
-    | tr '\t' ' '
+    | { tr '\t' ' '; } | sed 's/$/ hyperfine/'
 }
 
-# stats <cmd> — echo "median stddev mean" (ms); prefers hyperfine.
+# stats <cmd> — echo "median stddev mean driver" (ms); prefers hyperfine. The
+# driver token reports what actually timed this measurement: a hyperfine
+# failure falls back to the builtin loop and says so, per measurement.
 stats() {
   local out=""
   if [ "$USE_HYPERFINE" = true ]; then
@@ -221,6 +228,7 @@ printf '%-18s %-11s %14s %14s %7s %5s\n' "case" "variant" "cpp ms(±sd)" "go ms(
 printf '%-18s %-11s %14s %14s %7s %5s\n' "----" "-------" "-----------" "----------" "------" "----"
 
 ROWS_MD=()
+FALLBACK_ROWS=0
 for spec in "${CASES[@]}"; do
   IFS='|' read -r label dir <<< "$spec"
   [ -d "$dir" ] || continue
@@ -232,20 +240,34 @@ for spec in "${CASES[@]}"; do
   [ "$label" = "startup_empty" ] && info=true
 
   for variant in $VARIANTS; do
-    read -r go_med go_sd go_mean <<< "$(stats "$(build_cmd "$PROTOC_GO" "$variant" "$dir" "$basenames")")"
+    read -r go_med go_sd go_mean go_driver <<< "$(stats "$(build_cmd "$PROTOC_GO" "$variant" "$dir" "$basenames")")"
     go_disp=$(awk -v m="$go_med" -v s="$go_sd" 'BEGIN{printf "%d±%d", m+0.5, s+0.5}')
 
     if [ -n "$PROTOC" ]; then
-      read -r cpp_med cpp_sd cpp_mean <<< "$(stats "$(build_cmd "$PROTOC" "$variant" "$dir" "$basenames")")"
+      read -r cpp_med cpp_sd cpp_mean cpp_driver <<< "$(stats "$(build_cmd "$PROTOC" "$variant" "$dir" "$basenames")")"
       cpp_disp=$(awk -v m="$cpp_med" -v s="$cpp_sd" 'BEGIN{printf "%d±%d", m+0.5, s+0.5}')
       ratio=$(awk -v g="$go_med" -v c="$cpp_med" 'BEGIN{ if(c>0) printf "%.2f", g/c; else print "n/a" }')
       verd=$(verdict "$go_med" "$go_sd" "$cpp_med" "$cpp_sd")
+      # A row is only as reliable as its weaker measurement: both sides must
+      # have been timed by hyperfine for the row to count as hyperfine-timed.
+      if [ "$go_driver" = "hyperfine" ] && [ "$cpp_driver" = "hyperfine" ]; then
+        row_driver="hyperfine"; row_reliable=true
+      else
+        row_driver="builtin-median-$RUNS"; row_reliable=false
+        FALLBACK_ROWS=$((FALLBACK_ROWS + 1))
+      fi
       printf '{"case":"%s","variant":"%s","informational":%s,"cpp_ms":%.2f,"cpp_sd":%.2f,"go_ms":%.2f,"go_sd":%.2f,"ratio":%s,"verdict":"%s","driver":"%s","reliable":%s,"runs":%s}\n' \
-        "$label" "$variant" "$info" "$cpp_med" "$cpp_sd" "$go_med" "$go_sd" "$ratio" "$verd" "$DRIVER" "$RELIABLE" "$RUNS" >> "$ROWS_JSONL"
+        "$label" "$variant" "$info" "$cpp_med" "$cpp_sd" "$go_med" "$go_sd" "$ratio" "$verd" "$row_driver" "$row_reliable" "$RUNS" >> "$ROWS_JSONL"
     else
       cpp_disp="n/a"; ratio="n/a"; verd="n/a"
+      if [ "$go_driver" = "hyperfine" ]; then
+        row_driver="hyperfine"; row_reliable=true
+      else
+        row_driver="builtin-median-$RUNS"; row_reliable=false
+        [ "$USE_HYPERFINE" = true ] && FALLBACK_ROWS=$((FALLBACK_ROWS + 1))
+      fi
       printf '{"case":"%s","variant":"%s","informational":%s,"cpp_ms":null,"cpp_sd":null,"go_ms":%.2f,"go_sd":%.2f,"ratio":null,"verdict":"n/a","driver":"%s","reliable":%s,"runs":%s}\n' \
-        "$label" "$variant" "$info" "$go_med" "$go_sd" "$DRIVER" "$RELIABLE" "$RUNS" >> "$ROWS_JSONL"
+        "$label" "$variant" "$info" "$go_med" "$go_sd" "$row_driver" "$row_reliable" "$RUNS" >> "$ROWS_JSONL"
     fi
 
     printf '%-18s %-11s %14s %14s %7s %5s\n' "$label" "$variant" "$cpp_disp" "$go_disp" "$ratio" "$verd"
@@ -283,4 +305,10 @@ jq -s '.' "$ROWS_JSONL" > "$OUT_DIR/bench.json"
 } > "$OUT_DIR/bench.md"
 
 echo ""
+if [ "$USE_HYPERFINE" = true ] && [ "$FALLBACK_ROWS" -gt 0 ]; then
+  echo "WARNING: $FALLBACK_ROWS row(s) fell back to the builtin ~1ms timer because"
+  echo "         hyperfine failed to run the command. Those rows are marked"
+  echo "         driver=builtin/reliable=false in bench.json and their verdicts"
+  echo "         should not be trusted or published."
+fi
 echo "Wrote $OUT_DIR/bench.json and $OUT_DIR/bench.md"
