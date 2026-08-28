@@ -51,52 +51,55 @@ for byte: the `CodeGeneratorRequest` sent to plugins, the serialized
 by that run.
 
 <!-- BEGIN COMPLIANCE -->
-**5497 / 5497 comparisons produce byte-identical output to C++ protoc 35.1**
+**5609 / 5609 comparisons produce byte-identical output to C++ protoc 36.0**
 
-Last verified 2026-08-27 · commit `5c6012d` · Go 1.24.7 on ubuntu24 · [run log](https://github.com/wham/protoc-go/actions/runs/33043099783)
+Last verified 2026-08-28 · commit `29f40e1` · Go 1.23.12 on ubuntu24 · [run log](https://github.com/wham/protoc-go/actions/runs/33144917190)
 
 <details><summary>Per-suite results</summary>
 
 | suite | comparisons | result |
 | --- | ---: | --- |
-| `cli` | 126 | all match |
-| `colon_param` | 532 | all match |
+| `cli` | 139 | all match |
+| `colon_param` | 530 | all match |
 | `decode` | 27 | all match |
-| `descriptor_set` | 532 | all match |
-| `descriptor_set_full` | 532 | all match |
-| `descriptor_set_retain` | 532 | all match |
-| `descriptor_set_src` | 532 | all match |
+| `descriptor_set` | 530 | all match |
+| `descriptor_set_full` | 530 | all match |
+| `descriptor_set_retain` | 530 | all match |
+| `descriptor_set_src` | 530 | all match |
 | `determinism` | 14 | all match |
-| `multi_opt` | 532 | all match |
-| `multi_plugin` | 532 | all match |
+| `google` | 106 | all match |
+| `mock` | 12 | all match |
+| `multi_opt` | 530 | all match |
+| `multi_plugin` | 530 | all match |
 | `partial` | 2 | all match |
-| `plugin` | 532 | all match |
-| `plugin_descriptor` | 532 | all match |
-| `plugin_param` | 532 | all match |
+| `pathplugin` | 1 | all match |
+| `plugin` | 530 | all match |
+| `plugin_descriptor` | 530 | all match |
+| `plugin_param` | 530 | all match |
 | `stdin` | 8 | all match |
 
 </details>
 
 <details><summary>Performance vs C++ protoc</summary>
 
-Across 12 compile cases: Go faster on 4, C++ faster on 3, tie on 5. A gap smaller than both the run-to-run noise and the tie margin counts as a tie, not a win.
+Across 12 compile cases: Go faster on 6, C++ faster on 3, tie on 3. A gap smaller than both the run-to-run noise and the tie margin counts as a tie, not a win.
 
 | case | variant | C++ ms | Go ms | go/cpp | verdict |
 | --- | --- | ---: | ---: | ---: | --- |
-| startup_empty | descriptor | 6.00±0.53 | 7.00±0.48 | 1.17 | informational |
-| startup_empty | plugin | 9.00±0.42 | 10.00±0.42 | 1.11 | informational |
-| 01_basic_message | descriptor | 7.00±0.32 | 8.00±0.42 | 1.14 | cpp |
-| 01_basic_message | plugin | 10.00±0.00 | 11.00±0.32 | 1.10 | cpp |
-| bench_tiny | descriptor | 8.00±0.00 | 9.00±0.52 | 1.12 | cpp |
-| bench_tiny | plugin | 17.00±0.70 | 18.00±0.67 | 1.06 | tie |
-| bench_small | descriptor | 17.00±0.52 | 13.00±0.57 | 0.76 | go |
-| bench_small | plugin | 149.00±2.78 | 136.00±17.39 | 0.91 | tie |
-| bench_medium | descriptor | 77.00±0.82 | 41.00±1.18 | 0.53 | go |
-| bench_medium | plugin | 2390.00±79.87 | 2339.00±101.72 | 0.98 | tie |
-| bench_large | descriptor | 384.00±6.60 | 162.00±1.17 | 0.42 | go |
-| bench_large | plugin | 32429.00±200.77 | 32137.00±264.86 | 0.99 | tie |
-| 329_large_stress | descriptor | 77.00±2.27 | 42.00±1.15 | 0.55 | go |
-| 329_large_stress | plugin | 2430.00±45.10 | 2348.00±42.06 | 0.97 | tie |
+| startup_empty | descriptor | 1.42±0.06 | 2.23±0.20 | 1.57 | informational |
+| startup_empty | plugin | 3.92±0.11 | 4.81±0.22 | 1.23 | informational |
+| 01_basic_message | descriptor | 1.63±0.03 | 2.63±0.19 | 1.61 | cpp |
+| 01_basic_message | plugin | 5.10±0.21 | 6.06±0.24 | 1.19 | cpp |
+| bench_tiny | descriptor | 2.84±0.11 | 3.14±0.15 | 1.11 | cpp |
+| bench_tiny | plugin | 12.98±0.21 | 13.56±0.48 | 1.04 | tie |
+| bench_small | descriptor | 14.67±0.32 | 8.65±0.33 | 0.59 | go |
+| bench_small | plugin | 144.09±3.65 | 131.18±3.56 | 0.91 | go |
+| bench_medium | descriptor | 78.70±2.29 | 41.31±2.60 | 0.52 | go |
+| bench_medium | plugin | 2239.16±49.81 | 2193.71±40.12 | 0.98 | tie |
+| bench_large | descriptor | 451.85±7.95 | 171.04±2.89 | 0.38 | go |
+| bench_large | plugin | 16729.26±430.22 | 16178.54±252.86 | 0.97 | tie |
+| 329_large_stress | descriptor | 76.52±8.91 | 40.42±1.80 | 0.53 | go |
+| 329_large_stress | plugin | 2203.75±35.45 | 2107.93±37.51 | 0.96 | go |
 
 `startup_empty` is process launch cost, not compilation, and is excluded
 from the tally. Timings come from the run above, on a shared machine, so
