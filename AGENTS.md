@@ -103,7 +103,9 @@ Harness invariants (deliberate, keep them):
 protocolbuffers/protobuf (BSD license included) at the release protoc-go
 targets. Unlike the numbered fixtures these were not written alongside this
 port, so they don't share its blind spots. Each file is compiled standalone in
-`plugin` and `descriptor_set_full` mode from the corpus root. When the target
+`plugin` and `descriptor_set_full` mode from the corpus root. The same corpus
+is the real-world row of the performance harness, compiled there as one
+invocation rather than file by file. When the target
 C++ protoc version moves, refresh the corpus from the matching upstream tag
 (`https://raw.githubusercontent.com/protocolbuffers/protobuf/v<VER>/src/google/protobuf/<file>.proto`).
 
@@ -138,9 +140,27 @@ An unsharded run is just `--shard 1/1` and needs no merge.
 ### Performance harness
 
 `scripts/bench` is the performance counterpart to `scripts/test`. It runs both
-compilers on a curated, size-scaled corpus — serial, warmed up, median-of-N —
-and reports per-case latency plus the Go/C++ ratio, separating compile
-throughput from process-startup cost.
+compilers on a curated corpus — serial, warmed up, median-of-N — and reports
+per-case latency plus the Go/C++ ratio, separating compile throughput from
+process-startup cost.
+
+The corpus is the size-scaled generated tiers (which isolate how each compiler
+scales, since only one dimension changes between them) plus one `google_corpus`
+row: the whole vendored upstream corpus (`testdata/google/`, 53 files) compiled
+in a single invocation. The generated tiers are uniform by construction, so
+they say nothing about the mix a real project actually contains — imports and
+public imports, custom options, extensions, editions, generic services. That
+row is the one that does, and it is the honest headline number. It adds ~35s to
+the run.
+
+Every row is gated on a clean compile from both compilers before it is timed: a
+failed compile is not a measurement of compiling, and the two give up at
+different points, so timing one would compare error paths. Rows that don't
+compile are dropped from the table with a reason rather than published. The
+`google_corpus` row needs the C++ protoc include directory (four corpus files
+import `google/protobuf/cpp_features.proto` or `java_features.proto`, which
+protoc ships, protoc-go does not embed and the corpus does not vendor), so a
+Go-only run without protoc installed drops it instead of benchmarking a subset.
 
 ```bash
 scripts/bench                 # C++ protoc vs Go protoc-go, human table
@@ -151,7 +171,7 @@ If `hyperfine` is installed it drives the timing for better statistics;
 otherwise a built-in median-of-N loop is used. C++ `protoc` is optional — when
 absent, only Go numbers are reported. For the in-process library core (no
 process-startup noise, plus `B/op` and `allocs/op`), use Go's native
-benchmarks:
+benchmarks — same cases, `google_corpus` included:
 
 ```bash
 go test ./protoc/ -run='^$' -bench=. -benchmem
