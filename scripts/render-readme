@@ -187,33 +187,29 @@ if [ -f "$BENCH_JSON" ] && jq -e 'length > 0' "$BENCH_JSON" >/dev/null 2>&1; the
         "Across " + ($n | tostring) + " compile cases: Go faster on " +
         (($rows | map(select(.verdict == "go")) | length) | tostring) + ", C++ faster on " +
         (($rows | map(select(.verdict == "cpp")) | length) | tostring) + ", tie on " +
-        (($rows | map(select(.verdict == "tie")) | length) | tostring) +
-        ". A gap smaller than both the run-to-run noise and the tie margin counts as a tie, not a win.\n"
+        (($rows | map(select(.verdict == "tie")) | length) | tostring) + ".\n"
       end
     ' "$BENCH_JSON" >> "$BLOCK"
   fi
 
   {
-    echo "| case | variant | C++ ms | Go ms | go/cpp | verdict |"
-    echo "| --- | --- | ---: | ---: | ---: | --- |"
+    echo "| case | variant | C++ ms | Go ms | go/cpp | C++ peak MB | Go peak MB | go/cpp |"
+    echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |"
   } >> "$BLOCK"
 
-  jq -r --arg reliable "$RELIABLE" '
+  jq -r '
+    def mb: if . == null then "n/a" else ((. / 1024 * 10 | round) / 10 | tostring) end;
     .[] |
     "| " + .case + " | " + .variant + " | " +
     (if .cpp_ms == null then "n/a" else (.cpp_ms | tostring) + "±" + (.cpp_sd | tostring) end) + " | " +
     ((.go_ms | tostring) + "±" + (.go_sd | tostring)) + " | " +
     (if .ratio == null then "n/a" else (.ratio | tostring) end) + " | " +
-    (if .informational then "informational"
-     elif $reliable != "true" then "unreliable"
-     else .verdict end) + " |"
+    ((.cpp_peak_kb // null) | mb) + " | " +
+    ((.go_peak_kb // null) | mb) + " | " +
+    (if (.mem_ratio // null) == null then "n/a" else (.mem_ratio | tostring) end) + " |"
   ' "$BENCH_JSON" >> "$BLOCK"
 
   {
-    echo ""
-    echo "\`startup_empty\` is process launch cost, not compilation, and is excluded"
-    echo "from the tally. Timings come from the run above, on a shared machine, so"
-    echo "read them as a trend, not a lab result."
     echo ""
     echo "</details>"
   } >> "$BLOCK"

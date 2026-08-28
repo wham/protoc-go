@@ -34,6 +34,10 @@ jobs:
     # Informational only — perf is environment-sensitive and must never block a
     # merge. Kept separate from the correctness gate above.
     continue-on-error: true
+    permissions:
+      contents: read
+      # For the sticky results comment below.
+      pull-requests: write
     steps:
       - uses: actions/checkout@v7
 
@@ -58,3 +62,33 @@ jobs:
         with:
           name: benchmark-results
           path: results-bench/
+
+      - name: Post results to the pull request
+        # One sticky comment per pull request, found by its marker and updated
+        # in place on every push, so the numbers are always the current head's
+        # rather than a pile of stale comments. Runs only for pull_request
+        # events; on a fork's pull request the token cannot write comments and
+        # the step simply fails inside an already-informational job.
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          marker='<!-- bench-results -->'
+          body=$(mktemp)
+          {
+            echo "$marker"
+            cat results-bench/bench.md
+          } > "$body"
+
+          comment_id=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+            --paginate --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n1)
+          if [ -n "$comment_id" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+              -F body=@"$body" >/dev/null
+            echo "updated comment ${comment_id}"
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+              -F body=@"$body" >/dev/null
+            echo "created comment"
+          fi

@@ -167,6 +167,18 @@ scripts/bench                 # C++ protoc vs Go protoc-go, human table
 scripts/bench --summary       # table only; writes results-bench/bench.{json,md}
 ```
 
+Each timed row also reports peak memory (max RSS, median of `--mem-runs` runs,
+default 3) for both compilers, read from the kernel's rusage accounting via
+GNU/BSD `time` or a python3 fallback — the plugin variant includes the plugin
+subprocess on both sides. The tables show raw go/cpp ratios for time and
+memory rather than verdict columns; the noise-aware wall-clock verdict is
+still computed into `bench.json` per row, where lisa.sh and the README tally
+consume it. Memory rows read `n/a` when no reader is available.
+
+`tests.yml` runs this harness (tiny/small/medium tiers) on every pull request
+and posts `bench.md` as a sticky comment on the pull request, updated in place
+on each push.
+
 If `hyperfine` is installed it drives the timing for better statistics;
 otherwise a built-in median-of-N loop is used. C++ `protoc` is optional — when
 absent, only Go numbers are reported. For the in-process library core (no
@@ -233,7 +245,9 @@ The rendered results are published as a pull request from the disposable
 `compliance/results` branch, not pushed straight to main: main's ruleset
 requires the `test` status check, which a direct push has no way to satisfy.
 That branch is force-pushed every run, so an already-open pull request is
-updated in place rather than piling up.
+updated in place rather than piling up. The pull request body carries the
+bench table (`results-bench/bench.md`), rebuilt on every run, so the week's
+numbers are visible without opening artifacts.
 
 Two things have to be true for that pull request to open and merge on its own.
 "Allow GitHub Actions to create and approve pull requests" (Settings → Actions →
