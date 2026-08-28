@@ -173,6 +173,10 @@ GNU/BSD `time` or a python3 fallback — the plugin variant includes the plugin
 subprocess on both sides. Memory is informational only: verdicts stay
 wall-clock, and rows read `n/a` when no reader is available.
 
+`tests.yml` runs this harness (tiny/small/medium tiers) on every pull request
+and posts `bench.md` as a sticky comment on the pull request, updated in place
+on each push.
+
 If `hyperfine` is installed it drives the timing for better statistics;
 otherwise a built-in median-of-N loop is used. C++ `protoc` is optional — when
 absent, only Go numbers are reported. For the in-process library core (no
