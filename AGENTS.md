@@ -30,16 +30,15 @@ This is a port of the Protocol Buffers compiler (`protoc`) from C++ to Go. The G
 │   ├── protoc-gen-dump/    # Fake plugin that captures CodeGeneratorRequest
 │   ├── protoc-gen-mock/    # Misbehaving plugin for response-protocol tests
 │   └── protoc-bin/         # (reserved) Vendored C++ protoc if needed
-├── scripts/
-│   ├── test                # Correctness harness — compares C++ protoc vs Go protoc-go
-│   ├── bench               # Performance harness — times C++ protoc vs Go protoc-go
-│   ├── merge-summaries     # Reassembles sharded `scripts/test` runs into one verdict
-│   ├── render-readme       # Renders harness output into the README compliance block
-│   ├── release-notes       # Renders the compliance header for a GitHub release
-│   ├── next-version        # Semver arithmetic over existing tags
-│   ├── gen-large-stress    # Generates scaled stress/bench corpus (tiers)
-│   └── find-protoc         # Locates system C++ protoc
-└── lisa.sh                 # Performance loop orchestrator
+└── scripts/
+    ├── test                # Correctness harness — compares C++ protoc vs Go protoc-go
+    ├── bench               # Performance harness — times C++ protoc vs Go protoc-go
+    ├── merge-summaries     # Reassembles sharded `scripts/test` runs into one verdict
+    ├── render-readme       # Renders harness output into the README compliance block
+    ├── release-notes       # Renders the compliance header for a GitHub release
+    ├── next-version        # Semver arithmetic over existing tags
+    ├── gen-large-stress    # Generates scaled stress/bench corpus (tiers)
+    └── find-protoc         # Locates system C++ protoc
 ```
 
 ## How To Build and Test
@@ -168,8 +167,8 @@ default 3) for both compilers, read from the kernel's rusage accounting via
 GNU/BSD `time` or a python3 fallback — the plugin variant includes the plugin
 subprocess on both sides. The tables show raw go/cpp ratios for time and
 memory rather than verdict columns; the noise-aware wall-clock verdict is
-still computed into `bench.json` per row, where lisa.sh and the README tally
-consume it. Memory rows read `n/a` when no reader is available.
+still computed into `bench.json` per row, where the README tally consumes it.
+Memory rows read `n/a` when no reader is available.
 
 `tests.yml` runs this harness (tiny/small/medium tiers) on every pull request
 and posts `bench.md` as a sticky comment on the pull request, updated in place
