@@ -31,7 +31,10 @@
 #     otherwise a python3 getrusage fallback reading the same counter. It
 #     covers the whole invocation, so the plugin variant includes the
 #     protoc-gen-dump subprocess on both sides (same binary, so still fair).
-#     Memory is informational only: verdicts stay wall-clock.
+#     Memory gets its own verdict, separate from the wall-clock one: the two
+#     can disagree, and folding them into one column would hide that. Its tie
+#     margin is wider (--mem-margin, default 10%) because peak RSS moves with
+#     the Go GC's run-to-run timing.
 #
 # Usage:
 #   scripts/bench                 # default corpus + variants, human table
@@ -41,6 +44,7 @@
 #   scripts/bench --margin 0.03   # relative "tie" margin (default 0.03 = 3%)
 #   scripts/bench --sizes "tiny small medium large"   # which scaled tiers
 #   scripts/bench --mem-runs 3    # peak-RSS runs per case (default 3, 0 = off)
+#   scripts/bench --mem-margin 0.10   # memory "tie" margin (default 10%)
 #
 # Outputs results-bench/bench.json (machine-readable, one object per
 # case/variant with verdict + stddev + peak RSS) and results-bench/bench.md.
@@ -66,14 +70,16 @@ WARMUP=3
 MARGIN=0.03
 SIZES="tiny small medium"
 MEM_RUNS=3
+MEM_MARGIN=0.10
 while [ $# -gt 0 ]; do
   case "$1" in
-    --summary)  SUMMARY_ONLY=true; shift ;;
-    --runs)     RUNS="$2"; shift 2 ;;
-    --warmup)   WARMUP="$2"; shift 2 ;;
-    --margin)   MARGIN="$2"; shift 2 ;;
-    --sizes)    SIZES="$2"; shift 2 ;;
-    --mem-runs) MEM_RUNS="$2"; shift 2 ;;
+    --summary)    SUMMARY_ONLY=true; shift ;;
+    --runs)       RUNS="$2"; shift 2 ;;
+    --warmup)     WARMUP="$2"; shift 2 ;;
+    --margin)     MARGIN="$2"; shift 2 ;;
+    --sizes)      SIZES="$2"; shift 2 ;;
+    --mem-runs)   MEM_RUNS="$2"; shift 2 ;;
+    --mem-margin) MEM_MARGIN="$2"; shift 2 ;;
     *) echo "Unknown flag: $1" >&2; exit 2 ;;
   esac
 done
@@ -287,11 +293,12 @@ peak_rss_kb() {
   printf '%s\n' "${vals[@]}" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}'
 }
 
-# verdict <go_med> <go_sd> <cpp_med> <cpp_sd> — echo go|cpp|tie.
+# verdict <go_med> <go_sd> <cpp_med> <cpp_sd> [margin] — echo go|cpp|tie.
 # "tie" unless the medians differ by more than BOTH the combined stddev
-# (run-to-run noise) AND a relative margin. This refuses to call noise a win.
+# (run-to-run noise) AND a relative margin (MARGIN unless overridden). This
+# refuses to call noise a win.
 verdict() {
-  awk -v gm="$1" -v gs="$2" -v cm="$3" -v cs="$4" -v margin="$MARGIN" 'BEGIN{
+  awk -v gm="$1" -v gs="$2" -v cm="$3" -v cs="$4" -v margin="${5:-$MARGIN}" 'BEGIN{
     diff=gm-cm; ad=(diff<0)?-diff:diff;
     noise=gs+cs; relm=margin*cm; thr=(noise>relm)?noise:relm;
     if(ad<=thr){print "tie"; exit}
@@ -324,8 +331,8 @@ compiles_ok() {
 
 # -- run ------------------------------------------------------------------
 
-printf '%-18s %-11s %14s %14s %7s %9s %9s %7s %5s\n' "case" "variant" "cpp ms(±sd)" "go ms(±sd)" "go/cpp" "cpp MB" "go MB" "go/cpp" "verd"
-printf '%-18s %-11s %14s %14s %7s %9s %9s %7s %5s\n' "----" "-------" "-----------" "----------" "------" "------" "-----" "------" "----"
+printf '%-18s %-11s %14s %14s %7s %5s %9s %9s %7s %5s\n' "case" "variant" "cpp ms(±sd)" "go ms(±sd)" "go/cpp" "verd" "cpp MB" "go MB" "go/cpp" "verd"
+printf '%-18s %-11s %14s %14s %7s %5s %9s %9s %7s %5s\n' "----" "-------" "-----------" "----------" "------" "----" "------" "-----" "------" "----"
 
 ROWS_MD=()
 FALLBACK_ROWS=0
@@ -353,7 +360,7 @@ for spec in "${CASES[@]}"; do
     fi
     if [ -n "$skip_why" ]; then
       SKIPPED_ROWS+=("$label/$variant: $skip_why")
-      printf '%-18s %-11s %14s %14s %7s %9s %9s %7s %5s\n' "$label" "$variant" "-" "-" "-" "-" "-" "-" "skip"
+      printf '%-18s %-11s %14s %14s %7s %5s %9s %9s %7s %5s\n' "$label" "$variant" "-" "-" "-" "skip" "-" "-" "-" "-"
       continue
     fi
 
@@ -373,10 +380,14 @@ for spec in "${CASES[@]}"; do
       cpp_mem_disp=$(awk -v k="$cpp_mem_kb" 'BEGIN{printf "%.1f", k/1024}')
       cpp_mem_json=$cpp_mem_kb
     fi
-    mem_ratio_disp="n/a"; mem_ratio_json=null
+    mem_ratio_disp="n/a"; mem_ratio_json=null; mem_verd="n/a"
     if [ -n "$go_mem_kb" ] && [ -n "$cpp_mem_kb" ] && [ "$cpp_mem_kb" -gt 0 ]; then
       mem_ratio_json=$(awk -v g="$go_mem_kb" -v c="$cpp_mem_kb" 'BEGIN{printf "%.2f", g/c}')
       mem_ratio_disp=$mem_ratio_json
+      # Memory gets its own verdict: it and the wall-clock one can disagree.
+      # No stddev is tracked for peak RSS, so the wider MEM_MARGIN alone
+      # absorbs the GC's run-to-run swing.
+      mem_verd=$(verdict "$go_mem_kb" 0 "$cpp_mem_kb" 0 "$MEM_MARGIN")
     fi
 
     if [ -n "$PROTOC" ]; then
@@ -392,8 +403,8 @@ for spec in "${CASES[@]}"; do
         row_driver="builtin-median-$RUNS"; row_reliable=false
         FALLBACK_ROWS=$((FALLBACK_ROWS + 1))
       fi
-      printf '{"case":"%s","variant":"%s","informational":%s,"cpp_ms":%.2f,"cpp_sd":%.2f,"go_ms":%.2f,"go_sd":%.2f,"ratio":%s,"verdict":"%s","driver":"%s","reliable":%s,"runs":%s,"cpp_peak_kb":%s,"go_peak_kb":%s,"mem_ratio":%s}\n' \
-        "$label" "$variant" "$info" "$cpp_med" "$cpp_sd" "$go_med" "$go_sd" "$ratio" "$verd" "$row_driver" "$row_reliable" "$RUNS" "$cpp_mem_json" "$go_mem_json" "$mem_ratio_json" >> "$ROWS_JSONL"
+      printf '{"case":"%s","variant":"%s","informational":%s,"cpp_ms":%.2f,"cpp_sd":%.2f,"go_ms":%.2f,"go_sd":%.2f,"ratio":%s,"verdict":"%s","driver":"%s","reliable":%s,"runs":%s,"cpp_peak_kb":%s,"go_peak_kb":%s,"mem_ratio":%s,"mem_verdict":"%s"}\n' \
+        "$label" "$variant" "$info" "$cpp_med" "$cpp_sd" "$go_med" "$go_sd" "$ratio" "$verd" "$row_driver" "$row_reliable" "$RUNS" "$cpp_mem_json" "$go_mem_json" "$mem_ratio_json" "$mem_verd" >> "$ROWS_JSONL"
     else
       cpp_disp="n/a"; ratio="n/a"; verd="n/a"
       if [ "$go_driver" = "hyperfine" ]; then
@@ -402,12 +413,12 @@ for spec in "${CASES[@]}"; do
         row_driver="builtin-median-$RUNS"; row_reliable=false
         [ "$USE_HYPERFINE" = true ] && FALLBACK_ROWS=$((FALLBACK_ROWS + 1))
       fi
-      printf '{"case":"%s","variant":"%s","informational":%s,"cpp_ms":null,"cpp_sd":null,"go_ms":%.2f,"go_sd":%.2f,"ratio":null,"verdict":"n/a","driver":"%s","reliable":%s,"runs":%s,"cpp_peak_kb":null,"go_peak_kb":%s,"mem_ratio":null}\n' \
+      printf '{"case":"%s","variant":"%s","informational":%s,"cpp_ms":null,"cpp_sd":null,"go_ms":%.2f,"go_sd":%.2f,"ratio":null,"verdict":"n/a","driver":"%s","reliable":%s,"runs":%s,"cpp_peak_kb":null,"go_peak_kb":%s,"mem_ratio":null,"mem_verdict":"n/a"}\n' \
         "$label" "$variant" "$info" "$go_med" "$go_sd" "$row_driver" "$row_reliable" "$RUNS" "$go_mem_json" >> "$ROWS_JSONL"
     fi
 
-    printf '%-18s %-11s %14s %14s %7s %9s %9s %7s %5s\n' "$label" "$variant" "$cpp_disp" "$go_disp" "$ratio" "$cpp_mem_disp" "$go_mem_disp" "$mem_ratio_disp" "$verd"
-    ROWS_MD+=("| $label | $variant | $cpp_disp | $go_disp | $ratio | $cpp_mem_disp | $go_mem_disp | $mem_ratio_disp | $verd |")
+    printf '%-18s %-11s %14s %14s %7s %5s %9s %9s %7s %5s\n' "$label" "$variant" "$cpp_disp" "$go_disp" "$ratio" "$verd" "$cpp_mem_disp" "$go_mem_disp" "$mem_ratio_disp" "$mem_verd"
+    ROWS_MD+=("| $label | $variant | $cpp_disp | $go_disp | $ratio | $verd | $cpp_mem_disp | $go_mem_disp | $mem_ratio_disp | $mem_verd |")
   done
 done
 
@@ -416,7 +427,7 @@ done
 jq -s '.' "$ROWS_JSONL" > "$OUT_DIR/bench.json"
 
 {
-  echo "# protoc-go performance: C++ protoc vs Go protoc-go"
+  echo "# Performance: C++ protoc vs Go protoc-go"
   echo ""
   if [ -n "$PROTOC" ]; then
     echo "- C++ protoc: \`$("$PROTOC" --version)\`"
@@ -434,17 +445,8 @@ jq -s '.' "$ROWS_JSONL" > "$OUT_DIR/bench.json"
     echo "- **WARNING:** built-in ~1ms timer — verdicts on sub-30ms rows are noise."
   fi
   echo ""
-  echo "Median wall-clock per invocation (±stddev). \`go/cpp\` < 1.0 means the Go"
-  echo "median was lower, but the **verdict** column is authoritative: a row is"
-  echo "only \`go\`/\`cpp\` when the gap exceeds both the combined stddev and the"
-  echo "tie margin; otherwise it is a \`tie\`. The \`startup_empty\` row is process"
-  echo "launch cost, not compilation, and is excluded from any win/loss tally."
-  echo "\`peak MB\` is the median peak resident set size of the whole invocation"
-  echo "(the plugin variant includes the protoc-gen-dump subprocess on both"
-  echo "sides); it is informational and never decides a verdict."
-  echo ""
-  echo "| case | variant | cpp ms(±sd) | go ms(±sd) | go/cpp | cpp peak MB | go peak MB | mem go/cpp | verdict |"
-  echo "| ---- | ------- | ----------- | ---------- | ------ | ----------- | ---------- | ---------- | ------- |"
+  echo "| case | variant | cpp ms(±sd) | go ms(±sd) | go/cpp | verdict | cpp peak MB | go peak MB | go/cpp | verdict |"
+  echo "| ---- | ------- | ----------- | ---------- | ------ | ------- | ----------- | ---------- | ------ | ------- |"
   printf '%s\n' "${ROWS_MD[@]}"
   if [ "${#SKIPPED_ROWS[@]}" -gt 0 ]; then
     echo ""
