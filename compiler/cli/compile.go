@@ -245,9 +245,14 @@ func compileInternal(in *compileInput) (*compileOutput, error) {
 		}
 	}
 
-	// Parse all proto files recursively
+	// Parse all proto files recursively. The cache parses ahead in parallel;
+	// parseRecursive consumes results in its usual deterministic order.
+	cache := newParseCache(in.srcTree)
 	for _, f := range in.relFiles {
-		ok, err := parseRecursive(f, in.srcTree, parsed, explicitJsonNames, parseResults, &orderedFiles, nil, &collectErrors)
+		cache.prefetch(f)
+	}
+	for _, f := range in.relFiles {
+		ok, err := parseRecursive(f, in.srcTree, cache, parsed, explicitJsonNames, parseResults, &orderedFiles, nil, &collectErrors)
 		if err != nil {
 			return co, err
 		}
@@ -290,40 +295,41 @@ func compileInternal(in *compileInput) (*compileOutput, error) {
 		return co, &CompileErrors{Errors: resolveErrors}
 	}
 
-	// Resolve custom options (9 kinds)
-	if errs := resolveCustomFileOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
+	// Resolve custom options (9 kinds); they share one lazily-built index set.
+	optIdx := &optionIndexes{orderedFiles: orderedFiles, parsed: parsed}
+	if errs := resolveCustomFileOptions(orderedFiles, parsed, parseResults, optIdx); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
 
-	if errs := resolveCustomFieldOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
+	if errs := resolveCustomFieldOptions(orderedFiles, parsed, parseResults, optIdx); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
 
-	if errs := resolveCustomMessageOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
+	if errs := resolveCustomMessageOptions(orderedFiles, parsed, parseResults, optIdx); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
 
-	if errs := resolveCustomServiceOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
+	if errs := resolveCustomServiceOptions(orderedFiles, parsed, parseResults, optIdx); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
 
-	if errs := resolveCustomMethodOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
+	if errs := resolveCustomMethodOptions(orderedFiles, parsed, parseResults, optIdx); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
 
-	if errs := resolveCustomEnumOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
+	if errs := resolveCustomEnumOptions(orderedFiles, parsed, parseResults, optIdx); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
 
-	if errs := resolveCustomEnumValueOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
+	if errs := resolveCustomEnumValueOptions(orderedFiles, parsed, parseResults, optIdx); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
 
-	if errs := resolveCustomOneofOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
+	if errs := resolveCustomOneofOptions(orderedFiles, parsed, parseResults, optIdx); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
 
-	if errs := resolveCustomExtRangeOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
+	if errs := resolveCustomExtRangeOptions(orderedFiles, parsed, parseResults, optIdx); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
 
