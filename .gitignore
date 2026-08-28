@@ -42,3 +42,6 @@ dist/
 *~
 
 bin/
+
+# Compiled test binaries
+*.test

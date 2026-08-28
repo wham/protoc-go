@@ -2599,6 +2599,7 @@ func collectReservedFieldNumberErrors(filename string, msgs []*descriptorpb.Desc
 // validateDuplicateFieldNumbers checks that no two fields in a message share the same field number.
 func validateDuplicateFieldNumbers(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
+	seen := make(map[int32]string)
 	for _, name := range orderedFiles {
 		fd := parsed[name]
 		pkg := fd.GetPackage()
@@ -2607,24 +2608,28 @@ func validateDuplicateFieldNumbers(orderedFiles []string, parsed map[string]*des
 			if pkg != "" {
 				fqn = pkg + "." + fqn
 			}
-			collectDuplicateFieldNumberErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), &errs)
+			collectDuplicateFieldNumberErrors(fd.GetName(), msg, fqn, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), seen, &errs)
 		}
 	}
 	return errs
 }
 
-func collectDuplicateFieldNumberErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, errs *[]string) {
-	// Map field number -> first field name
-	seen := make(map[int32]string)
-	for i, field := range msg.GetField() {
-		num := field.GetNumber()
-		if firstName, ok := seen[num]; ok {
-			line, col := findFieldNumberLocation(msgPath, i, sci)
-			nextAvail := suggestFieldNumbers(msg, 1)
-			*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Field number %d has already been used in \"%s\" by field \"%s\". Next available field number is %s.",
-				filename, line, col, num, fqn, firstName, nextAvail))
-		} else {
-			seen[num] = field.GetName()
+// collectDuplicateFieldNumberErrors checks msg and its nested messages for
+// reused field numbers. seen is caller-owned scratch reused across messages;
+// it is cleared before use.
+func collectDuplicateFieldNumberErrors(filename string, msg *descriptorpb.DescriptorProto, fqn string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, seen map[int32]string, errs *[]string) {
+	if fields := msg.GetField(); len(fields) > 1 {
+		clear(seen) // field number -> first field name
+		for i, field := range fields {
+			num := field.GetNumber()
+			if firstName, ok := seen[num]; ok {
+				line, col := findFieldNumberLocation(msgPath, i, sci)
+				nextAvail := suggestFieldNumbers(msg, 1)
+				*errs = append(*errs, fmt.Sprintf("%s:%d:%d: Field number %d has already been used in \"%s\" by field \"%s\". Next available field number is %s.",
+					filename, line, col, num, fqn, firstName, nextAvail))
+			} else {
+				seen[num] = field.GetName()
+			}
 		}
 	}
 	for i, nested := range msg.GetNestedType() {
@@ -2633,7 +2638,7 @@ func collectDuplicateFieldNumberErrors(filename string, msg *descriptorpb.Descri
 		}
 		nestedFqn := fqn + "." + nested.GetName()
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
-		collectDuplicateFieldNumberErrors(filename, nested, nestedFqn, nestedPath, sci, errs)
+		collectDuplicateFieldNumberErrors(filename, nested, nestedFqn, nestedPath, sci, seen, errs)
 	}
 }
 
@@ -3154,9 +3159,15 @@ func validateJsonNameConflicts(orderedFiles []string, parsed map[string]*descrip
 		isProto2 := fd.GetSyntax() != "proto3" && fd.GetSyntax() != "editions"
 		fileJsonFormat := fd.GetOptions().GetFeatures().GetJsonFormat()
 		var msgs []string
+		seen := make(map[string]jsonNameEntry)
 		for i, msg := range fd.GetMessageType() {
-			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, false, fileJsonFormat, &msgs)
-			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, true, fileJsonFormat, &msgs)
+			collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, false, fileJsonFormat, seen, &msgs)
+			// With no explicit json_name anywhere, the custom pass can only
+			// rediscover default-vs-default conflicts, which it suppresses as
+			// already reported — a guaranteed no-op, so skip the walk.
+			if len(explicitJsonNames) > 0 {
+				collectJsonNameConflictErrors(fd.GetName(), msg, []int32{4, int32(i)}, fd.GetSourceCodeInfo(), explicitJsonNames, true, fileJsonFormat, seen, &msgs)
+			}
 		}
 		if isProto2 {
 			for _, m := range msgs {
@@ -3182,19 +3193,31 @@ type jsonNameEntry struct {
 	isCustom  bool
 }
 
-func collectJsonNameConflictErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, useCustom bool, parentJsonFormat descriptorpb.FeatureSet_JsonFormat, errs *[]string) {
+// collectJsonNameConflictErrors checks msg and its nested messages for JSON
+// name conflicts. seen is scratch owned by the caller and reused across
+// messages to avoid a map allocation per message; it is cleared before use.
+func collectJsonNameConflictErrors(filename string, msg *descriptorpb.DescriptorProto, msgPath []int32, sci *descriptorpb.SourceCodeInfo, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, useCustom bool, parentJsonFormat descriptorpb.FeatureSet_JsonFormat, seen map[string]jsonNameEntry, errs *[]string) {
 	// Determine effective json_format: message-level overrides file/parent level
 	effectiveJsonFormat := parentJsonFormat
 	if feat := msg.GetOptions().GetFeatures(); feat != nil && feat.JsonFormat != nil {
 		effectiveJsonFormat = feat.GetJsonFormat()
 	}
-	if !msg.GetOptions().GetDeprecatedLegacyJsonFieldConflicts() && effectiveJsonFormat != descriptorpb.FeatureSet_LEGACY_BEST_EFFORT {
-		seen := make(map[string]jsonNameEntry)
-		for i, field := range msg.GetField() {
-			defaultJsonName := tokenizer.ToJSONName(field.GetName())
+	if fields := msg.GetField(); len(fields) > 1 &&
+		!msg.GetOptions().GetDeprecatedLegacyJsonFieldConflicts() && effectiveJsonFormat != descriptorpb.FeatureSet_LEGACY_BEST_EFFORT {
+		clear(seen)
+		for i, field := range fields {
+			// The parser stores the default JSON name unless an explicit
+			// json_name option replaced it, so recompute only in that case.
+			explicit := explicitJsonNames[field]
+			var defaultJsonName string
+			if !explicit && field.JsonName != nil {
+				defaultJsonName = field.GetJsonName()
+			} else {
+				defaultJsonName = tokenizer.ToJSONName(field.GetName())
+			}
 			isCustom := false
 			jsonName := defaultJsonName
-			if useCustom && explicitJsonNames[field] && field.GetJsonName() != defaultJsonName {
+			if useCustom && explicit && field.GetJsonName() != defaultJsonName {
 				jsonName = field.GetJsonName()
 				isCustom = true
 			}
@@ -3229,7 +3252,7 @@ func collectJsonNameConflictErrors(filename string, msg *descriptorpb.Descriptor
 			continue
 		}
 		nestedPath := append(append([]int32{}, msgPath...), 3, int32(i))
-		collectJsonNameConflictErrors(filename, nested, nestedPath, sci, explicitJsonNames, useCustom, effectiveJsonFormat, errs)
+		collectJsonNameConflictErrors(filename, nested, nestedPath, sci, explicitJsonNames, useCustom, effectiveJsonFormat, seen, errs)
 	}
 }
 
@@ -4159,17 +4182,65 @@ func findDefaultValueLocation(field *descriptorpb.FieldDescriptorProto, msg *des
 }
 
 // validateDuplicateNames checks that no two symbols share the same fully-qualified name.
+// symbolKey identifies a fully qualified name without building the string:
+// short names are identifiers (no dots), so (scope, shortName) determines the
+// FQN and vice versa. Keying the dedup map on the pair reuses strings that
+// already exist instead of concatenating a fresh FQN for every symbol.
+type symbolKey struct {
+	scope string // enclosing package, message, or service FQN ("" for none)
+	name  string // the symbol's short name
+}
+
+func (k symbolKey) fqn() string {
+	if k.scope == "" {
+		return k.name
+	}
+	return k.scope + "." + k.name
+}
+
+// countSymbols reports how many names fd registers, to pre-size the dedup map.
+func countSymbols(fd *descriptorpb.FileDescriptorProto) int {
+	var inMsg func(msg *descriptorpb.DescriptorProto) int
+	inMsg = func(msg *descriptorpb.DescriptorProto) int {
+		n := 1 + len(msg.GetOneofDecl()) + len(msg.GetField()) + len(msg.GetExtension())
+		for _, e := range msg.GetEnumType() {
+			n += 1 + len(e.GetValue())
+		}
+		for _, nested := range msg.GetNestedType() {
+			n += inMsg(nested)
+		}
+		return n
+	}
+	n := len(fd.GetExtension())
+	for _, msg := range fd.GetMessageType() {
+		n += inMsg(msg)
+	}
+	for _, e := range fd.GetEnumType() {
+		n += 1 + len(e.GetValue())
+	}
+	for _, svc := range fd.GetService() {
+		n += 1 + len(svc.GetMethod())
+	}
+	return n
+}
+
 func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []string {
 	var errs []string
-	seen := make(map[string]string)            // FQN -> filename where first defined
-	enumValParent := make(map[string]string)    // fqn -> enum short name
+	total := 0
+	for _, name := range orderedFiles {
+		total += countSymbols(parsed[name])
+	}
+	seen := make(map[symbolKey]string, total)  // symbol -> filename where first defined
+	var enumValParent map[symbolKey]string     // enum value -> enum short name
 	for _, name := range orderedFiles {
 		fd := parsed[name]
 		pkg := fd.GetPackage()
 		sci := fd.GetSourceCodeInfo()
 
-		check := func(fqn, shortName, scope string, path []int32, enumName string) {
-			if firstFile, exists := seen[fqn]; exists {
+		check := func(shortName, scope string, path []int32, enumName string) {
+			key := symbolKey{scope: scope, name: shortName}
+			if firstFile, exists := seen[key]; exists {
+				fqn := key.fqn()
 				// Location is only needed to format the error, so compute it
 				// lazily here rather than for every symbol. A nil path means
 				// the location is intentionally omitted (e.g. oneof names).
@@ -4206,14 +4277,17 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 				errs = append(errs, errMsg)
 				// Only emit scoping note when the conflict is cross-enum
 				// (C++ protoc: added_to_inner_scope && !added_to_outer_scope)
-				if enumName != "" && enumValParent[fqn] != enumName {
+				if enumName != "" && enumValParent[key] != enumName {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Note that enum values use C++ scoping rules, meaning that enum values are siblings of their type, not children of it.  Therefore, \"%s\" must be unique within \"%s\", not just within \"%s\".",
 						fd.GetName(), line, col, shortName, scope, enumName))
 				}
 			} else {
-				seen[fqn] = fd.GetName()
+				seen[key] = fd.GetName()
 				if enumName != "" {
-					enumValParent[fqn] = enumName
+					if enumValParent == nil {
+						enumValParent = make(map[symbolKey]string)
+					}
+					enumValParent[key] = enumName
 				}
 			}
 		}
@@ -4226,22 +4300,14 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 				msgFQN = pkg + "." + msgFQN
 			}
 			collectDupNamesInMsg(msg, msgFQN, []int32{4, int32(i)}, sci, check)
-			check(msgFQN, msg.GetName(), pkg, []int32{4, int32(i), 1}, "")
+			check(msg.GetName(), pkg, []int32{4, int32(i), 1}, "")
 		}
 
 		for i, enum := range fd.GetEnumType() {
-			enumFQN := enum.GetName()
-			if pkg != "" {
-				enumFQN = pkg + "." + enumFQN
-			}
 			for j, val := range enum.GetValue() {
-				valFQN := val.GetName()
-				if pkg != "" {
-					valFQN = pkg + "." + valFQN
-				}
-				check(valFQN, val.GetName(), pkg, []int32{5, int32(i), 2, int32(j), 1}, enum.GetName())
+				check(val.GetName(), pkg, []int32{5, int32(i), 2, int32(j), 1}, enum.GetName())
 			}
-			check(enumFQN, enum.GetName(), pkg, []int32{5, int32(i), 1}, "")
+			check(enum.GetName(), pkg, []int32{5, int32(i), 1}, "")
 		}
 
 		for i, svc := range fd.GetService() {
@@ -4250,29 +4316,23 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 				svcFQN = pkg + "." + svcFQN
 			}
 			for j, method := range svc.GetMethod() {
-				mFQN := svcFQN + "." + method.GetName()
-				check(mFQN, method.GetName(), svcFQN, []int32{6, int32(i), 2, int32(j), 1}, "")
+				check(method.GetName(), svcFQN, []int32{6, int32(i), 2, int32(j), 1}, "")
 			}
-			check(svcFQN, svc.GetName(), pkg, []int32{6, int32(i), 1}, "")
+			check(svc.GetName(), pkg, []int32{6, int32(i), 1}, "")
 		}
 
 		for i, ext := range fd.GetExtension() {
-			extFQN := ext.GetName()
-			if pkg != "" {
-				extFQN = pkg + "." + extFQN
-			}
-			check(extFQN, ext.GetName(), pkg, []int32{7, int32(i), 1}, "")
+			check(ext.GetName(), pkg, []int32{7, int32(i), 1}, "")
 		}
 	}
 	return errs
 }
 
-func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, check func(fqn, shortName, scope string, path []int32, enumName string)) {
+func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, check func(shortName, scope string, path []int32, enumName string)) {
 	// C++ protoc BuildMessage order: oneofs, fields, enums, nested_types, then AddSymbol for self.
 	for _, oneof := range msg.GetOneofDecl() {
-		oFQN := msgFQN + "." + oneof.GetName()
 		// C++ protoc omits line:col for duplicate oneof names
-		check(oFQN, oneof.GetName(), msgFQN, nil, "")
+		check(oneof.GetName(), msgFQN, nil, "")
 	}
 	base := len(msgPath)
 	// check only consults the path when it detects a duplicate, and it does so
@@ -4282,33 +4342,29 @@ func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgP
 		scratch := make([]int32, base, base+3)
 		copy(scratch, msgPath)
 		for i, field := range fields {
-			fqn := msgFQN + "." + field.GetName()
-			check(fqn, field.GetName(), msgFQN, append(scratch, 2, int32(i), 1), "")
+			check(field.GetName(), msgFQN, append(scratch, 2, int32(i), 1), "")
 		}
 	}
 	if exts := msg.GetExtension(); len(exts) > 0 {
 		scratch := make([]int32, base, base+3)
 		copy(scratch, msgPath)
 		for i, ext := range exts {
-			eFQN := msgFQN + "." + ext.GetName()
-			check(eFQN, ext.GetName(), msgFQN, append(scratch, 6, int32(i), 1), "")
+			check(ext.GetName(), msgFQN, append(scratch, 6, int32(i), 1), "")
 		}
 	}
 	for i, enum := range msg.GetEnumType() {
-		eFQN := msgFQN + "." + enum.GetName()
 		scratch := make([]int32, base, base+5)
 		copy(scratch, msgPath)
 		for j, val := range enum.GetValue() {
-			vFQN := msgFQN + "." + val.GetName()
-			check(vFQN, val.GetName(), msgFQN, append(scratch, 4, int32(i), 2, int32(j), 1), enum.GetName())
+			check(val.GetName(), msgFQN, append(scratch, 4, int32(i), 2, int32(j), 1), enum.GetName())
 		}
-		check(eFQN, enum.GetName(), msgFQN, append(scratch, 4, int32(i), 1), "")
+		check(enum.GetName(), msgFQN, append(scratch, 4, int32(i), 1), "")
 	}
 	for i, nested := range msg.GetNestedType() {
 		nFQN := msgFQN + "." + nested.GetName()
 		np := append(append([]int32{}, msgPath...), 3, int32(i))
 		collectDupNamesInMsg(nested, nFQN, np, sci, check)
-		check(nFQN, nested.GetName(), msgFQN, append(append([]int32{}, np...), 1), "")
+		check(nested.GetName(), msgFQN, append(append([]int32{}, np...), 1), "")
 	}
 }
 
@@ -5415,8 +5471,10 @@ func pathIn(path []int32, paths [][]int32) bool {
 
 // sourceRetentionFeatures is the set of FeatureSet field numbers descriptor.proto
 // marks RETENTION_SOURCE, read off the runtime descriptor so a new one needs no
-// change here.
-var sourceRetentionFeatures = func() map[int32]bool {
+// change here. Resolved on first use rather than at package init: forcing
+// descriptor.proto's reflection descriptor is measurable startup cost paid by
+// every invocation otherwise.
+var sourceRetentionFeatures = sync.OnceValue(func() map[int32]bool {
 	nums := map[int32]bool{}
 	fields := (&descriptorpb.FeatureSet{}).ProtoReflect().Descriptor().Fields()
 	for i := 0; i < fields.Len(); i++ {
@@ -5427,7 +5485,7 @@ var sourceRetentionFeatures = func() map[int32]bool {
 		}
 	}
 	return nums
-}()
+})
 
 // featureSetSink is called for every FeatureSet in a file, with the source code
 // info path of the descriptor carrying it and the two field numbers leading from
@@ -5449,7 +5507,7 @@ func stripSourceRetentionFeatures(fd *descriptorpb.FileDescriptorProto, stripped
 	walkFeatureSets(fd, func(fs *descriptorpb.FeatureSet, elemPath []int32, optionsNum, featuresNum int32) {
 		m := fs.ProtoReflect()
 		fields := m.Descriptor().Fields()
-		for num := range sourceRetentionFeatures {
+		for num := range sourceRetentionFeatures() {
 			f := fields.ByNumber(protoreflect.FieldNumber(num))
 			if f == nil || !m.Has(f) {
 				continue
@@ -5472,7 +5530,7 @@ func hasSourceRetentionFeatures(fd *descriptorpb.FileDescriptorProto) bool {
 		}
 		m := fs.ProtoReflect()
 		fields := m.Descriptor().Fields()
-		for num := range sourceRetentionFeatures {
+		for num := range sourceRetentionFeatures() {
 			if f := fields.ByNumber(protoreflect.FieldNumber(num)); f != nil && m.Has(f) {
 				found = true
 				return
@@ -5485,7 +5543,7 @@ func hasSourceRetentionFeatures(fd *descriptorpb.FileDescriptorProto) bool {
 // walkFeatureSets visits the FeatureSet of every descriptor in fd that can carry
 // options.
 func walkFeatureSets(fd *descriptorpb.FileDescriptorProto, visit featureSetSink) {
-	if len(sourceRetentionFeatures) == 0 {
+	if len(sourceRetentionFeatures()) == 0 {
 		return
 	}
 	// The path is built only where a FeatureSet is actually present: most
