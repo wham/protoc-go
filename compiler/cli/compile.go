@@ -179,20 +179,6 @@ func (e *CompileErrors) Error() string {
 // Internal types
 // ---------------------------------------------------------------------------
 
-// subFieldOptNums groups the per-file sub-field option numbers produced by
-// the custom option resolution passes.
-type subFieldOptNums struct {
-	file     map[string]map[int32]bool
-	field    map[string]map[int32]bool
-	msg      map[string]map[int32]bool
-	enum     map[string]map[int32]bool
-	enumVal  map[string]map[int32]bool
-	svc      map[string]map[int32]bool
-	method   map[string]map[int32]bool
-	oneof    map[string]map[int32]bool
-	extRange map[string]map[int32]bool
-}
-
 // compileOutput holds all intermediate state produced by the compilation
 // pipeline. It is always returned (even on error) so that callers can
 // access warnings collected before the error occurred.
@@ -204,7 +190,8 @@ type compileOutput struct {
 	parseResults      map[string]*parser.ParseResult
 	warnings          []string
 	srcRetFields      sourceRetentionFields
-	subOpts           subFieldOptNums
+	optionFields      optionFields
+	canonical         map[string]*descriptorpb.FileDescriptorProto
 }
 
 // compileInput holds the parameters for compileInternal, after the caller
@@ -304,61 +291,41 @@ func compileInternal(in *compileInput) (*compileOutput, error) {
 	}
 
 	// Resolve custom options (9 kinds)
-	var subOpts subFieldOptNums
-
-	errs, nums := resolveCustomFileOptions(orderedFiles, parsed, parseResults)
-	if len(errs) > 0 {
+	if errs := resolveCustomFileOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
-	subOpts.file = nums
 
-	errs, nums = resolveCustomFieldOptions(orderedFiles, parsed, parseResults)
-	if len(errs) > 0 {
+	if errs := resolveCustomFieldOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
-	subOpts.field = nums
 
-	errs, nums = resolveCustomMessageOptions(orderedFiles, parsed, parseResults)
-	if len(errs) > 0 {
+	if errs := resolveCustomMessageOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
-	subOpts.msg = nums
 
-	errs, nums = resolveCustomServiceOptions(orderedFiles, parsed, parseResults)
-	if len(errs) > 0 {
+	if errs := resolveCustomServiceOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
-	subOpts.svc = nums
 
-	errs, nums = resolveCustomMethodOptions(orderedFiles, parsed, parseResults)
-	if len(errs) > 0 {
+	if errs := resolveCustomMethodOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
-	subOpts.method = nums
 
-	errs, nums = resolveCustomEnumOptions(orderedFiles, parsed, parseResults)
-	if len(errs) > 0 {
+	if errs := resolveCustomEnumOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
-	subOpts.enum = nums
 
-	errs, nums = resolveCustomEnumValueOptions(orderedFiles, parsed, parseResults)
-	if len(errs) > 0 {
+	if errs := resolveCustomEnumValueOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
-	subOpts.enumVal = nums
 
-	errs, nums = resolveCustomOneofOptions(orderedFiles, parsed, parseResults)
-	if len(errs) > 0 {
+	if errs := resolveCustomOneofOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
-	subOpts.oneof = nums
 
-	errs, nums = resolveCustomExtRangeOptions(orderedFiles, parsed, parseResults)
-	if len(errs) > 0 {
+	if errs := resolveCustomExtRangeOptions(orderedFiles, parsed, parseResults); len(errs) > 0 {
 		return co, &CompileErrors{Errors: errs}
 	}
-	subOpts.extRange = nums
 
 	// Phase 1: Build/cross-link validation
 	var buildErrors []string
@@ -440,13 +407,35 @@ func compileInternal(in *compileInput) (*compileOutput, error) {
 
 	// Collect source retention fields for output processing
 	co.srcRetFields = collectSourceRetentionFields(orderedFiles, parsed)
+	// protoc rebuilds a file's options when it strips source-retention ones, so
+	// the descriptors it hands to plugins and writes to a descriptor set carry
+	// the canonical encoding, while --retain_options and source_file_descriptors
+	// pass the file through as parsed. Keep both forms: co.parsed as parsed,
+	// co.canonical for the outputs protoc rebuilds. Only a custom option is
+	// stored in a form that needs re-encoding, so a pool without one is left
+	// alone rather than walked.
+	co.canonical = make(map[string]*descriptorpb.FileDescriptorProto, len(orderedFiles))
+	var needsCanonical []string
+	for _, name := range orderedFiles {
+		co.canonical[name] = parsed[name]
+		if hasOptionsUnknowns(parsed[name]) {
+			needsCanonical = append(needsCanonical, name)
+		}
+	}
+	if len(needsCanonical) > 0 {
+		co.optionFields = collectOptionFields(orderedFiles, parsed)
+		for _, name := range needsCanonical {
+			fd := proto.Clone(parsed[name]).(*descriptorpb.FileDescriptorProto)
+			canonicalizeFDOptions(fd, co.optionFields)
+			co.canonical[name] = fd
+		}
+	}
 
 	// Store all intermediate state
 	co.orderedFiles = orderedFiles
 	co.parsed = parsed
 	co.explicitJsonNames = explicitJsonNames
 	co.parseResults = parseResults
-	co.subOpts = subOpts
 
 	return co, nil
 }
@@ -457,8 +446,8 @@ func compileInternal(in *compileInput) (*compileOutput, error) {
 
 // buildProtoFiles builds the ordered list of FileDescriptorProtos suitable for
 // plugin CodeGeneratorRequests (proto_file field). Source files have
-// source-retention options stripped; dependency files do not. All files have
-// custom options merged and unknown fields sorted.
+// source-retention options stripped and their options re-encoded; dependency
+// files are passed through as parsed.
 func (co *compileOutput) buildProtoFiles() []*descriptorpb.FileDescriptorProto {
 	relFileSet := make(map[string]bool)
 	for _, name := range co.relFiles {
@@ -467,21 +456,11 @@ func (co *compileOutput) buildProtoFiles() []*descriptorpb.FileDescriptorProto {
 
 	var protoFiles []*descriptorpb.FileDescriptorProto
 	for _, name := range co.orderedFiles {
+		// A dependency is passed through as parsed: protoc only rebuilds — and
+		// so only re-encodes — the files it was asked to generate.
 		fd := co.parsed[name]
 		if relFileSet[name] {
-			fd = stripSourceRetention(fd, co.srcRetFields)
-		}
-		if pr := co.parseResults[name]; pr != nil && hasSubFieldCustomOpts(pr) {
-			fd = cloneWithMergedExtUnknowns(fd,
-				co.subOpts.file[name], co.subOpts.field[name], co.subOpts.msg[name],
-				co.subOpts.enum[name], co.subOpts.enumVal[name], co.subOpts.svc[name],
-				co.subOpts.method[name], co.subOpts.oneof[name], co.subOpts.extRange[name])
-		}
-		if hasOptionsUnknowns(fd) {
-			if fd == co.parsed[name] {
-				fd = proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
-			}
-			sortFDOptionsUnknownFields(fd)
+			fd = stripSourceRetention(co.canonical[name], co.srcRetFields)
 		}
 		protoFiles = append(protoFiles, fd)
 	}
@@ -538,7 +517,7 @@ func (co *compileOutput) buildDescriptorSetFiles(includeImports, retainOptions, 
 			fd = protoFileMap[name]
 			// For includeImports, dependency files also need source-retention stripped
 			if includeImports && !relFileSet[name] {
-				fd = stripSourceRetention(co.parsed[name], co.srcRetFields)
+				fd = stripSourceRetention(co.canonical[name], co.srcRetFields)
 			}
 		}
 
@@ -565,6 +544,7 @@ func shallowFileWithoutSourceInfo(fd *descriptorpb.FileDescriptorProto) *descrip
 		Name:             fd.Name,
 		Package:          fd.Package,
 		Dependency:       fd.Dependency,
+		OptionDependency: fd.OptionDependency,
 		PublicDependency: fd.PublicDependency,
 		WeakDependency:   fd.WeakDependency,
 		MessageType:      fd.MessageType,

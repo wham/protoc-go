@@ -56,6 +56,15 @@ func Generate(req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorRespon
 		return nil, fmt.Errorf("writing output: %w", err)
 	}
 
+	// Record the raw parameter string protoc sent. The harness compares this
+	// between compilers after normalizing the output-directory path out of it;
+	// request.pb cannot carry it because the directories necessarily differ
+	// between the C++ and Go runs.
+	parameterPath := filepath.Join(outputDir, "parameter.txt")
+	if err := os.WriteFile(parameterPath, []byte(req.GetParameter()), 0o644); err != nil {
+		return nil, fmt.Errorf("writing parameter: %w", err)
+	}
+
 	// For comparison outputs, clear the parameter field
 	reqForCompare := proto.Clone(req).(*pluginpb.CodeGeneratorRequest)
 	reqForCompare.Parameter = nil

@@ -12,6 +12,7 @@ import (
 
 	"github.com/wham/protoc-go/io/tokenizer"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 )
 
@@ -128,6 +129,7 @@ type CustomFieldOption struct {
 	AggregateFields []AggregateField                    // non-nil for aggregate values
 	AggregateBraceTok tokenizer.Token                   // position of "{" for aggregate error reporting
 	Negative        bool                                // value preceded by '-'
+	OnFeatures      bool                                // the extension hangs off features, not the options message
 	SCILoc          *descriptorpb.SourceCodeInfo_Location // SCI entry to update with resolved field number
 }
 
@@ -144,6 +146,7 @@ type CustomMessageOption struct {
 	AggregateFields []AggregateField                    // non-nil for aggregate values
 	AggregateBraceTok tokenizer.Token                   // position of "{" for aggregate error reporting
 	Negative        bool                                // value preceded by '-'
+	OnFeatures      bool                                // the extension hangs off features, not the options message
 	SCILoc          *descriptorpb.SourceCodeInfo_Location // SCI entry to update with resolved field number
 }
 
@@ -538,9 +541,102 @@ func (p *parser) parseSyntax(fd *descriptorpb.FileDescriptorProto) error {
 	return nil
 }
 
-var editionMap = map[string]descriptorpb.Edition{
-	"2023": descriptorpb.Edition_EDITION_2023,
-	"2024": descriptorpb.Edition_EDITION_2024,
+// applyMessageAggregate fills msg from a message literal such as
+// `option features = { ... }` or `feature_support = { ... }`, reporting the
+// option interpreter's errors verbatim; the caller wraps them with the
+// "Error while parsing option value" prefix and the brace's position, which is
+// where C++ protoc anchors them.
+func applyMessageAggregate(msg proto.Message, fields []AggregateField) error {
+	m := msg.ProtoReflect()
+	desc := m.Descriptor()
+	seen := make(map[string]bool, len(fields))
+	for _, f := range fields {
+		fd := desc.Fields().ByName(protoreflect.Name(f.Name))
+		if f.IsExtension || fd == nil {
+			return fmt.Errorf("Message type %q has no field named %q.", desc.FullName(), f.Name)
+		}
+		if seen[f.Name] {
+			return fmt.Errorf("Non-repeated field %q is specified multiple times.", f.Name)
+		}
+		seen[f.Name] = true
+		switch fd.Kind() {
+		case protoreflect.EnumKind:
+			ev := fd.Enum().Values().ByName(protoreflect.Name(f.Value))
+			if ev == nil || f.ValueType != tokenizer.TokenIdent {
+				return fmt.Errorf("Unknown enumeration value of %q for field %q.", f.Value, f.Name)
+			}
+			m.Set(fd, protoreflect.ValueOfEnum(ev.Number()))
+		case protoreflect.StringKind:
+			if f.ValueType != tokenizer.TokenString {
+				return fmt.Errorf("Expected string, got: %s", f.Value)
+			}
+			m.Set(fd, protoreflect.ValueOfString(f.Value))
+		default:
+			return fmt.Errorf("Message type %q has no field named %q.", desc.FullName(), f.Name)
+		}
+	}
+	return nil
+}
+
+// applySubOption sets the dotted spelling of a message-valued built-in option —
+// `features.X = V` or `feature_support.X = V` — on msg. C++ protoc names these
+// by the target field in every diagnostic, never by the enclosing options
+// message, and resolves the name before it looks at the value. The returned
+// number is the field's tag, for source code info.
+func applySubOption(msg proto.Message, prefix, name string, valTok, nameTok tokenizer.Token) (int32, error) {
+	unknown := func() error {
+		return fmt.Errorf("%d:%d: Option \"%s.%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, prefix, name)
+	}
+	m := msg.ProtoReflect()
+	fd := m.Descriptor().Fields().ByName(protoreflect.Name(name))
+	if fd == nil {
+		return 0, unknown()
+	}
+	switch fd.Kind() {
+	case protoreflect.EnumKind:
+		if valTok.Type != tokenizer.TokenIdent {
+			return 0, fmt.Errorf("%d:%d: Value must be identifier for enum-valued option %q.", valTok.Line+1, valTok.Column+1, fd.FullName())
+		}
+		ev := fd.Enum().Values().ByName(protoreflect.Name(valTok.Value))
+		if ev == nil {
+			return 0, fmt.Errorf("%d:%d: Enum type %q has no value named %q for option %q.", valTok.Line+1, valTok.Column+1, fd.Enum().FullName(), valTok.Value, fd.FullName())
+		}
+		m.Set(fd, protoreflect.ValueOfEnum(ev.Number()))
+	case protoreflect.StringKind:
+		if valTok.Type != tokenizer.TokenString {
+			return 0, fmt.Errorf("%d:%d: Value must be quoted string for string option %q.", valTok.Line+1, valTok.Column+1, fd.FullName())
+		}
+		m.Set(fd, protoreflect.ValueOfString(valTok.Value))
+	default:
+		return 0, unknown()
+	}
+	return int32(fd.Number()), nil
+}
+
+// Editions protoc-go compiles. Anything outside the range is rejected with the
+// same message C++ protoc gives; the names come from the Edition enum so a new
+// edition only has to be admitted here, not spelled out twice.
+const (
+	minSupportedEdition = descriptorpb.Edition_EDITION_PROTO2
+	maxSupportedEdition = descriptorpb.Edition_EDITION_2026
+)
+
+// lookupEdition resolves an `edition = "X";` string the way C++ protoc does:
+// "EDITION_" + X against the Edition enum, with the three non-edition members
+// (UNKNOWN and the proto2/proto3 stand-ins) treated as unspellable.
+func lookupEdition(name string) (descriptorpb.Edition, bool) {
+	v, ok := descriptorpb.Edition_value["EDITION_"+name]
+	if !ok {
+		return 0, false
+	}
+	ed := descriptorpb.Edition(v)
+	switch ed {
+	case descriptorpb.Edition_EDITION_UNKNOWN,
+		descriptorpb.Edition_EDITION_PROTO2,
+		descriptorpb.Edition_EDITION_PROTO3:
+		return 0, false
+	}
+	return ed, true
 }
 
 func (p *parser) parseEdition(fd *descriptorpb.FileDescriptorProto) error {
@@ -564,12 +660,15 @@ func (p *parser) parseEdition(fd *descriptorpb.FileDescriptorProto) error {
 		return err
 	}
 
-	edEnum, ok := editionMap[valTok.Value]
+	edEnum, ok := lookupEdition(valTok.Value)
 	if !ok {
 		return fmt.Errorf("%d:%d: Unknown edition %q.", valTok.Line+1, valTok.Column+1, valTok.Value)
 	}
-	if edEnum > descriptorpb.Edition_EDITION_2024 {
-		return fmt.Errorf("%d:%d: Edition %s is later than the maximum supported edition 2024", startTok.Line+1, startTok.Column+1, valTok.Value)
+	if edEnum < minSupportedEdition {
+		return fmt.Errorf("%d:%d: Edition %s is earlier than the minimum supported edition PROTO2", startTok.Line+1, startTok.Column+1, valTok.Value)
+	}
+	if edEnum > maxSupportedEdition {
+		return fmt.Errorf("%d:%d: Edition %s is later than the maximum supported edition 2026", startTok.Line+1, startTok.Column+1, valTok.Value)
 	}
 
 	fd.Syntax = proto.String("editions")
@@ -621,12 +720,17 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "import"
 
-	// Check for "public" or "weak"
+	// Check for "option", "public" or "weak"
+	isOption := false
 	isPublic := false
 	isWeak := false
+	var optionTok tokenizer.Token
 	var publicTok tokenizer.Token
 	var weakTok tokenizer.Token
-	if p.tok.Peek().Value == "public" {
+	if p.tok.Peek().Value == "option" {
+		optionTok = p.tok.Next()
+		isOption = true
+	} else if p.tok.Peek().Value == "public" {
 		publicTok = p.tok.Next()
 		isPublic = true
 	} else if p.tok.Peek().Value == "weak" {
@@ -634,9 +738,16 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 		isWeak = true
 	}
 
+	if isOption && fd.GetEdition() < descriptorpb.Edition_EDITION_2024 {
+		return fmt.Errorf("%d:%d: option import is not supported before edition 2024.", optionTok.Line+1, optionTok.Column+1)
+	}
+
 	pathTok := p.tok.Next()
 	if pathTok.Type != tokenizer.TokenString {
 		return fmt.Errorf("%d:%d: Expected a string naming the file to import.", pathTok.Line+1, pathTok.Column+1)
+	}
+	if !isOption && len(fd.OptionDependency) > 0 {
+		return fmt.Errorf("%d:%d: imports should precede any option imports to ensure proto files can roundtrip.", pathTok.Line+1, pathTok.Column+1)
 	}
 	// Adjacent string literal concatenation (like C/C++)
 	importPath := pathTok.Value
@@ -654,6 +765,16 @@ func (p *parser) parseImport(fd *descriptorpb.FileDescriptorProto) error {
 		return fmt.Errorf("%d:%d: Import \"%s\" was listed twice.", startTok.Line+1, startTok.Column+1, importPath)
 	}
 	p.seenImports[importPath] = true
+
+	if isOption {
+		// `import option` files are carried in option_dependency (field 15), not
+		// dependency, and index independently of it.
+		optIdx := int32(len(fd.OptionDependency))
+		fd.OptionDependency = append(fd.OptionDependency, importPath)
+		p.addLocationSpan([]int32{15, optIdx}, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		p.attachComments(len(p.locations)-1, firstIdx)
+		return nil
+	}
 
 	depIdx := int32(len(fd.Dependency))
 	fd.Dependency = append(fd.Dependency, importPath)
@@ -1739,6 +1860,18 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 	p.trackEnd(nameTok)
 	optName := nameTok.Value
 
+	// `features.(ext)...` is a custom option whose extension hangs off
+	// FeatureSet rather than off MessageOptions.
+	onFeatures := false
+	featuresTok := nameTok
+	if optName == "features" && p.tok.Peek().Value == "." && p.tok.PeekAt(1).Value == "(" {
+		p.trackEnd(p.tok.Next()) // consume "."
+		nameTok = p.tok.Next()
+		p.trackEnd(nameTok)
+		optName = nameTok.Value
+		onFeatures = true
+	}
+
 	if optName == "(" {
 		fullName, err := p.parseParenthesizedOptionName(nameTok)
 		if err != nil {
@@ -1752,13 +1885,11 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 
 		// Handle sub-field path: option (name).sub1.sub2... = value;
 		var subFieldPath []string
-		for p.tok.Peek().Value == "." {
-			dotTok := p.tok.Next()
-			p.trackEnd(dotTok)
-			subTok := p.tok.Next()
-			p.trackEnd(subTok)
-			subFieldPath = append(subFieldPath, subTok.Value)
+		sub, err := p.parseOptionSubPath()
+		if err != nil {
+			return err
 		}
+		subFieldPath = append(subFieldPath, sub...)
 
 		// Consume "="
 		if _, err := p.tok.Expect("="); err != nil {
@@ -1771,6 +1902,12 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		custOpt.SubFieldPath = subFieldPath
 		custOpt.NameTok = nameTok
 		custOpt.Message = msg
+		custOpt.OnFeatures = onFeatures
+		if onFeatures {
+			// protoc names the option, and points at it, as it was written.
+			custOpt.ParenName = "features." + fullName
+			custOpt.NameTok = featuresTok
+		}
 
 		// Reject angle bracket aggregate syntax and positive sign
 		if p.tok.Peek().Value == "<" || p.tok.Peek().Value == "+" {
@@ -1829,6 +1966,9 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		if msg.Options == nil {
 			msg.Options = &descriptorpb.MessageOptions{}
 		}
+		if onFeatures && msg.Options.Features == nil {
+			msg.Options.Features = &descriptorpb.FeatureSet{}
+		}
 
 		// SCI: [msgPath..., 7] for options statement, [msgPath..., 7, 0, ...] placeholder
 		optPath := append(copyPath(msgPath), 7)
@@ -1837,10 +1977,14 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 			Path: optPath,
 			Span: span,
 		})
-		sciPath := append(copyPath(optPath), 0)
+		extPath := optPath
+		if onFeatures {
+			extPath = append(copyPath(optPath), 12)
+		}
+		sciPath := append(copyPath(extPath), 0)
 		if len(subFieldPath) > 0 {
-			sciPath = make([]int32, len(optPath)+1+len(subFieldPath))
-			copy(sciPath, optPath)
+			sciPath = make([]int32, len(extPath)+1+len(subFieldPath))
+			copy(sciPath, extPath)
 			// remaining elements will be resolved post-parse
 		}
 		sciLoc := &descriptorpb.SourceCodeInfo_Location{
@@ -1931,55 +2075,9 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 			if msg.Options.Features == nil {
 				msg.Options.Features = &descriptorpb.FeatureSet{}
 			}
-			if valTok.Type != tokenizer.TokenIdent {
-				return fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.MessageOptions.features.%s\".", valTok.Line+1, valTok.Column+1, featSubField)
-			}
-			var featFieldNum int32
-			switch featSubField {
-			case "field_presence":
-				v, ok := descriptorpb.FeatureSet_FieldPresence_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.FieldPresence\" has no value named \"%s\" for option \"google.protobuf.MessageOptions.features.field_presence\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				msg.Options.Features.FieldPresence = descriptorpb.FeatureSet_FieldPresence(v).Enum()
-				featFieldNum = 1
-			case "enum_type":
-				v, ok := descriptorpb.FeatureSet_EnumType_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.EnumType\" has no value named \"%s\" for option \"google.protobuf.MessageOptions.features.enum_type\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				msg.Options.Features.EnumType = descriptorpb.FeatureSet_EnumType(v).Enum()
-				featFieldNum = 2
-			case "repeated_field_encoding":
-				v, ok := descriptorpb.FeatureSet_RepeatedFieldEncoding_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.RepeatedFieldEncoding\" has no value named \"%s\" for option \"google.protobuf.MessageOptions.features.repeated_field_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				msg.Options.Features.RepeatedFieldEncoding = descriptorpb.FeatureSet_RepeatedFieldEncoding(v).Enum()
-				featFieldNum = 3
-			case "utf8_validation":
-				v, ok := descriptorpb.FeatureSet_Utf8Validation_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.Utf8Validation\" has no value named \"%s\" for option \"google.protobuf.MessageOptions.features.utf8_validation\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				msg.Options.Features.Utf8Validation = descriptorpb.FeatureSet_Utf8Validation(v).Enum()
-				featFieldNum = 4
-			case "message_encoding":
-				v, ok := descriptorpb.FeatureSet_MessageEncoding_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.MessageEncoding\" has no value named \"%s\" for option \"google.protobuf.MessageOptions.features.message_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				msg.Options.Features.MessageEncoding = descriptorpb.FeatureSet_MessageEncoding(v).Enum()
-				featFieldNum = 5
-			case "json_format":
-				v, ok := descriptorpb.FeatureSet_JsonFormat_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.JsonFormat\" has no value named \"%s\" for option \"google.protobuf.MessageOptions.features.json_format\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				msg.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
-				featFieldNum = 6
-			default:
-				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
+			featFieldNum, ferr := applySubOption(msg.Options.Features, "features", featSubField, valTok, nameTok)
+			if ferr != nil {
+				return ferr
 			}
 			// SCI: [msgPath..., 7] for options statement, [msgPath..., 7, 12, featFieldNum] for specific feature
 			optPath := append(copyPath(msgPath), 7)
@@ -2783,13 +2881,11 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 
 					// Handle sub-field path: [(name).sub1.sub2 = value]
 					var subFieldPath []string
-					for p.tok.Peek().Value == "." {
-						dotTok := p.tok.Next()
-						p.trackEnd(dotTok)
-						subTok := p.tok.Next()
-						p.trackEnd(subTok)
-						subFieldPath = append(subFieldPath, subTok.Value)
+					sub, err := p.parseOptionSubPath()
+					if err != nil {
+						return nil, err
 					}
+					subFieldPath = append(subFieldPath, sub...)
 
 					if _, err := p.tok.Expect("="); err != nil {
 						return nil, err
@@ -2884,12 +2980,16 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 				}
 
 				// Handle dotted option names like features.enum_type
-				var featSubField string
-				if optName == "features" && p.tok.Peek().Value == "." {
+				var featSubField, fsSubField string
+				if (optName == "features" || optName == "feature_support") && p.tok.Peek().Value == "." {
 					p.tok.Next() // consume "."
 					subTok := p.tok.Next()
-					featSubField = subTok.Value
-					optName = "features." + featSubField
+					if optName == "features" {
+						featSubField = subTok.Value
+					} else {
+						fsSubField = subTok.Value
+					}
+					optName += "." + subTok.Value
 				}
 
 				if seenEnumValOpts[optName] {
@@ -2906,6 +3006,77 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 
 				if enumValOpts == nil {
 					enumValOpts = &descriptorpb.EnumValueOptions{}
+				}
+
+				// feature_support = { ... } — the whole FeatureSupport message.
+				if optName == "feature_support" && optValTok.Value == "{" {
+					fs := &descriptorpb.FieldOptions_FeatureSupport{}
+					aggFields, aggErr := p.consumeAggregate()
+					if aggErr != nil {
+						return nil, fmt.Errorf("%d:%d: Error while parsing option value for \"feature_support\": %s", optValTok.Line+1, optValTok.Column+1, aggErr.Error())
+					}
+					closeTok, err := p.tok.Expect("}")
+					if err != nil {
+						return nil, err
+					}
+					p.trackEnd(closeTok)
+					if err := applyMessageAggregate(fs, aggFields); err != nil {
+						return nil, fmt.Errorf("%d:%d: Error while parsing option value for \"feature_support\": %s", optValTok.Line+1, optValTok.Column+1, err.Error())
+					}
+					enumValOpts.FeatureSupport = fs
+					parsedEnumValOpts = append(parsedEnumValOpts, enumValOptInfo{
+						fieldNum:      4,
+						nameStartLine: optNameTok.Line,
+						nameStartCol:  optNameTok.Column,
+						endLine:       closeTok.Line,
+						endCol:        closeTok.Column + 1,
+					})
+					optOrder = append(optOrder, enumValOptOrderEntry{isCustom: false, index: len(parsedEnumValOpts) - 1})
+					hasOpts = true
+
+					if p.tok.Peek().Value == "," {
+						p.tok.Next()
+						if p.tok.Peek().Value == "]" {
+							tok := p.tok.Peek()
+							return nil, fmt.Errorf("%d:%d: Expected identifier.", tok.Line+1, tok.Column+1)
+						}
+						continue
+					}
+					break
+				}
+
+				if fsSubField != "" {
+					if enumValOpts.FeatureSupport == nil {
+						enumValOpts.FeatureSupport = &descriptorpb.FieldOptions_FeatureSupport{}
+					}
+					subNum, ferr := applySubOption(enumValOpts.FeatureSupport, "feature_support", fsSubField, optValTok, optNameTok)
+					if ferr != nil {
+						return nil, ferr
+					}
+					endCol := optValTok.Column + len(optValTok.Value)
+					if optValTok.Type == tokenizer.TokenString {
+						endCol = optValTok.Column + optValTok.RawLen
+					}
+					parsedEnumValOpts = append(parsedEnumValOpts, enumValOptInfo{
+						fieldNum:      4,
+						nameStartLine: optNameTok.Line,
+						nameStartCol:  optNameTok.Column,
+						endLine:       optValTok.Line,
+						endCol:        endCol,
+						featFieldNum:  subNum,
+					})
+					optOrder = append(optOrder, enumValOptOrderEntry{isCustom: false, index: len(parsedEnumValOpts) - 1})
+					hasOpts = true
+
+					if p.tok.Peek().Value == "," {
+						p.tok.Next()
+						if p.tok.Peek().Value == "]" {
+							tok := p.tok.Peek()
+							return nil, fmt.Errorf("%d:%d: Expected identifier.", tok.Line+1, tok.Column+1)
+						}
+						continue
+					}
+					break
 				}
 
 				var fieldNum int32
@@ -2933,55 +3104,9 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 						if enumValOpts.Features == nil {
 							enumValOpts.Features = &descriptorpb.FeatureSet{}
 						}
-						if optValTok.Type != tokenizer.TokenIdent {
-							return nil, fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.EnumValueOptions.features.%s\".", optValTok.Line+1, optValTok.Column+1, featSubField)
-						}
-						var featFieldNum int32
-						switch featSubField {
-						case "field_presence":
-							v, ok := descriptorpb.FeatureSet_FieldPresence_value[optValTok.Value]
-							if !ok {
-								return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.FieldPresence\" has no value named \"%s\" for option \"google.protobuf.EnumValueOptions.features.field_presence\".", optValTok.Line+1, optValTok.Column+1, optValTok.Value)
-							}
-							enumValOpts.Features.FieldPresence = descriptorpb.FeatureSet_FieldPresence(v).Enum()
-							featFieldNum = 1
-						case "enum_type":
-							v, ok := descriptorpb.FeatureSet_EnumType_value[optValTok.Value]
-							if !ok {
-								return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.EnumType\" has no value named \"%s\" for option \"google.protobuf.EnumValueOptions.features.enum_type\".", optValTok.Line+1, optValTok.Column+1, optValTok.Value)
-							}
-							enumValOpts.Features.EnumType = descriptorpb.FeatureSet_EnumType(v).Enum()
-							featFieldNum = 2
-						case "repeated_field_encoding":
-							v, ok := descriptorpb.FeatureSet_RepeatedFieldEncoding_value[optValTok.Value]
-							if !ok {
-								return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.RepeatedFieldEncoding\" has no value named \"%s\" for option \"google.protobuf.EnumValueOptions.features.repeated_field_encoding\".", optValTok.Line+1, optValTok.Column+1, optValTok.Value)
-							}
-							enumValOpts.Features.RepeatedFieldEncoding = descriptorpb.FeatureSet_RepeatedFieldEncoding(v).Enum()
-							featFieldNum = 3
-						case "utf8_validation":
-							v, ok := descriptorpb.FeatureSet_Utf8Validation_value[optValTok.Value]
-							if !ok {
-								return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.Utf8Validation\" has no value named \"%s\" for option \"google.protobuf.EnumValueOptions.features.utf8_validation\".", optValTok.Line+1, optValTok.Column+1, optValTok.Value)
-							}
-							enumValOpts.Features.Utf8Validation = descriptorpb.FeatureSet_Utf8Validation(v).Enum()
-							featFieldNum = 4
-						case "message_encoding":
-							v, ok := descriptorpb.FeatureSet_MessageEncoding_value[optValTok.Value]
-							if !ok {
-								return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.MessageEncoding\" has no value named \"%s\" for option \"google.protobuf.EnumValueOptions.features.message_encoding\".", optValTok.Line+1, optValTok.Column+1, optValTok.Value)
-							}
-							enumValOpts.Features.MessageEncoding = descriptorpb.FeatureSet_MessageEncoding(v).Enum()
-							featFieldNum = 5
-						case "json_format":
-							v, ok := descriptorpb.FeatureSet_JsonFormat_value[optValTok.Value]
-							if !ok {
-								return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.JsonFormat\" has no value named \"%s\" for option \"google.protobuf.EnumValueOptions.features.json_format\".", optValTok.Line+1, optValTok.Column+1, optValTok.Value)
-							}
-							enumValOpts.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
-							featFieldNum = 6
-						default:
-							return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", optNameTok.Line+1, optNameTok.Column+1, optName)
+						featFieldNum, ferr := applySubOption(enumValOpts.Features, "features", featSubField, optValTok, optNameTok)
+						if ferr != nil {
+							return nil, ferr
 						}
 						endCol := optValTok.Column + len(optValTok.Value)
 						parsedEnumValOpts = append(parsedEnumValOpts, enumValOptInfo{
@@ -3176,13 +3301,11 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 
 		// Handle sub-field path: option (name).sub1.sub2... = value;
 		var subFieldPath []string
-		for p.tok.Peek().Value == "." {
-			dotTok := p.tok.Next()
-			p.trackEnd(dotTok)
-			subTok := p.tok.Next()
-			p.trackEnd(subTok)
-			subFieldPath = append(subFieldPath, subTok.Value)
+		sub, err := p.parseOptionSubPath()
+		if err != nil {
+			return err
 		}
+		subFieldPath = append(subFieldPath, sub...)
 
 		// Consume "="
 		if _, err := p.tok.Expect("="); err != nil {
@@ -3348,55 +3471,9 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 			if e.Options.Features == nil {
 				e.Options.Features = &descriptorpb.FeatureSet{}
 			}
-			if valTok.Type != tokenizer.TokenIdent {
-				return fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.EnumOptions.features.%s\".", valTok.Line+1, valTok.Column+1, featSubField)
-			}
-			var featFieldNum int32
-			switch featSubField {
-			case "field_presence":
-				v, ok := descriptorpb.FeatureSet_FieldPresence_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.FieldPresence\" has no value named \"%s\" for option \"google.protobuf.EnumOptions.features.field_presence\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				e.Options.Features.FieldPresence = descriptorpb.FeatureSet_FieldPresence(v).Enum()
-				featFieldNum = 1
-			case "enum_type":
-				v, ok := descriptorpb.FeatureSet_EnumType_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.EnumType\" has no value named \"%s\" for option \"google.protobuf.EnumOptions.features.enum_type\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				e.Options.Features.EnumType = descriptorpb.FeatureSet_EnumType(v).Enum()
-				featFieldNum = 2
-			case "repeated_field_encoding":
-				v, ok := descriptorpb.FeatureSet_RepeatedFieldEncoding_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.RepeatedFieldEncoding\" has no value named \"%s\" for option \"google.protobuf.EnumOptions.features.repeated_field_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				e.Options.Features.RepeatedFieldEncoding = descriptorpb.FeatureSet_RepeatedFieldEncoding(v).Enum()
-				featFieldNum = 3
-			case "utf8_validation":
-				v, ok := descriptorpb.FeatureSet_Utf8Validation_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.Utf8Validation\" has no value named \"%s\" for option \"google.protobuf.EnumOptions.features.utf8_validation\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				e.Options.Features.Utf8Validation = descriptorpb.FeatureSet_Utf8Validation(v).Enum()
-				featFieldNum = 4
-			case "message_encoding":
-				v, ok := descriptorpb.FeatureSet_MessageEncoding_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.MessageEncoding\" has no value named \"%s\" for option \"google.protobuf.EnumOptions.features.message_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				e.Options.Features.MessageEncoding = descriptorpb.FeatureSet_MessageEncoding(v).Enum()
-				featFieldNum = 5
-			case "json_format":
-				v, ok := descriptorpb.FeatureSet_JsonFormat_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.JsonFormat\" has no value named \"%s\" for option \"google.protobuf.EnumOptions.features.json_format\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				e.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
-				featFieldNum = 6
-			default:
-				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
+			featFieldNum, ferr := applySubOption(e.Options.Features, "features", featSubField, valTok, nameTok)
+			if ferr != nil {
+				return ferr
 			}
 			// SCI: [enumPath..., 3] for options statement, [enumPath..., 3, 7, featFieldNum] for specific feature
 			optPath := append(copyPath(enumPath), 3)
@@ -3495,6 +3572,35 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 				p.skipToToken(";")
 				return nil
 			}
+			// Editions spells reserved names as bare identifiers: reserved foo, bar;
+			namePath := append(copyPath(enumPath), 5) // field 5 = reserved_name
+			startNameCount := *nameIdx
+			for {
+				nameTok := p.tok.Next()
+				e.ReservedName = append(e.ReservedName, nameTok.Value)
+				p.addLocationSpan(append(copyPath(namePath), *nameIdx),
+					nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
+				*nameIdx++
+
+				if p.tok.Peek().Value == "," {
+					p.tok.Next()
+				} else {
+					break
+				}
+			}
+			endTok, err := p.tok.Expect(";")
+			if err != nil {
+				return err
+			}
+			p.trackEnd(endTok)
+			p.addLocationSpan(namePath, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+			// Move statement span before individual names added in this call
+			namesAdded := int(*nameIdx - startNameCount)
+			stmtLoc := p.locations[len(p.locations)-1]
+			copy(p.locations[len(p.locations)-namesAdded:], p.locations[len(p.locations)-namesAdded-1:len(p.locations)-1])
+			p.locations[len(p.locations)-namesAdded-1] = stmtLoc
+			p.attachComments(len(p.locations)-namesAdded-1, firstIdx)
+			return nil
 		}
 
 		for {
@@ -3691,13 +3797,11 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 
 		// Handle sub-field path: option (name).sub1.sub2... = value;
 		var subFieldPath []string
-		for p.tok.Peek().Value == "." {
-			dotTok := p.tok.Next()
-			p.trackEnd(dotTok)
-			subTok := p.tok.Next()
-			p.trackEnd(subTok)
-			subFieldPath = append(subFieldPath, subTok.Value)
+		sub, err := p.parseOptionSubPath()
+		if err != nil {
+			return err
 		}
+		subFieldPath = append(subFieldPath, sub...)
 
 		if _, err := p.tok.Expect("="); err != nil {
 			return err
@@ -3841,55 +3945,9 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 			if svc.Options.Features == nil {
 				svc.Options.Features = &descriptorpb.FeatureSet{}
 			}
-			if valTok.Type != tokenizer.TokenIdent {
-				return fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.ServiceOptions.features.%s\".", valTok.Line+1, valTok.Column+1, featSubField)
-			}
-			var featFieldNum int32
-			switch featSubField {
-			case "field_presence":
-				v, ok := descriptorpb.FeatureSet_FieldPresence_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.FieldPresence\" has no value named \"%s\" for option \"google.protobuf.ServiceOptions.features.field_presence\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				svc.Options.Features.FieldPresence = descriptorpb.FeatureSet_FieldPresence(v).Enum()
-				featFieldNum = 1
-			case "enum_type":
-				v, ok := descriptorpb.FeatureSet_EnumType_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.EnumType\" has no value named \"%s\" for option \"google.protobuf.ServiceOptions.features.enum_type\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				svc.Options.Features.EnumType = descriptorpb.FeatureSet_EnumType(v).Enum()
-				featFieldNum = 2
-			case "repeated_field_encoding":
-				v, ok := descriptorpb.FeatureSet_RepeatedFieldEncoding_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.RepeatedFieldEncoding\" has no value named \"%s\" for option \"google.protobuf.ServiceOptions.features.repeated_field_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				svc.Options.Features.RepeatedFieldEncoding = descriptorpb.FeatureSet_RepeatedFieldEncoding(v).Enum()
-				featFieldNum = 3
-			case "utf8_validation":
-				v, ok := descriptorpb.FeatureSet_Utf8Validation_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.Utf8Validation\" has no value named \"%s\" for option \"google.protobuf.ServiceOptions.features.utf8_validation\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				svc.Options.Features.Utf8Validation = descriptorpb.FeatureSet_Utf8Validation(v).Enum()
-				featFieldNum = 4
-			case "message_encoding":
-				v, ok := descriptorpb.FeatureSet_MessageEncoding_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.MessageEncoding\" has no value named \"%s\" for option \"google.protobuf.ServiceOptions.features.message_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				svc.Options.Features.MessageEncoding = descriptorpb.FeatureSet_MessageEncoding(v).Enum()
-				featFieldNum = 5
-			case "json_format":
-				v, ok := descriptorpb.FeatureSet_JsonFormat_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.JsonFormat\" has no value named \"%s\" for option \"google.protobuf.ServiceOptions.features.json_format\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				svc.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
-				featFieldNum = 6
-			default:
-				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
+			featFieldNum, ferr := applySubOption(svc.Options.Features, "features", featSubField, valTok, nameTok)
+			if ferr != nil {
+				return ferr
 			}
 			optPath := append(copyPath(svcPath), 3)
 			span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
@@ -3944,13 +4002,11 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 
 		// Handle sub-field path: option (name).sub1.sub2... = value;
 		var subFieldPath []string
-		for p.tok.Peek().Value == "." {
-			dotTok := p.tok.Next()
-			p.trackEnd(dotTok)
-			subTok := p.tok.Next()
-			p.trackEnd(subTok)
-			subFieldPath = append(subFieldPath, subTok.Value)
+		sub, err := p.parseOptionSubPath()
+		if err != nil {
+			return err
 		}
+		subFieldPath = append(subFieldPath, sub...)
 
 		if _, err := p.tok.Expect("="); err != nil {
 			return err
@@ -4110,55 +4166,9 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 			if method.Options.Features == nil {
 				method.Options.Features = &descriptorpb.FeatureSet{}
 			}
-			if valTok.Type != tokenizer.TokenIdent {
-				return fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.MethodOptions.features.%s\".", valTok.Line+1, valTok.Column+1, featSubField)
-			}
-			var featFieldNum int32
-			switch featSubField {
-			case "field_presence":
-				v, ok := descriptorpb.FeatureSet_FieldPresence_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.FieldPresence\" has no value named \"%s\" for option \"google.protobuf.MethodOptions.features.field_presence\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				method.Options.Features.FieldPresence = descriptorpb.FeatureSet_FieldPresence(v).Enum()
-				featFieldNum = 1
-			case "enum_type":
-				v, ok := descriptorpb.FeatureSet_EnumType_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.EnumType\" has no value named \"%s\" for option \"google.protobuf.MethodOptions.features.enum_type\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				method.Options.Features.EnumType = descriptorpb.FeatureSet_EnumType(v).Enum()
-				featFieldNum = 2
-			case "repeated_field_encoding":
-				v, ok := descriptorpb.FeatureSet_RepeatedFieldEncoding_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.RepeatedFieldEncoding\" has no value named \"%s\" for option \"google.protobuf.MethodOptions.features.repeated_field_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				method.Options.Features.RepeatedFieldEncoding = descriptorpb.FeatureSet_RepeatedFieldEncoding(v).Enum()
-				featFieldNum = 3
-			case "utf8_validation":
-				v, ok := descriptorpb.FeatureSet_Utf8Validation_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.Utf8Validation\" has no value named \"%s\" for option \"google.protobuf.MethodOptions.features.utf8_validation\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				method.Options.Features.Utf8Validation = descriptorpb.FeatureSet_Utf8Validation(v).Enum()
-				featFieldNum = 4
-			case "message_encoding":
-				v, ok := descriptorpb.FeatureSet_MessageEncoding_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.MessageEncoding\" has no value named \"%s\" for option \"google.protobuf.MethodOptions.features.message_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				method.Options.Features.MessageEncoding = descriptorpb.FeatureSet_MessageEncoding(v).Enum()
-				featFieldNum = 5
-			case "json_format":
-				v, ok := descriptorpb.FeatureSet_JsonFormat_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.JsonFormat\" has no value named \"%s\" for option \"google.protobuf.MethodOptions.features.json_format\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				method.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
-				featFieldNum = 6
-			default:
-				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
+			featFieldNum, ferr := applySubOption(method.Options.Features, "features", featSubField, valTok, nameTok)
+			if ferr != nil {
+				return ferr
 			}
 			optPath := append(copyPath(methodPath), 4)
 			span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
@@ -4452,13 +4462,11 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 
 		// Handle sub-field path: option (name).sub1.sub2... = value;
 		var subFieldPath []string
-		for p.tok.Peek().Value == "." {
-			dotTok := p.tok.Next()
-			p.trackEnd(dotTok)
-			subTok := p.tok.Next()
-			p.trackEnd(subTok)
-			subFieldPath = append(subFieldPath, subTok.Value)
+		sub, err := p.parseOptionSubPath()
+		if err != nil {
+			return err
 		}
+		subFieldPath = append(subFieldPath, sub...)
 
 		if _, err := p.tok.Expect("="); err != nil {
 			return err
@@ -4583,55 +4591,9 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 		if decl.Options.Features == nil {
 			decl.Options.Features = &descriptorpb.FeatureSet{}
 		}
-		if valTok.Type != tokenizer.TokenIdent {
-			return fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.OneofOptions.features.%s\".", valTok.Line+1, valTok.Column+1, featSubField)
-		}
-		var featFieldNum int32
-		switch featSubField {
-		case "field_presence":
-			v, ok := descriptorpb.FeatureSet_FieldPresence_value[valTok.Value]
-			if !ok {
-				return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.FieldPresence\" has no value named \"%s\" for option \"google.protobuf.OneofOptions.features.field_presence\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-			}
-			decl.Options.Features.FieldPresence = descriptorpb.FeatureSet_FieldPresence(v).Enum()
-			featFieldNum = 1
-		case "enum_type":
-			v, ok := descriptorpb.FeatureSet_EnumType_value[valTok.Value]
-			if !ok {
-				return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.EnumType\" has no value named \"%s\" for option \"google.protobuf.OneofOptions.features.enum_type\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-			}
-			decl.Options.Features.EnumType = descriptorpb.FeatureSet_EnumType(v).Enum()
-			featFieldNum = 2
-		case "repeated_field_encoding":
-			v, ok := descriptorpb.FeatureSet_RepeatedFieldEncoding_value[valTok.Value]
-			if !ok {
-				return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.RepeatedFieldEncoding\" has no value named \"%s\" for option \"google.protobuf.OneofOptions.features.repeated_field_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-			}
-			decl.Options.Features.RepeatedFieldEncoding = descriptorpb.FeatureSet_RepeatedFieldEncoding(v).Enum()
-			featFieldNum = 3
-		case "utf8_validation":
-			v, ok := descriptorpb.FeatureSet_Utf8Validation_value[valTok.Value]
-			if !ok {
-				return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.Utf8Validation\" has no value named \"%s\" for option \"google.protobuf.OneofOptions.features.utf8_validation\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-			}
-			decl.Options.Features.Utf8Validation = descriptorpb.FeatureSet_Utf8Validation(v).Enum()
-			featFieldNum = 4
-		case "message_encoding":
-			v, ok := descriptorpb.FeatureSet_MessageEncoding_value[valTok.Value]
-			if !ok {
-				return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.MessageEncoding\" has no value named \"%s\" for option \"google.protobuf.OneofOptions.features.message_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-			}
-			decl.Options.Features.MessageEncoding = descriptorpb.FeatureSet_MessageEncoding(v).Enum()
-			featFieldNum = 5
-		case "json_format":
-			v, ok := descriptorpb.FeatureSet_JsonFormat_value[valTok.Value]
-			if !ok {
-				return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.JsonFormat\" has no value named \"%s\" for option \"google.protobuf.OneofOptions.features.json_format\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-			}
-			decl.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
-			featFieldNum = 6
-		default:
-			return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
+		featFieldNum, ferr := applySubOption(decl.Options.Features, "features", featSubField, valTok, nameTok)
+		if ferr != nil {
+			return ferr
 		}
 		// SCI: [oneofPath..., 2] for options statement, [oneofPath..., 2, 1, featFieldNum] for specific feature
 		optPath := append(copyPath(oneofPath), 2)
@@ -4829,13 +4791,11 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 
 		// Handle sub-field path: option (name).sub1.sub2... = value;
 		var subFieldPath []string
-		for p.tok.Peek().Value == "." {
-			dotTok := p.tok.Next()
-			p.trackEnd(dotTok)
-			subTok := p.tok.Next()
-			p.trackEnd(subTok)
-			subFieldPath = append(subFieldPath, subTok.Value)
+		sub, err := p.parseOptionSubPath()
+		if err != nil {
+			return err
 		}
+		subFieldPath = append(subFieldPath, sub...)
 
 		if _, err := p.tok.Expect("="); err != nil {
 			return err
@@ -4952,6 +4912,47 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 
 	valTok := p.tok.Next()
 	p.trackEnd(valTok)
+
+	// `option features = { ... };` — the whole FeatureSet as a message literal,
+	// rather than one features.X assignment per statement.
+	if optName == "features" && valTok.Value == "{" {
+		aggFields, aggErr := p.consumeAggregate()
+		if aggErr != nil {
+			return fmt.Errorf("%d:%d: Error while parsing option value for \"features\": %s", valTok.Line+1, valTok.Column+1, aggErr.Error())
+		}
+		closeTok, err := p.tok.Expect("}")
+		if err != nil {
+			return err
+		}
+		p.trackEnd(closeTok)
+		endTok, err := p.tok.Expect(";")
+		if err != nil {
+			return err
+		}
+		p.trackEnd(endTok)
+
+		if fd.Options == nil {
+			fd.Options = &descriptorpb.FileOptions{}
+		}
+		if fd.Options.Features == nil {
+			fd.Options.Features = &descriptorpb.FeatureSet{}
+		}
+		if err := applyMessageAggregate(fd.Options.Features, aggFields); err != nil {
+			return fmt.Errorf("%d:%d: Error while parsing option value for \"features\": %s", valTok.Line+1, valTok.Column+1, err.Error())
+		}
+
+		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
+		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+			Path: []int32{8},
+			Span: span,
+		})
+		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
+			Path: []int32{8, 50},
+			Span: span,
+		})
+		p.attachComments(len(p.locations)-1, firstIdx)
+		return nil
+	}
 
 	// Concatenate adjacent string tokens (C++ protoc allows this)
 	if valTok.Type == tokenizer.TokenString {
@@ -5123,52 +5124,9 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 			if fd.Options.Features == nil {
 				fd.Options.Features = &descriptorpb.FeatureSet{}
 			}
-			var featFieldNum int32
-			switch featSubField {
-			case "field_presence":
-				v, ok := descriptorpb.FeatureSet_FieldPresence_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.FieldPresence\" has no value named \"%s\" for option \"google.protobuf.FileOptions.features.field_presence\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				fd.Options.Features.FieldPresence = descriptorpb.FeatureSet_FieldPresence(v).Enum()
-				featFieldNum = 1
-			case "enum_type":
-				v, ok := descriptorpb.FeatureSet_EnumType_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.EnumType\" has no value named \"%s\" for option \"google.protobuf.FileOptions.features.enum_type\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				fd.Options.Features.EnumType = descriptorpb.FeatureSet_EnumType(v).Enum()
-				featFieldNum = 2
-			case "repeated_field_encoding":
-				v, ok := descriptorpb.FeatureSet_RepeatedFieldEncoding_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.RepeatedFieldEncoding\" has no value named \"%s\" for option \"google.protobuf.FileOptions.features.repeated_field_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				fd.Options.Features.RepeatedFieldEncoding = descriptorpb.FeatureSet_RepeatedFieldEncoding(v).Enum()
-				featFieldNum = 3
-			case "utf8_validation":
-				v, ok := descriptorpb.FeatureSet_Utf8Validation_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.Utf8Validation\" has no value named \"%s\" for option \"google.protobuf.FileOptions.features.utf8_validation\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				fd.Options.Features.Utf8Validation = descriptorpb.FeatureSet_Utf8Validation(v).Enum()
-				featFieldNum = 4
-			case "message_encoding":
-				v, ok := descriptorpb.FeatureSet_MessageEncoding_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.MessageEncoding\" has no value named \"%s\" for option \"google.protobuf.FileOptions.features.message_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				fd.Options.Features.MessageEncoding = descriptorpb.FeatureSet_MessageEncoding(v).Enum()
-				featFieldNum = 5
-			case "json_format":
-				v, ok := descriptorpb.FeatureSet_JsonFormat_value[valTok.Value]
-				if !ok {
-					return fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.JsonFormat\" has no value named \"%s\" for option \"google.protobuf.FileOptions.features.json_format\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-				}
-				fd.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
-				featFieldNum = 6
-			default:
-				return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
+			featFieldNum, ferr := applySubOption(fd.Options.Features, "features", featSubField, valTok, nameTok)
+			if ferr != nil {
+				return ferr
 			}
 			// SCI: [8] for option statement, [8, 50, featFieldNum] for specific feature
 			span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
@@ -5199,6 +5157,30 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 	p.attachComments(len(p.locations)-1, firstIdx)
 
 	return nil
+}
+
+// parseOptionSubPath reads the `.name` and `.(ext.name)` segments that follow a
+// custom option's leading extension. Extension segments keep their parentheses,
+// which is how the resolver tells them from an ordinary field.
+func (p *parser) parseOptionSubPath() ([]string, error) {
+	var path []string
+	for p.tok.Peek().Value == "." {
+		dotTok := p.tok.Next()
+		p.trackEnd(dotTok)
+		if p.tok.Peek().Value == "(" {
+			parenTok := p.tok.Next()
+			name, err := p.parseParenthesizedOptionName(parenTok)
+			if err != nil {
+				return nil, err
+			}
+			path = append(path, name)
+			continue
+		}
+		subTok := p.tok.Next()
+		p.trackEnd(subTok)
+		path = append(path, subTok.Value)
+	}
+	return path, nil
 }
 
 func (p *parser) parseParenthesizedOptionName(openTok tokenizer.Token) (string, error) {
@@ -5659,6 +5641,17 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		optNameTok := p.tok.Next()
 		optName := optNameTok.Value
 
+		// `features.(ext)...` is a custom option like any other, except that the
+		// extension hangs off FeatureSet rather than off FieldOptions.
+		onFeatures := false
+		featuresTok := optNameTok
+		if optName == "features" && p.tok.Peek().Value == "." && p.tok.PeekAt(1).Value == "(" {
+			p.trackEnd(p.tok.Next()) // consume "."
+			optNameTok = p.tok.Next()
+			optName = optNameTok.Value
+			onFeatures = true
+		}
+
 		// Handle parenthesized custom option names: [(name) = value]
 		if optName == "(" {
 			fullName, err := p.parseParenthesizedOptionName(optNameTok)
@@ -5668,13 +5661,11 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 
 			// Handle sub-field path: [(ext).sub1.sub2 = value]
 			var subFieldPath []string
-			for p.tok.Peek().Value == "." {
-				dotTok := p.tok.Next()
-				p.trackEnd(dotTok)
-				subTok := p.tok.Next()
-				p.trackEnd(subTok)
-				subFieldPath = append(subFieldPath, subTok.Value)
+			sub, err := p.parseOptionSubPath()
+			if err != nil {
+				return nil, err
 			}
+			subFieldPath = append(subFieldPath, sub...)
 
 			// Consume "="
 			if _, err := p.tok.Expect("="); err != nil {
@@ -5693,6 +5684,14 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			custOpt.SubFieldPath = subFieldPath
 			custOpt.NameTok = optNameTok
 			custOpt.Field = field
+			custOpt.OnFeatures = onFeatures
+			if onFeatures {
+				// protoc names the option, and points at it, as it was written:
+				// from the "features" token through the whole path.
+				custOpt.ParenName = "features." + fullName
+				custOpt.NameTok = featuresTok
+				optNameTok = featuresTok
+			}
 
 			// Reject angle bracket aggregate syntax and positive sign
 			if p.tok.Peek().Value == "<" || p.tok.Peek().Value == "+" {
@@ -5710,6 +5709,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			}
 			custOpt.Negative = negative
 
+			var optEndLine, optEndCol int
 			if p.tok.Peek().Value == "{" {
 				// Aggregate value
 				brTok := p.tok.Next() // consume '{'
@@ -5722,6 +5722,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				p.trackEnd(closeTok)
 				custOpt.AggregateFields = aggFields
 				custOpt.AggregateBraceTok = brTok
+				optEndLine, optEndCol = closeTok.Line, closeTok.Column+1
 			} else {
 				valTok := p.tok.Next()
 				p.trackEnd(valTok)
@@ -5731,11 +5732,14 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 					custOpt.AggregateBraceTok = valTok
 				}
 				custOpt.Value = valTok.Value
+				optEndLine, optEndCol = valTok.Line, valTok.Column+len(valTok.Value)
 				if valTok.Type == tokenizer.TokenString {
+					optEndCol = valTok.Column + valTok.RawLen
 					for p.tok.Peek().Type == tokenizer.TokenString {
 						nextStr := p.tok.Next()
 						p.trackEnd(nextStr)
 						custOpt.Value += nextStr.Value
+						optEndLine, optEndCol = nextStr.Line, nextStr.Column+nextStr.RawLen
 					}
 				}
 				if negative {
@@ -5745,13 +5749,11 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				custOpt.ValTok = valTok
 			}
 
-			// Determine option span end position
-			endTok := p.tok.Peek()
-			optEndLine := endTok.Line
-			optEndCol := endTok.Column // don't include ]/,
-
 			// Add SCI: option span [fieldPath..., 8, 0, ...subfields] (placeholder; field number resolved later)
 			sciPath := append(copyPath(fieldPath), 8, 0)
+			if onFeatures {
+				sciPath = append(copyPath(fieldPath), 8, 21, 0)
+			}
 			if len(subFieldPath) > 0 {
 				for range subFieldPath {
 					sciPath = append(sciPath, 0)
@@ -5766,6 +5768,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 
 			if field.Options == nil {
 				field.Options = &descriptorpb.FieldOptions{}
+			}
+			if onFeatures && field.Options.Features == nil {
+				field.Options.Features = &descriptorpb.FeatureSet{}
 			}
 
 			p.customFieldOptions = append(p.customFieldOptions, custOpt)
@@ -5787,12 +5792,16 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 		}
 
 		// Handle dotted option names like features.field_presence
-		var featSubField string
-		if optName == "features" && p.tok.Peek().Value == "." {
+		var featSubField, fsSubField string
+		if (optName == "features" || optName == "feature_support") && p.tok.Peek().Value == "." {
 			p.tok.Next() // consume "."
 			subTok := p.tok.Next()
-			featSubField = subTok.Value
-			optName = "features." + featSubField
+			if optName == "features" {
+				featSubField = subTok.Value
+			} else {
+				fsSubField = subTok.Value
+			}
+			optName += "." + subTok.Value
 		}
 
 		if optName != "targets" && optName != "edition_defaults" && seenFieldOpts[optName] {
@@ -6124,62 +6133,29 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			}
 			field.Options.Targets = append(field.Options.Targets, targetVal)
 		default:
-			if featSubField != "" {
+			if fsSubField != "" {
+				if field.Options == nil {
+					field.Options = &descriptorpb.FieldOptions{}
+				}
+				if field.Options.FeatureSupport == nil {
+					field.Options.FeatureSupport = &descriptorpb.FieldOptions_FeatureSupport{}
+				}
+				subNum, ferr := applySubOption(field.Options.FeatureSupport, "feature_support", fsSubField, valTok, optNameTok)
+				if ferr != nil {
+					return nil, ferr
+				}
+				addLoc(append(copyPath(fieldPath), 8, 22, subNum),
+					optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
+			} else if featSubField != "" {
 				if field.Options == nil {
 					field.Options = &descriptorpb.FieldOptions{}
 				}
 				if field.Options.Features == nil {
 					field.Options.Features = &descriptorpb.FeatureSet{}
 				}
-				if valTok.Type != tokenizer.TokenIdent {
-					return nil, fmt.Errorf("%d:%d: Value must be identifier for enum-valued option \"google.protobuf.FieldOptions.features.%s\".", valTok.Line+1, valTok.Column+1, featSubField)
-				}
-				var featFieldNum int32
-				switch featSubField {
-				case "field_presence":
-					v, ok := descriptorpb.FeatureSet_FieldPresence_value[valTok.Value]
-					if !ok {
-						return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.FieldPresence\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.features.field_presence\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-					}
-					field.Options.Features.FieldPresence = descriptorpb.FeatureSet_FieldPresence(v).Enum()
-					featFieldNum = 1
-				case "enum_type":
-					v, ok := descriptorpb.FeatureSet_EnumType_value[valTok.Value]
-					if !ok {
-						return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.EnumType\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.features.enum_type\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-					}
-					field.Options.Features.EnumType = descriptorpb.FeatureSet_EnumType(v).Enum()
-					featFieldNum = 2
-				case "repeated_field_encoding":
-					v, ok := descriptorpb.FeatureSet_RepeatedFieldEncoding_value[valTok.Value]
-					if !ok {
-						return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.RepeatedFieldEncoding\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.features.repeated_field_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-					}
-					field.Options.Features.RepeatedFieldEncoding = descriptorpb.FeatureSet_RepeatedFieldEncoding(v).Enum()
-					featFieldNum = 3
-				case "utf8_validation":
-					v, ok := descriptorpb.FeatureSet_Utf8Validation_value[valTok.Value]
-					if !ok {
-						return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.Utf8Validation\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.features.utf8_validation\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-					}
-					field.Options.Features.Utf8Validation = descriptorpb.FeatureSet_Utf8Validation(v).Enum()
-					featFieldNum = 4
-				case "message_encoding":
-					v, ok := descriptorpb.FeatureSet_MessageEncoding_value[valTok.Value]
-					if !ok {
-						return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.MessageEncoding\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.features.message_encoding\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-					}
-					field.Options.Features.MessageEncoding = descriptorpb.FeatureSet_MessageEncoding(v).Enum()
-					featFieldNum = 5
-				case "json_format":
-					v, ok := descriptorpb.FeatureSet_JsonFormat_value[valTok.Value]
-					if !ok {
-						return nil, fmt.Errorf("%d:%d: Enum type \"google.protobuf.FeatureSet.JsonFormat\" has no value named \"%s\" for option \"google.protobuf.FieldOptions.features.json_format\".", valTok.Line+1, valTok.Column+1, valTok.Value)
-					}
-					field.Options.Features.JsonFormat = descriptorpb.FeatureSet_JsonFormat(v).Enum()
-					featFieldNum = 6
-				default:
-					return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", optNameTok.Line+1, optNameTok.Column+1, optName)
+				featFieldNum, ferr := applySubOption(field.Options.Features, "features", featSubField, valTok, optNameTok)
+				if ferr != nil {
+					return nil, ferr
 				}
 				addLoc(append(copyPath(fieldPath), 8, 21, featFieldNum),
 					optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
@@ -6285,7 +6261,6 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 // Returns the closing '}' token.
 func (p *parser) parseMessageLiteralFieldOption(optName string, field *descriptorpb.FieldDescriptorProto) (tokenizer.Token, error) {
 	openTok := p.tok.Next() // consume "{"
-	_ = openTok
 
 	switch optName {
 	case "edition_defaults":
@@ -6314,42 +6289,17 @@ func (p *parser) parseMessageLiteralFieldOption(optName string, field *descripto
 
 	case "feature_support":
 		fs := &descriptorpb.FieldOptions_FeatureSupport{}
-		for p.tok.Peek().Value != "}" && p.tok.Peek().Type != tokenizer.TokenEOF {
-			keyTok := p.tok.Next()
-			key := keyTok.Value
-			p.tok.Next() // consume ":"
-			valTok := p.tok.Next()
-			// Adjacent string concatenation
-			if valTok.Type == tokenizer.TokenString {
-				for p.tok.Peek().Type == tokenizer.TokenString {
-					next := p.tok.Next()
-					valTok.Value += next.Value
-				}
-			}
-			switch key {
-			case "edition_introduced":
-				if v, ok := descriptorpb.Edition_value[valTok.Value]; ok {
-					fs.EditionIntroduced = descriptorpb.Edition(v).Enum()
-				}
-			case "edition_deprecated":
-				if v, ok := descriptorpb.Edition_value[valTok.Value]; ok {
-					fs.EditionDeprecated = descriptorpb.Edition(v).Enum()
-				}
-			case "deprecation_warning":
-				fs.DeprecationWarning = proto.String(valTok.Value)
-			case "edition_removed":
-				if v, ok := descriptorpb.Edition_value[valTok.Value]; ok {
-					fs.EditionRemoved = descriptorpb.Edition(v).Enum()
-				}
-			case "removal_error":
-				fs.RemovalError = proto.String(valTok.Value)
-			}
-			// consume optional comma/semicolon
-			if p.tok.Peek().Value == "," || p.tok.Peek().Value == ";" {
-				p.tok.Next()
-			}
+		aggFields, err := p.consumeAggregate()
+		if err != nil {
+			return openTok, fmt.Errorf("%d:%d: Error while parsing option value for \"feature_support\": %s", openTok.Line+1, openTok.Column+1, err.Error())
 		}
-		closeTok := p.tok.Next() // consume "}"
+		closeTok, err := p.tok.Expect("}")
+		if err != nil {
+			return openTok, err
+		}
+		if err := applyMessageAggregate(fs, aggFields); err != nil {
+			return openTok, fmt.Errorf("%d:%d: Error while parsing option value for \"feature_support\": %s", openTok.Line+1, openTok.Column+1, err.Error())
+		}
 		field.Options.FeatureSupport = fs
 		return closeTok, nil
 	}
