@@ -37,18 +37,15 @@ for _, f := range files {
 }
 ```
 
-That is the whole idea. In-memory sources, `FileDescriptorSet` output, in-process
-Go plugins and the concurrency guarantees are all in the reference:
+In-memory sources, `FileDescriptorSet` output, in-process Go plugins and
+concurrency guarantees are all in the reference:
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/wham/protoc-go.svg)](https://pkg.go.dev/github.com/wham/protoc-go/protoc)
 
 ## Compliance
 
-A [weekly run](.github/workflows/compliance.yml) feeds the same `.proto` corpus to
-the real C++ `protoc` and to protoc-go, then compares what each one produces byte
-for byte: the `CodeGeneratorRequest` sent to plugins, the serialized
-`FileDescriptorSet`, stdout, stderr and exit codes. The results below are written
-by that run.
+A [weekly run](.github/workflows/compliance.yml) compiles the same corpus with C++
+`protoc` and with protoc-go and compares the output byte for byte.
 
 <!-- BEGIN COMPLIANCE -->
 **5609 / 5609 comparisons produce byte-identical output to C++ protoc 36.0**
@@ -115,23 +112,15 @@ The two numbers answer different questions:
 
 - **`protoc-go --version`** prints `libprotoc <upstream>`, the C++ release this
   build reproduces. Tooling parses that string and expects protoc's answer, so
-  it has to be protoc's answer.
+  that is what it gets.
 - **The Go module version** (`v0.x.y`) describes this project's own API and
   fixes, and follows semver. `protoc-go --protoc_go_version` prints it alongside
   the upstream one, e.g. `protoc-go v0.1.0 (libprotoc 36.0)`.
 
-So `protoc-go v0.4.0` may report `libprotoc 36.0`: our release, verified against
-that C++ release. We deliberately don't renumber the module to match upstream.
-protoc majors land roughly yearly, and following them would force a new import
-path (`/v33`, `/v34`, …) on everyone for releases containing none of our changes.
-The compliance table above is the compatibility claim; the version number never
-was one.
-
-Releases are cut by a `release: major|minor|patch|none` label on the pull
-request, so a change nobody can observe never mints a version. Unlabelled work
-rides along in the next release that happens. Every tag re-runs the comparison
-suite on the tree it points at, and moving the mirrored protoc release is always
-at least a minor.
+So `protoc-go v0.4.0` may report `libprotoc 36.0`. We don't renumber the module to
+match upstream: protoc majors land about once a year, and chasing them would push
+a new import path (`/v33`, `/v34`, …) on everyone for a release with none of our
+changes in it. The compliance table above is what says which protoc we match.
 
 ## Development
 
@@ -141,3 +130,6 @@ scripts/bench           # performance comparison
 ```
 
 Requires Go 1.23+, plus a C++ `protoc` on your PATH for the comparison suites (e.g. `brew install protobuf`).
+
+Releases are cut by a `release: major|minor|patch|none` label on the pull
+request, so a change nobody can observe never mints a version.
