@@ -44,15 +44,25 @@ type TokenError struct {
 	Notes   []TokenError // follow-up notes (printed after main error, not sorted separately)
 }
 
+// indexedComments is one sparse entry of the token→comments mapping: cd holds
+// the comments preceding token slot idx. Most tokens have none, so storing
+// only the occupied slots replaces what used to be a dense array parallel to
+// every token.
+type indexedComments struct {
+	idx int
+	cd  TokenComments
+}
+
 type Tokenizer struct {
-	input    string
-	pos      int
-	line     int // 0-based
-	col      int // 0-based
-	tokens   []Token
-	comments []TokenComments // parallel to tokens
-	idx      int
-	Errors   []TokenError
+	input        string
+	pos          int
+	line         int // 0-based
+	col          int // 0-based
+	tokens       []Token
+	comments     []indexedComments // sparse, ascending by idx
+	commentSlots int               // next comment slot (mirrors the old dense length)
+	idx          int
+	Errors       []TokenError
 }
 
 // symbolStrings caches single-byte strings to avoid allocations in tokenize.
@@ -71,9 +81,8 @@ func New(input string) *Tokenizer {
 		est = 64
 	}
 	t := &Tokenizer{
-		input:    input,
-		tokens:   make([]Token, 0, est),
-		comments: make([]TokenComments, 0, est),
+		input:  input,
+		tokens: make([]Token, 0, est),
 	}
 	// Skip UTF-8 BOM if present (matching C++ protoc behavior).
 	// Keep in input so positions account for BOM bytes.
@@ -90,12 +99,12 @@ func (t *Tokenizer) tokenize() {
 	for t.pos < len(t.input) {
 		cd := t.collectComments(prevTokenLine)
 		if t.pos >= len(t.input) {
-			t.comments = append(t.comments, cd)
+			t.addComments(cd)
 			break
 		}
 
 		ch := t.input[t.pos]
-		t.comments = append(t.comments, cd)
+		t.addComments(cd)
 
 		// Check for control characters (null byte and unprintable bytes 1-31
 		// excluding whitespace chars that are already consumed by collectComments).
@@ -138,14 +147,20 @@ func (t *Tokenizer) tokenize() {
 		prevTokenLine = t.tokens[len(t.tokens)-1].Line
 	}
 	// EOF token
-	if len(t.comments) < len(t.tokens)+1 {
-		t.comments = append(t.comments, t.collectComments(prevTokenLine))
+	if t.commentSlots < len(t.tokens)+1 {
+		t.addComments(t.collectComments(prevTokenLine))
 	}
 	t.tokens = append(t.tokens, Token{Type: TokenEOF, Value: "", Line: t.line, Column: t.col})
-	// Ensure comments slice matches tokens
-	for len(t.comments) < len(t.tokens) {
-		t.comments = append(t.comments, TokenComments{})
+}
+
+// addComments records cd for the next comment slot, storing only non-empty
+// entries. The slot counter advances either way so sparse indexes stay
+// identical to the dense array this replaces.
+func (t *Tokenizer) addComments(cd TokenComments) {
+	if cd.PrevTrailing != "" || cd.Leading != "" || len(cd.Detached) > 0 {
+		t.comments = append(t.comments, indexedComments{idx: t.commentSlots, cd: cd})
 	}
+	t.commentSlots++
 }
 
 // collectComments scans whitespace and comments between tokens, classifying
@@ -377,8 +392,17 @@ func (t *Tokenizer) readBlockCommentText(startLine, startCol int) string {
 
 // CommentsAt returns comment data for the token at index i.
 func (t *Tokenizer) CommentsAt(i int) TokenComments {
-	if i >= 0 && i < len(t.comments) {
-		return t.comments[i]
+	lo, hi := 0, len(t.comments)
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if t.comments[mid].idx < i {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo < len(t.comments) && t.comments[lo].idx == i {
+		return t.comments[lo].cd
 	}
 	return TokenComments{}
 }
