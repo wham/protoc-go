@@ -324,8 +324,8 @@ compiles_ok() {
 
 # -- run ------------------------------------------------------------------
 
-printf '%-18s %-11s %14s %14s %7s %5s %9s %9s %7s\n' "case" "variant" "cpp ms(±sd)" "go ms(±sd)" "go/cpp" "verd" "cpp MB" "go MB" "mem"
-printf '%-18s %-11s %14s %14s %7s %5s %9s %9s %7s\n' "----" "-------" "-----------" "----------" "------" "----" "------" "-----" "---"
+printf '%-18s %-11s %14s %14s %7s %9s %9s %7s %5s\n' "case" "variant" "cpp ms(±sd)" "go ms(±sd)" "go/cpp" "cpp MB" "go MB" "go/cpp" "verd"
+printf '%-18s %-11s %14s %14s %7s %9s %9s %7s %5s\n' "----" "-------" "-----------" "----------" "------" "------" "-----" "------" "----"
 
 ROWS_MD=()
 FALLBACK_ROWS=0
@@ -353,7 +353,7 @@ for spec in "${CASES[@]}"; do
     fi
     if [ -n "$skip_why" ]; then
       SKIPPED_ROWS+=("$label/$variant: $skip_why")
-      printf '%-18s %-11s %14s %14s %7s %5s %9s %9s %7s\n' "$label" "$variant" "-" "-" "-" "skip" "-" "-" "-"
+      printf '%-18s %-11s %14s %14s %7s %9s %9s %7s %5s\n' "$label" "$variant" "-" "-" "-" "-" "-" "-" "skip"
       continue
     fi
 
@@ -406,8 +406,8 @@ for spec in "${CASES[@]}"; do
         "$label" "$variant" "$info" "$go_med" "$go_sd" "$row_driver" "$row_reliable" "$RUNS" "$go_mem_json" >> "$ROWS_JSONL"
     fi
 
-    printf '%-18s %-11s %14s %14s %7s %5s %9s %9s %7s\n' "$label" "$variant" "$cpp_disp" "$go_disp" "$ratio" "$verd" "$cpp_mem_disp" "$go_mem_disp" "$mem_ratio_disp"
-    ROWS_MD+=("| $label | $variant | $cpp_disp | $go_disp | $ratio | $verd | $cpp_mem_disp | $go_mem_disp | $mem_ratio_disp |")
+    printf '%-18s %-11s %14s %14s %7s %9s %9s %7s %5s\n' "$label" "$variant" "$cpp_disp" "$go_disp" "$ratio" "$cpp_mem_disp" "$go_mem_disp" "$mem_ratio_disp" "$verd"
+    ROWS_MD+=("| $label | $variant | $cpp_disp | $go_disp | $ratio | $cpp_mem_disp | $go_mem_disp | $mem_ratio_disp | $verd |")
   done
 done
 
@@ -443,8 +443,8 @@ jq -s '.' "$ROWS_JSONL" > "$OUT_DIR/bench.json"
   echo "(the plugin variant includes the protoc-gen-dump subprocess on both"
   echo "sides); it is informational and never decides a verdict."
   echo ""
-  echo "| case | variant | cpp ms(±sd) | go ms(±sd) | go/cpp | verdict | cpp peak MB | go peak MB | mem go/cpp |"
-  echo "| ---- | ------- | ----------- | ---------- | ------ | ------- | ----------- | ---------- | ---------- |"
+  echo "| case | variant | cpp ms(±sd) | go ms(±sd) | go/cpp | cpp peak MB | go peak MB | mem go/cpp | verdict |"
+  echo "| ---- | ------- | ----------- | ---------- | ------ | ----------- | ---------- | ---------- | ------- |"
   printf '%s\n' "${ROWS_MD[@]}"
   if [ "${#SKIPPED_ROWS[@]}" -gt 0 ]; then
     echo ""

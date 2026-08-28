@@ -194,8 +194,8 @@ if [ -f "$BENCH_JSON" ] && jq -e 'length > 0' "$BENCH_JSON" >/dev/null 2>&1; the
   fi
 
   {
-    echo "| case | variant | C++ ms | Go ms | go/cpp | verdict | C++ peak MB | Go peak MB |"
-    echo "| --- | --- | ---: | ---: | ---: | --- | ---: | ---: |"
+    echo "| case | variant | C++ ms | Go ms | go/cpp | C++ peak MB | Go peak MB | mem go/cpp | verdict |"
+    echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |"
   } >> "$BLOCK"
 
   jq -r --arg reliable "$RELIABLE" '
@@ -205,11 +205,12 @@ if [ -f "$BENCH_JSON" ] && jq -e 'length > 0' "$BENCH_JSON" >/dev/null 2>&1; the
     (if .cpp_ms == null then "n/a" else (.cpp_ms | tostring) + "±" + (.cpp_sd | tostring) end) + " | " +
     ((.go_ms | tostring) + "±" + (.go_sd | tostring)) + " | " +
     (if .ratio == null then "n/a" else (.ratio | tostring) end) + " | " +
+    ((.cpp_peak_kb // null) | mb) + " | " +
+    ((.go_peak_kb // null) | mb) + " | " +
+    (if (.mem_ratio // null) == null then "n/a" else (.mem_ratio | tostring) end) + " | " +
     (if .informational then "informational"
      elif $reliable != "true" then "unreliable"
-     else .verdict end) + " | " +
-    ((.cpp_peak_kb // null) | mb) + " | " +
-    ((.go_peak_kb // null) | mb) + " |"
+     else .verdict end) + " |"
   ' "$BENCH_JSON" >> "$BLOCK"
 
   {

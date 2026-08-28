@@ -260,16 +260,29 @@ jobs:
             sleep $((2 ** attempt))
           done
 
+          # The pull request body carries the bench table so the run's numbers
+          # are visible without digging into artifacts; rebuilt every run so an
+          # updated pull request never shows a previous week's table.
+          body=$(mktemp)
+          {
+            echo "Weekly compliance run, published by [\`compliance.yml\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). The README block, badge and history are written by \`scripts/render-readme\`; nothing here is typed by hand."
+            if [ -f results-bench/bench.md ]; then
+              echo ""
+              cat results-bench/bench.md
+            fi
+          } > "$body"
+
           # The force push already refreshed any open pull request for the
           # branch; only open a new one when there is none.
           open=$(gh pr list --head "${BRANCH}" --base "${GITHUB_REF_NAME}" \
             --state open --json number --jq '.[].number')
           if [ -n "$open" ]; then
+            gh pr edit "$open" --body-file "$body"
             echo "updated existing pull request #${open}"
           else
             gh pr create --base "${GITHUB_REF_NAME}" --head "${BRANCH}" \
               --title "Published weekly compliance results" \
-              --body "Weekly compliance run, published by [\`compliance.yml\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). The README block, badge and history are written by \`scripts/render-readme\`; nothing here is typed by hand."
+              --body-file "$body"
           fi
 
           # Nothing above triggered a workflow run, so the pull request has no

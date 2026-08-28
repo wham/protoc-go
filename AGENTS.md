@@ -239,7 +239,9 @@ The rendered results are published as a pull request from the disposable
 `compliance/results` branch, not pushed straight to main: main's ruleset
 requires the `test` status check, which a direct push has no way to satisfy.
 That branch is force-pushed every run, so an already-open pull request is
-updated in place rather than piling up.
+updated in place rather than piling up. The pull request body carries the
+bench table (`results-bench/bench.md`), rebuilt on every run, so the week's
+numbers are visible without opening artifacts.
 
 Two things have to be true for that pull request to open and merge on its own.
 "Allow GitHub Actions to create and approve pull requests" (Settings → Actions →
