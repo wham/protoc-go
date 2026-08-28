@@ -26,8 +26,7 @@
 #     each other. Rows that cannot compile are dropped and reported.
 #   * hyperfine is strongly preferred. The built-in fallback timer has ~1ms
 #     resolution, which is unreliable for the sub-30ms rows; verdicts from it
-#     should not be trusted (and scripts that certify a winner, e.g. lisa.sh,
-#     require hyperfine).
+#     should not be trusted.
 #   * Each timed row also reports peak memory (max RSS) for both compilers,
 #     read from the kernel's rusage accounting — GNU/BSD time when available,
 #     otherwise a python3 getrusage fallback reading the same counter. It
@@ -289,7 +288,7 @@ peak_rss_kb() {
 }
 
 # verdict <go_med> <go_sd> <cpp_med> <cpp_sd> — echo go|cpp|tie. Recorded in
-# bench.json for machine consumers (lisa.sh, the README tally), not shown in
+# bench.json for machine consumers (the README tally), not shown in
 # the human tables. "tie" unless the medians differ by more than BOTH the
 # combined stddev (run-to-run noise) AND a relative margin. This refuses to
 # call noise a win.
