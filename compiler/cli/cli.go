@@ -13,10 +13,12 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 	"unsafe"
 
@@ -924,7 +926,84 @@ func writeDependencyOut(depPath, target string, orderedFiles []string, srcTree *
 	return err
 }
 
-func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, parseResults map[string]*parser.ParseResult, orderedFiles *[]string, importStack []string, collectErrors *[]string) (bool, error) {
+// parseCache speculatively opens and parses files with parallel workers ahead
+// of parseRecursive. Opening and parsing are pure — Open only reads the source
+// tree and ParseFile is a function of (filename, content) — so doing them
+// early cannot change what parseRecursive observes: it consumes each file's
+// cached result in its usual deterministic order, and results for files it
+// never reaches are discarded.
+type parseCache struct {
+	srcTree *importer.SourceTree
+	sem     chan struct{}
+	mu      sync.Mutex
+	entries map[string]*parseCacheEntry
+}
+
+type parseCacheEntry struct {
+	done     chan struct{}
+	content  string
+	openErr  error
+	result   *parser.ParseResult
+	parseErr error
+}
+
+func newParseCache(srcTree *importer.SourceTree) *parseCache {
+	return &parseCache{
+		srcTree: srcTree,
+		sem:     make(chan struct{}, runtime.GOMAXPROCS(0)),
+		entries: map[string]*parseCacheEntry{},
+	}
+}
+
+// prefetch queues filename and, transitively, everything it imports.
+func (c *parseCache) prefetch(filename string) {
+	c.mu.Lock()
+	if _, ok := c.entries[filename]; ok {
+		c.mu.Unlock()
+		return
+	}
+	e := &parseCacheEntry{done: make(chan struct{})}
+	c.entries[filename] = e
+	c.mu.Unlock()
+	go func() {
+		c.sem <- struct{}{}
+		e.content, e.openErr = c.srcTree.Open(filename)
+		if e.openErr == nil {
+			e.result, e.parseErr = parser.ParseFile(filename, e.content)
+		}
+		<-c.sem
+		// Deps must be read before done is closed: once a consumer holds the
+		// result it may mutate the descriptor.
+		var deps []string
+		if e.result != nil {
+			deps = allDependencies(e.result.FD)
+		}
+		close(e.done)
+		for _, dep := range deps {
+			c.prefetch(dep)
+		}
+	}()
+}
+
+// load returns the entry for filename, waiting for a queued parse or doing
+// the work inline when it was never prefetched.
+func (c *parseCache) load(filename string) *parseCacheEntry {
+	c.mu.Lock()
+	e, ok := c.entries[filename]
+	c.mu.Unlock()
+	if !ok {
+		e = &parseCacheEntry{}
+		e.content, e.openErr = c.srcTree.Open(filename)
+		if e.openErr == nil {
+			e.result, e.parseErr = parser.ParseFile(filename, e.content)
+		}
+		return e
+	}
+	<-e.done
+	return e
+}
+
+func parseRecursive(filename string, srcTree *importer.SourceTree, cache *parseCache, parsed map[string]*descriptorpb.FileDescriptorProto, explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool, parseResults map[string]*parser.ParseResult, orderedFiles *[]string, importStack []string, collectErrors *[]string) (bool, error) {
 	// Check for import cycles
 	for idx, f := range importStack {
 		if f == filename {
@@ -970,8 +1049,8 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 		return true, nil
 	}
 
-	content, err := srcTree.Open(filename)
-	if err != nil {
+	entry := cache.load(filename)
+	if err := entry.openErr; err != nil {
 		if collectErrors != nil {
 			if vpe, ok := err.(*importer.VirtualPathError); ok {
 				_ = vpe
@@ -984,7 +1063,7 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 		return false, err
 	}
 
-	result, err := parser.ParseFile(filename, content)
+	result, err := entry.result, entry.parseErr
 	if err != nil {
 		if collectErrors != nil {
 			if me, ok := err.(*parser.MultiError); ok {
@@ -1012,7 +1091,7 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 	newStack := append(importStack, filename)
 	failedDeps := map[string]bool{}
 	for _, dep := range allDependencies(fd) {
-		ok, err := parseRecursive(dep, srcTree, parsed, explicitJsonNames, parseResults, orderedFiles, newStack, collectErrors)
+		ok, err := parseRecursive(dep, srcTree, cache, parsed, explicitJsonNames, parseResults, orderedFiles, newStack, collectErrors)
 		if err != nil {
 			return false, err
 		}

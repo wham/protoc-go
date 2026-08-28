@@ -245,9 +245,14 @@ func compileInternal(in *compileInput) (*compileOutput, error) {
 		}
 	}
 
-	// Parse all proto files recursively
+	// Parse all proto files recursively. The cache parses ahead in parallel;
+	// parseRecursive consumes results in its usual deterministic order.
+	cache := newParseCache(in.srcTree)
 	for _, f := range in.relFiles {
-		ok, err := parseRecursive(f, in.srcTree, parsed, explicitJsonNames, parseResults, &orderedFiles, nil, &collectErrors)
+		cache.prefetch(f)
+	}
+	for _, f := range in.relFiles {
+		ok, err := parseRecursive(f, in.srcTree, cache, parsed, explicitJsonNames, parseResults, &orderedFiles, nil, &collectErrors)
 		if err != nil {
 			return co, err
 		}
