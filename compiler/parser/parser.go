@@ -279,6 +279,9 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 		explicitJsonNames: map[*descriptorpb.FieldDescriptorProto]bool{},
 		locations:         make([]*descriptorpb.SourceCodeInfo_Location, 0, estLocs),
 	}
+	// Each location carries a path (~4 ints) and a span (3-4 ints).
+	p.locArena.next = estLocs
+	p.i32Arena.next = estLocs * 8
 
 	// If the tokenizer has errors, we still parse to collect parser errors too
 	// (C++ protoc interleaves tokenizer and parser errors)
@@ -6580,20 +6583,33 @@ func (p *parser) addLocationSpanReturn(path []int32, startLine, startCol, endLin
 	return loc
 }
 
-// locArena hands out *SourceCodeInfo_Location values from fixed-size blocks so
-// that the millions of locations produced for large files cost one allocation
-// per block rather than one per location. Pointers remain valid because blocks
-// are never grown or moved once allocated.
+// locArena hands out *SourceCodeInfo_Location values from blocks so that the
+// millions of locations produced for large files cost one allocation per block
+// rather than one per location. Pointers remain valid because blocks are never
+// grown or moved once allocated. Block sizes start from the caller's seed (an
+// estimate of the whole file's needs, so small files pay for what they use)
+// and grow geometrically up to a cap.
 type locArena struct {
-	cur []descriptorpb.SourceCodeInfo_Location
-	idx int
+	cur  []descriptorpb.SourceCodeInfo_Location
+	idx  int
+	next int
 }
 
-const locBlockSize = 1024
+const (
+	locBlockMin = 64
+	locBlockMax = 1024
+)
 
 func (a *locArena) alloc() *descriptorpb.SourceCodeInfo_Location {
 	if a.idx >= len(a.cur) {
-		a.cur = make([]descriptorpb.SourceCodeInfo_Location, locBlockSize)
+		n := a.next
+		if n < locBlockMin {
+			n = locBlockMin
+		} else if n > locBlockMax {
+			n = locBlockMax
+		}
+		a.cur = make([]descriptorpb.SourceCodeInfo_Location, n)
+		a.next = n * 4
 		a.idx = 0
 	}
 	l := &a.cur[a.idx]
@@ -6605,19 +6621,29 @@ func (a *locArena) alloc() *descriptorpb.SourceCodeInfo_Location {
 // backing blocks. Returned slices have cap == len so callers appending to them
 // would not corrupt neighbours.
 type i32Arena struct {
-	cur []int32
-	idx int
+	cur  []int32
+	idx  int
+	next int
 }
 
-const i32BlockSize = 8192
+const (
+	i32BlockMin = 256
+	i32BlockMax = 8192
+)
 
 func (a *i32Arena) get(n int) []int32 {
 	if a.idx+n > len(a.cur) {
-		size := i32BlockSize
+		size := a.next
+		if size < i32BlockMin {
+			size = i32BlockMin
+		} else if size > i32BlockMax {
+			size = i32BlockMax
+		}
 		if n > size {
 			size = n
 		}
 		a.cur = make([]int32, size)
+		a.next = size * 4
 		a.idx = 0
 	}
 	s := a.cur[a.idx : a.idx+n : a.idx+n]
