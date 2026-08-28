@@ -6100,7 +6100,7 @@ func hasAnyCustomOpts(orderedFiles []string, parseResults map[string]*parser.Par
 // value, and sets it on the FileOptions proto as unknown (extension) fields.
 // It also returns a map from filename to the set of extension field numbers
 // that have sub-field options (needed to know which fields to merge in proto_file).
-func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult, idx *optionIndexes) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomFileOptions) }) {
 		return nil
 	}
@@ -6119,24 +6119,11 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 		}
 	}
 
-	// Build enum value number map: enum FQN → (value name → number)
-	enumValueNumbers := map[string]map[string]int32{}
-	for _, name := range orderedFiles {
-		fd := parsed[name]
-		prefix := fd.GetPackage()
-		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
-		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
-	}
+	enumValueNumbers := idx.enumValueNumbers()
 
-	// Build message field map: message FQN → (field name → field descriptor)
-	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
-	for _, n := range orderedFiles {
-		fd := parsed[n]
-		prefix := fd.GetPackage()
-		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
-	}
-	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
-	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	msgFieldMap := idx.msgFields()
+	extByExtendee := idx.extensionsByExtendee()
+	messageSets := idx.messageSetTypes()
 
 	var errs []string
 	for _, name := range orderedFiles {
@@ -6453,7 +6440,7 @@ func findFileOptionExtension(name string, currentPkg string, allExts []fileOptEx
 
 // resolveCustomFieldOptions resolves parenthesized custom options on fields
 // (e.g., [(my_ext) = "value"]) against extension definitions for FieldOptions.
-func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult, idx *optionIndexes) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomFieldOptions) }) {
 		return nil
 	}
@@ -6471,26 +6458,13 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 		}
 	}
 
-	// Build enum value number map
-	enumValueNumbers := map[string]map[string]int32{}
-	for _, name := range orderedFiles {
-		fd := parsed[name]
-		prefix := fd.GetPackage()
-		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
-		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
-	}
+	enumValueNumbers := idx.enumValueNumbers()
 
-	// Build message field map
-	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
-	for _, n := range orderedFiles {
-		fd := parsed[n]
-		prefix := fd.GetPackage()
-		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
-	}
-	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
-	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	msgFieldMap := idx.msgFields()
+	extByExtendee := idx.extensionsByExtendee()
+	messageSets := idx.messageSetTypes()
 	subPathIdx := map[string]int32{}
-	featureExts := collectFeatureSetExtensions(orderedFiles, parsed)
+	featureExts := idx.featureSetExts()
 
 	type fieldRepKey struct {
 		field *descriptorpb.FieldDescriptorProto
@@ -6883,7 +6857,7 @@ func collectFieldOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN 
 
 // resolveCustomMessageOptions resolves parenthesized custom options on messages
 // (e.g., option (my_msg_label) = "primary";) against extension definitions for MessageOptions.
-func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult, idx *optionIndexes) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomMessageOptions) }) {
 		return nil
 	}
@@ -6901,26 +6875,13 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 		}
 	}
 
-	// Build enum value number map
-	enumValueNumbers := map[string]map[string]int32{}
-	for _, name := range orderedFiles {
-		fd := parsed[name]
-		prefix := fd.GetPackage()
-		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
-		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
-	}
+	enumValueNumbers := idx.enumValueNumbers()
 
-	// Build message field map
-	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
-	for _, n := range orderedFiles {
-		fd := parsed[n]
-		prefix := fd.GetPackage()
-		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
-	}
-	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
-	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	msgFieldMap := idx.msgFields()
+	extByExtendee := idx.extensionsByExtendee()
+	messageSets := idx.messageSetTypes()
 	subPathIdx := map[string]int32{}
-	featureExts := collectFeatureSetExtensions(orderedFiles, parsed)
+	featureExts := idx.featureSetExts()
 	msgFQNMap := buildMsgFQNMap(orderedFiles, parsed)
 
 	type msgOptKey struct {
@@ -7138,7 +7099,7 @@ func collectMessageOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQ
 
 // resolveCustomServiceOptions resolves parenthesized custom options on services
 // (e.g., option (service_label) = "primary";) against extensions of ServiceOptions.
-func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult, idx *optionIndexes) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomServiceOptions) }) {
 		return nil
 	}
@@ -7155,22 +7116,11 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 		}
 	}
 
-	enumValueNumbers := map[string]map[string]int32{}
-	for _, name := range orderedFiles {
-		fd := parsed[name]
-		prefix := fd.GetPackage()
-		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
-		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
-	}
+	enumValueNumbers := idx.enumValueNumbers()
 
-	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
-	for _, n := range orderedFiles {
-		fd := parsed[n]
-		prefix := fd.GetPackage()
-		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
-	}
-	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
-	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	msgFieldMap := idx.msgFields()
+	extByExtendee := idx.extensionsByExtendee()
+	messageSets := idx.messageSetTypes()
 	subPathIdx := map[string]int32{}
 
 	type svcOptKey struct {
@@ -7379,7 +7329,7 @@ func collectServiceOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQ
 
 // resolveCustomMethodOptions resolves parenthesized custom options on methods
 // (e.g., option (auth_role) = "admin";) against extensions of MethodOptions.
-func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult, idx *optionIndexes) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomMethodOptions) }) {
 		return nil
 	}
@@ -7396,22 +7346,11 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 		}
 	}
 
-	enumValueNumbers := map[string]map[string]int32{}
-	for _, name := range orderedFiles {
-		fd := parsed[name]
-		prefix := fd.GetPackage()
-		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
-		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
-	}
+	enumValueNumbers := idx.enumValueNumbers()
 
-	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
-	for _, n := range orderedFiles {
-		fd := parsed[n]
-		prefix := fd.GetPackage()
-		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
-	}
-	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
-	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	msgFieldMap := idx.msgFields()
+	extByExtendee := idx.extensionsByExtendee()
+	messageSets := idx.messageSetTypes()
 	subPathIdx := map[string]int32{}
 
 	type mtdOptKey struct {
@@ -7620,7 +7559,7 @@ func collectMethodOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN
 
 // resolveCustomEnumOptions resolves parenthesized custom options on enums
 // (e.g., option (enum_label) = "status_tracker";) against extensions of EnumOptions.
-func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult, idx *optionIndexes) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomEnumOptions) }) {
 		return nil
 	}
@@ -7637,22 +7576,11 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 		}
 	}
 
-	enumValueNumbers := map[string]map[string]int32{}
-	for _, name := range orderedFiles {
-		fd := parsed[name]
-		prefix := fd.GetPackage()
-		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
-		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
-	}
+	enumValueNumbers := idx.enumValueNumbers()
 
-	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
-	for _, n := range orderedFiles {
-		fd := parsed[n]
-		prefix := fd.GetPackage()
-		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
-	}
-	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
-	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	msgFieldMap := idx.msgFields()
+	extByExtendee := idx.extensionsByExtendee()
+	messageSets := idx.messageSetTypes()
 	subPathIdx := map[string]int32{}
 
 	type enumOptKey struct {
@@ -7861,7 +7789,7 @@ func collectEnumOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN s
 
 // resolveCustomEnumValueOptions resolves parenthesized custom options on enum values
 // (e.g., HIGH = 1 [(display_name) = "High Priority"]) against extension definitions for EnumValueOptions.
-func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult, idx *optionIndexes) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomEnumValueOptions) }) {
 		return nil
 	}
@@ -7878,22 +7806,11 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 		}
 	}
 
-	enumValueNumbers := map[string]map[string]int32{}
-	for _, name := range orderedFiles {
-		fd := parsed[name]
-		prefix := fd.GetPackage()
-		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
-		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
-	}
+	enumValueNumbers := idx.enumValueNumbers()
 
-	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
-	for _, n := range orderedFiles {
-		fd := parsed[n]
-		prefix := fd.GetPackage()
-		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
-	}
-	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
-	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	msgFieldMap := idx.msgFields()
+	extByExtendee := idx.extensionsByExtendee()
+	messageSets := idx.messageSetTypes()
 	subPathIdx := map[string]int32{}
 
 	type evOptKey struct {
@@ -8102,7 +8019,7 @@ func collectEnumValueOptionsExtensions(msg *descriptorpb.DescriptorProto, parent
 
 // resolveCustomOneofOptions resolves parenthesized custom options on oneofs
 // (e.g., option (oneof_label) = "primary";) against extensions of OneofOptions.
-func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult, idx *optionIndexes) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomOneofOptions) }) {
 		return nil
 	}
@@ -8119,22 +8036,11 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 		}
 	}
 
-	enumValueNumbers := map[string]map[string]int32{}
-	for _, name := range orderedFiles {
-		fd := parsed[name]
-		prefix := fd.GetPackage()
-		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
-		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
-	}
+	enumValueNumbers := idx.enumValueNumbers()
 
-	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
-	for _, n := range orderedFiles {
-		fd := parsed[n]
-		prefix := fd.GetPackage()
-		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
-	}
-	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
-	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	msgFieldMap := idx.msgFields()
+	extByExtendee := idx.extensionsByExtendee()
+	messageSets := idx.messageSetTypes()
 	subPathIdx := map[string]int32{}
 
 	type oneofOptKey struct {
@@ -8343,7 +8249,7 @@ func collectOneofOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN 
 
 // resolveCustomExtRangeOptions resolves parenthesized custom options on extension ranges
 // (e.g., extensions 100 to 199 [(my_annotation) = "annotated"];) against extension definitions.
-func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult, idx *optionIndexes) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomExtRangeOptions) }) {
 		return nil
 	}
@@ -8360,22 +8266,11 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 		}
 	}
 
-	enumValueNumbers := map[string]map[string]int32{}
-	for _, name := range orderedFiles {
-		fd := parsed[name]
-		prefix := fd.GetPackage()
-		collectEnumValueNumbers(fd.GetEnumType(), prefix, enumValueNumbers)
-		collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, enumValueNumbers)
-	}
+	enumValueNumbers := idx.enumValueNumbers()
 
-	msgFieldMap := map[string]map[string]*descriptorpb.FieldDescriptorProto{}
-	for _, n := range orderedFiles {
-		fd := parsed[n]
-		prefix := fd.GetPackage()
-		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
-	}
-	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
-	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	msgFieldMap := idx.msgFields()
+	extByExtendee := idx.extensionsByExtendee()
+	messageSets := idx.messageSetTypes()
 
 	type extRangeOptKey struct {
 		rng  *descriptorpb.DescriptorProto_ExtensionRange
@@ -8759,6 +8654,69 @@ func encodeCustomOptionValue(ext *descriptorpb.FieldDescriptorProto, value strin
 	}
 
 	return b, nil
+}
+
+// optionIndexes carries the lookup tables shared by every
+// resolveCustom*Options pass. They are derived purely from names, numbers and
+// extension declarations fixed at parse time — option resolution only writes
+// into descriptor options, which none of these tables read — so each table is
+// built once per compile, lazily, instead of once per pass.
+type optionIndexes struct {
+	orderedFiles []string
+	parsed       map[string]*descriptorpb.FileDescriptorProto
+
+	enumValNums  map[string]map[string]int32
+	msgFieldMap  map[string]map[string]*descriptorpb.FieldDescriptorProto
+	extByExt     map[string]map[string]*descriptorpb.FieldDescriptorProto
+	msgSets      map[string]bool
+	featureExts  []fileOptExtInfo
+	haveFeatures bool
+}
+
+func (x *optionIndexes) enumValueNumbers() map[string]map[string]int32 {
+	if x.enumValNums == nil {
+		x.enumValNums = map[string]map[string]int32{}
+		for _, name := range x.orderedFiles {
+			fd := x.parsed[name]
+			prefix := fd.GetPackage()
+			collectEnumValueNumbers(fd.GetEnumType(), prefix, x.enumValNums)
+			collectEnumValueNumbersInMsgs(fd.GetMessageType(), prefix, x.enumValNums)
+		}
+	}
+	return x.enumValNums
+}
+
+func (x *optionIndexes) msgFields() map[string]map[string]*descriptorpb.FieldDescriptorProto {
+	if x.msgFieldMap == nil {
+		x.msgFieldMap = map[string]map[string]*descriptorpb.FieldDescriptorProto{}
+		for _, n := range x.orderedFiles {
+			fd := x.parsed[n]
+			collectMsgFields(fd.GetMessageType(), fd.GetPackage(), x.msgFieldMap)
+		}
+	}
+	return x.msgFieldMap
+}
+
+func (x *optionIndexes) extensionsByExtendee() map[string]map[string]*descriptorpb.FieldDescriptorProto {
+	if x.extByExt == nil {
+		x.extByExt = collectExtensionsByExtendee(x.orderedFiles, x.parsed)
+	}
+	return x.extByExt
+}
+
+func (x *optionIndexes) messageSetTypes() map[string]bool {
+	if x.msgSets == nil {
+		x.msgSets = collectMessageSetTypes(x.orderedFiles, x.parsed)
+	}
+	return x.msgSets
+}
+
+func (x *optionIndexes) featureSetExts() []fileOptExtInfo {
+	if !x.haveFeatures {
+		x.featureExts = collectFeatureSetExtensions(x.orderedFiles, x.parsed)
+		x.haveFeatures = true
+	}
+	return x.featureExts
 }
 
 // collectMsgFields builds a map of message FQN → (field name → field descriptor).
