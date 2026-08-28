@@ -26,8 +26,10 @@ This is a port of the Protocol Buffers compiler (`protoc`) from C++ to Go. The G
 ├── io/tokenizer/           # Tokenizer (mirrors io/tokenizer.cc)
 ├── descriptor/             # DescriptorPool (mirrors descriptor.cc)
 ├── testdata/               # Test .proto fixtures (numbered)
+│   └── google/             # Vendored upstream protobuf test corpus (see below)
 ├── tools/
 │   ├── protoc-gen-dump/    # Fake plugin that captures CodeGeneratorRequest
+│   ├── protoc-gen-mock/    # Misbehaving plugin for response-protocol tests
 │   └── protoc-bin/         # (reserved) Vendored C++ protoc if needed
 ├── scripts/
 │   ├── test                # Correctness harness — compares C++ protoc vs Go protoc-go
@@ -66,12 +68,44 @@ go test ./protoc/ -run='^$' -bench=. -benchmem
 ```
 
 The test harness:
-1. Builds `cmd/protoc-go/` and `tools/protoc-gen-dump/`
-2. For each `testdata/*/` directory × 5 profiles, runs both C++ protoc and Go protoc-go
-3. Profiles: `plugin`, `plugin_param`, `descriptor_set`, `descriptor_set_src`, `descriptor_set_full`
-4. Also runs CLI error tests (no args, missing files, bad flags)
+1. Builds `cmd/protoc-go/`, `tools/protoc-gen-dump/`, and `tools/protoc-gen-mock/`
+2. Verifies the discovered C++ protoc is the version `protoc-go --version`
+   declares as its target — a mismatched run is marked `status=error` in the
+   JSON summary and cannot be published
+3. For each `testdata/*/` directory × 10 profiles, runs both C++ protoc and Go
+   protoc-go. Profiles: `plugin`, `plugin_param`, `descriptor_set`,
+   `descriptor_set_src`, `descriptor_set_full`, `descriptor_set_retain`,
+   `multi_plugin`, `multi_opt`, `plugin_descriptor`, `colon_param`
+4. Also runs: CLI error tests (`cli@`), stdin/decode tests (`stdin@`,
+   `decode@`), partial-generation (`partial@`), determinism (`determinism@`),
+   the vendored upstream corpus (`google@`, see below), plugin response
+   protocol tests (`mock@`), and PATH-based plugin discovery (`pathplugin@`)
 5. Test names: `<case>@<profile>` (e.g., `01_basic_message@plugin`, `cli@no_args`)
 6. Reports pass/fail with diffs
+
+Harness invariants (deliberate, keep them):
+- A successful compile whose comparison artifacts (request.pb, summary.txt,
+  parameter.txt, descriptor sets) are missing on either side is a FAILURE,
+  never a skip — a comparison that silently didn't happen must not count as a
+  match. Fixture dirs with no top-level `.proto` files are not registered
+  (container dirs for CLI tests); if a run function still meets one, that's a
+  FAILURE too.
+- protoc-gen-dump treats the segment after the LAST comma of its parameter as
+  the output directory, so the dir must always be the final `--dump_opt`. The
+  full raw parameter is written to `parameter.txt` and compared between
+  compilers (with each side's output dir normalized to `<OUT>`).
+- Compiler stdout is captured and compared in every suite, and exit codes are
+  compared in the CLI/mock suites.
+
+### Vendored Google corpus
+
+`testdata/google/` carries the `.proto` test corpus from
+protocolbuffers/protobuf (BSD license included) at the release protoc-go
+targets. Unlike the numbered fixtures these were not written alongside this
+port, so they don't share its blind spots. Each file is compiled standalone in
+`plugin` and `descriptor_set_full` mode from the corpus root. When the target
+C++ protoc version moves, refresh the corpus from the matching upstream tag
+(`https://raw.githubusercontent.com/protocolbuffers/protobuf/v<VER>/src/google/protobuf/<file>.proto`).
 
 A registered test that writes no verdict (usually a missing tool — `xxd` drives
 the `stdin@`/`decode@` suites) is reported as a `no_result` warning and is NOT

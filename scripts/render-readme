@@ -163,7 +163,10 @@ fi
 # -- performance ----------------------------------------------------------
 
 if [ -f "$BENCH_JSON" ] && jq -e 'length > 0' "$BENCH_JSON" >/dev/null 2>&1; then
-  RELIABLE=$(jq -r '[.[].reliable] | any' "$BENCH_JSON")
+  # Every row must have been hyperfine-timed (reliable is stamped per row and
+  # a fallback marks only its own row): one builtin-timed row means the table
+  # as a whole cannot claim winners.
+  RELIABLE=$(jq -r '[.[].reliable] | all' "$BENCH_JSON")
 
   {
     echo "<details><summary>Performance vs C++ protoc</summary>"

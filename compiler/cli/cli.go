@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"reflect"
 	"regexp"
 	"runtime/debug"
 	"sort"
@@ -31,6 +32,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
+	pluginpb "google.golang.org/protobuf/types/pluginpb"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
@@ -416,10 +418,52 @@ type pluginSpec struct {
 	path      string
 	outputDir string
 	parameter string
+	// Set by the --<lang>_out=PARAM:DIR colon syntax. Kept apart from
+	// parameter (which accumulates --<lang>_opt values) because C++ protoc
+	// always places it first, regardless of flag order.
+	colonParameter string
 	// Set by --<lang>_out. A plugin named only by --plugin or --<lang>_opt is
 	// not an output directive and is never run. Tracked separately from
 	// outputDir because --<lang>_out= is a directive with an empty directory.
 	hasOutput bool
+}
+
+// splitOutputDirective splits a --<lang>_out value into the colon-syntax
+// parameter and the output location, mirroring C++ protoc: the value is cut at
+// the first ':' unless that colon is the drive separator of a Windows absolute
+// path.
+func splitOutputDirective(value string) (parameter, outputLocation string) {
+	colon := strings.IndexByte(value, ':')
+	if colon < 0 || isWindowsAbsolutePath(value) {
+		return "", value
+	}
+	return value[:colon], value[colon+1:]
+}
+
+func isWindowsAbsolutePath(text string) bool {
+	if len(text) < 3 {
+		return false
+	}
+	c := text[0]
+	if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') || text[1] != ':' {
+		return false
+	}
+	if text[2] != '/' && text[2] != '\\' {
+		return false
+	}
+	return len(text) < 4 || text[3] != ':'
+}
+
+// effectiveParameter is the plugin parameter C++ protoc sends: the
+// colon-syntax parameter first, then every --<lang>_opt value, comma-joined.
+func (p *pluginSpec) effectiveParameter() string {
+	if p.colonParameter == "" {
+		return p.parameter
+	}
+	if p.parameter == "" {
+		return p.colonParameter
+	}
+	return p.colonParameter + "," + p.parameter
 }
 
 type config struct {
@@ -443,6 +487,10 @@ type config struct {
 	directDependenciesViolationMsg  string
 	fatalWarnings                   bool
 	retainOptions                   bool
+	allowOutDirEscape               bool
+	editionDefaultsOut              string
+	editionDefaultsMinimum          descriptorpb.Edition
+	editionDefaultsMaximum          descriptorpb.Edition
 	dependencyOut                   string
 
 	// Kept out of plugins: a --<lang>_prefix with no matching --<lang>_out is
@@ -560,7 +608,7 @@ func Run(args []string) error {
 	}
 
 	// Validate we have output directives
-	if !cfg.hasPluginOutput() && cfg.descriptorSetOut == "" && !cfg.printFreeFieldNumbers && cfg.decodeType == "" && cfg.encodeType == "" {
+	if !cfg.hasPluginOutput() && cfg.descriptorSetOut == "" && cfg.editionDefaultsOut == "" && !cfg.printFreeFieldNumbers && cfg.decodeType == "" && cfg.encodeType == "" {
 		return fmt.Errorf("Missing output directives.")
 	}
 
@@ -679,6 +727,20 @@ func Run(args []string) error {
 		}
 	}
 
+	// Handle edition defaults output
+	if cfg.editionDefaultsOut != "" {
+		minimum, maximum := cfg.editionDefaultsMinimum, cfg.editionDefaultsMaximum
+		if minimum == descriptorpb.Edition_EDITION_UNKNOWN {
+			minimum = defaultEditionDefaultsMinimum
+		}
+		if maximum == descriptorpb.Edition_EDITION_UNKNOWN {
+			maximum = defaultEditionDefaultsMaximum
+		}
+		if err := writeEditionDefaults(cfg.editionDefaultsOut, minimum, maximum, co.orderedFiles, co.parsed); err != nil {
+			return err
+		}
+	}
+
 	// Handle dependency output
 	if cfg.dependencyOut != "" && cfg.descriptorSetOut != "" {
 		if err := writeDependencyOut(cfg.dependencyOut, cfg.descriptorSetOut, co.orderedFiles, srcTree); err != nil {
@@ -692,12 +754,16 @@ func Run(args []string) error {
 		if !plug.hasOutput {
 			continue
 		}
-		req := plugin.BuildCodeGeneratorRequest(co.relFiles, plug.parameter, protoFiles, sourceFileDescriptors)
+		req := plugin.BuildCodeGeneratorRequest(co.relFiles, plug.effectiveParameter(), protoFiles, sourceFileDescriptors)
 
 		resp, err := plugin.RunPluginCommand(append(append([]string{}, cfg.pluginPrefixes[plug.name]...), plug.path), req)
 		if err != nil {
 			var startErr *plugin.PluginStartError
 			var exitErr *plugin.PluginExitError
+			var respErr *plugin.ResponseError
+			if errors.As(err, &respErr) {
+				return fmt.Errorf("--%s_out: protoc-gen-%s: %s", plug.name, plug.name, respErr.Message)
+			}
 			if errors.As(err, &startErr) {
 				return fmt.Errorf("--%s_out: protoc-gen-%s: Plugin failed with status code 1.", plug.name, plug.name)
 			}
@@ -708,10 +774,21 @@ func Run(args []string) error {
 		}
 
 		if resp.GetError() != "" {
-			return fmt.Errorf("plugin %s: %s", plug.name, resp.GetError())
+			return fmt.Errorf("--%s_out: %s", plug.name, resp.GetError())
 		}
 
-		if err := plugin.WritePluginOutput(resp, plug.outputDir); err != nil {
+		// The plugin declares what it can handle only in its response, so these
+		// gates run after it has been asked to generate — and before anything
+		// it produced is written.
+		if err := enforcePluginSupport(plug.name, resp, co.relFiles, co.parsed); err != nil {
+			return err
+		}
+
+		if err := plugin.WritePluginOutput(resp, plug.outputDir, cfg.allowOutDirEscape); err != nil {
+			var respErr *plugin.ResponseError
+			if errors.As(err, &respErr) {
+				return fmt.Errorf("--%s_out: protoc-gen-%s: %s", plug.name, plug.name, respErr.Message)
+			}
 			return err
 		}
 	}
@@ -721,6 +798,80 @@ func Run(args []string) error {
 	}
 
 	return nil
+}
+
+// enforcePluginSupport applies the two gates protoc puts between a plugin's
+// declared features and the files it was asked to generate. Both print their
+// own explanation and then fail with a bare "--<lang>_out: ", which is how
+// protoc reports a generator that returned no message of its own.
+func enforcePluginSupport(name string, resp *pluginpb.CodeGeneratorResponse, relFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) error {
+	codegen := "protoc-gen-" + name
+	features := resp.GetSupportedFeatures()
+	bare := fmt.Errorf("--%s_out: ", name)
+
+	if features&uint64(pluginpb.CodeGeneratorResponse_FEATURE_PROTO3_OPTIONAL) == 0 {
+		for _, f := range relFiles {
+			if !containsProto3Optional(parsed[f]) {
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "%s: is a proto3 file that contains optional fields, but code generator %s hasn't been updated to support optional fields in proto3. Please ask the owner of this code generator to support proto3 optional.\n", f, codegen)
+			return bare
+		}
+	}
+
+	minEdition := descriptorpb.Edition(resp.GetMinimumEdition())
+	maxEdition := descriptorpb.Edition(resp.GetMaximumEdition())
+	for _, f := range relFiles {
+		fd := parsed[f]
+		// protoc exempts its own bundled protos: a generator is not expected to
+		// have been updated for the edition descriptor.proto happens to use.
+		if strings.HasPrefix(f, "google/protobuf/") || strings.HasPrefix(f, "upb/") {
+			continue
+		}
+		if fd.GetSyntax() != "editions" {
+			continue
+		}
+		if features&uint64(pluginpb.CodeGeneratorResponse_FEATURE_SUPPORTS_EDITIONS) == 0 {
+			fmt.Fprintf(os.Stderr, "%s: is an editions file, but code generator %s hasn't been updated to support editions yet.  Please ask the owner of this code generator to add support or switch back to proto2/proto3.\n\nSee https://protobuf.dev/editions/overview/ for more information.", f, codegen)
+			return bare
+		}
+		if fd.GetEdition() < minEdition {
+			fmt.Fprintf(os.Stderr, "%s: is a file using edition %s, which is earlier than the minimum supported edition %s of code generator %s.  Please ask the owner of this code generator to add support or switch to a minimum of edition %s.", f, editionName(fd.GetEdition()), editionName(minEdition), codegen, editionName(minEdition))
+			return bare
+		}
+		if fd.GetEdition() > maxEdition {
+			fmt.Fprintf(os.Stderr, "%s: is a file using edition %s, which isn't supported by code generator %s.  Please ask the owner of this code generator to add support or switch back to a maximum of edition %s.", f, editionName(fd.GetEdition()), codegen, editionName(maxEdition))
+			return bare
+		}
+	}
+	return nil
+}
+
+// editionName is the edition as it is spelled in a .proto file: the enum name
+// without its EDITION_ prefix.
+func editionName(e descriptorpb.Edition) string {
+	return strings.TrimPrefix(e.String(), "EDITION_")
+}
+
+func containsProto3Optional(fd *descriptorpb.FileDescriptorProto) bool {
+	if fd.GetSyntax() != "proto3" {
+		return false
+	}
+	var inMessages func(msgs []*descriptorpb.DescriptorProto) bool
+	inMessages = func(msgs []*descriptorpb.DescriptorProto) bool {
+		for _, msg := range msgs {
+			for _, f := range msg.GetField() {
+				if f.GetProto3Optional() {
+					return true
+				}
+			}
+			if inMessages(msg.GetNestedType()) {
+				return true
+			}
+		}
+		return false
+	}
+	return inMessages(fd.GetMessageType())
 }
 
 // writeDescriptorSet writes the descriptor set file, matching C++ protoc error format.
@@ -860,7 +1011,7 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 	// Parse dependencies
 	newStack := append(importStack, filename)
 	failedDeps := map[string]bool{}
-	for _, dep := range fd.GetDependency() {
+	for _, dep := range allDependencies(fd) {
 		ok, err := parseRecursive(dep, srcTree, parsed, explicitJsonNames, parseResults, orderedFiles, newStack, collectErrors)
 		if err != nil {
 			return false, err
@@ -877,7 +1028,7 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 		}
 
 		// Add "Import X was not found or had errors." for each failed dep (that isn't self)
-		for _, dep := range fd.GetDependency() {
+		for _, dep := range allDependencies(fd) {
 			if failedDeps[dep] && dep != filename {
 				line, col := findImportLocation(fd, dep)
 				*collectErrors = append(*collectErrors, fmt.Sprintf("%s:%d:%d: Import \"%s\" was not found or had errors.", filename, line, col, dep))
@@ -886,7 +1037,7 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 
 		// Build available files (excluding failed deps)
 		availableFiles := map[string]*descriptorpb.FileDescriptorProto{}
-		for _, dep := range fd.GetDependency() {
+		for _, dep := range allDependencies(fd) {
 			if !failedDeps[dep] {
 				if depFd, ok := parsed[dep]; ok {
 					availableFiles[dep] = depFd
@@ -916,6 +1067,18 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, parsed map[st
 	return true, nil
 }
 
+// allDependencies is every file an import statement named, whether it was a
+// plain import or an `import option`.
+func allDependencies(fd *descriptorpb.FileDescriptorProto) []string {
+	deps := fd.GetDependency()
+	if len(fd.GetOptionDependency()) == 0 {
+		return deps
+	}
+	all := make([]string, 0, len(deps)+len(fd.GetOptionDependency()))
+	all = append(all, deps...)
+	return append(all, fd.GetOptionDependency()...)
+}
+
 // findImportLocation finds the line:col of an import statement in a file descriptor's SCI.
 func findImportLocation(fd *descriptorpb.FileDescriptorProto, importedFile string) (int, int) {
 	if fd == nil {
@@ -923,6 +1086,7 @@ func findImportLocation(fd *descriptorpb.FileDescriptorProto, importedFile strin
 	}
 	// Find the dependency index
 	depIdx := int32(-1)
+	field := int32(3)
 	for i, dep := range fd.GetDependency() {
 		if dep == importedFile {
 			depIdx = int32(i)
@@ -930,12 +1094,21 @@ func findImportLocation(fd *descriptorpb.FileDescriptorProto, importedFile strin
 		}
 	}
 	if depIdx < 0 {
+		field = 15
+		for i, dep := range fd.GetOptionDependency() {
+			if dep == importedFile {
+				depIdx = int32(i)
+				break
+			}
+		}
+	}
+	if depIdx < 0 {
 		return 0, 0
 	}
-	// Look for SCI path [3, depIdx]
+	// Look for SCI path [3, depIdx] (or [15, depIdx] for an option import)
 	for _, loc := range fd.GetSourceCodeInfo().GetLocation() {
 		path := loc.GetPath()
-		if len(path) == 2 && path[0] == 3 && path[1] == depIdx {
+		if len(path) == 2 && path[0] == field && path[1] == depIdx {
 			span := loc.GetSpan()
 			if len(span) >= 2 {
 				return int(span[0]) + 1, int(span[1]) + 1 // 1-indexed
@@ -1011,6 +1184,13 @@ func detectUnusedImports(relFiles []string, orderedFiles []string, parsed map[st
 			}
 			trackable[dep] = true
 		}
+		for _, dep := range fd.GetOptionDependency() {
+			depFd := parsed[dep]
+			if depFd != nil && len(depFd.GetPublicDependency()) > 0 {
+				continue
+			}
+			trackable[dep] = true
+		}
 
 		if len(trackable) == 0 {
 			continue
@@ -1024,8 +1204,10 @@ func detectUnusedImports(relFiles []string, orderedFiles []string, parsed map[st
 		// Scan custom option extension references
 		markUsedExtensions(fd, extNumToFile, used)
 
-		// Emit warnings for unused imports (in dependency order)
-		for _, dep := range fd.GetDependency() {
+		// Emit warnings for unused imports (in dependency order). C++ protoc
+		// walks an unordered set here, so its order across several unused
+		// imports in one file is not reproducible and not worth matching.
+		for _, dep := range allDependencies(fd) {
 			if trackable[dep] && !used[dep] {
 				line, col := findImportLocation(fd, dep)
 				warnings = append(warnings, fmt.Sprintf("%s:%d:%d: warning: Import %s is unused.", filename, line, col, dep))
@@ -1123,17 +1305,21 @@ func markUsedTypes(fd *descriptorpb.FileDescriptorProto, fqnToFile map[string]st
 
 // markUsedExtensions scans unknown fields in all Options messages to find
 // custom extension references and marks the defining files as used.
+// optionsWithFeatures is any descriptor options message, all of which carry a
+// features field.
+type optionsWithFeatures interface {
+	proto.Message
+	GetFeatures() *descriptorpb.FeatureSet
+}
+
 func markUsedExtensions(fd *descriptorpb.FileDescriptorProto, extNumToFile map[string]map[int32]string, used map[string]bool) {
-	checkOpts := func(extendee string, opts proto.Message) {
-		if opts == nil {
+	scanUnknown := func(extendee string, msg proto.Message) {
+		if msg == nil {
 			return
 		}
-		raw := opts.ProtoReflect().GetUnknown()
-		if len(raw) == 0 {
-			return
-		}
+		raw := msg.ProtoReflect().GetUnknown()
 		nums := extNumToFile[extendee]
-		if nums == nil {
+		if len(raw) == 0 || nums == nil {
 			return
 		}
 		for len(raw) > 0 {
@@ -1145,6 +1331,18 @@ func markUsedExtensions(fd *descriptorpb.FileDescriptorProto, extNumToFile map[s
 				used[file] = true
 			}
 			raw = raw[n:]
+		}
+	}
+
+	// An option can extend the options message itself or the FeatureSet inside
+	// it, and a file imported only for a custom feature is used just as much.
+	checkOpts := func(extendee string, opts optionsWithFeatures) {
+		if opts == nil || reflect.ValueOf(opts).IsNil() {
+			return
+		}
+		scanUnknown(extendee, opts)
+		if fs := opts.GetFeatures(); fs != nil {
+			scanUnknown("google.protobuf.FeatureSet", fs)
 		}
 	}
 
@@ -1421,6 +1619,11 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
+		if arg == "--unsafe_allow_out_dir_escape" {
+			cfg.allowOutDirEscape = true
+			continue
+		}
+
 		if arg == "--experimental_allow_proto3_optional" {
 			continue
 		}
@@ -1599,16 +1802,39 @@ func parseArgs(args []string) (*config, error) {
 			continue
 		}
 
+		// The edition-defaults flags have to be recognised before the generic
+		// --<lang>_out rule below, which would otherwise take
+		// --edition_defaults_out for a plugin directive.
+		if name, value, matched, err := takeFlagValue(arg, args, &i, "--edition_defaults_out", "--edition_defaults_minimum", "--edition_defaults_maximum"); matched {
+			if err != nil {
+				return nil, err
+			}
+			switch name {
+			case "--edition_defaults_out":
+				cfg.editionDefaultsOut = value
+			case "--edition_defaults_minimum":
+				if cfg.editionDefaultsMinimum, err = parseEditionFlag(name, value); err != nil {
+					return nil, err
+				}
+			case "--edition_defaults_maximum":
+				if cfg.editionDefaultsMaximum, err = parseEditionFlag(name, value); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+
 		// --X_out=DIR or --X_out DIR
 		if strings.HasPrefix(arg, "--") && strings.Contains(arg, "_out") {
 			withoutDashes := arg[2:]
 			if eqIdx := strings.Index(withoutDashes, "_out="); eqIdx >= 0 {
 				pluginName := withoutDashes[:eqIdx]
-				outputDir := withoutDashes[eqIdx+5:]
+				colonParam, outputDir := splitOutputDirective(withoutDashes[eqIdx+5:])
 				if _, ok := cfg.plugins[pluginName]; !ok {
 					cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
 				}
 				cfg.plugins[pluginName].outputDir = outputDir
+				cfg.plugins[pluginName].colonParameter = colonParam
 				cfg.plugins[pluginName].hasOutput = true
 				if cfg.plugins[pluginName].path == "" {
 					cfg.plugins[pluginName].path = "protoc-gen-" + pluginName
@@ -1621,11 +1847,12 @@ func parseArgs(args []string) (*config, error) {
 					return nil, fmt.Errorf("Missing value for flag: %s", arg)
 				}
 				i++
-				outputDir := args[i]
+				colonParam, outputDir := splitOutputDirective(args[i])
 				if _, ok := cfg.plugins[pluginName]; !ok {
 					cfg.plugins[pluginName] = &pluginSpec{name: pluginName}
 				}
 				cfg.plugins[pluginName].outputDir = outputDir
+				cfg.plugins[pluginName].colonParameter = colonParam
 				cfg.plugins[pluginName].hasOutput = true
 				if cfg.plugins[pluginName].path == "" {
 					cfg.plugins[pluginName].path = "protoc-gen-" + pluginName
@@ -1715,6 +1942,26 @@ func parseArgs(args []string) (*config, error) {
 	}
 
 	return cfg, nil
+}
+
+// takeFlagValue matches arg against flags that take a value in either spelling,
+// --flag=VALUE or --flag VALUE, advancing i past a separate value.
+func takeFlagValue(arg string, args []string, i *int, flags ...string) (name, value string, matched bool, err error) {
+	for _, flag := range flags {
+		if strings.HasPrefix(arg, flag+"=") {
+			return flag, arg[len(flag)+1:], true, nil
+		}
+		if arg == flag {
+			// As in C++ protoc, a separate value may not itself look like a
+			// flag — that is how a missing value is detected.
+			if *i+1 >= len(args) || strings.HasPrefix(args[*i+1], "-") {
+				return flag, "", true, fmt.Errorf("Missing value for flag: %s", flag)
+			}
+			*i++
+			return flag, args[*i], true, nil
+		}
+	}
+	return "", "", false, nil
 }
 
 // validateMapKeyTypes checks that map fields don't use float/double/bytes/enum/message as key types.
@@ -4846,422 +5093,198 @@ func findFirstLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (
 	return 0, 0
 }
 
-func hasSubFieldCustomOpts(pr *parser.ParseResult) bool {
-	for _, opt := range pr.CustomFileOptions {
-		if len(opt.SubFieldPath) > 0 {
-			return true
-		}
+// sourceRetentionFields maps extendee type name (e.g., ".google.protobuf.FieldOptions")
+// to the set of extension field numbers that have retention = RETENTION_SOURCE.
+// sourceRetentionFields describes, per message — options messages keyed by the
+// extendee they are extended through, ordinary messages by their
+// fully-qualified name — which field numbers carry retention = RETENTION_SOURCE
+// and which fields hold messages that may themselves need stripping. Retention
+// on a field inside an option's message value removes just that field from the
+// encoded value, so stripping has to walk into it.
+type sourceRetentionFields struct {
+	strip    map[string]map[int32]bool
+	msgTypes map[string]map[int32]string
+}
+
+func (r sourceRetentionFields) empty() bool { return len(r.strip) == 0 }
+
+// stripEncoded rewrites the encoded fields in buf, dropping the source-retention
+// fields declared on owner and recursing into message-valued fields whose type
+// contains one. It reports the field numbers dropped at this level and whether
+// anything changed.
+func (r sourceRetentionFields) stripEncoded(owner string, buf []byte) ([]byte, []int32, bool) {
+	strip, msgs := r.strip[owner], r.msgTypes[owner]
+	if len(strip) == 0 && len(msgs) == 0 {
+		return buf, nil, false
 	}
-	for _, opt := range pr.CustomFieldOptions {
-		if len(opt.SubFieldPath) > 0 {
-			return true
+	var kept []byte
+	var dropped []int32
+	changed := false
+	for len(buf) > 0 {
+		num, typ, n := protowire.ConsumeField(buf)
+		if n < 0 {
+			break
 		}
-	}
-	for _, opt := range pr.CustomMessageOptions {
-		if len(opt.SubFieldPath) > 0 {
-			return true
+		field := buf[:n]
+		buf = buf[n:]
+		if strip[int32(num)] {
+			changed = true
+			dropped = append(dropped, int32(num))
+			continue
 		}
-	}
-	for _, opt := range pr.CustomEnumOptions {
-		if len(opt.SubFieldPath) > 0 {
-			return true
+		nested := msgs[int32(num)]
+		if typ != protowire.BytesType || nested == "" {
+			kept = append(kept, field...)
+			continue
 		}
-	}
-	for _, opt := range pr.CustomServiceOptions {
-		if len(opt.SubFieldPath) > 0 {
-			return true
+		_, _, tagLen := protowire.ConsumeTag(field)
+		payload, plen := protowire.ConsumeBytes(field[tagLen:])
+		if plen < 0 {
+			kept = append(kept, field...)
+			continue
 		}
-	}
-	for _, opt := range pr.CustomMethodOptions {
-		if len(opt.SubFieldPath) > 0 {
-			return true
+		inner, _, innerChanged := r.stripEncoded(nested, payload)
+		if !innerChanged {
+			kept = append(kept, field...)
+			continue
 		}
+		changed = true
+		kept = protowire.AppendTag(kept, num, protowire.BytesType)
+		kept = protowire.AppendBytes(kept, inner)
 	}
-	for _, opt := range pr.CustomEnumValueOptions {
-		if len(opt.SubFieldPath) > 0 {
-			return true
+	return kept, dropped, changed
+}
+
+// collectSourceRetentionFields builds a map of extension field numbers with RETENTION_SOURCE,
+// grouped by the option type they extend.
+// anySourceRetention reports whether any field in the pool is marked
+// retention = RETENTION_SOURCE.
+func anySourceRetention(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) bool {
+	isSource := func(f *descriptorpb.FieldDescriptorProto) bool {
+		return f.GetOptions().GetRetention() == descriptorpb.FieldOptions_RETENTION_SOURCE
+	}
+	var inMessages func(msgs []*descriptorpb.DescriptorProto) bool
+	inMessages = func(msgs []*descriptorpb.DescriptorProto) bool {
+		for _, msg := range msgs {
+			for _, f := range msg.GetField() {
+				if isSource(f) {
+					return true
+				}
+			}
+			for _, ext := range msg.GetExtension() {
+				if isSource(ext) {
+					return true
+				}
+			}
+			if inMessages(msg.GetNestedType()) {
+				return true
+			}
 		}
+		return false
 	}
-	for _, opt := range pr.CustomOneofOptions {
-		if len(opt.SubFieldPath) > 0 {
-			return true
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, ext := range fd.GetExtension() {
+			if isSource(ext) {
+				return true
+			}
 		}
-	}
-	for _, opt := range pr.CustomExtRangeOptions {
-		if len(opt.SubFieldPath) > 0 {
+		if inMessages(fd.GetMessageType()) {
 			return true
 		}
 	}
 	return false
 }
 
-// cloneWithMergedExtUnknowns clones fd and merges multiple unknown field entries
-// with the same tag (length-delimited) in FileOptions, FieldOptions, MessageOptions, EnumOptions, EnumValueOptions, ServiceOptions, MethodOptions, OneofOptions, and ExtensionRangeOptions into single entries.
-func cloneWithMergedExtUnknowns(fd *descriptorpb.FileDescriptorProto, mergeableFileFields map[int32]bool, mergeableFieldOptFields map[int32]bool, mergeableMsgOptFields map[int32]bool, mergeableEnumOptFields map[int32]bool, mergeableEnumValOptFields map[int32]bool, mergeableSvcOptFields map[int32]bool, mergeableMethodOptFields map[int32]bool, mergeableOneofOptFields map[int32]bool, mergeableExtRangeOptFields map[int32]bool) *descriptorpb.FileDescriptorProto {
-	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
-	if fdCopy.Options != nil {
-		mergeUnknownExtensions(fdCopy.Options.ProtoReflect(), mergeableFileFields)
-	}
-	// Merge field options for top-level extensions (fd.Extension)
-	for _, ext := range fdCopy.GetExtension() {
-		if ext.Options != nil {
-			mergeUnknownExtensions(ext.Options.ProtoReflect(), mergeableFieldOptFields)
-		}
-	}
-	mergeFieldOptionsInMessages(fdCopy.GetMessageType(), mergeableFieldOptFields)
-	mergeMessageOptionsInMessages(fdCopy.GetMessageType(), mergeableMsgOptFields)
-	mergeEnumOptions(fdCopy.GetEnumType(), mergeableEnumOptFields)
-	mergeEnumOptionsInMessages(fdCopy.GetMessageType(), mergeableEnumOptFields)
-	mergeEnumValueOptions(fdCopy.GetEnumType(), mergeableEnumValOptFields)
-	mergeEnumValueOptionsInMessages(fdCopy.GetMessageType(), mergeableEnumValOptFields)
-	mergeServiceOptions(fdCopy.GetService(), mergeableSvcOptFields)
-	mergeMethodOptions(fdCopy.GetService(), mergeableMethodOptFields)
-	mergeOneofOptionsInMessages(fdCopy.GetMessageType(), mergeableOneofOptFields)
-	mergeExtRangeOptionsInMessages(fdCopy.GetMessageType(), mergeableExtRangeOptFields)
-	return fdCopy
-}
-
-// mergeFieldOptionsInMessages recursively merges unknown extensions in FieldOptions
-// for all fields in the given messages and their nested types.
-func mergeFieldOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
-	for _, msg := range msgs {
-		for _, field := range msg.GetField() {
-			if field.Options != nil {
-				mergeUnknownExtensions(field.Options.ProtoReflect(), mergeableFields)
-			}
-		}
-		for _, ext := range msg.GetExtension() {
-			if ext.Options != nil {
-				mergeUnknownExtensions(ext.Options.ProtoReflect(), mergeableFields)
-			}
-		}
-		mergeFieldOptionsInMessages(msg.GetNestedType(), mergeableFields)
-	}
-}
-
-// mergeMessageOptionsInMessages recursively merges unknown extensions in MessageOptions
-// for all messages and their nested types.
-func mergeMessageOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
-	for _, msg := range msgs {
-		if msg.Options != nil {
-			mergeUnknownExtensions(msg.Options.ProtoReflect(), mergeableFields)
-		}
-		mergeMessageOptionsInMessages(msg.GetNestedType(), mergeableFields)
-	}
-}
-
-// mergeEnumOptions merges unknown extensions in EnumOptions for top-level enums.
-func mergeEnumOptions(enums []*descriptorpb.EnumDescriptorProto, mergeableFields map[int32]bool) {
-	for _, enum := range enums {
-		if enum.Options != nil {
-			mergeUnknownExtensions(enum.Options.ProtoReflect(), mergeableFields)
-		}
-	}
-}
-
-// mergeEnumOptionsInMessages recursively merges unknown extensions in EnumOptions
-// for all enums in the given messages and their nested types.
-func mergeEnumOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
-	for _, msg := range msgs {
-		mergeEnumOptions(msg.GetEnumType(), mergeableFields)
-		mergeEnumOptionsInMessages(msg.GetNestedType(), mergeableFields)
-	}
-}
-
-// mergeEnumValueOptions merges unknown extensions in EnumValueOptions
-// for all values in the given enums.
-func mergeEnumValueOptions(enums []*descriptorpb.EnumDescriptorProto, mergeableFields map[int32]bool) {
-	for _, enum := range enums {
-		for _, val := range enum.GetValue() {
-			if val.Options != nil {
-				mergeUnknownExtensions(val.Options.ProtoReflect(), mergeableFields)
-			}
-		}
-	}
-}
-
-// mergeEnumValueOptionsInMessages recursively merges unknown extensions in EnumValueOptions
-// for all enum values in the given messages and their nested types.
-func mergeEnumValueOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
-	for _, msg := range msgs {
-		mergeEnumValueOptions(msg.GetEnumType(), mergeableFields)
-		mergeEnumValueOptionsInMessages(msg.GetNestedType(), mergeableFields)
-	}
-}
-
-// mergeServiceOptions merges unknown extensions in ServiceOptions for all services.
-func mergeServiceOptions(services []*descriptorpb.ServiceDescriptorProto, mergeableFields map[int32]bool) {
-	for _, svc := range services {
-		if svc.Options != nil {
-			mergeUnknownExtensions(svc.Options.ProtoReflect(), mergeableFields)
-		}
-	}
-}
-
-// mergeMethodOptions merges unknown extensions in MethodOptions for all methods in all services.
-func mergeMethodOptions(services []*descriptorpb.ServiceDescriptorProto, mergeableFields map[int32]bool) {
-	for _, svc := range services {
-		for _, method := range svc.GetMethod() {
-			if method.Options != nil {
-				mergeUnknownExtensions(method.Options.ProtoReflect(), mergeableFields)
-			}
-		}
-	}
-}
-
-// mergeOneofOptionsInMessages recursively merges unknown extensions in OneofOptions
-// for all oneofs in the given messages and their nested types.
-func mergeOneofOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
-	for _, msg := range msgs {
-		for _, oneof := range msg.GetOneofDecl() {
-			if oneof.Options != nil {
-				mergeUnknownExtensions(oneof.Options.ProtoReflect(), mergeableFields)
-			}
-		}
-		mergeOneofOptionsInMessages(msg.GetNestedType(), mergeableFields)
-	}
-}
-
-func mergeExtRangeOptionsInMessages(msgs []*descriptorpb.DescriptorProto, mergeableFields map[int32]bool) {
-	for _, msg := range msgs {
-		for _, er := range msg.GetExtensionRange() {
-			if er.Options != nil {
-				mergeUnknownExtensions(er.Options.ProtoReflect(), mergeableFields)
-			}
-		}
-		mergeExtRangeOptionsInMessages(msg.GetNestedType(), mergeableFields)
-	}
-}
-
-// mergeUnknownExtensions merges multiple unknown field entries with the same
-// field number (BytesType) into single entries. If mergeableFields is non-nil,
-// only field numbers in the set are merged; others are left as separate entries.
-func mergeUnknownExtensions(m protoreflect.Message, mergeableFields map[int32]bool) {
-	raw := m.GetUnknown()
-	if len(raw) == 0 {
-		return
-	}
-
-	type entry struct {
-		num     protowire.Number
-		wtyp    protowire.Type
-		payload []byte
-		raw     []byte
-	}
-	var entries []entry
-	buf := raw
-	for len(buf) > 0 {
-		entryStart := buf
-		num, wtyp, n := protowire.ConsumeTag(buf)
-		if n < 0 {
-			return
-		}
-		buf = buf[n:]
-		var payload []byte
-		switch wtyp {
-		case protowire.BytesType:
-			v, vn := protowire.ConsumeBytes(buf)
-			if vn < 0 {
-				return
-			}
-			payload = v
-			buf = buf[vn:]
-		case protowire.VarintType:
-			_, vn := protowire.ConsumeVarint(buf)
-			if vn < 0 {
-				return
-			}
-			buf = buf[vn:]
-		case protowire.Fixed32Type:
-			_, vn := protowire.ConsumeFixed32(buf)
-			if vn < 0 {
-				return
-			}
-			buf = buf[vn:]
-		case protowire.Fixed64Type:
-			_, vn := protowire.ConsumeFixed64(buf)
-			if vn < 0 {
-				return
-			}
-			buf = buf[vn:]
-		default:
-			return
-		}
-		entries = append(entries, entry{num: num, wtyp: wtyp, payload: payload, raw: entryStart[:len(entryStart)-len(buf)]})
-	}
-
-	// Check if any BytesType field appears more than once and is mergeable
-	counts := make(map[protowire.Number]int)
-	needsMerge := false
-	for _, e := range entries {
-		if e.wtyp == protowire.BytesType && (mergeableFields == nil || mergeableFields[int32(e.num)]) {
-			counts[e.num]++
-			if counts[e.num] > 1 {
-				needsMerge = true
-			}
-		}
-	}
-	if !needsMerge {
-		return
-	}
-
-	merged := make(map[protowire.Number][]byte)
-	for _, e := range entries {
-		if e.wtyp == protowire.BytesType && (mergeableFields == nil || mergeableFields[int32(e.num)]) {
-			merged[e.num] = append(merged[e.num], e.payload...)
-		}
-	}
-	emitted := make(map[protowire.Number]bool)
-	var result []byte
-	for _, e := range entries {
-		if e.wtyp == protowire.BytesType && (mergeableFields == nil || mergeableFields[int32(e.num)]) {
-			if !emitted[e.num] {
-				emitted[e.num] = true
-				result = protowire.AppendTag(result, e.num, protowire.BytesType)
-				result = protowire.AppendBytes(result, mergeNestedBytes(merged[e.num]))
-			}
-		} else {
-			result = append(result, e.raw...)
-		}
-	}
-	m.SetUnknown(result)
-}
-
-// mergeNestedBytes recursively merges duplicate bytes-type fields within raw
-// protobuf bytes. This handles deep sub-field option merging: when two entries
-// for the same message field exist (e.g., inner { value: "hello" } and
-// inner { num: 42 }), they are merged into one entry (inner { value: "hello",
-// num: 42 }), recursively.
-func mergeNestedBytes(data []byte) []byte {
-	type entry struct {
-		num     protowire.Number
-		wtyp    protowire.Type
-		payload []byte
-		raw     []byte
-	}
-	var entries []entry
-	buf := data
-	for len(buf) > 0 {
-		entryStart := buf
-		num, wtyp, n := protowire.ConsumeTag(buf)
-		if n < 0 {
-			return data
-		}
-		buf = buf[n:]
-		var payload []byte
-		switch wtyp {
-		case protowire.BytesType:
-			v, vn := protowire.ConsumeBytes(buf)
-			if vn < 0 {
-				return data
-			}
-			payload = v
-			buf = buf[vn:]
-		case protowire.VarintType:
-			_, vn := protowire.ConsumeVarint(buf)
-			if vn < 0 {
-				return data
-			}
-			buf = buf[vn:]
-		case protowire.Fixed32Type:
-			_, vn := protowire.ConsumeFixed32(buf)
-			if vn < 0 {
-				return data
-			}
-			buf = buf[vn:]
-		case protowire.Fixed64Type:
-			_, vn := protowire.ConsumeFixed64(buf)
-			if vn < 0 {
-				return data
-			}
-			buf = buf[vn:]
-		case protowire.StartGroupType:
-			_, vn := protowire.ConsumeGroup(num, buf)
-			if vn < 0 {
-				return data
-			}
-			buf = buf[vn:]
-		default:
-			return data
-		}
-		entries = append(entries, entry{num: num, wtyp: wtyp, payload: payload, raw: entryStart[:len(entryStart)-len(buf)]})
-	}
-
-	// Check if any bytes-type field appears more than once
-	counts := make(map[protowire.Number]int)
-	needsMerge := false
-	for _, e := range entries {
-		if e.wtyp == protowire.BytesType {
-			counts[e.num]++
-			if counts[e.num] > 1 {
-				needsMerge = true
-			}
-		}
-	}
-	if !needsMerge {
-		return data
-	}
-
-	merged := make(map[protowire.Number][]byte)
-	for _, e := range entries {
-		if e.wtyp == protowire.BytesType && counts[e.num] > 1 {
-			merged[e.num] = append(merged[e.num], e.payload...)
-		}
-	}
-	emitted := make(map[protowire.Number]bool)
-	var result []byte
-	for _, e := range entries {
-		if e.wtyp == protowire.BytesType && counts[e.num] > 1 {
-			if !emitted[e.num] {
-				emitted[e.num] = true
-				result = protowire.AppendTag(result, e.num, protowire.BytesType)
-				result = protowire.AppendBytes(result, mergeNestedBytes(merged[e.num]))
-			}
-		} else {
-			result = append(result, e.raw...)
-		}
-	}
-	return result
-}
-
-// sourceRetentionFields maps extendee type name (e.g., ".google.protobuf.FieldOptions")
-// to the set of extension field numbers that have retention = RETENTION_SOURCE.
-type sourceRetentionFields map[string]map[int32]bool
-
-// collectSourceRetentionFields builds a map of extension field numbers with RETENTION_SOURCE,
-// grouped by the option type they extend.
 func collectSourceRetentionFields(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) sourceRetentionFields {
-	result := make(sourceRetentionFields)
+	// Walking into option values costs an entry per message field in the pool,
+	// so it is only worth building when some field is source-retention at all.
+	if !anySourceRetention(orderedFiles, parsed) {
+		return sourceRetentionFields{}
+	}
+	result := sourceRetentionFields{
+		strip:    make(map[string]map[int32]bool),
+		msgTypes: make(map[string]map[int32]string),
+	}
 	for _, name := range orderedFiles {
 		fd := parsed[name]
+		prefix := ""
+		if pkg := fd.GetPackage(); pkg != "" {
+			prefix = "." + pkg
+		}
 		for _, ext := range fd.GetExtension() {
-			if ext.GetOptions().GetRetention() == descriptorpb.FieldOptions_RETENTION_SOURCE {
-				extendee := ext.GetExtendee()
-				if result[extendee] == nil {
-					result[extendee] = make(map[int32]bool)
-				}
-				result[extendee][ext.GetNumber()] = true
-			}
+			result.record(ext.GetExtendee(), ext)
 		}
 		for _, msg := range fd.GetMessageType() {
-			collectSourceRetentionFieldsInMsg(msg, result)
+			collectSourceRetentionFieldsInMsg(msg, prefix, result)
 		}
 	}
+	result.pruneClean()
 	return result
 }
 
-func collectSourceRetentionFieldsInMsg(msg *descriptorpb.DescriptorProto, result sourceRetentionFields) {
-	for _, ext := range msg.GetExtension() {
-		if ext.GetOptions().GetRetention() == descriptorpb.FieldOptions_RETENTION_SOURCE {
-			extendee := ext.GetExtendee()
-			if result[extendee] == nil {
-				result[extendee] = make(map[int32]bool)
+// record notes field under owner: its number when it is source-retention, and
+// its message type so an option value of that type can be walked into.
+func (r sourceRetentionFields) record(owner string, field *descriptorpb.FieldDescriptorProto) {
+	if field.GetOptions().GetRetention() == descriptorpb.FieldOptions_RETENTION_SOURCE {
+		if r.strip[owner] == nil {
+			r.strip[owner] = make(map[int32]bool)
+		}
+		r.strip[owner][field.GetNumber()] = true
+	}
+	if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_MESSAGE {
+		if r.msgTypes[owner] == nil {
+			r.msgTypes[owner] = make(map[int32]string)
+		}
+		r.msgTypes[owner][field.GetNumber()] = field.GetTypeName()
+	}
+}
+
+// pruneClean drops the message-valued fields whose type cannot lead to a
+// source-retention field, so files that use no such option are walked no more
+// than they were before.
+func (r sourceRetentionFields) pruneClean() {
+	dirty := make(map[string]bool, len(r.strip))
+	for owner := range r.strip {
+		dirty[owner] = true
+	}
+	for changed := true; changed; {
+		changed = false
+		for owner, fields := range r.msgTypes {
+			if dirty[owner] {
+				continue
 			}
-			result[extendee][ext.GetNumber()] = true
+			for _, typeName := range fields {
+				if dirty[typeName] {
+					dirty[owner] = true
+					changed = true
+					break
+				}
+			}
 		}
 	}
+	for owner, fields := range r.msgTypes {
+		for num, typeName := range fields {
+			if !dirty[typeName] {
+				delete(fields, num)
+			}
+		}
+		if len(fields) == 0 {
+			delete(r.msgTypes, owner)
+		}
+	}
+}
+
+func collectSourceRetentionFieldsInMsg(msg *descriptorpb.DescriptorProto, prefix string, result sourceRetentionFields) {
+	fqn := prefix + "." + msg.GetName()
+	for _, ext := range msg.GetExtension() {
+		result.record(ext.GetExtendee(), ext)
+	}
+	for _, f := range msg.GetField() {
+		result.record(fqn, f)
+	}
 	for _, nested := range msg.GetNestedType() {
-		collectSourceRetentionFieldsInMsg(nested, result)
+		collectSourceRetentionFieldsInMsg(nested, fqn, result)
 	}
 }
 
@@ -5269,8 +5292,11 @@ func collectSourceRetentionFieldsInMsg(msg *descriptorpb.DescriptorProto, result
 // If the descriptor has no such options, returns the original to avoid cloning.
 func stripSourceRetention(fd *descriptorpb.FileDescriptorProto, srcRetFields sourceRetentionFields) *descriptorpb.FileDescriptorProto {
 	needsClone := hasExtRangeOpts(fd.GetMessageType())
-	if !needsClone && len(srcRetFields) > 0 {
+	if !needsClone && !srcRetFields.empty() {
 		needsClone = fdHasSourceRetentionOpts(fd, srcRetFields)
+	}
+	if !needsClone {
+		needsClone = hasSourceRetentionFeatures(fd)
 	}
 	if !needsClone {
 		return fd
@@ -5282,17 +5308,176 @@ func stripSourceRetention(fd *descriptorpb.FileDescriptorProto, srcRetFields sou
 	// Strip source-retention custom option unknown fields
 	var strippedOptsPaths [][]int32
 	stripSourceRetentionOpts(fdCopy, srcRetFields, &strippedOptsPaths)
+	// Strip the built-in features descriptor.proto marks RETENTION_SOURCE
+	var strippedFeaturePaths [][]int32
+	stripSourceRetentionFeatures(fdCopy, &strippedFeaturePaths)
 	if fdCopy.SourceCodeInfo != nil {
 		var filtered []*descriptorpb.SourceCodeInfo_Location
 		for _, loc := range fdCopy.SourceCodeInfo.Location {
 			if !isStrippedExtRangeOptsPath(loc.Path, emptyOptsPaths) &&
-				!isStrippedSourceRetentionPath(loc.Path, strippedOptsPaths) {
+				!isStrippedSourceRetentionPath(loc.Path, strippedOptsPaths) &&
+				!pathIn(loc.Path, strippedFeaturePaths) {
 				filtered = append(filtered, loc)
 			}
 		}
 		fdCopy.SourceCodeInfo.Location = filtered
 	}
 	return fdCopy
+}
+
+func pathIn(path []int32, paths [][]int32) bool {
+	for _, p := range paths {
+		if len(p) == len(path) && pathPrefix(path, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// sourceRetentionFeatures is the set of FeatureSet field numbers descriptor.proto
+// marks RETENTION_SOURCE, read off the runtime descriptor so a new one needs no
+// change here.
+var sourceRetentionFeatures = func() map[int32]bool {
+	nums := map[int32]bool{}
+	fields := (&descriptorpb.FeatureSet{}).ProtoReflect().Descriptor().Fields()
+	for i := 0; i < fields.Len(); i++ {
+		f := fields.Get(i)
+		if opts, ok := f.Options().(*descriptorpb.FieldOptions); ok &&
+			opts.GetRetention() == descriptorpb.FieldOptions_RETENTION_SOURCE {
+			nums[int32(f.Number())] = true
+		}
+	}
+	return nums
+}()
+
+// featureSetSink is called for every FeatureSet in a file, with the source code
+// info path of the descriptor carrying it and the two field numbers leading from
+// that descriptor to the FeatureSet.
+type featureSetSink func(fs *descriptorpb.FeatureSet, elemPath []int32, optionsNum, featuresNum int32)
+
+// featureSetWalk is the internal form the traversal uses. The child's own path
+// elements are passed as numbers rather than as a slice, and joined to the
+// parent path only where a FeatureSet is actually present: a file holds
+// thousands of descriptors and almost none of them carry one. A negative field
+// means the path is already complete.
+type featureSetWalk func(fs *descriptorpb.FeatureSet, path []int32, field, index, optionsNum, featuresNum int32)
+
+// stripSourceRetentionFeatures drops the source-retention features and records
+// the source code info path of each, so the location describing an option goes
+// away with the value it described. The FeatureSet itself stays, even when
+// emptied — that is what C++ protoc leaves behind.
+func stripSourceRetentionFeatures(fd *descriptorpb.FileDescriptorProto, stripped *[][]int32) {
+	walkFeatureSets(fd, func(fs *descriptorpb.FeatureSet, elemPath []int32, optionsNum, featuresNum int32) {
+		m := fs.ProtoReflect()
+		fields := m.Descriptor().Fields()
+		for num := range sourceRetentionFeatures {
+			f := fields.ByNumber(protoreflect.FieldNumber(num))
+			if f == nil || !m.Has(f) {
+				continue
+			}
+			m.Clear(f)
+			p := make([]int32, 0, len(elemPath)+3)
+			p = append(p, elemPath...)
+			*stripped = append(*stripped, append(p, optionsNum, featuresNum, num))
+		}
+	})
+}
+
+// hasSourceRetentionFeatures reports whether any FeatureSet in fd carries one,
+// without copying the file.
+func hasSourceRetentionFeatures(fd *descriptorpb.FileDescriptorProto) bool {
+	found := false
+	walkFeatureSets(fd, func(fs *descriptorpb.FeatureSet, _ []int32, _, _ int32) {
+		if found {
+			return
+		}
+		m := fs.ProtoReflect()
+		fields := m.Descriptor().Fields()
+		for num := range sourceRetentionFeatures {
+			if f := fields.ByNumber(protoreflect.FieldNumber(num)); f != nil && m.Has(f) {
+				found = true
+				return
+			}
+		}
+	})
+	return found
+}
+
+// walkFeatureSets visits the FeatureSet of every descriptor in fd that can carry
+// options.
+func walkFeatureSets(fd *descriptorpb.FileDescriptorProto, visit featureSetSink) {
+	if len(sourceRetentionFeatures) == 0 {
+		return
+	}
+	// The path is built only where a FeatureSet is actually present: most
+	// descriptors have none, and a file can hold thousands of them.
+	at := func(fs *descriptorpb.FeatureSet, path []int32, field, index, optionsNum, featuresNum int32) {
+		if fs == nil {
+			return
+		}
+		if field < 0 {
+			visit(fs, childPath(path), optionsNum, featuresNum)
+			return
+		}
+		visit(fs, childPath(path, field, index), optionsNum, featuresNum)
+	}
+	at(fd.GetOptions().GetFeatures(), nil, -1, 0, 8, 50)
+	// One scratch path is grown and truncated as the walk descends; the sink
+	// copies whatever it keeps.
+	var path []int32
+	for i, msg := range fd.GetMessageType() {
+		path = walkMessageFeatureSets(msg, append(path, 4, int32(i)), at)[:0]
+	}
+	for i, e := range fd.GetEnumType() {
+		path = walkEnumFeatureSets(e, append(path, 5, int32(i)), at)[:0]
+	}
+	for i, ext := range fd.GetExtension() {
+		at(ext.GetOptions().GetFeatures(), nil, 7, int32(i), 8, 21)
+	}
+	for i, svc := range fd.GetService() {
+		svcPath := []int32{6, int32(i)}
+		at(svc.GetOptions().GetFeatures(), svcPath, -1, 0, 3, 34)
+		for j, mtd := range svc.GetMethod() {
+			at(mtd.GetOptions().GetFeatures(), svcPath, 2, int32(j), 4, 35)
+		}
+	}
+}
+
+func walkMessageFeatureSets(msg *descriptorpb.DescriptorProto, path []int32, at featureSetWalk) []int32 {
+	at(msg.GetOptions().GetFeatures(), path, -1, 0, 7, 12)
+	for i, f := range msg.GetField() {
+		at(f.GetOptions().GetFeatures(), path, 2, int32(i), 8, 21)
+	}
+	for i, f := range msg.GetExtension() {
+		at(f.GetOptions().GetFeatures(), path, 6, int32(i), 8, 21)
+	}
+	for i, o := range msg.GetOneofDecl() {
+		at(o.GetOptions().GetFeatures(), path, 8, int32(i), 2, 1)
+	}
+	for i, er := range msg.GetExtensionRange() {
+		at(er.GetOptions().GetFeatures(), path, 5, int32(i), 3, 50)
+	}
+	n := len(path)
+	for i, e := range msg.GetEnumType() {
+		path = walkEnumFeatureSets(e, append(path, 4, int32(i)), at)[:n]
+	}
+	for i, nested := range msg.GetNestedType() {
+		path = walkMessageFeatureSets(nested, append(path, 3, int32(i)), at)[:n]
+	}
+	return path
+}
+
+func walkEnumFeatureSets(e *descriptorpb.EnumDescriptorProto, path []int32, at featureSetWalk) []int32 {
+	at(e.GetOptions().GetFeatures(), path, -1, 0, 3, 7)
+	for i, v := range e.GetValue() {
+		at(v.GetOptions().GetFeatures(), path, 2, int32(i), 3, 2)
+	}
+	return path
+}
+
+func childPath(path []int32, elems ...int32) []int32 {
+	out := make([]int32, 0, len(path)+len(elems))
+	return append(append(out, path...), elems...)
 }
 
 func hasExtRangeOpts(msgs []*descriptorpb.DescriptorProto) bool {
@@ -5379,7 +5564,7 @@ func isVerificationPath(path []int32) bool {
 // fdHasSourceRetentionOpts checks if any options in fd have unknown fields
 // that correspond to source-retention extensions.
 func fdHasSourceRetentionOpts(fd *descriptorpb.FileDescriptorProto, srcRetFields sourceRetentionFields) bool {
-	if hasSourceRetUnknowns(fd.GetOptions(), srcRetFields[".google.protobuf.FileOptions"]) {
+	if hasSourceRetUnknowns(fd.GetOptions(), ".google.protobuf.FileOptions", srcRetFields) {
 		return true
 	}
 	for _, msg := range fd.GetMessageType() {
@@ -5388,17 +5573,17 @@ func fdHasSourceRetentionOpts(fd *descriptorpb.FileDescriptorProto, srcRetFields
 		}
 	}
 	for _, svc := range fd.GetService() {
-		if hasSourceRetUnknowns(svc.GetOptions(), srcRetFields[".google.protobuf.ServiceOptions"]) {
+		if hasSourceRetUnknowns(svc.GetOptions(), ".google.protobuf.ServiceOptions", srcRetFields) {
 			return true
 		}
 		for _, mtd := range svc.GetMethod() {
-			if hasSourceRetUnknowns(mtd.GetOptions(), srcRetFields[".google.protobuf.MethodOptions"]) {
+			if hasSourceRetUnknowns(mtd.GetOptions(), ".google.protobuf.MethodOptions", srcRetFields) {
 				return true
 			}
 		}
 	}
 	for _, ext := range fd.GetExtension() {
-		if hasSourceRetUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"]) {
+		if hasSourceRetUnknowns(ext.GetOptions(), ".google.protobuf.FieldOptions", srcRetFields) {
 			return true
 		}
 	}
@@ -5411,21 +5596,21 @@ func fdHasSourceRetentionOpts(fd *descriptorpb.FileDescriptorProto, srcRetFields
 }
 
 func msgHasSourceRetentionOpts(msg *descriptorpb.DescriptorProto, srcRetFields sourceRetentionFields) bool {
-	if hasSourceRetUnknowns(msg.GetOptions(), srcRetFields[".google.protobuf.MessageOptions"]) {
+	if hasSourceRetUnknowns(msg.GetOptions(), ".google.protobuf.MessageOptions", srcRetFields) {
 		return true
 	}
 	for _, f := range msg.GetField() {
-		if hasSourceRetUnknowns(f.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"]) {
+		if hasSourceRetUnknowns(f.GetOptions(), ".google.protobuf.FieldOptions", srcRetFields) {
 			return true
 		}
 	}
 	for _, oo := range msg.GetOneofDecl() {
-		if hasSourceRetUnknowns(oo.GetOptions(), srcRetFields[".google.protobuf.OneofOptions"]) {
+		if hasSourceRetUnknowns(oo.GetOptions(), ".google.protobuf.OneofOptions", srcRetFields) {
 			return true
 		}
 	}
 	for _, ext := range msg.GetExtension() {
-		if hasSourceRetUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"]) {
+		if hasSourceRetUnknowns(ext.GetOptions(), ".google.protobuf.FieldOptions", srcRetFields) {
 			return true
 		}
 	}
@@ -5443,45 +5628,34 @@ func msgHasSourceRetentionOpts(msg *descriptorpb.DescriptorProto, srcRetFields s
 }
 
 func enumHasSourceRetentionOpts(en *descriptorpb.EnumDescriptorProto, srcRetFields sourceRetentionFields) bool {
-	if hasSourceRetUnknowns(en.GetOptions(), srcRetFields[".google.protobuf.EnumOptions"]) {
+	if hasSourceRetUnknowns(en.GetOptions(), ".google.protobuf.EnumOptions", srcRetFields) {
 		return true
 	}
 	for _, ev := range en.GetValue() {
-		if hasSourceRetUnknowns(ev.GetOptions(), srcRetFields[".google.protobuf.EnumValueOptions"]) {
+		if hasSourceRetUnknowns(ev.GetOptions(), ".google.protobuf.EnumValueOptions", srcRetFields) {
 			return true
 		}
 	}
 	return false
 }
 
-func hasSourceRetUnknowns(opts proto.Message, retFieldNums map[int32]bool) bool {
-	if opts == nil || len(retFieldNums) == 0 {
+func hasSourceRetUnknowns(opts proto.Message, owner string, srcRet sourceRetentionFields) bool {
+	if opts == nil {
 		return false
 	}
-	unknowns := opts.ProtoReflect().GetUnknown()
-	buf := unknowns
-	for len(buf) > 0 {
-		num, _, n := protowire.ConsumeField(buf)
-		if n < 0 {
-			break
-		}
-		if retFieldNums[int32(num)] {
-			return true
-		}
-		buf = buf[n:]
-	}
-	return false
+	_, _, changed := srcRet.stripEncoded(owner, opts.ProtoReflect().GetUnknown())
+	return changed
 }
 
 // stripSourceRetentionOpts strips unknown fields for source-retention extensions
 // from all options in the FileDescriptorProto and collects paths of stripped options.
 func stripSourceRetentionOpts(fd *descriptorpb.FileDescriptorProto, srcRetFields sourceRetentionFields, strippedPaths *[][]int32) {
-	if len(srcRetFields) == 0 {
+	if srcRetFields.empty() {
 		return
 	}
 
 	// File options (path: [8])
-	if stripOptsUnknowns(fd.GetOptions(), srcRetFields[".google.protobuf.FileOptions"], []int32{8}, strippedPaths) {
+	if stripOptsUnknowns(fd.GetOptions(), ".google.protobuf.FileOptions", srcRetFields, []int32{8}, strippedPaths) {
 		fd.Options = nil
 	}
 
@@ -5499,12 +5673,12 @@ func stripSourceRetentionOpts(fd *descriptorpb.FileDescriptorProto, srcRetFields
 	for si, svc := range fd.GetService() {
 		svcPath := []int32{6, int32(si)}
 		// Service options (path: [6, i, 3])
-		if stripOptsUnknowns(svc.GetOptions(), srcRetFields[".google.protobuf.ServiceOptions"], append(append([]int32{}, svcPath...), 3), strippedPaths) {
+		if stripOptsUnknowns(svc.GetOptions(), ".google.protobuf.ServiceOptions", srcRetFields, append(append([]int32{}, svcPath...), 3), strippedPaths) {
 			svc.Options = nil
 		}
 		// Methods (path: [6, i, 2, j])
 		for mi, mtd := range svc.GetMethod() {
-			if stripOptsUnknowns(mtd.GetOptions(), srcRetFields[".google.protobuf.MethodOptions"], append(append([]int32{}, svcPath...), 2, int32(mi), 3), strippedPaths) {
+			if stripOptsUnknowns(mtd.GetOptions(), ".google.protobuf.MethodOptions", srcRetFields, append(append([]int32{}, svcPath...), 2, int32(mi), 3), strippedPaths) {
 				mtd.Options = nil
 			}
 		}
@@ -5512,7 +5686,7 @@ func stripSourceRetentionOpts(fd *descriptorpb.FileDescriptorProto, srcRetFields
 
 	// Top-level extensions (path: [7, i])
 	for ei, ext := range fd.GetExtension() {
-		if stripOptsUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"], []int32{7, int32(ei), 8}, strippedPaths) {
+		if stripOptsUnknowns(ext.GetOptions(), ".google.protobuf.FieldOptions", srcRetFields, []int32{7, int32(ei), 8}, strippedPaths) {
 			ext.Options = nil
 		}
 	}
@@ -5520,34 +5694,34 @@ func stripSourceRetentionOpts(fd *descriptorpb.FileDescriptorProto, srcRetFields
 
 func stripMsgSourceRetention(msg *descriptorpb.DescriptorProto, srcRetFields sourceRetentionFields, msgPath []int32, strippedPaths *[][]int32) {
 	// Message options (path: [..., 7])
-	if stripOptsUnknowns(msg.GetOptions(), srcRetFields[".google.protobuf.MessageOptions"], append(append([]int32{}, msgPath...), 7), strippedPaths) {
+	if stripOptsUnknowns(msg.GetOptions(), ".google.protobuf.MessageOptions", srcRetFields, append(append([]int32{}, msgPath...), 7), strippedPaths) {
 		msg.Options = nil
 	}
 
 	// Fields (path: [..., 2, i, 8])
 	for fi, f := range msg.GetField() {
-		if stripOptsUnknowns(f.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"], append(append([]int32{}, msgPath...), 2, int32(fi), 8), strippedPaths) {
+		if stripOptsUnknowns(f.GetOptions(), ".google.protobuf.FieldOptions", srcRetFields, append(append([]int32{}, msgPath...), 2, int32(fi), 8), strippedPaths) {
 			f.Options = nil
 		}
 	}
 
 	// Oneofs (path: [..., 8, i, 2])
 	for oi, oo := range msg.GetOneofDecl() {
-		if stripOptsUnknowns(oo.GetOptions(), srcRetFields[".google.protobuf.OneofOptions"], append(append([]int32{}, msgPath...), 8, int32(oi), 2), strippedPaths) {
+		if stripOptsUnknowns(oo.GetOptions(), ".google.protobuf.OneofOptions", srcRetFields, append(append([]int32{}, msgPath...), 8, int32(oi), 2), strippedPaths) {
 			oo.Options = nil
 		}
 	}
 
 	// Extension ranges (path: [..., 5, i, 3])
 	for ri, rng := range msg.GetExtensionRange() {
-		if stripOptsUnknowns(rng.GetOptions(), srcRetFields[".google.protobuf.ExtensionRangeOptions"], append(append([]int32{}, msgPath...), 5, int32(ri), 3), strippedPaths) {
+		if stripOptsUnknowns(rng.GetOptions(), ".google.protobuf.ExtensionRangeOptions", srcRetFields, append(append([]int32{}, msgPath...), 5, int32(ri), 3), strippedPaths) {
 			rng.Options = nil
 		}
 	}
 
 	// Extensions (path: [..., 6, i, 8])
 	for ei, ext := range msg.GetExtension() {
-		if stripOptsUnknowns(ext.GetOptions(), srcRetFields[".google.protobuf.FieldOptions"], append(append([]int32{}, msgPath...), 6, int32(ei), 8), strippedPaths) {
+		if stripOptsUnknowns(ext.GetOptions(), ".google.protobuf.FieldOptions", srcRetFields, append(append([]int32{}, msgPath...), 6, int32(ei), 8), strippedPaths) {
 			ext.Options = nil
 		}
 	}
@@ -5565,13 +5739,13 @@ func stripMsgSourceRetention(msg *descriptorpb.DescriptorProto, srcRetFields sou
 
 func stripEnumSourceRetention(en *descriptorpb.EnumDescriptorProto, srcRetFields sourceRetentionFields, enumPath []int32, strippedPaths *[][]int32) {
 	// Enum options (path: [..., 3])
-	if stripOptsUnknowns(en.GetOptions(), srcRetFields[".google.protobuf.EnumOptions"], append(append([]int32{}, enumPath...), 3), strippedPaths) {
+	if stripOptsUnknowns(en.GetOptions(), ".google.protobuf.EnumOptions", srcRetFields, append(append([]int32{}, enumPath...), 3), strippedPaths) {
 		en.Options = nil
 	}
 
 	// Enum values (path: [..., 2, i, 3])
 	for vi, ev := range en.GetValue() {
-		if stripOptsUnknowns(ev.GetOptions(), srcRetFields[".google.protobuf.EnumValueOptions"], append(append([]int32{}, enumPath...), 2, int32(vi), 3), strippedPaths) {
+		if stripOptsUnknowns(ev.GetOptions(), ".google.protobuf.EnumValueOptions", srcRetFields, append(append([]int32{}, enumPath...), 2, int32(vi), 3), strippedPaths) {
 			ev.Options = nil
 		}
 	}
@@ -5580,35 +5754,13 @@ func stripEnumSourceRetention(en *descriptorpb.EnumDescriptorProto, srcRetFields
 // stripOptsUnknowns removes unknown fields with source-retention field numbers
 // from the given options message. Returns true if options should be nilled out
 // (all fields removed). Collects stripped paths for SCI filtering.
-func stripOptsUnknowns(opts proto.Message, retFieldNums map[int32]bool, optsPath []int32, strippedPaths *[][]int32) bool {
-	if opts == nil || len(retFieldNums) == 0 {
+func stripOptsUnknowns(opts proto.Message, owner string, srcRet sourceRetentionFields, optsPath []int32, strippedPaths *[][]int32) bool {
+	if opts == nil {
 		return false
 	}
 	ref := opts.ProtoReflect()
-	unknowns := ref.GetUnknown()
-	if len(unknowns) == 0 {
-		return false
-	}
-
-	var kept []byte
-	stripped := false
-	var strippedNums []int32
-	buf := unknowns
-	for len(buf) > 0 {
-		num, _, n := protowire.ConsumeField(buf)
-		if n < 0 {
-			break
-		}
-		if retFieldNums[int32(num)] {
-			stripped = true
-			strippedNums = append(strippedNums, int32(num))
-		} else {
-			kept = append(kept, buf[:n]...)
-		}
-		buf = buf[n:]
-	}
-
-	if !stripped {
+	kept, strippedNums, changed := srcRet.stripEncoded(owner, ref.GetUnknown())
+	if !changed {
 		return false
 	}
 
@@ -5948,9 +6100,9 @@ func hasAnyCustomOpts(orderedFiles []string, parseResults map[string]*parser.Par
 // value, and sets it on the FileOptions proto as unknown (extension) fields.
 // It also returns a map from filename to the set of extension field numbers
 // that have sub-field options (needed to know which fields to merge in proto_file).
-func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomFileOptions) }) {
-		return nil, nil
+		return nil
 	}
 	// Build extension map: name → extension field for FileOptions extensions
 	var allExts []fileOptExtInfo
@@ -5984,9 +6136,9 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
+	messageSets := collectMessageSetTypes(orderedFiles, parsed)
 
 	var errs []string
-	subFieldNums := map[string]map[int32]bool{}
 	for _, name := range orderedFiles {
 		result := parseResults[name]
 		if result == nil {
@@ -6075,10 +6227,6 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 
 			if len(opt.SubFieldPath) > 0 {
 				// Sub-field option: option (ext).sub1.sub2... = value;
-				if subFieldNums[name] == nil {
-					subFieldNums[name] = map[int32]bool{}
-				}
-				subFieldNums[name][ext.GetNumber()] = true
 				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -6094,15 +6242,9 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 				var leafFieldDesc *descriptorpb.FieldDescriptorProto
 				valid := true
 				for i, seg := range opt.SubFieldPath {
-					fields, ok := msgFieldMap[currentTypeName]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, currentTypeName, opt.InnerName))
-						valid = false
-						break
-					}
-					subFieldDesc, ok := fields[seg]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, seg, currentTypeName))
+					subFieldDesc := lookupOptionSegment(currentTypeName, seg, fd.GetPackage(), msgFieldMap, extByExtendee)
+					if subFieldDesc == nil {
+						errs = append(errs, unknownSubOptionError(name, opt.NameTok, opt.ParenName, opt.SubFieldPath, i))
 						valid = false
 						break
 					}
@@ -6148,26 +6290,19 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 						parentTypeName = parentTypeName[1:]
 					}
 					for j := 0; j < i; j++ {
-						parentFields := msgFieldMap[parentTypeName]
-						parentField := parentFields[opt.SubFieldPath[j]]
+						parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[j], fd.GetPackage(), msgFieldMap, extByExtendee)
 						nextType := parentField.GetTypeName()
 						if strings.HasPrefix(nextType, ".") {
 							nextType = nextType[1:]
 						}
 						parentTypeName = nextType
 					}
-					parentFields := msgFieldMap[parentTypeName]
-					parentField := parentFields[opt.SubFieldPath[i]]
-					var wrapper []byte
-					wrapper = protowire.AppendTag(wrapper, protowire.Number(parentField.GetNumber()), protowire.BytesType)
-					wrapper = protowire.AppendBytes(wrapper, encoded)
-					encoded = wrapper
+					parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[i], fd.GetPackage(), msgFieldMap, extByExtendee)
+					encoded = appendSubmessage(nil, parentField, encoded)
 				}
 
 				// Wrap in the extension's length-delimited tag
-				var rawBytes []byte
-				rawBytes = protowire.AppendTag(rawBytes, protowire.Number(ext.GetNumber()), protowire.BytesType)
-				rawBytes = protowire.AppendBytes(rawBytes, encoded)
+				rawBytes := appendSubmessage(nil, ext, encoded)
 
 				fd.Options.ProtoReflect().SetUnknown(
 					append(fd.Options.ProtoReflect().GetUnknown(), rawBytes...))
@@ -6187,7 +6322,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 				var rawBytes []byte
 				var err error
 				if opt.AggregateFields != nil {
-					rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
+					rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
 				} else {
 					value := opt.Value
 					if opt.Negative {
@@ -6205,7 +6340,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 			}
 		}
 	}
-	return errs, subFieldNums
+	return errs
 }
 
 func collectEnumValueNumbers(enums []*descriptorpb.EnumDescriptorProto, prefix string, out map[string]map[string]int32) {
@@ -6318,11 +6453,10 @@ func findFileOptionExtension(name string, currentPkg string, allExts []fileOptEx
 
 // resolveCustomFieldOptions resolves parenthesized custom options on fields
 // (e.g., [(my_ext) = "value"]) against extension definitions for FieldOptions.
-func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomFieldOptions) }) {
-		return nil, nil
+		return nil
 	}
-	subFieldNums := map[string]map[int32]bool{}
 	// Build extension map for FieldOptions extensions
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
@@ -6354,6 +6488,9 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
+	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	subPathIdx := map[string]int32{}
+	featureExts := collectFeatureSetExtensions(orderedFiles, parsed)
 
 	type fieldRepKey struct {
 		field *descriptorpb.FieldDescriptorProto
@@ -6375,7 +6512,11 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 		}
 		fd := parsed[name]
 		for _, opt := range result.CustomFieldOptions {
-			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), allExts)
+			exts := allExts
+			if opt.OnFeatures {
+				exts = featureExts
+			}
+			ext, extFQN := findFileOptionExtension(opt.InnerName, fd.GetPackage(), exts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -6472,10 +6613,6 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 			}
 
 			if len(opt.SubFieldPath) > 0 {
-				if subFieldNums[name] == nil {
-					subFieldNums[name] = map[int32]bool{}
-				}
-				subFieldNums[name][ext.GetNumber()] = true
 				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -6487,24 +6624,17 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 				}
 
 				var leafFieldDesc *descriptorpb.FieldDescriptorProto
+				var resolvedSubFields []*descriptorpb.FieldDescriptorProto
 				valid := true
 				sciPathOffset := len(opt.SCILoc.Path) - len(opt.SubFieldPath)
 				for i, seg := range opt.SubFieldPath {
-					fields, ok := msgFieldMap[currentTypeName]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, currentTypeName, opt.InnerName))
+					subFieldDesc := lookupOptionSegment(currentTypeName, seg, fd.GetPackage(), msgFieldMap, extByExtendee)
+					if subFieldDesc == nil {
+						errs = append(errs, unknownSubOptionError(name, opt.NameTok, opt.ParenName, opt.SubFieldPath, i))
 						valid = false
 						break
 					}
-					subFieldDesc, ok := fields[seg]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, seg, currentTypeName))
-						valid = false
-						break
-					}
-					if opt.SCILoc != nil {
-						opt.SCILoc.Path[sciPathOffset+i] = subFieldDesc.GetNumber()
-					}
+					resolvedSubFields = append(resolvedSubFields, subFieldDesc)
 					if i == len(opt.SubFieldPath)-1 {
 						leafFieldDesc = subFieldDesc
 					} else {
@@ -6518,9 +6648,18 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 				if !valid {
 					continue
 				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				if opt.SCILoc != nil {
+					opt.SCILoc.Path = subPathSourceLocation(opt.SCILoc.Path[:sciPathOffset], resolvedSubFields, name, subPathIdx)
+				}
+				var leafBytes []byte
+				var err error
+				if opt.AggregateFields != nil {
+					leafBytes, err = encodeAggregateOption(leafFieldDesc, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
+				} else {
+					leafBytes, err = encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				}
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+					errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, leafFieldDesc.GetName()))
 					continue
 				}
 
@@ -6531,28 +6670,20 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 						parentTypeName = parentTypeName[1:]
 					}
 					for j := 0; j < i; j++ {
-						parentFields := msgFieldMap[parentTypeName]
-						parentField := parentFields[opt.SubFieldPath[j]]
+						parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[j], fd.GetPackage(), msgFieldMap, extByExtendee)
 						nextType := parentField.GetTypeName()
 						if strings.HasPrefix(nextType, ".") {
 							nextType = nextType[1:]
 						}
 						parentTypeName = nextType
 					}
-					parentFields := msgFieldMap[parentTypeName]
-					parentField := parentFields[opt.SubFieldPath[i]]
-					var wrapper []byte
-					wrapper = protowire.AppendTag(wrapper, protowire.Number(parentField.GetNumber()), protowire.BytesType)
-					wrapper = protowire.AppendBytes(wrapper, encoded)
-					encoded = wrapper
+					parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[i], fd.GetPackage(), msgFieldMap, extByExtendee)
+					encoded = appendSubmessage(nil, parentField, encoded)
 				}
 
-				var rawBytes []byte
-				rawBytes = protowire.AppendTag(rawBytes, protowire.Number(ext.GetNumber()), protowire.BytesType)
-				rawBytes = protowire.AppendBytes(rawBytes, encoded)
+				rawBytes := appendSubmessage(nil, ext, encoded)
 
-				opt.Field.Options.ProtoReflect().SetUnknown(
-					append(opt.Field.Options.ProtoReflect().GetUnknown(), rawBytes...))
+				appendUnknown(opt.Field.Options, opt.Field.Options.GetFeatures(), opt.OnFeatures, rawBytes)
 				continue
 			}
 
@@ -6560,7 +6691,7 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -6570,11 +6701,172 @@ func resolveCustomFieldOptions(orderedFiles []string, parsed map[string]*descrip
 			}
 
 			// Add to FieldOptions unknown fields
-			opt.Field.Options.ProtoReflect().SetUnknown(
-				append(opt.Field.Options.ProtoReflect().GetUnknown(), rawBytes...))
+			appendUnknown(opt.Field.Options, opt.Field.Options.GetFeatures(), opt.OnFeatures, rawBytes)
 		}
 	}
-	return errs, subFieldNums
+	return errs
+}
+
+// collectFeatureSetExtensions is every extension of FeatureSet in the pool —
+// the custom features a `features.(ext)` option can name.
+// unknownSubOptionError reports a sub-field of a custom option that the
+// extension's message type does not declare. protoc names the option by the
+// path as written, up to and including the segment it could not resolve.
+func unknownSubOptionError(file string, nameTok tokenizer.Token, parenName string, subFieldPath []string, failed int) string {
+	name := parenName
+	for _, seg := range subFieldPath[:failed+1] {
+		name += "." + seg
+	}
+	return fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
+		file, nameTok.Line+1, nameTok.Column+1, name)
+}
+
+// lookupOptionSegment resolves one segment of a custom option's sub-path against
+// the message the path has reached so far: an ordinary field, or an extension of
+// that message when the segment was written in parentheses.
+func lookupOptionSegment(msgFQN, seg, scope string,
+	msgFieldMap map[string]map[string]*descriptorpb.FieldDescriptorProto,
+	extByExtendee map[string]map[string]*descriptorpb.FieldDescriptorProto) *descriptorpb.FieldDescriptorProto {
+	if !strings.HasPrefix(seg, "(") {
+		return msgFieldMap[msgFQN][seg]
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(seg, "("), ")")
+	exts := extByExtendee[msgFQN]
+	if exts == nil {
+		return nil
+	}
+	if strings.HasPrefix(name, ".") {
+		return exts[name[1:]]
+	}
+	// Innermost scope outwards, as protoc resolves a relative extension name.
+	for {
+		candidate := name
+		if scope != "" {
+			candidate = scope + "." + name
+		}
+		if ext, ok := exts[candidate]; ok {
+			return ext
+		}
+		if scope == "" {
+			return nil
+		}
+		if dot := strings.LastIndex(scope, "."); dot >= 0 {
+			scope = scope[:dot]
+		} else {
+			scope = ""
+		}
+	}
+}
+
+// subPathSourceLocation extends a custom option's source path with one element
+// per sub-path segment, following each repeated field with the index of this
+// occurrence — how protoc addresses a single entry of a repeated option field.
+func subPathSourceLocation(prefix []int32, fields []*descriptorpb.FieldDescriptorProto, file string, counters map[string]int32) []int32 {
+	path := append([]int32{}, prefix...)
+	for _, f := range fields {
+		path = append(path, f.GetNumber())
+		if f.GetLabel() == descriptorpb.FieldDescriptorProto_LABEL_REPEATED {
+			key := fmt.Sprintf("%s%v", file, path)
+			path = append(path, counters[key])
+			counters[key]++
+		}
+	}
+	return path
+}
+
+// appendSubmessage writes body as the value of f, using the group encoding when
+// f is a group field. The two forms carry the same content, but protoc emits
+// each field in the one its type calls for.
+func appendSubmessage(dst []byte, f *descriptorpb.FieldDescriptorProto, body []byte) []byte {
+	num := protowire.Number(f.GetNumber())
+	if f.GetType() == descriptorpb.FieldDescriptorProto_TYPE_GROUP {
+		dst = protowire.AppendTag(dst, num, protowire.StartGroupType)
+		dst = append(dst, body...)
+		return protowire.AppendTag(dst, num, protowire.EndGroupType)
+	}
+	dst = protowire.AppendTag(dst, num, protowire.BytesType)
+	return protowire.AppendBytes(dst, body)
+}
+
+// collectMessageSetTypes is the set of messages using the MessageSet wire
+// format, whose extensions serialize as item groups rather than as fields.
+// messageSetItem rewrites an encoded extension field into the item group a
+// MessageSet uses in place of a plain field: the extension number and the
+// encoded message, wrapped in the repeated group at field 1.
+func messageSetItem(num int32, encodedField []byte) []byte {
+	_, _, tagLen := protowire.ConsumeTag(encodedField)
+	if tagLen < 0 {
+		return encodedField
+	}
+	body, n := protowire.ConsumeBytes(encodedField[tagLen:])
+	if n < 0 {
+		return encodedField
+	}
+	out := protowire.AppendTag(nil, 1, protowire.StartGroupType)
+	out = protowire.AppendVarint(protowire.AppendTag(out, 2, protowire.VarintType), uint64(num))
+	out = protowire.AppendBytes(protowire.AppendTag(out, 3, protowire.BytesType), body)
+	return protowire.AppendTag(out, 1, protowire.EndGroupType)
+}
+
+func collectMessageSetTypes(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) map[string]bool {
+	out := map[string]bool{}
+	var inMessages func(msgs []*descriptorpb.DescriptorProto, prefix string)
+	inMessages = func(msgs []*descriptorpb.DescriptorProto, prefix string) {
+		for _, msg := range msgs {
+			fqn := msg.GetName()
+			if prefix != "" {
+				fqn = prefix + "." + msg.GetName()
+			}
+			if msg.GetOptions().GetMessageSetWireFormat() {
+				out[fqn] = true
+			}
+			inMessages(msg.GetNestedType(), fqn)
+		}
+	}
+	for _, name := range orderedFiles {
+		inMessages(parsed[name].GetMessageType(), parsed[name].GetPackage())
+	}
+	return out
+}
+
+func collectFeatureSetExtensions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) []fileOptExtInfo {
+	var exts []fileOptExtInfo
+	var inMessages func(msgs []*descriptorpb.DescriptorProto, prefix string)
+	inMessages = func(msgs []*descriptorpb.DescriptorProto, prefix string) {
+		for _, msg := range msgs {
+			fqn := prefix + "." + msg.GetName()
+			if prefix == "" {
+				fqn = msg.GetName()
+			}
+			for _, ext := range msg.GetExtension() {
+				if ext.GetExtendee() == ".google.protobuf.FeatureSet" {
+					exts = append(exts, fileOptExtInfo{field: ext, pkg: fqn})
+				}
+			}
+			inMessages(msg.GetNestedType(), fqn)
+		}
+	}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		for _, ext := range fd.GetExtension() {
+			if ext.GetExtendee() == ".google.protobuf.FeatureSet" {
+				exts = append(exts, fileOptExtInfo{field: ext, pkg: fd.GetPackage()})
+			}
+		}
+		inMessages(fd.GetMessageType(), fd.GetPackage())
+	}
+	return exts
+}
+
+// appendUnknown adds encoded option bytes to opts, or to the FeatureSet inside
+// it when the option named a custom feature.
+func appendUnknown(opts proto.Message, features *descriptorpb.FeatureSet, onFeatures bool, encoded []byte) {
+	target := opts
+	if onFeatures {
+		target = features
+	}
+	ref := target.ProtoReflect()
+	ref.SetUnknown(append(ref.GetUnknown(), encoded...))
 }
 
 func collectFieldOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -6591,9 +6883,9 @@ func collectFieldOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN 
 
 // resolveCustomMessageOptions resolves parenthesized custom options on messages
 // (e.g., option (my_msg_label) = "primary";) against extension definitions for MessageOptions.
-func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomMessageOptions) }) {
-		return nil, nil
+		return nil
 	}
 	// Build extension map for MessageOptions extensions
 	var allExts []fileOptExtInfo
@@ -6626,6 +6918,9 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
+	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	subPathIdx := map[string]int32{}
+	featureExts := collectFeatureSetExtensions(orderedFiles, parsed)
 	msgFQNMap := buildMsgFQNMap(orderedFiles, parsed)
 
 	type msgOptKey struct {
@@ -6635,7 +6930,6 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 	seenMsgOpts := map[msgOptKey]bool{}
 
 	var errs []string
-	subFieldNums := map[string]map[int32]bool{}
 	for _, name := range orderedFiles {
 		result := parseResults[name]
 		if result == nil {
@@ -6647,7 +6941,11 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 			if fqn, ok := msgFQNMap[opt.Message]; ok {
 				scope = fqn
 			}
-			ext, extFQN := findFileOptionExtension(opt.InnerName, scope, allExts)
+			exts := allExts
+			if opt.OnFeatures {
+				exts = featureExts
+			}
+			ext, extFQN := findFileOptionExtension(opt.InnerName, scope, exts)
 			if ext == nil {
 				errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).",
 					name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -6732,10 +7030,6 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 			}
 
 			if len(opt.SubFieldPath) > 0 {
-				if subFieldNums[name] == nil {
-					subFieldNums[name] = map[int32]bool{}
-				}
-				subFieldNums[name][ext.GetNumber()] = true
 				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_MESSAGE && ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					errs = append(errs, fmt.Sprintf("%s:%d:%d: Option \"%s\" is an atomic type, not a message.",
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
@@ -6747,24 +7041,17 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 				}
 
 				var leafFieldDesc *descriptorpb.FieldDescriptorProto
+				var resolvedSubFields []*descriptorpb.FieldDescriptorProto
 				valid := true
 				sciPathOffset := len(opt.SCILoc.Path) - len(opt.SubFieldPath)
 				for i, seg := range opt.SubFieldPath {
-					fields, ok := msgFieldMap[currentTypeName]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, currentTypeName, opt.InnerName))
+					subFieldDesc := lookupOptionSegment(currentTypeName, seg, fd.GetPackage(), msgFieldMap, extByExtendee)
+					if subFieldDesc == nil {
+						errs = append(errs, unknownSubOptionError(name, opt.NameTok, opt.ParenName, opt.SubFieldPath, i))
 						valid = false
 						break
 					}
-					subFieldDesc, ok := fields[seg]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, seg, currentTypeName))
-						valid = false
-						break
-					}
-					if opt.SCILoc != nil {
-						opt.SCILoc.Path[sciPathOffset+i] = subFieldDesc.GetNumber()
-					}
+					resolvedSubFields = append(resolvedSubFields, subFieldDesc)
 					if i == len(opt.SubFieldPath)-1 {
 						leafFieldDesc = subFieldDesc
 					} else {
@@ -6778,9 +7065,18 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 				if !valid {
 					continue
 				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				if opt.SCILoc != nil {
+					opt.SCILoc.Path = subPathSourceLocation(opt.SCILoc.Path[:sciPathOffset], resolvedSubFields, name, subPathIdx)
+				}
+				var leafBytes []byte
+				var err error
+				if opt.AggregateFields != nil {
+					leafBytes, err = encodeAggregateOption(leafFieldDesc, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
+				} else {
+					leafBytes, err = encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				}
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+					errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, leafFieldDesc.GetName()))
 					continue
 				}
 
@@ -6791,28 +7087,20 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 						parentTypeName = parentTypeName[1:]
 					}
 					for j := 0; j < i; j++ {
-						parentFields := msgFieldMap[parentTypeName]
-						parentField := parentFields[opt.SubFieldPath[j]]
+						parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[j], fd.GetPackage(), msgFieldMap, extByExtendee)
 						nextType := parentField.GetTypeName()
 						if strings.HasPrefix(nextType, ".") {
 							nextType = nextType[1:]
 						}
 						parentTypeName = nextType
 					}
-					parentFields := msgFieldMap[parentTypeName]
-					parentField := parentFields[opt.SubFieldPath[i]]
-					var wrapper []byte
-					wrapper = protowire.AppendTag(wrapper, protowire.Number(parentField.GetNumber()), protowire.BytesType)
-					wrapper = protowire.AppendBytes(wrapper, encoded)
-					encoded = wrapper
+					parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[i], fd.GetPackage(), msgFieldMap, extByExtendee)
+					encoded = appendSubmessage(nil, parentField, encoded)
 				}
 
-				var rawBytes []byte
-				rawBytes = protowire.AppendTag(rawBytes, protowire.Number(ext.GetNumber()), protowire.BytesType)
-				rawBytes = protowire.AppendBytes(rawBytes, encoded)
+				rawBytes := appendSubmessage(nil, ext, encoded)
 
-				opt.Message.Options.ProtoReflect().SetUnknown(
-					append(opt.Message.Options.ProtoReflect().GetUnknown(), rawBytes...))
+				appendUnknown(opt.Message.Options, opt.Message.Options.GetFeatures(), opt.OnFeatures, rawBytes)
 				continue
 			}
 
@@ -6820,7 +7108,7 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -6830,11 +7118,10 @@ func resolveCustomMessageOptions(orderedFiles []string, parsed map[string]*descr
 			}
 
 			// Add to MessageOptions unknown fields
-			opt.Message.Options.ProtoReflect().SetUnknown(
-				append(opt.Message.Options.ProtoReflect().GetUnknown(), rawBytes...))
+			appendUnknown(opt.Message.Options, opt.Message.Options.GetFeatures(), opt.OnFeatures, rawBytes)
 		}
 	}
-	return errs, subFieldNums
+	return errs
 }
 
 func collectMessageOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -6851,11 +7138,10 @@ func collectMessageOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQ
 
 // resolveCustomServiceOptions resolves parenthesized custom options on services
 // (e.g., option (service_label) = "primary";) against extensions of ServiceOptions.
-func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomServiceOptions) }) {
-		return nil, nil
+		return nil
 	}
-	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -6884,6 +7170,8 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
+	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	subPathIdx := map[string]int32{}
 
 	type svcOptKey struct {
 		svc  *descriptorpb.ServiceDescriptorProto
@@ -6988,34 +7276,23 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 					continue
 				}
-				if subFieldNums[name] == nil {
-					subFieldNums[name] = map[int32]bool{}
-				}
-				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
 				}
 
 				var leafFieldDesc *descriptorpb.FieldDescriptorProto
+				var resolvedSubFields []*descriptorpb.FieldDescriptorProto
 				valid := true
 				sciPathOffset := len(opt.SCILoc.Path) - len(opt.SubFieldPath)
 				for i, seg := range opt.SubFieldPath {
-					fields, ok := msgFieldMap[currentTypeName]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, currentTypeName, opt.InnerName))
+					subFieldDesc := lookupOptionSegment(currentTypeName, seg, fd.GetPackage(), msgFieldMap, extByExtendee)
+					if subFieldDesc == nil {
+						errs = append(errs, unknownSubOptionError(name, opt.NameTok, opt.ParenName, opt.SubFieldPath, i))
 						valid = false
 						break
 					}
-					subFieldDesc, ok := fields[seg]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, seg, currentTypeName))
-						valid = false
-						break
-					}
-					if opt.SCILoc != nil {
-						opt.SCILoc.Path[sciPathOffset+i] = subFieldDesc.GetNumber()
-					}
+					resolvedSubFields = append(resolvedSubFields, subFieldDesc)
 					if i == len(opt.SubFieldPath)-1 {
 						leafFieldDesc = subFieldDesc
 					} else {
@@ -7029,9 +7306,18 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 				if !valid {
 					continue
 				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				if opt.SCILoc != nil {
+					opt.SCILoc.Path = subPathSourceLocation(opt.SCILoc.Path[:sciPathOffset], resolvedSubFields, name, subPathIdx)
+				}
+				var leafBytes []byte
+				var err error
+				if opt.AggregateFields != nil {
+					leafBytes, err = encodeAggregateOption(leafFieldDesc, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
+				} else {
+					leafBytes, err = encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				}
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+					errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, leafFieldDesc.GetName()))
 					continue
 				}
 
@@ -7042,25 +7328,18 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 						parentTypeName = parentTypeName[1:]
 					}
 					for j := 0; j < i; j++ {
-						parentFields := msgFieldMap[parentTypeName]
-						parentField := parentFields[opt.SubFieldPath[j]]
+						parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[j], fd.GetPackage(), msgFieldMap, extByExtendee)
 						nextType := parentField.GetTypeName()
 						if strings.HasPrefix(nextType, ".") {
 							nextType = nextType[1:]
 						}
 						parentTypeName = nextType
 					}
-					parentFields := msgFieldMap[parentTypeName]
-					parentField := parentFields[opt.SubFieldPath[i]]
-					var wrapper []byte
-					wrapper = protowire.AppendTag(wrapper, protowire.Number(parentField.GetNumber()), protowire.BytesType)
-					wrapper = protowire.AppendBytes(wrapper, encoded)
-					encoded = wrapper
+					parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[i], fd.GetPackage(), msgFieldMap, extByExtendee)
+					encoded = appendSubmessage(nil, parentField, encoded)
 				}
 
-				var rawBytes []byte
-				rawBytes = protowire.AppendTag(rawBytes, protowire.Number(ext.GetNumber()), protowire.BytesType)
-				rawBytes = protowire.AppendBytes(rawBytes, encoded)
+				rawBytes := appendSubmessage(nil, ext, encoded)
 
 				opt.Service.Options.ProtoReflect().SetUnknown(
 					append(opt.Service.Options.ProtoReflect().GetUnknown(), rawBytes...))
@@ -7070,7 +7349,7 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -7083,7 +7362,7 @@ func resolveCustomServiceOptions(orderedFiles []string, parsed map[string]*descr
 				append(opt.Service.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs, subFieldNums
+	return errs
 }
 
 func collectServiceOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -7100,11 +7379,10 @@ func collectServiceOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQ
 
 // resolveCustomMethodOptions resolves parenthesized custom options on methods
 // (e.g., option (auth_role) = "admin";) against extensions of MethodOptions.
-func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomMethodOptions) }) {
-		return nil, nil
+		return nil
 	}
-	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -7133,6 +7411,8 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
+	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	subPathIdx := map[string]int32{}
 
 	type mtdOptKey struct {
 		mtd  *descriptorpb.MethodDescriptorProto
@@ -7237,34 +7517,23 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 					continue
 				}
-				if subFieldNums[name] == nil {
-					subFieldNums[name] = map[int32]bool{}
-				}
-				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
 				}
 
 				var leafFieldDesc *descriptorpb.FieldDescriptorProto
+				var resolvedSubFields []*descriptorpb.FieldDescriptorProto
 				valid := true
 				sciPathOffset := len(opt.SCILoc.Path) - len(opt.SubFieldPath)
 				for i, seg := range opt.SubFieldPath {
-					fields, ok := msgFieldMap[currentTypeName]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, currentTypeName, opt.InnerName))
+					subFieldDesc := lookupOptionSegment(currentTypeName, seg, fd.GetPackage(), msgFieldMap, extByExtendee)
+					if subFieldDesc == nil {
+						errs = append(errs, unknownSubOptionError(name, opt.NameTok, opt.ParenName, opt.SubFieldPath, i))
 						valid = false
 						break
 					}
-					subFieldDesc, ok := fields[seg]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, seg, currentTypeName))
-						valid = false
-						break
-					}
-					if opt.SCILoc != nil {
-						opt.SCILoc.Path[sciPathOffset+i] = subFieldDesc.GetNumber()
-					}
+					resolvedSubFields = append(resolvedSubFields, subFieldDesc)
 					if i == len(opt.SubFieldPath)-1 {
 						leafFieldDesc = subFieldDesc
 					} else {
@@ -7278,9 +7547,18 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 				if !valid {
 					continue
 				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				if opt.SCILoc != nil {
+					opt.SCILoc.Path = subPathSourceLocation(opt.SCILoc.Path[:sciPathOffset], resolvedSubFields, name, subPathIdx)
+				}
+				var leafBytes []byte
+				var err error
+				if opt.AggregateFields != nil {
+					leafBytes, err = encodeAggregateOption(leafFieldDesc, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
+				} else {
+					leafBytes, err = encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				}
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+					errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, leafFieldDesc.GetName()))
 					continue
 				}
 
@@ -7291,25 +7569,18 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 						parentTypeName = parentTypeName[1:]
 					}
 					for j := 0; j < i; j++ {
-						parentFields := msgFieldMap[parentTypeName]
-						parentField := parentFields[opt.SubFieldPath[j]]
+						parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[j], fd.GetPackage(), msgFieldMap, extByExtendee)
 						nextType := parentField.GetTypeName()
 						if strings.HasPrefix(nextType, ".") {
 							nextType = nextType[1:]
 						}
 						parentTypeName = nextType
 					}
-					parentFields := msgFieldMap[parentTypeName]
-					parentField := parentFields[opt.SubFieldPath[i]]
-					var wrapper []byte
-					wrapper = protowire.AppendTag(wrapper, protowire.Number(parentField.GetNumber()), protowire.BytesType)
-					wrapper = protowire.AppendBytes(wrapper, encoded)
-					encoded = wrapper
+					parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[i], fd.GetPackage(), msgFieldMap, extByExtendee)
+					encoded = appendSubmessage(nil, parentField, encoded)
 				}
 
-				var rawBytes []byte
-				rawBytes = protowire.AppendTag(rawBytes, protowire.Number(ext.GetNumber()), protowire.BytesType)
-				rawBytes = protowire.AppendBytes(rawBytes, encoded)
+				rawBytes := appendSubmessage(nil, ext, encoded)
 
 				opt.Method.Options.ProtoReflect().SetUnknown(
 					append(opt.Method.Options.ProtoReflect().GetUnknown(), rawBytes...))
@@ -7319,7 +7590,7 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -7332,7 +7603,7 @@ func resolveCustomMethodOptions(orderedFiles []string, parsed map[string]*descri
 				append(opt.Method.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs, subFieldNums
+	return errs
 }
 
 func collectMethodOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -7349,11 +7620,10 @@ func collectMethodOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN
 
 // resolveCustomEnumOptions resolves parenthesized custom options on enums
 // (e.g., option (enum_label) = "status_tracker";) against extensions of EnumOptions.
-func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomEnumOptions) }) {
-		return nil, nil
+		return nil
 	}
-	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -7382,6 +7652,8 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
+	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	subPathIdx := map[string]int32{}
 
 	type enumOptKey struct {
 		enum *descriptorpb.EnumDescriptorProto
@@ -7486,34 +7758,23 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 					continue
 				}
-				if subFieldNums[name] == nil {
-					subFieldNums[name] = map[int32]bool{}
-				}
-				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
 				}
 
 				var leafFieldDesc *descriptorpb.FieldDescriptorProto
+				var resolvedSubFields []*descriptorpb.FieldDescriptorProto
 				valid := true
 				sciPathOffset := len(opt.SCILoc.Path) - len(opt.SubFieldPath)
 				for i, seg := range opt.SubFieldPath {
-					fields, ok := msgFieldMap[currentTypeName]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, currentTypeName, opt.InnerName))
+					subFieldDesc := lookupOptionSegment(currentTypeName, seg, fd.GetPackage(), msgFieldMap, extByExtendee)
+					if subFieldDesc == nil {
+						errs = append(errs, unknownSubOptionError(name, opt.NameTok, opt.ParenName, opt.SubFieldPath, i))
 						valid = false
 						break
 					}
-					subFieldDesc, ok := fields[seg]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, seg, currentTypeName))
-						valid = false
-						break
-					}
-					if opt.SCILoc != nil {
-						opt.SCILoc.Path[sciPathOffset+i] = subFieldDesc.GetNumber()
-					}
+					resolvedSubFields = append(resolvedSubFields, subFieldDesc)
 					if i == len(opt.SubFieldPath)-1 {
 						leafFieldDesc = subFieldDesc
 					} else {
@@ -7527,9 +7788,18 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 				if !valid {
 					continue
 				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				if opt.SCILoc != nil {
+					opt.SCILoc.Path = subPathSourceLocation(opt.SCILoc.Path[:sciPathOffset], resolvedSubFields, name, subPathIdx)
+				}
+				var leafBytes []byte
+				var err error
+				if opt.AggregateFields != nil {
+					leafBytes, err = encodeAggregateOption(leafFieldDesc, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
+				} else {
+					leafBytes, err = encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				}
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+					errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, leafFieldDesc.GetName()))
 					continue
 				}
 
@@ -7540,25 +7810,18 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 						parentTypeName = parentTypeName[1:]
 					}
 					for j := 0; j < i; j++ {
-						parentFields := msgFieldMap[parentTypeName]
-						parentField := parentFields[opt.SubFieldPath[j]]
+						parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[j], fd.GetPackage(), msgFieldMap, extByExtendee)
 						nextType := parentField.GetTypeName()
 						if strings.HasPrefix(nextType, ".") {
 							nextType = nextType[1:]
 						}
 						parentTypeName = nextType
 					}
-					parentFields := msgFieldMap[parentTypeName]
-					parentField := parentFields[opt.SubFieldPath[i]]
-					var wrapper []byte
-					wrapper = protowire.AppendTag(wrapper, protowire.Number(parentField.GetNumber()), protowire.BytesType)
-					wrapper = protowire.AppendBytes(wrapper, encoded)
-					encoded = wrapper
+					parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[i], fd.GetPackage(), msgFieldMap, extByExtendee)
+					encoded = appendSubmessage(nil, parentField, encoded)
 				}
 
-				var rawBytes []byte
-				rawBytes = protowire.AppendTag(rawBytes, protowire.Number(ext.GetNumber()), protowire.BytesType)
-				rawBytes = protowire.AppendBytes(rawBytes, encoded)
+				rawBytes := appendSubmessage(nil, ext, encoded)
 
 				opt.Enum.Options.ProtoReflect().SetUnknown(
 					append(opt.Enum.Options.ProtoReflect().GetUnknown(), rawBytes...))
@@ -7568,7 +7831,7 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -7581,7 +7844,7 @@ func resolveCustomEnumOptions(orderedFiles []string, parsed map[string]*descript
 				append(opt.Enum.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs, subFieldNums
+	return errs
 }
 
 func collectEnumOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -7598,11 +7861,10 @@ func collectEnumOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN s
 
 // resolveCustomEnumValueOptions resolves parenthesized custom options on enum values
 // (e.g., HIGH = 1 [(display_name) = "High Priority"]) against extension definitions for EnumValueOptions.
-func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomEnumValueOptions) }) {
-		return nil, nil
+		return nil
 	}
-	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -7631,6 +7893,8 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
+	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	subPathIdx := map[string]int32{}
 
 	type evOptKey struct {
 		ev   *descriptorpb.EnumValueDescriptorProto
@@ -7735,34 +7999,23 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 					continue
 				}
-				if subFieldNums[name] == nil {
-					subFieldNums[name] = map[int32]bool{}
-				}
-				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
 				}
 
 				var leafFieldDesc *descriptorpb.FieldDescriptorProto
+				var resolvedSubFields []*descriptorpb.FieldDescriptorProto
 				valid := true
 				sciPathOffset := len(opt.SCILoc.Path) - len(opt.SubFieldPath)
 				for i, seg := range opt.SubFieldPath {
-					fields, ok := msgFieldMap[currentTypeName]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, currentTypeName, opt.InnerName))
+					subFieldDesc := lookupOptionSegment(currentTypeName, seg, fd.GetPackage(), msgFieldMap, extByExtendee)
+					if subFieldDesc == nil {
+						errs = append(errs, unknownSubOptionError(name, opt.NameTok, opt.ParenName, opt.SubFieldPath, i))
 						valid = false
 						break
 					}
-					subFieldDesc, ok := fields[seg]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, seg, currentTypeName))
-						valid = false
-						break
-					}
-					if opt.SCILoc != nil {
-						opt.SCILoc.Path[sciPathOffset+i] = subFieldDesc.GetNumber()
-					}
+					resolvedSubFields = append(resolvedSubFields, subFieldDesc)
 					if i == len(opt.SubFieldPath)-1 {
 						leafFieldDesc = subFieldDesc
 					} else {
@@ -7776,9 +8029,18 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 				if !valid {
 					continue
 				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				if opt.SCILoc != nil {
+					opt.SCILoc.Path = subPathSourceLocation(opt.SCILoc.Path[:sciPathOffset], resolvedSubFields, name, subPathIdx)
+				}
+				var leafBytes []byte
+				var err error
+				if opt.AggregateFields != nil {
+					leafBytes, err = encodeAggregateOption(leafFieldDesc, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
+				} else {
+					leafBytes, err = encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				}
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+					errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, leafFieldDesc.GetName()))
 					continue
 				}
 
@@ -7789,25 +8051,18 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 						parentTypeName = parentTypeName[1:]
 					}
 					for j := 0; j < i; j++ {
-						parentFields := msgFieldMap[parentTypeName]
-						parentField := parentFields[opt.SubFieldPath[j]]
+						parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[j], fd.GetPackage(), msgFieldMap, extByExtendee)
 						nextType := parentField.GetTypeName()
 						if strings.HasPrefix(nextType, ".") {
 							nextType = nextType[1:]
 						}
 						parentTypeName = nextType
 					}
-					parentFields := msgFieldMap[parentTypeName]
-					parentField := parentFields[opt.SubFieldPath[i]]
-					var wrapper []byte
-					wrapper = protowire.AppendTag(wrapper, protowire.Number(parentField.GetNumber()), protowire.BytesType)
-					wrapper = protowire.AppendBytes(wrapper, encoded)
-					encoded = wrapper
+					parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[i], fd.GetPackage(), msgFieldMap, extByExtendee)
+					encoded = appendSubmessage(nil, parentField, encoded)
 				}
 
-				var rawBytes []byte
-				rawBytes = protowire.AppendTag(rawBytes, protowire.Number(ext.GetNumber()), protowire.BytesType)
-				rawBytes = protowire.AppendBytes(rawBytes, encoded)
+				rawBytes := appendSubmessage(nil, ext, encoded)
 
 				opt.EnumValue.Options.ProtoReflect().SetUnknown(
 					append(opt.EnumValue.Options.ProtoReflect().GetUnknown(), rawBytes...))
@@ -7817,7 +8072,7 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -7830,7 +8085,7 @@ func resolveCustomEnumValueOptions(orderedFiles []string, parsed map[string]*des
 				append(opt.EnumValue.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs, subFieldNums
+	return errs
 }
 
 func collectEnumValueOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -7847,11 +8102,10 @@ func collectEnumValueOptionsExtensions(msg *descriptorpb.DescriptorProto, parent
 
 // resolveCustomOneofOptions resolves parenthesized custom options on oneofs
 // (e.g., option (oneof_label) = "primary";) against extensions of OneofOptions.
-func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomOneofOptions) }) {
-		return nil, nil
+		return nil
 	}
-	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -7880,6 +8134,8 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
+	messageSets := collectMessageSetTypes(orderedFiles, parsed)
+	subPathIdx := map[string]int32{}
 
 	type oneofOptKey struct {
 		oneof *descriptorpb.OneofDescriptorProto
@@ -7984,34 +8240,23 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 					continue
 				}
-				if subFieldNums[name] == nil {
-					subFieldNums[name] = map[int32]bool{}
-				}
-				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
 				}
 
 				var leafFieldDesc *descriptorpb.FieldDescriptorProto
+				var resolvedSubFields []*descriptorpb.FieldDescriptorProto
 				valid := true
 				sciPathOffset := len(opt.SCILoc.Path) - len(opt.SubFieldPath)
 				for i, seg := range opt.SubFieldPath {
-					fields, ok := msgFieldMap[currentTypeName]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, currentTypeName, opt.InnerName))
+					subFieldDesc := lookupOptionSegment(currentTypeName, seg, fd.GetPackage(), msgFieldMap, extByExtendee)
+					if subFieldDesc == nil {
+						errs = append(errs, unknownSubOptionError(name, opt.NameTok, opt.ParenName, opt.SubFieldPath, i))
 						valid = false
 						break
 					}
-					subFieldDesc, ok := fields[seg]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, seg, currentTypeName))
-						valid = false
-						break
-					}
-					if opt.SCILoc != nil {
-						opt.SCILoc.Path[sciPathOffset+i] = subFieldDesc.GetNumber()
-					}
+					resolvedSubFields = append(resolvedSubFields, subFieldDesc)
 					if i == len(opt.SubFieldPath)-1 {
 						leafFieldDesc = subFieldDesc
 					} else {
@@ -8025,9 +8270,18 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 				if !valid {
 					continue
 				}
-				leafBytes, err := encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				if opt.SCILoc != nil {
+					opt.SCILoc.Path = subPathSourceLocation(opt.SCILoc.Path[:sciPathOffset], resolvedSubFields, name, subPathIdx)
+				}
+				var leafBytes []byte
+				var err error
+				if opt.AggregateFields != nil {
+					leafBytes, err = encodeAggregateOption(leafFieldDesc, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
+				} else {
+					leafBytes, err = encodeCustomOptionValue(leafFieldDesc, opt.Value, opt.ValueType, enumValueNumbers)
+				}
 				if err != nil {
-					errs = append(errs, fmt.Sprintf("%s: error encoding custom option: %v", name, err))
+					errs = append(errs, formatAggregateError(err, name, opt.AggregateBraceTok, leafFieldDesc.GetName()))
 					continue
 				}
 
@@ -8038,25 +8292,18 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 						parentTypeName = parentTypeName[1:]
 					}
 					for j := 0; j < i; j++ {
-						parentFields := msgFieldMap[parentTypeName]
-						parentField := parentFields[opt.SubFieldPath[j]]
+						parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[j], fd.GetPackage(), msgFieldMap, extByExtendee)
 						nextType := parentField.GetTypeName()
 						if strings.HasPrefix(nextType, ".") {
 							nextType = nextType[1:]
 						}
 						parentTypeName = nextType
 					}
-					parentFields := msgFieldMap[parentTypeName]
-					parentField := parentFields[opt.SubFieldPath[i]]
-					var wrapper []byte
-					wrapper = protowire.AppendTag(wrapper, protowire.Number(parentField.GetNumber()), protowire.BytesType)
-					wrapper = protowire.AppendBytes(wrapper, encoded)
-					encoded = wrapper
+					parentField := lookupOptionSegment(parentTypeName, opt.SubFieldPath[i], fd.GetPackage(), msgFieldMap, extByExtendee)
+					encoded = appendSubmessage(nil, parentField, encoded)
 				}
 
-				var rawBytes []byte
-				rawBytes = protowire.AppendTag(rawBytes, protowire.Number(ext.GetNumber()), protowire.BytesType)
-				rawBytes = protowire.AppendBytes(rawBytes, encoded)
+				rawBytes := appendSubmessage(nil, ext, encoded)
 
 				opt.Oneof.Options.ProtoReflect().SetUnknown(
 					append(opt.Oneof.Options.ProtoReflect().GetUnknown(), rawBytes...))
@@ -8066,7 +8313,7 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 			var rawBytes []byte
 			var err error
 			if opt.AggregateFields != nil {
-				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
+				rawBytes, err = encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
 			} else {
 				rawBytes, err = encodeCustomOptionValue(ext, opt.Value, opt.ValueType, enumValueNumbers)
 			}
@@ -8079,7 +8326,7 @@ func resolveCustomOneofOptions(orderedFiles []string, parsed map[string]*descrip
 				append(opt.Oneof.Options.ProtoReflect().GetUnknown(), rawBytes...))
 		}
 	}
-	return errs, subFieldNums
+	return errs
 }
 
 func collectOneofOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -8096,11 +8343,10 @@ func collectOneofOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN 
 
 // resolveCustomExtRangeOptions resolves parenthesized custom options on extension ranges
 // (e.g., extensions 100 to 199 [(my_annotation) = "annotated"];) against extension definitions.
-func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) ([]string, map[string]map[int32]bool) {
+func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
 	if !hasAnyCustomOpts(orderedFiles, parseResults, func(pr *parser.ParseResult) int { return len(pr.CustomExtRangeOptions) }) {
-		return nil, nil
+		return nil
 	}
-	subFieldNums := map[string]map[int32]bool{}
 	var allExts []fileOptExtInfo
 	for _, name := range orderedFiles {
 		fd := parsed[name]
@@ -8129,6 +8375,7 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 		collectMsgFields(fd.GetMessageType(), prefix, msgFieldMap)
 	}
 	extByExtendee := collectExtensionsByExtendee(orderedFiles, parsed)
+	messageSets := collectMessageSetTypes(orderedFiles, parsed)
 
 	type extRangeOptKey struct {
 		rng  *descriptorpb.DescriptorProto_ExtensionRange
@@ -8242,10 +8489,6 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 						name, opt.NameTok.Line+1, opt.NameTok.Column+1, opt.ParenName))
 					continue
 				}
-				if subFieldNums[name] == nil {
-					subFieldNums[name] = map[int32]bool{}
-				}
-				subFieldNums[name][ext.GetNumber()] = true
 				currentTypeName := ext.GetTypeName()
 				if strings.HasPrefix(currentTypeName, ".") {
 					currentTypeName = currentTypeName[1:]
@@ -8253,15 +8496,9 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 				var leafFieldDesc *descriptorpb.FieldDescriptorProto
 				valid := true
 				for i, seg := range opt.SubFieldPath {
-					fields, ok := msgFieldMap[currentTypeName]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown message type %s for extension %s", name, currentTypeName, opt.InnerName))
-						valid = false
-						break
-					}
-					subFieldDesc, ok := fields[seg]
-					if !ok {
-						errs = append(errs, fmt.Sprintf("%s: unknown field %q in message type %s", name, seg, currentTypeName))
+					subFieldDesc := lookupOptionSegment(currentTypeName, seg, fd.GetPackage(), msgFieldMap, extByExtendee)
+					if subFieldDesc == nil {
+						errs = append(errs, unknownSubOptionError(name, opt.NameTok, opt.ParenName, opt.SubFieldPath, i))
 						valid = false
 						break
 					}
@@ -8287,7 +8524,13 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 				if opt.Negative {
 					val = "-" + val
 				}
-				leafBytes, encErr := encodeCustomOptionValue(leafFieldDesc, val, opt.ValueType, enumValueNumbers)
+				var leafBytes []byte
+				var encErr error
+				if opt.AggregateFields != nil {
+					leafBytes, encErr = encodeAggregateOption(leafFieldDesc, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
+				} else {
+					leafBytes, encErr = encodeCustomOptionValue(leafFieldDesc, val, opt.ValueType, enumValueNumbers)
+				}
 				if encErr != nil {
 					errs = append(errs, fmt.Sprintf("%s: %s", name, encErr.Error()))
 					continue
@@ -8307,20 +8550,15 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 						parentTypeName = nextType
 					}
 					parentField := msgFieldMap[parentTypeName][opt.SubFieldPath[i]]
-					var wrapper []byte
-					wrapper = protowire.AppendTag(wrapper, protowire.Number(parentField.GetNumber()), protowire.BytesType)
-					wrapper = protowire.AppendBytes(wrapper, encoded)
-					encoded = wrapper
+					encoded = appendSubmessage(nil, parentField, encoded)
 				}
-				var rawBytes []byte
-				rawBytes = protowire.AppendTag(rawBytes, protowire.Number(ext.GetNumber()), protowire.BytesType)
-				rawBytes = protowire.AppendBytes(rawBytes, encoded)
+				rawBytes := appendSubmessage(nil, ext, encoded)
 				for _, rng := range opt.Ranges {
 					rng.Options.ProtoReflect().SetUnknown(
 						append(rng.Options.ProtoReflect().GetUnknown(), rawBytes...))
 				}
 			} else if opt.AggregateFields != nil {
-				rawBytes, aggErr := encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee)
+				rawBytes, aggErr := encodeAggregateOption(ext, opt.AggregateFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
 				if aggErr != nil {
 					if ade, ok := aggErr.(*aggregateDupFieldError); ok {
 						errs = append(errs, formatAggregateError(ade, name, opt.AggregateBraceTok, opt.ParenName))
@@ -8350,7 +8588,7 @@ func resolveCustomExtRangeOptions(orderedFiles []string, parsed map[string]*desc
 			}
 		}
 	}
-	return errs, subFieldNums
+	return errs
 }
 
 func collectExtRangeOptionsExtensions(msg *descriptorpb.DescriptorProto, parentFQN string, exts *[]fileOptExtInfo) {
@@ -8595,7 +8833,7 @@ func collectMsgExtensionsByExtendee(msgs []*descriptorpb.DescriptorProto, prefix
 }
 
 // encodeAggregateOption encodes an aggregate (message literal) custom option value.
-func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []parser.AggregateField, msgFieldMap map[string]map[string]*descriptorpb.FieldDescriptorProto, enumValueNumbers map[string]map[string]int32, extByExtendee map[string]map[string]*descriptorpb.FieldDescriptorProto) ([]byte, error) {
+func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []parser.AggregateField, msgFieldMap map[string]map[string]*descriptorpb.FieldDescriptorProto, enumValueNumbers map[string]map[string]int32, extByExtendee map[string]map[string]*descriptorpb.FieldDescriptorProto, messageSets map[string]bool) ([]byte, error) {
 	typeName := ext.GetTypeName()
 	if strings.HasPrefix(typeName, ".") {
 		typeName = typeName[1:]
@@ -8641,9 +8879,12 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 		}
 		if len(af.SubFields) > 0 {
 			// Nested message literal — recurse
-			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
+			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
 			if err != nil {
 				return nil, err
+			}
+			if af.IsExtension && messageSets[typeName] {
+				subBytes = messageSetItem(subField.GetNumber(), subBytes)
 			}
 			entries = append(entries, encodedEntry{subField.GetNumber(), subBytes})
 		} else {
@@ -8683,7 +8924,7 @@ func encodeAggregateOption(ext *descriptorpb.FieldDescriptorProto, aggFields []p
 }
 
 // encodeAggregateFields encodes nested message literal sub-fields for a TYPE_MESSAGE field.
-func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields []parser.AggregateField, msgFieldMap map[string]map[string]*descriptorpb.FieldDescriptorProto, enumValueNumbers map[string]map[string]int32, extByExtendee map[string]map[string]*descriptorpb.FieldDescriptorProto) ([]byte, error) {
+func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields []parser.AggregateField, msgFieldMap map[string]map[string]*descriptorpb.FieldDescriptorProto, enumValueNumbers map[string]map[string]int32, extByExtendee map[string]map[string]*descriptorpb.FieldDescriptorProto, messageSets map[string]bool) ([]byte, error) {
 	typeName := field.GetTypeName()
 	if strings.HasPrefix(typeName, ".") {
 		typeName = typeName[1:]
@@ -8717,7 +8958,7 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 				TypeName: proto.String("." + msgType),
 				Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
 			}
-			valBytes, err := encodeAggregateFields(syntheticField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
+			valBytes, err := encodeAggregateFields(syntheticField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
 			if err != nil {
 				return nil, err
 			}
@@ -8751,9 +8992,12 @@ func encodeAggregateFields(field *descriptorpb.FieldDescriptorProto, aggFields [
 			return nil, &aggregateTrailingTokenError{fieldType: subField.GetType(), token: af.TrailingCommaToken}
 		}
 		if len(af.SubFields) > 0 {
-			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee)
+			subBytes, err := encodeAggregateFields(subField, af.SubFields, msgFieldMap, enumValueNumbers, extByExtendee, messageSets)
 			if err != nil {
 				return nil, err
+			}
+			if af.IsExtension && messageSets[typeName] {
+				subBytes = messageSetItem(subField.GetNumber(), subBytes)
 			}
 			entries = append(entries, encodedEntry{subField.GetNumber(), subBytes})
 		} else {
@@ -9809,36 +10053,6 @@ func extractBinaryMapKeyStr(entryBytes []byte) string {
 	return ""
 }
 
-// sortOptionsUnknownFields sorts unknown fields on all Options messages in all
-// parsed files, so that custom extension options appear in field-number order
-// (matching C++ protoc behavior).
-func sortOptionsUnknownFields(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto) {
-	for _, name := range orderedFiles {
-		fd := parsed[name]
-		sortFDOptionsUnknownFields(fd)
-	}
-}
-
-// sortFDOptionsUnknownFields sorts unknown fields on all Options messages in fd.
-func sortFDOptionsUnknownFields(fd *descriptorpb.FileDescriptorProto) {
-	sortProtoUnknown(fd.GetOptions())
-	for _, msg := range fd.GetMessageType() {
-		sortMessageOptionsDeep(msg)
-	}
-	for _, e := range fd.GetEnumType() {
-		sortEnumOptions(e)
-	}
-	for _, ext := range fd.GetExtension() {
-		sortProtoUnknown(ext.GetOptions())
-	}
-	for _, svc := range fd.GetService() {
-		sortProtoUnknown(svc.GetOptions())
-		for _, m := range svc.GetMethod() {
-			sortProtoUnknown(m.GetOptions())
-		}
-	}
-}
-
 // hasOptionsUnknowns returns true if any Options message in fd has unknown fields.
 func hasOptionsUnknowns(fd *descriptorpb.FileDescriptorProto) bool {
 	if hasUnknown(fd.GetOptions()) {
@@ -9926,48 +10140,6 @@ func hasUnknown(m proto.Message) bool {
 		return false
 	}
 	return len(m.ProtoReflect().GetUnknown()) > 0
-}
-
-func sortMessageOptionsDeep(msg *descriptorpb.DescriptorProto) {
-	sortProtoUnknown(msg.GetOptions())
-	for _, f := range msg.GetField() {
-		sortProtoUnknown(f.GetOptions())
-	}
-	for _, o := range msg.GetOneofDecl() {
-		sortProtoUnknown(o.GetOptions())
-	}
-	for _, e := range msg.GetEnumType() {
-		sortEnumOptions(e)
-	}
-	for _, ext := range msg.GetExtension() {
-		sortProtoUnknown(ext.GetOptions())
-	}
-	for _, rng := range msg.GetExtensionRange() {
-		sortProtoUnknown(rng.GetOptions())
-	}
-	for _, nested := range msg.GetNestedType() {
-		sortMessageOptionsDeep(nested)
-	}
-}
-
-func sortEnumOptions(e *descriptorpb.EnumDescriptorProto) {
-	sortProtoUnknown(e.GetOptions())
-	for _, v := range e.GetValue() {
-		sortProtoUnknown(v.GetOptions())
-	}
-}
-
-func sortProtoUnknown(m proto.Message) {
-	if m == nil {
-		return
-	}
-	ref := m.ProtoReflect()
-	raw := ref.GetUnknown()
-	if len(raw) == 0 {
-		return
-	}
-	sorted := sortUnknownFields(raw)
-	ref.SetUnknown(sorted)
 }
 
 // decodeExt holds info about an extension field for --decode mode.

@@ -1,6 +1,7 @@
 # Binaries
 cmd/protoc-go/protoc-go
 tools/protoc-gen-dump/protoc-gen-dump
+tools/protoc-gen-mock/protoc-gen-mock
 tools/protoc-bin/protoc
 tools/protoc-bin/include/
 
@@ -13,6 +14,7 @@ results/
 testdata/*/*/request.json
 testdata/*/*/request.pb
 testdata/*/*/summary.txt
+testdata/*/*/parameter.txt
 
 # Same artifacts, written into the repo root by scripts/test. Their contents
 # shift whenever the binary is rebuilt (prototext varies its spacing on
@@ -21,6 +23,7 @@ testdata/*/*/summary.txt
 /request.json
 /request.pb
 /summary.txt
+/parameter.txt
 /cpp_stderr.tmp
 
 # Performance harness: generated corpus + results
