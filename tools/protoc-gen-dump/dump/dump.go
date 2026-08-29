@@ -17,19 +17,24 @@ import (
 	pluginpb "google.golang.org/protobuf/types/pluginpb"
 )
 
+// SkipJSONEnv suppresses the request.json dump when set to a non-empty value.
+// Everything the test harness actually compares is still written.
+const SkipJSONEnv = "PROTOC_GEN_DUMP_SKIP_JSON"
+
 // NewPlugin returns a protoc-gen-dump plugin that can be used in-process
 // with [protoc.CompileResult.RunLibraryPlugin].
 //
 // The plugin uses the parameter string as the output directory, writing
 // request.json, request.pb, and summary.txt — the same files that the
-// protoc-gen-dump binary writes.
+// protoc-gen-dump binary writes, and honouring SkipJSONEnv the same way.
 func NewPlugin() protoc.Plugin {
 	return protoc.PluginFunc(Generate)
 }
 
 // Generate processes a CodeGeneratorRequest the same way the protoc-gen-dump
 // binary does: it writes request.json, request.pb, and summary.txt to the
-// directory specified in the request parameter.
+// directory specified in the request parameter. request.json is skipped when
+// SkipJSONEnv is set.
 func Generate(req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error) {
 	outputDir := req.GetParameter()
 	if outputDir == "" {
@@ -38,22 +43,27 @@ func Generate(req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorRespon
 		outputDir = outputDir[idx+1:]
 	}
 
-	// Marshal to deterministic JSON
-	marshaler := protojson.MarshalOptions{
-		Multiline: true,
-		Indent:    "  ",
-	}
-	jsonBytes, err := marshaler.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshaling to JSON: %w", err)
-	}
-
-	outputPath := filepath.Join(outputDir, "request.json")
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating output directory: %w", err)
 	}
-	if err := os.WriteFile(outputPath, jsonBytes, 0o644); err != nil {
-		return nil, fmt.Errorf("writing output: %w", err)
+
+	// request.json is a debugging aid, not a comparison artifact: the harness
+	// diffs request.pb, summary.txt and parameter.txt and never reads this. On
+	// the big bench tiers rendering it costs an order of magnitude more than
+	// the compile it surrounds, so the perf harness sets SkipJSONEnv rather
+	// than time the plugin instead of the compiler.
+	if os.Getenv(SkipJSONEnv) == "" {
+		marshaler := protojson.MarshalOptions{
+			Multiline: true,
+			Indent:    "  ",
+		}
+		jsonBytes, err := marshaler.Marshal(req)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling to JSON: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(outputDir, "request.json"), jsonBytes, 0o644); err != nil {
+			return nil, fmt.Errorf("writing output: %w", err)
+		}
 	}
 
 	// Record the raw parameter string protoc sent. The harness compares this
@@ -98,43 +108,43 @@ func Generate(req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorRespon
 
 // BuildSummary creates a human-readable text summary of a CodeGeneratorRequest.
 func BuildSummary(req *pluginpb.CodeGeneratorRequest) string {
-	var s string
-	s += fmt.Sprintf("files_to_generate: %v\n", req.GetFileToGenerate())
-	s += fmt.Sprintf("parameter: %q\n", req.GetParameter())
-	s += fmt.Sprintf("compiler_version: %v\n", req.GetCompilerVersion())
-	s += fmt.Sprintf("proto_file_count: %d\n", len(req.GetProtoFile()))
-	s += fmt.Sprintf("source_file_descriptor_count: %d\n", len(req.GetSourceFileDescriptors()))
-	s += "\n"
+	var b strings.Builder
+	fmt.Fprintf(&b, "files_to_generate: %v\n", req.GetFileToGenerate())
+	fmt.Fprintf(&b, "parameter: %q\n", req.GetParameter())
+	fmt.Fprintf(&b, "compiler_version: %v\n", req.GetCompilerVersion())
+	fmt.Fprintf(&b, "proto_file_count: %d\n", len(req.GetProtoFile()))
+	fmt.Fprintf(&b, "source_file_descriptor_count: %d\n", len(req.GetSourceFileDescriptors()))
+	b.WriteString("\n")
 	for i, f := range req.GetProtoFile() {
-		s += fmt.Sprintf("proto_file[%d]: %s (package=%q, syntax=%q)\n", i, f.GetName(), f.GetPackage(), f.GetSyntax())
+		fmt.Fprintf(&b, "proto_file[%d]: %s (package=%q, syntax=%q)\n", i, f.GetName(), f.GetPackage(), f.GetSyntax())
 
 		for _, m := range f.GetMessageType() {
-			s += fmt.Sprintf("  message: %s\n", m.GetName())
+			fmt.Fprintf(&b, "  message: %s\n", m.GetName())
 			for _, field := range m.GetField() {
-				s += fmt.Sprintf("    field: %s (number=%d, type=%v, label=%v)\n",
+				fmt.Fprintf(&b, "    field: %s (number=%d, type=%v, label=%v)\n",
 					field.GetName(), field.GetNumber(), field.GetType(), field.GetLabel())
 			}
 		}
 
 		for _, e := range f.GetEnumType() {
-			s += fmt.Sprintf("  enum: %s\n", e.GetName())
+			fmt.Fprintf(&b, "  enum: %s\n", e.GetName())
 			for _, v := range e.GetValue() {
-				s += fmt.Sprintf("    value: %s = %d\n", v.GetName(), v.GetNumber())
+				fmt.Fprintf(&b, "    value: %s = %d\n", v.GetName(), v.GetNumber())
 			}
 		}
 
 		for _, svc := range f.GetService() {
-			s += fmt.Sprintf("  service: %s\n", svc.GetName())
+			fmt.Fprintf(&b, "  service: %s\n", svc.GetName())
 			for _, m := range svc.GetMethod() {
-				s += fmt.Sprintf("    rpc: %s(%s) returns (%s)\n",
+				fmt.Fprintf(&b, "    rpc: %s(%s) returns (%s)\n",
 					m.GetName(), m.GetInputType(), m.GetOutputType())
 			}
 		}
 
 		if sci := f.GetSourceCodeInfo(); sci != nil {
-			s += fmt.Sprintf("  source_code_info_locations: %d\n", len(sci.GetLocation()))
+			fmt.Fprintf(&b, "  source_code_info_locations: %d\n", len(sci.GetLocation()))
 		}
 	}
 
-	return s
+	return b.String()
 }

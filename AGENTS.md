@@ -145,7 +145,7 @@ row: the whole vendored upstream corpus (`testdata/google/`, 53 files) compiled
 in a single invocation. The generated tiers are uniform by construction, so
 they say nothing about the mix a real project actually contains — imports and
 public imports, custom options, extensions, editions, generic services. That
-row is the one that does, and it is the honest headline number. It adds ~35s to
+row is the one that does, and it is the honest headline number. It adds ~10s to
 the run.
 
 Every row is gated on a clean compile from both compilers before it is timed: a
@@ -156,6 +156,16 @@ compile are dropped from the table with a reason rather than published. The
 import `google/protobuf/cpp_features.proto` or `java_features.proto`, which
 protoc ships, protoc-go does not embed and the corpus does not vendor), so a
 Go-only run without protoc installed drops it instead of benchmarking a subset.
+
+The `plugin` rows run protoc-gen-dump with `PROTOC_GEN_DUMP_SKIP_JSON=1`, which
+drops the plugin's `request.json` debugging dump (150MB on the `large` tier).
+Both compilers inherit the variable, so the row stays a fair comparison — it is
+simply one that measures the compilers rather than the fixture between them.
+That distinction is not cosmetic: while the fixture dominated a row, its cost
+sat on both sides of the ratio and dragged it toward 1.00, so `bench_large`
+published `0.38` (`go`) on `descriptor` and `0.97` (`tie`) on `plugin` for the
+same corpus. Anything added to protoc-gen-dump that is not a comparison
+artifact belongs behind that switch for the same reason.
 
 ```bash
 scripts/bench                 # C++ protoc vs Go protoc-go, human table
@@ -214,14 +224,18 @@ Shape and rough cost of a weekly run (measured on a 4-core box):
 | leg | wall | note |
 | --- | ---: | --- |
 | correctness, per shard | ~35s | ~1,370 of 5,497 comparisons |
-| performance | ~20min | `bench_large`/`plugin` alone is ~17min of it |
+| performance | ~2min | `bench_large`/`plugin`, the longest row, is ~30s of it |
 
-The performance leg is the critical path and sharding it does not help: one row
-(`bench_large` × `plugin`, 13 timed invocations of each compiler at ~40s each)
-sets the floor. Splitting a compiler's timing across machines is not an option —
-the go-vs-cpp comparison in a row is only meaningful when both halves ran on the
-same machine — so the only levers there are `--runs` or dropping the `large`
-tier from the weekly `--sizes`, both of which weaken the published evidence.
+Neither leg is worth sharding further, and the performance one is no longer the
+critical path. It used to run ~20 minutes, ~17 of them in a single row, but that
+row was never measuring a compiler: on `bench_large`/`plugin`, protoc-go
+compiled and shipped the whole request in 243ms and protoc-gen-dump then spent
+38.8s on it, 34.3s of that in a quadratic `s +=` loop building summary.txt.
+Sharding would have bought ~3 of those 20 minutes; fixing the fixture bought 18
+and un-diluted the ratios at the same time. Should the leg ever need splitting,
+note that a row's go and cpp halves must stay on one machine for its ratio to
+mean anything, and the tiers are meant to be read against each other as a
+size→latency curve, which spanning machines would spoil.
 
 A shard that finds real differences does not abort the run: `scripts/test` exits
 non-zero, the step is `continue-on-error`, and the merged `fail` status is
