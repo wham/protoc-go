@@ -191,7 +191,9 @@ CASES+=("google_corpus|$TESTS_DIR/google|google/protobuf/*.proto")
 # Variants: how each compiler is invoked.
 #   descriptor — pure compile + serialize, no plugin/disk noise
 #   plugin     — adds the protoc-gen-dump subprocess round-trip (the realistic
-#                mode: protoc almost always drives a protoc-gen-* plugin)
+#                mode: protoc almost always drives a protoc-gen-* plugin), with
+#                the plugin's debugging JSON dump switched off so the row
+#                measures the compilers rather than the fixture between them
 VARIANTS="descriptor plugin"
 
 # -- timing helpers -------------------------------------------------------
@@ -313,7 +315,12 @@ build_cmd() {
     plugin)
       local od="$OUT_DIR/dump_$(basename "$dir")_$(basename "$bin")"
       mkdir -p "$od"
-      echo "(cd '$dir' && '$bin' --plugin=protoc-gen-dump='$PROTOC_GEN_DUMP' --dump_out='$od' --dump_opt='$od' $INC_FLAG -I. $sources)"
+      # PROTOC_GEN_DUMP_SKIP_JSON keeps protoc-gen-dump from rendering its
+      # 150MB debugging JSON, which the correctness harness never reads and
+      # which on the big tiers costs far more than the compile being timed.
+      # Both compilers inherit it, so the row stays a fair comparison — it is
+      # simply one that measures the compilers rather than the fixture plugin.
+      echo "(cd '$dir' && PROTOC_GEN_DUMP_SKIP_JSON=1 '$bin' --plugin=protoc-gen-dump='$PROTOC_GEN_DUMP' --dump_out='$od' --dump_opt='$od' $INC_FLAG -I. $sources)"
       ;;
   esac
 }
