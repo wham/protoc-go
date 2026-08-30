@@ -521,7 +521,11 @@ compile_gate() {
   local out rc first
   out=$(eval "$1" 2>&1 >/dev/null); rc=$?
   [ $rc -eq 0 ] && return 0
-  first=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | head -1 | cut -c1-160)
+  # sed on a here-string rather than `grep | head`: an early-exiting reader
+  # would SIGPIPE the writer, and a compiler that failed loudly (the google
+  # corpus gives buf 677 lines of stderr) would print "grep: write error:
+  # Broken pipe" into the harness's own output.
+  first=$(sed -n '/[^[:space:]]/{s/^\(.\{0,160\}\).*/\1/p;q}' <<< "$out")
   [ -n "$first" ] || first="exit status $rc"
   echo "$first"
   return 1
