@@ -50,7 +50,7 @@ A [weekly run](.github/workflows/compliance.yml) compiles the same corpus with C
 <!-- BEGIN COMPLIANCE -->
 **5609 / 5609 comparisons produce byte-identical output to C++ protoc 36.0**
 
-Last verified 2026-08-28 · commit `29f40e1` · Go 1.23.12 on ubuntu24 · [run log](https://github.com/wham/protoc-go/actions/runs/33144917190)
+Last verified 2026-08-29 · commit `e30986b` · Go 1.23.12 on ubuntu24 · [run log](https://github.com/wham/protoc-go/actions/runs/33270684392)
 
 <details><summary>Per-suite results</summary>
 
@@ -79,28 +79,26 @@ Last verified 2026-08-28 · commit `29f40e1` · Go 1.23.12 on ubuntu24 · [run l
 
 <details><summary>Performance vs C++ protoc</summary>
 
-Across 12 compile cases: Go faster on 6, C++ faster on 3, tie on 3. A gap smaller than both the run-to-run noise and the tie margin counts as a tie, not a win.
+Across 14 compile cases: Go faster on 10, C++ faster on 4, tie on 0.
 
-| case | variant | C++ ms | Go ms | go/cpp | verdict |
-| --- | --- | ---: | ---: | ---: | --- |
-| startup_empty | descriptor | 1.42±0.06 | 2.23±0.20 | 1.57 | informational |
-| startup_empty | plugin | 3.92±0.11 | 4.81±0.22 | 1.23 | informational |
-| 01_basic_message | descriptor | 1.63±0.03 | 2.63±0.19 | 1.61 | cpp |
-| 01_basic_message | plugin | 5.10±0.21 | 6.06±0.24 | 1.19 | cpp |
-| bench_tiny | descriptor | 2.84±0.11 | 3.14±0.15 | 1.11 | cpp |
-| bench_tiny | plugin | 12.98±0.21 | 13.56±0.48 | 1.04 | tie |
-| bench_small | descriptor | 14.67±0.32 | 8.65±0.33 | 0.59 | go |
-| bench_small | plugin | 144.09±3.65 | 131.18±3.56 | 0.91 | go |
-| bench_medium | descriptor | 78.70±2.29 | 41.31±2.60 | 0.52 | go |
-| bench_medium | plugin | 2239.16±49.81 | 2193.71±40.12 | 0.98 | tie |
-| bench_large | descriptor | 451.85±7.95 | 171.04±2.89 | 0.38 | go |
-| bench_large | plugin | 16729.26±430.22 | 16178.54±252.86 | 0.97 | tie |
-| 329_large_stress | descriptor | 76.52±8.91 | 40.42±1.80 | 0.53 | go |
-| 329_large_stress | plugin | 2203.75±35.45 | 2107.93±37.51 | 0.96 | go |
-
-`startup_empty` is process launch cost, not compilation, and is excluded
-from the tally. Timings come from the run above, on a shared machine, so
-read them as a trend, not a lab result.
+| case | variant | C++ ms | Go ms | go/cpp | C++ peak MB | Go peak MB | go/cpp |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| startup_empty | descriptor | 1.37±0.08 | 1.98±0.07 | 1.44 | 5 | 6.8 | 1.36 |
+| startup_empty | plugin | 3.37±0.13 | 4.04±0.10 | 1.20 | 5.5 | 7 | 1.26 |
+| 01_basic_message | descriptor | 1.56±0.05 | 2.30±0.23 | 1.47 | 5 | 9.1 | 1.81 |
+| 01_basic_message | plugin | 3.77±0.10 | 4.77±0.12 | 1.27 | 5.5 | 9.1 | 1.64 |
+| bench_tiny | descriptor | 2.77±0.06 | 2.99±0.10 | 1.08 | 5.5 | 9.5 | 1.71 |
+| bench_tiny | plugin | 6.89±0.15 | 7.61±0.28 | 1.11 | 7.6 | 9.3 | 1.24 |
+| bench_small | descriptor | 13.80±0.26 | 6.90±0.24 | 0.50 | 10.3 | 13.4 | 1.31 |
+| bench_small | plugin | 46.47±2.26 | 30.93±0.82 | 0.67 | 18.9 | 18.8 | 1.00 |
+| bench_medium | descriptor | 75.03±2.87 | 23.01±0.76 | 0.31 | 34.6 | 31.7 | 0.92 |
+| bench_medium | plugin | 254.70±7.43 | 149.81±4.64 | 0.59 | 74.2 | 72 | 0.97 |
+| bench_large | descriptor | 445.34±12.93 | 97.95±3.54 | 0.22 | 138.7 | 108.5 | 0.78 |
+| bench_large | plugin | 1254.47±16.19 | 655.84±9.16 | 0.52 | 311.4 | 311.4 | 1.00 |
+| 329_large_stress | descriptor | 75.42±3.08 | 23.21±0.68 | 0.31 | 34.6 | 31.7 | 0.92 |
+| 329_large_stress | plugin | 259.25±5.34 | 153.77±7.04 | 0.59 | 74 | 74.1 | 1.00 |
+| google_corpus | descriptor | 92.15±1.90 | 33.30±0.85 | 0.36 | 17.5 | 40.8 | 2.34 |
+| google_corpus | plugin | 208.16±2.83 | 100.52±2.54 | 0.48 | 43.7 | 43.8 | 1.00 |
 
 </details>
 <!-- END COMPLIANCE -->
