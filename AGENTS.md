@@ -37,7 +37,7 @@ This is a port of the Protocol Buffers compiler (`protoc`) from C++ to Go. The G
     ├── render-readme       # Renders harness output into the README compliance block
     ├── release-notes       # Renders the compliance header for a GitHub release
     ├── next-version        # Semver arithmetic over existing tags
-    ├── gen-large-stress    # Generates scaled stress/bench corpus (tiers)
+    ├── gen-large-stress    # Generates scaled stress/bench corpus (tiers + multi)
     └── find-protoc         # Locates system C++ protoc
 ```
 
@@ -150,7 +150,11 @@ about buf. See [Comparing against buf](#comparing-against-buf) for what is and
 is not comparable.
 
 The corpus is the size-scaled generated tiers (which isolate how each compiler
-scales, since only one dimension changes between them) plus one `google_corpus`
+scales, since only one dimension changes between them), one `bench_multi` row
+(the same generator emitting 42 files in one flat directory with a real import
+graph, since every scaled tier is a single file and so measures nothing about
+import resolution or a compiler's ability to parse files concurrently — all
+three produce byte-identical descriptor sets on it), plus one `google_corpus`
 row: the whole vendored upstream corpus (`testdata/google/`, 53 files) compiled
 in a single invocation. The generated tiers are uniform by construction, so
 they say nothing about the mix a real project actually contains — imports and
@@ -191,11 +195,16 @@ scripts/bench --no-buf        # skip buf even when it is installed
 Each timed row also reports peak memory (max RSS, median of `--mem-runs` runs,
 default 3) for every compiler, read from the kernel's rusage accounting via
 GNU/BSD `time` or a python3 fallback — the plugin variant includes the plugin
-subprocess on every side. The tables show raw ratios against C++ protoc for
-time and memory rather than verdict columns; the noise-aware wall-clock
-verdicts are still computed into `bench.json` per row (`verdict` for go/cpp,
-`verdict_buf_cpp`, `verdict_go_buf`), where the README tally consumes them.
-Memory rows read `n/a` when no reader is available.
+subprocess on every side. The tables show the raw go/cpp ratio for time and
+memory rather than verdict columns; the noise-aware wall-clock verdict is still
+computed into `bench.json` per row as `verdict`, where the README tally
+consumes it. Memory rows read `n/a` when no reader is available.
+
+**buf is reported, not scored.** It carries its own time and memory columns but
+no ratio against C++ protoc, and no verdict — there is no `buf_ratio` or
+`verdict_buf_*` in `bench.json`. It is a third implementation offered for
+reference, and readers can divide for themselves; the ranking machinery is
+reserved for the go/cpp pair, which is the one this project is a port of.
 
 The same rusage read also records CPU time (user+sys) per row as `*_cpu_ms` in
 `bench.json`. It is deliberately kept out of the tables and deliberately
@@ -210,7 +219,7 @@ There is exactly one performance table, and it looks the same everywhere it is
 read — the run's own log, `results-bench/bench.md` (which the weekly compliance
 pull request quotes), and the README block:
 
-| case | variant | cpp ms(±sd) | go ms(±sd) | buf ms(±sd) | go/cpp | buf/cpp | cpp peak MB | go peak MB | buf peak MB | go/cpp | buf/cpp |
+| case | variant | cpp ms(±sd) | go ms(±sd) | buf ms(±sd) | go/cpp | cpp peak MB | go peak MB | buf peak MB | go/cpp |
 
 `scripts/bench` formats it once (`fmt_ms`/`fmt_mb`/`fmt_ratio`) for both the log
 and the markdown; `scripts/render-readme` rebuilds the same table from
@@ -293,26 +302,24 @@ that is 20 of the 53 files. The row therefore publishes its C++/Go numbers with
 buf reading `n/a` and buf's own first error printed under the table — which is
 the whole reason the compile gate is per implementation rather than per row.
 
-The practical consequence is worth stating plainly: **every row buf is timed on
-is a single-directory corpus, and all but `01_basic_message` are a single
-file.** So the table compares buf's front end on compile throughput and startup
-cost, and does not exercise import-graph resolution or the parallelism buf gets
-from a many-file build.
+Corpus shape moves buf's numbers a lot, which is why `bench_multi` exists.
+Every scaled tier is a single generated file, which exercises raw parse/link
+throughput and nothing else — no import resolution, and nothing for a compiler
+that parses files concurrently to use. That judges a front end on its worst
+dimension. Measured on a 4-core box:
 
-That is not a cosmetic gap — it moves the number. Measured on a 4-core box
-against the largest subset of the vendored corpus buf can compile (32 of the 53
-files, real upstream protos with a real import graph), against the synthetic
-`bench_medium` tier:
-
-| corpus | cpp | go | buf | buf/cpp |
+| corpus | cpp | go | buf | buf÷cpp |
 | --- | ---: | ---: | ---: | ---: |
-| `bench_medium` (1 generated file) | 135ms | 50ms | 440ms | 3.26 |
-| 32 upstream files, import graph | 92ms | 44ms | 192ms | 2.09 |
+| `bench_medium` — 1 generated file | 135ms | 50ms | 440ms | 3.3 |
+| `bench_multi` — 42 generated files, import graph | 96ms | 37ms | 266ms | 2.8 |
+| 32 real upstream files, import graph | 92ms | 44ms | 192ms | 2.1 |
 
-So the rows buf is currently timed on are close to its worst case, and the one
-row whose shape would be kindest to it is the one it cannot compile. Read the
-published `buf/cpp` ratios with that in mind. A multi-file generated tier would
-close the gap and is the obvious next thing to add here.
+Two things follow. Adding files narrows the gap, so a single-file-only table
+was reading buf at close to its worst case. And the generated multi tier still
+does not narrow it as far as the real corpus does — generated protos are
+uniform, and buf does relatively better the more the input looks like something
+a person wrote. The row worth trusting most on that axis is `google_corpus`,
+and it is the one buf cannot compile, so no table here fully closes the gap.
 
 ### Re-checking that buf is measured fairly
 
@@ -370,7 +377,7 @@ Shape and rough cost of a weekly run (measured on a 4-core box):
 | leg | wall | note |
 | --- | ---: | --- |
 | correctness, per shard | ~35s | ~1,370 of 5,497 comparisons |
-| performance | ~4min | three compilers over every row; `bench_large`/`plugin` is the longest |
+| performance | ~5min | three compilers over every row; `bench_large`/`plugin` is the longest |
 
 Adding buf roughly doubled the performance leg: it is a third full pass over
 every row except `google_corpus`, and buf runs about 1.5–5× slower than C++

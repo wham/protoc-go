@@ -227,6 +227,10 @@ for size in $SIZES; do
     "$SCRIPT_DIR/gen-large-stress" "$size" >/dev/null
   fi
 done
+if [ ! -f "$TESTS_DIR/bench/multi/common.proto" ]; then
+  echo "Generating corpus tier: multi"
+  "$SCRIPT_DIR/gen-large-stress" multi >/dev/null
+fi
 
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
@@ -247,6 +251,16 @@ for size in $SIZES; do
   CASES+=("bench_$size|$TESTS_DIR/bench/$size")
 done
 CASES+=("329_large_stress|$TESTS_DIR/329_large_stress")
+
+# The one generated row that is many files rather than one. Every other tier
+# measures raw parse/link throughput on a single file, which says nothing about
+# import resolution and gives a compiler that parses concurrently nothing to
+# work with — so a front end is judged there on its worst dimension. This row
+# is 42 files in one flat directory with a real import graph (public import
+# included) and no well-known-type imports, so it needs no -I and all three
+# compile it unaided. They also produce byte-identical descriptor sets on it,
+# which is as close to like-for-like as this harness gets.
+CASES+=("bench_multi|$TESTS_DIR/bench/multi")
 
 # The vendored upstream corpus (testdata/google/, see AGENTS.md) compiled in a
 # single invocation: 53 real .proto files written by the protobuf maintainers,
@@ -421,9 +435,12 @@ jstr()     { if [ -n "$1" ]; then printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/
 
 # The table's columns, shared by the terminal table and bench.md so a row reads
 # the same in the log as it does in the README.
+# buf carries its own time and memory but no ratio against C++ protoc: it is a
+# third implementation offered for reference, not a rival being scored. The
+# go/cpp ratios stay because that pair is what this project is a port of.
 COL_HEADS=("case" "variant" \
-           "cpp ms(±sd)" "go ms(±sd)" "buf ms(±sd)" "go/cpp" "buf/cpp" \
-           "cpp peak MB" "go peak MB" "buf peak MB" "go/cpp" "buf/cpp")
+           "cpp ms(±sd)" "go ms(±sd)" "buf ms(±sd)" "go/cpp" \
+           "cpp peak MB" "go peak MB" "buf peak MB" "go/cpp")
 
 # rpad <width> <cell> — right-align a cell in `width` display columns. printf
 # pads to a byte count, and the ± in a timing cell is two bytes, so a plain
@@ -434,13 +451,13 @@ rpad() {
   printf "%${w}s" "$2"
 }
 
-# print_row <12 cells> — one line of the terminal table.
+# print_row <10 cells> — one line of the terminal table.
 print_row() {
   printf '%-18s %-11s ' "$1" "$2"
   rpad 15 "$3"; printf ' '; rpad 15 "$4"; printf ' '; rpad 15 "$5"
-  printf ' %7s %7s ' "$6" "$7"
-  rpad 11 "$8"; printf ' '; rpad 11 "$9"; printf ' '; rpad 11 "${10}"
-  printf ' %7s %7s\n' "${11}" "${12}"
+  printf ' %7s ' "$6"
+  rpad 11 "$7"; printf ' '; rpad 11 "$8"; printf ' '; rpad 11 "$9"
+  printf ' %7s\n' "${10}"
 }
 
 # verdict <a_med> <a_sd> <b_med> <b_sd> <a_name> <b_name> — echo the faster
@@ -584,7 +601,7 @@ for spec in "${CASES[@]}"; do
     # protoc-go against the others, so there is nothing left worth timing.
     if ! go_note=$(compile_gate "$go_cmd"); then
       DROPPED_ROWS+=("$label/$variant: Go protoc-go exits non-zero — $go_note")
-      print_row "$label" "$variant" "-" "-" "-" "skip" "skip" "-" "-" "-" "-" "-"
+      print_row "$label" "$variant" "-" "-" "-" "skip" "-" "-" "-" "-"
       continue
     fi
     if [ -n "$cpp_cmd" ] && ! cpp_note=$(compile_gate "$cpp_cmd"); then
@@ -621,9 +638,7 @@ for spec in "${CASES[@]}"; do
     go_mem_disp=$(mb_cell "$go_mem_kb")
     buf_mem_disp=$(mb_cell "$buf_mem_kb")
     r_go_cpp=$(fmt_ratio "$go_med" "$cpp_med")
-    r_buf_cpp=$(fmt_ratio "$buf_med" "$cpp_med")
     m_go_cpp=$(fmt_ratio "$go_mem_kb" "$cpp_mem_kb")
-    m_buf_cpp=$(fmt_ratio "$buf_mem_kb" "$cpp_mem_kb")
 
     printf '{"case":%s,"variant":%s,"informational":%s,' \
       "$(jstr "$label")" "$(jstr "$variant")" "$info" >> "$ROWS_JSONL"
@@ -631,24 +646,21 @@ for spec in "${CASES[@]}"; do
       "$(jnum2 "$cpp_med")" "$(jnum2 "$cpp_sd")" \
       "$(jnum2 "$go_med")" "$(jnum2 "$go_sd")" \
       "$(jnum2 "$buf_med")" "$(jnum2 "$buf_sd")" >> "$ROWS_JSONL"
-    printf '"ratio":%s,"buf_ratio":%s,"verdict":%s,"verdict_buf_cpp":%s,"verdict_go_buf":%s,' \
-      "$(jratio "$go_med" "$cpp_med")" "$(jratio "$buf_med" "$cpp_med")" \
-      "$(jstr "$(verdict "$go_med" "$go_sd" "$cpp_med" "$cpp_sd" go cpp)")" \
-      "$(jstr "$(verdict "$buf_med" "$buf_sd" "$cpp_med" "$cpp_sd" buf cpp)")" \
-      "$(jstr "$(verdict "$go_med" "$go_sd" "$buf_med" "$buf_sd" go buf)")" >> "$ROWS_JSONL"
+    printf '"ratio":%s,"verdict":%s,' \
+      "$(jratio "$go_med" "$cpp_med")" \
+      "$(jstr "$(verdict "$go_med" "$go_sd" "$cpp_med" "$cpp_sd" go cpp)")" >> "$ROWS_JSONL"
     printf '"driver":%s,"reliable":%s,"runs":%s,' \
       "$(jstr "$row_driver")" "$row_reliable" "$RUNS" >> "$ROWS_JSONL"
-    printf '"cpp_peak_kb":%s,"go_peak_kb":%s,"buf_peak_kb":%s,"mem_ratio":%s,"buf_mem_ratio":%s,' \
+    printf '"cpp_peak_kb":%s,"go_peak_kb":%s,"buf_peak_kb":%s,"mem_ratio":%s,' \
       "$(jint "$cpp_mem_kb")" "$(jint "$go_mem_kb")" "$(jint "$buf_mem_kb")" \
-      "$(jratio "$go_mem_kb" "$cpp_mem_kb")" "$(jratio "$buf_mem_kb" "$cpp_mem_kb")" >> "$ROWS_JSONL"
+      "$(jratio "$go_mem_kb" "$cpp_mem_kb")" >> "$ROWS_JSONL"
     printf '"cpp_cpu_ms":%s,"go_cpu_ms":%s,"buf_cpu_ms":%s,"cpp_note":%s,"buf_note":%s}\n' \
       "$(jint "$cpp_cpu_ms")" "$(jint "$go_cpu_ms")" "$(jint "$buf_cpu_ms")" \
       "$(jstr "$cpp_note")" "$(jstr "$buf_note")" >> "$ROWS_JSONL"
 
-    print_row "$label" "$variant" "$cpp_disp" "$go_disp" "$buf_disp" \
-      "$r_go_cpp" "$r_buf_cpp" \
-      "$cpp_mem_disp" "$go_mem_disp" "$buf_mem_disp" "$m_go_cpp" "$m_buf_cpp"
-    ROWS_MD+=("| $label | $variant | $cpp_disp | $go_disp | $buf_disp | $r_go_cpp | $r_buf_cpp | $cpp_mem_disp | $go_mem_disp | $buf_mem_disp | $m_go_cpp | $m_buf_cpp |")
+    print_row "$label" "$variant" "$cpp_disp" "$go_disp" "$buf_disp" "$r_go_cpp" \
+      "$cpp_mem_disp" "$go_mem_disp" "$buf_mem_disp" "$m_go_cpp"
+    ROWS_MD+=("| $label | $variant | $cpp_disp | $go_disp | $buf_disp | $r_go_cpp | $cpp_mem_disp | $go_mem_disp | $buf_mem_disp | $m_go_cpp |")
   done
 done
 
@@ -681,7 +693,7 @@ jq -s '.' "$ROWS_JSONL" > "$OUT_DIR/bench.json"
   fi
   echo ""
   printf '|'; printf ' %s |' "${COL_HEADS[@]}"; echo ""
-  echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+  echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
   printf '%s\n' "${ROWS_MD[@]}"
   echo ""
   echo "The three do not use cores the same way — C++ protoc is single-threaded,"
