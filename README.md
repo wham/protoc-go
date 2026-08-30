@@ -50,7 +50,7 @@ A [weekly run](.github/workflows/compliance.yml) compiles the same corpus with C
 <!-- BEGIN COMPLIANCE -->
 **5609 / 5609 comparisons produce byte-identical output to C++ protoc 36.0**
 
-Last verified 2026-08-29 · commit `e30986b` · Go 1.23.12 on ubuntu24 · [run log](https://github.com/wham/protoc-go/actions/runs/33270684392)
+Last verified 2026-08-30 · commit `187d7e8` · Go 1.23.12 on ubuntu24 · [run log](https://github.com/wham/protoc-go/actions/runs/33296147848)
 
 <details><summary>Per-suite results</summary>
 
@@ -77,28 +77,35 @@ Last verified 2026-08-29 · commit `e30986b` · Go 1.23.12 on ubuntu24 · [run l
 
 </details>
 
-<details><summary>Performance vs C++ protoc</summary>
+<details><summary>Performance: C++ protoc vs Go protoc-go vs buf</summary>
 
-Across 14 compile cases: Go faster on 10, C++ faster on 4, tie on 0.
+Across 16 compile cases: Go faster on 12, C++ faster on 2, tie on 2.
 
-| case | variant | C++ ms | Go ms | go/cpp | C++ peak MB | Go peak MB | go/cpp |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| startup_empty | descriptor | 1.37±0.08 | 1.98±0.07 | 1.44 | 5 | 6.8 | 1.36 |
-| startup_empty | plugin | 3.37±0.13 | 4.04±0.10 | 1.20 | 5.5 | 7 | 1.26 |
-| 01_basic_message | descriptor | 1.56±0.05 | 2.30±0.23 | 1.47 | 5 | 9.1 | 1.81 |
-| 01_basic_message | plugin | 3.77±0.10 | 4.77±0.12 | 1.27 | 5.5 | 9.1 | 1.64 |
-| bench_tiny | descriptor | 2.77±0.06 | 2.99±0.10 | 1.08 | 5.5 | 9.5 | 1.71 |
-| bench_tiny | plugin | 6.89±0.15 | 7.61±0.28 | 1.11 | 7.6 | 9.3 | 1.24 |
-| bench_small | descriptor | 13.80±0.26 | 6.90±0.24 | 0.50 | 10.3 | 13.4 | 1.31 |
-| bench_small | plugin | 46.47±2.26 | 30.93±0.82 | 0.67 | 18.9 | 18.8 | 1.00 |
-| bench_medium | descriptor | 75.03±2.87 | 23.01±0.76 | 0.31 | 34.6 | 31.7 | 0.92 |
-| bench_medium | plugin | 254.70±7.43 | 149.81±4.64 | 0.59 | 74.2 | 72 | 0.97 |
-| bench_large | descriptor | 445.34±12.93 | 97.95±3.54 | 0.22 | 138.7 | 108.5 | 0.78 |
-| bench_large | plugin | 1254.47±16.19 | 655.84±9.16 | 0.52 | 311.4 | 311.4 | 1.00 |
-| 329_large_stress | descriptor | 75.42±3.08 | 23.21±0.68 | 0.31 | 34.6 | 31.7 | 0.92 |
-| 329_large_stress | plugin | 259.25±5.34 | 153.77±7.04 | 0.59 | 74 | 74.1 | 1.00 |
-| google_corpus | descriptor | 92.15±1.90 | 33.30±0.85 | 0.36 | 17.5 | 40.8 | 2.34 |
-| google_corpus | plugin | 208.16±2.83 | 100.52±2.54 | 0.48 | 43.7 | 43.8 | 1.00 |
+| case | variant | cpp ms(±sd) | go ms(±sd) | buf ms(±sd) | go/cpp | cpp peak MB | go peak MB | buf peak MB | go/cpp |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| startup_empty | descriptor | 1.39±0.04 | 1.91±0.06 | 27.52±1.07 | 1.37 | 5.0 | 6.8 | 46.1 | 1.36 |
+| startup_empty | plugin | 3.26±0.06 | 4.07±0.22 | 29.39±0.70 | 1.25 | 5.5 | 7.0 | 46.3 | 1.26 |
+| 01_basic_message | descriptor | 1.52±0.01 | 2.27±0.06 | 27.94±0.75 | 1.49 | 5.0 | 9.1 | 48.6 | 1.81 |
+| 01_basic_message | plugin | 3.68±0.04 | 4.63±0.13 | 31.92±0.76 | 1.26 | 5.5 | 9.1 | 48.5 | 1.64 |
+| bench_tiny | descriptor | 2.74±0.01 | 2.78±0.06 | 31.74±0.44 | 1.01 | 5.5 | 9.4 | 46.4 | 1.69 |
+| bench_tiny | plugin | 6.84±0.21 | 6.88±0.12 | 36.76±0.95 | 1.01 | 7.6 | 9.5 | 48.6 | 1.26 |
+| bench_small | descriptor | 13.65±0.15 | 6.15±0.18 | 72.14±0.86 | 0.45 | 10.3 | 13.4 | 55.0 | 1.31 |
+| bench_small | plugin | 43.93±0.86 | 30.71±0.81 | 98.44±1.30 | 0.70 | 19.0 | 18.9 | 55.3 | 1.00 |
+| bench_medium | descriptor | 75.02±2.10 | 22.27±0.54 | 277.89±4.08 | 0.30 | 34.6 | 31.7 | 92.2 | 0.92 |
+| bench_medium | plugin | 247.01±4.41 | 148.59±3.59 | 412.68±2.63 | 0.60 | 74.1 | 74.0 | 98.2 | 1.00 |
+| bench_large | descriptor | 419.76±7.09 | 96.33±1.39 | 1208.33±22.67 | 0.23 | 138.8 | 106.6 | 281.1 | 0.77 |
+| bench_large | plugin | 1189.67±11.79 | 645.11±7.01 | 1792.75±34.11 | 0.54 | 313.1 | 313.2 | 309.6 | 1.00 |
+| 329_large_stress | descriptor | 75.57±1.41 | 22.26±0.35 | 277.85±2.21 | 0.29 | 34.6 | 31.7 | 96.2 | 0.92 |
+| 329_large_stress | plugin | 247.87±4.07 | 148.51±4.12 | 411.62±2.78 | 0.60 | 74.1 | 74.2 | 98.8 | 1.00 |
+| bench_multi | descriptor | 51.99±1.32 | 15.57±0.22 | 158.37±0.94 | 0.30 | 20.1 | 29.6 | 86.3 | 1.47 |
+| bench_multi | plugin | 174.58±1.59 | 103.43±1.38 | 253.37±1.81 | 0.59 | 53.6 | 53.7 | 90.6 | 1.00 |
+| google_corpus | descriptor | 90.22±0.52 | 31.74±0.39 | n/a | 0.35 | 17.5 | 40.9 | n/a | 2.34 |
+| google_corpus | plugin | 204.39±1.96 | 97.06±2.00 | n/a | 0.47 | 43.8 | 43.8 | n/a | 1.00 |
+
+buf was not timed on some rows:
+
+- `google_corpus` / `descriptor`: google/protobuf/edition_unittest.proto:17:11:unrecognized `edition` declaration value
+- `google_corpus` / `plugin`: google/protobuf/edition_unittest.proto:17:11:unrecognized `edition` declaration value
 
 </details>
 <!-- END COMPLIANCE -->
