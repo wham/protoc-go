@@ -192,21 +192,31 @@ if [ -f "$BENCH_JSON" ] && jq -e 'length > 0' "$BENCH_JSON" >/dev/null 2>&1; the
     ' "$BENCH_JSON" >> "$BLOCK"
   fi
 
+  # Same columns and same digits as the table scripts/bench prints and writes to
+  # bench.md — one performance table, wherever it is read. The fixed-decimal
+  # helpers below are that script's fmt_ms/fmt_mb/fmt_ratio in jq; keep them in
+  # step (jq's tostring would drop a trailing zero and print "0.9" for "0.90").
   {
-    echo "| case | variant | C++ ms | Go ms | go/cpp | C++ peak MB | Go peak MB | go/cpp |"
+    echo "| case | variant | cpp ms(±sd) | go ms(±sd) | go/cpp | cpp peak MB | go peak MB | go/cpp |"
     echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |"
   } >> "$BLOCK"
 
   jq -r '
-    def mb: if . == null then "n/a" else ((. / 1024 * 10 | round) / 10 | tostring) end;
+    def fixed($places): (. * pow(10; $places) | round) as $n |
+      (($n / pow(10; $places)) | floor) as $i |
+      (($n - $i * pow(10; $places)) | tostring) as $f |
+      ($i | tostring) + "." + ("0" * ($places - ($f | length)) // "") + $f;
+    def ms: if . == null then "n/a" else fixed(2) end;
+    def mb: if . == null then "n/a" else (. / 1024) | fixed(1) end;
+    def ratio: if . == null then "n/a" else fixed(2) end;
     .[] |
     "| " + .case + " | " + .variant + " | " +
-    (if .cpp_ms == null then "n/a" else (.cpp_ms | tostring) + "±" + (.cpp_sd | tostring) end) + " | " +
-    ((.go_ms | tostring) + "±" + (.go_sd | tostring)) + " | " +
-    (if .ratio == null then "n/a" else (.ratio | tostring) end) + " | " +
+    (if .cpp_ms == null then "n/a" else (.cpp_ms | ms) + "±" + (.cpp_sd | ms) end) + " | " +
+    ((.go_ms | ms) + "±" + (.go_sd | ms)) + " | " +
+    (.ratio | ratio) + " | " +
     ((.cpp_peak_kb // null) | mb) + " | " +
     ((.go_peak_kb // null) | mb) + " | " +
-    (if (.mem_ratio // null) == null then "n/a" else (.mem_ratio | tostring) end) + " |"
+    ((.mem_ratio // null) | ratio) + " |"
   ' "$BENCH_JSON" >> "$BLOCK"
 
   {
