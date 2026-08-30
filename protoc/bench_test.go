@@ -33,6 +33,10 @@ var benchCases = []benchCase{
 	{name: "bench_medium", dir: "../testdata/bench/medium"},
 	{name: "bench_large", dir: "../testdata/bench/large"},
 	{name: "329_large_stress", dir: "../testdata/329_large_stress"},
+	// Many files rather than one, in the same order scripts/bench runs them.
+	// Every other generated case is a single file, so this is the only one
+	// where import resolution and parsing files concurrently show up at all.
+	{name: "bench_multi", dir: "../testdata/bench/multi"},
 	// The upstream protobuf test corpus, compiled in one pass: 53 real .proto
 	// files with imports, custom options, extensions and editions, written by
 	// the protobuf maintainers rather than by this project's generator. It is
