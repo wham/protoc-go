@@ -48,7 +48,13 @@ jobs:
       - name: Install target protoc
         run: .github/install-target-protoc.sh
 
-      - name: CLI benchmark (C++ protoc vs Go protoc-go)
+      - name: Install buf
+        # Third compiler in the perf table. Non-fatal: without it the buf
+        # columns read n/a and the C++/Go comparison is unaffected.
+        continue-on-error: true
+        run: .github/install-buf.sh
+
+      - name: CLI benchmark (C++ protoc vs Go protoc-go vs buf)
         run: scripts/bench --summary --sizes "tiny small medium"
 
       - name: In-process library benchmark

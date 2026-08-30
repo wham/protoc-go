@@ -32,7 +32,7 @@ This is a port of the Protocol Buffers compiler (`protoc`) from C++ to Go. The G
 │   └── protoc-bin/         # (reserved) Vendored C++ protoc if needed
 └── scripts/
     ├── test                # Correctness harness — compares C++ protoc vs Go protoc-go
-    ├── bench               # Performance harness — times C++ protoc vs Go protoc-go
+    ├── bench               # Performance harness — times C++ protoc, Go protoc-go, buf
     ├── merge-summaries     # Reassembles sharded `scripts/test` runs into one verdict
     ├── render-readme       # Renders harness output into the README compliance block
     ├── release-notes       # Renders the compliance header for a GitHub release
@@ -56,8 +56,9 @@ scripts/test --summary --json results/summary.json
 # One slice of the suite, for splitting it across machines (see Sharding below)
 scripts/test --summary --shard 2/4 --json results/shard-2.json
 
-# Performance comparison (C++ protoc vs Go protoc-go) on a scaled corpus
+# Performance comparison (C++ protoc vs Go protoc-go vs buf) on a scaled corpus
 scripts/bench --summary
+scripts/bench --summary --no-buf   # two-way, when buf is installed but not wanted
 # In-process library core (ns/op, B/op, allocs/op)
 go test ./protoc/ -run='^$' -bench=. -benchmem
 ```
@@ -134,10 +135,19 @@ An unsharded run is just `--shard 1/1` and needs no merge.
 
 ### Performance harness
 
-`scripts/bench` is the performance counterpart to `scripts/test`. It runs both
-compilers on a curated corpus — serial, warmed up, median-of-N — and reports
-per-case latency plus the Go/C++ ratio, separating compile throughput from
-process-startup cost.
+`scripts/bench` is the performance counterpart to `scripts/test`. It runs each
+available compiler on a curated corpus — serial, warmed up, median-of-N — and
+reports per-case latency plus the ratio against C++ protoc, separating compile
+throughput from process-startup cost.
+
+Three implementations are timed: C++ protoc, Go protoc-go, and
+[buf](https://github.com/bufbuild/buf). C++ protoc and buf are both optional —
+their columns read `n/a` when they are not installed, and `--no-buf` drops buf
+from a run that has it. buf is here because it is what a lot of projects
+actually run, not because it is a port target: this project's correctness
+contract is with C++ protoc alone, and `scripts/test` says nothing whatsoever
+about buf. See [Comparing against buf](#comparing-against-buf) for what is and
+is not comparable.
 
 The corpus is the size-scaled generated tiers (which isolate how each compiler
 scales, since only one dimension changes between them) plus one `google_corpus`
@@ -148,18 +158,23 @@ public imports, custom options, extensions, editions, generic services. That
 row is the one that does, and it is the honest headline number. It adds ~10s to
 the run.
 
-Every row is gated on a clean compile from both compilers before it is timed: a
-failed compile is not a measurement of compiling, and the two give up at
-different points, so timing one would compare error paths. Rows that don't
-compile are dropped from the table with a reason rather than published. The
-`google_corpus` row needs the C++ protoc include directory (four corpus files
-import `google/protobuf/cpp_features.proto` or `java_features.proto`, which
-protoc ships, protoc-go does not embed and the corpus does not vendor), so a
-Go-only run without protoc installed drops it instead of benchmarking a subset.
+Every implementation is gated on a clean compile of a row before it is timed on
+it: a failed compile is not a measurement of compiling, and the three give up at
+different points, so timing one would compare error paths. The gate is **per
+implementation**, not per row — a row buf cannot compile still publishes its
+C++/Go numbers, with buf's cells reading `n/a` and the compiler's own first
+error printed under the table. (Go protoc-go failing is the one case that drops
+the whole row: this harness exists to place protoc-go against the others, so
+there is nothing left worth timing.) The `google_corpus` row needs the C++
+protoc include directory (four corpus files import
+`google/protobuf/cpp_features.proto` or `java_features.proto`, which protoc
+ships, protoc-go does not embed and the corpus does not vendor), so a Go-only
+run without protoc installed reports it Go-only instead of benchmarking a
+subset.
 
 The `plugin` rows run protoc-gen-dump with `PROTOC_GEN_DUMP_SKIP_JSON=1`, which
 drops the plugin's `request.json` debugging dump (150MB on the `large` tier).
-Both compilers inherit the variable, so the row stays a fair comparison — it is
+Every compiler inherits the variable, so the row stays a fair comparison — it is
 simply one that measures the compilers rather than the fixture between them.
 That distinction is not cosmetic: while the fixture dominated a row, its cost
 sat on both sides of the ratio and dragged it toward 1.00, so `bench_large`
@@ -168,23 +183,34 @@ same corpus. Anything added to protoc-gen-dump that is not a comparison
 artifact belongs behind that switch for the same reason.
 
 ```bash
-scripts/bench                 # C++ protoc vs Go protoc-go, human table
+scripts/bench                 # C++ protoc vs Go protoc-go vs buf, human table
 scripts/bench --summary       # table only; writes results-bench/bench.{json,md}
+scripts/bench --no-buf        # skip buf even when it is installed
 ```
 
 Each timed row also reports peak memory (max RSS, median of `--mem-runs` runs,
-default 3) for both compilers, read from the kernel's rusage accounting via
+default 3) for every compiler, read from the kernel's rusage accounting via
 GNU/BSD `time` or a python3 fallback — the plugin variant includes the plugin
-subprocess on both sides. The tables show raw go/cpp ratios for time and
-memory rather than verdict columns; the noise-aware wall-clock verdict is
-still computed into `bench.json` per row, where the README tally consumes it.
+subprocess on every side. The tables show raw ratios against C++ protoc for
+time and memory rather than verdict columns; the noise-aware wall-clock
+verdicts are still computed into `bench.json` per row (`verdict` for go/cpp,
+`verdict_buf_cpp`, `verdict_go_buf`), where the README tally consumes them.
 Memory rows read `n/a` when no reader is available.
+
+The same rusage read also records CPU time (user+sys) per row as `*_cpu_ms` in
+`bench.json`. It is deliberately kept out of the tables and deliberately
+collected: the three do not use cores the same way — C++ protoc is
+single-threaded, protoc-go parses files in parallel, buf compiles through a
+worker pool — so wall-clock alone does not separate *faster* from *spends fewer
+cycles*. Wall-clock stays the headline, because it is what a developer waits
+for, but a row whose `cpu_ms` far exceeds its `ms` got there with cores rather
+than efficiency, and only `cpu_ms` says so.
 
 There is exactly one performance table, and it looks the same everywhere it is
 read — the run's own log, `results-bench/bench.md` (which the weekly compliance
 pull request quotes), and the README block:
 
-| case | variant | cpp ms(±sd) | go ms(±sd) | go/cpp | cpp peak MB | go peak MB | go/cpp |
+| case | variant | cpp ms(±sd) | go ms(±sd) | buf ms(±sd) | go/cpp | buf/cpp | cpp peak MB | go peak MB | buf peak MB | go/cpp | buf/cpp |
 
 `scripts/bench` formats it once (`fmt_ms`/`fmt_mb`/`fmt_ratio`) for both the log
 and the markdown; `scripts/render-readme` rebuilds the same table from
@@ -193,19 +219,86 @@ and the markdown; `scripts/render-readme` rebuilds the same table from
 one and change them in the other.
 
 `tests.yml` runs this harness (tiny/small/medium tiers) on every pull request
-and uploads `results-bench/` as an artifact. It used to also post `bench.md` as
+and uploads `results-bench/` as an artifact. Both it and `compliance.yml`
+install buf through `.github/install-buf.sh`, which pins the version: protoc's
+comes from `protoc-go --version` because protoc-go declares what it targets,
+but nothing here targets a buf release, so an unpinned buf would move the
+published numbers because a third party shipped, with nothing in the diff to
+say so. Bumping that pin is a normal change; `bench.json` and `bench.md` record
+the version each run measured. It used to also post `bench.md` as
 a sticky pull-request comment; that was noise on every push and was removed —
 the numbers that get published are the weekly ones.
 
 If `hyperfine` is installed it drives the timing for better statistics;
-otherwise a built-in median-of-N loop is used. C++ `protoc` is optional — when
-absent, only Go numbers are reported. For the in-process library core (no
+otherwise a built-in median-of-N loop is used. C++ `protoc` and `buf` are both
+optional — when either is absent, its columns and the ratios against it read
+`n/a`. For the in-process library core (no
 process-startup noise, plus `B/op` and `allocs/op`), use Go's native
 benchmarks — same cases, `google_corpus` included:
 
 ```bash
 go test ./protoc/ -run='^$' -bench=. -benchmem
 ```
+
+### Comparing against buf
+
+[buf](https://github.com/bufbuild/buf) is a different compiler front end
+(`bufbuild/protocompile`) wrapped in a workspace-oriented CLI. It is in the
+performance table because it is what a lot of projects reach for, but it is
+**not** a correctness target: `scripts/test` compares protoc-go against C++
+protoc and says nothing about buf. Nothing about buf's numbers here should be
+read as a statement about its output.
+
+What maps onto what:
+
+| harness variant | protoc / protoc-go | buf |
+| --- | --- | --- |
+| `descriptor` | `--descriptor_set_out=/dev/null -I. <files>` | `buf build . -o /dev/null --as-file-descriptor-set --exclude-source-info` |
+| `plugin` | `--plugin=… --dump_out=… --dump_opt=…` | `buf generate . --template <generated buf.gen.yaml>` |
+
+Four differences the harness has to correct for, or it would be timing
+different work on each side:
+
+- **buf includes source info by default; protoc does not.** `buf build` writes
+  a buf Image (a `FileDescriptorSet` superset) with `SourceCodeInfo` attached —
+  on `01_basic_message` that is 1179 bytes against protoc's 418. So the
+  `descriptor` variant passes `--as-file-descriptor-set` (drop the Image
+  extensions) and `--exclude-source-info` (drop the source info), which is what
+  makes all three produce the same artifact.
+- **buf takes a directory; protoc takes a file list.** buf compiles every
+  `.proto` underneath its input, so the harness checks (`buf_input_matches`)
+  that the directory walk yields exactly the file list protoc is handed, and
+  marks buf `n/a` for the row if it does not. Every case in the corpus keeps
+  its `.proto` files in a single directory, which also means buf's default
+  per-directory plugin strategy issues exactly one plugin call, the same as
+  protoc.
+- **buf has no `--plugin`/`--x_out` flags.** A local plugin is named in a
+  generation template, so the harness writes a `buf.gen.yaml` per case into
+  `results-bench/`. The result is genuinely like-for-like: on
+  `01_basic_message` buf's `CodeGeneratorRequest` is 2412 bytes against
+  protoc's 2422, and the whole difference is the `compiler_version` field,
+  which buf does not set.
+- **buf embeds its own well-known types and ignores `-I` for them.** protoc
+  resolves `google/protobuf/*.proto` from its include directory; buf uses the
+  copies compiled into the binary. On a corpus needing a newer
+  `descriptor.proto` than the buf release carries, buf is compiling against
+  different inputs — which surfaces as a compile failure, not as a fast number.
+
+**buf cannot compile `google_corpus`, and that is a finding rather than a
+harness bug.** The vendored corpus tracks the protoc release protoc-go targets,
+so it uses editions newer than protocompile accepts (`edition = "2026"`,
+`edition = "2024"`) and options newer than buf's embedded `descriptor.proto`
+knows (`FieldOptions.FeatureSupport`, `enforce_naming_style`). At buf 1.72.0
+that is 20 of the 53 files. The row therefore publishes its C++/Go numbers with
+buf reading `n/a` and buf's own first error printed under the table — which is
+the whole reason the compile gate is per implementation rather than per row.
+
+The practical consequence is worth stating plainly: **every row buf is timed on
+is a single-directory corpus, and all but `01_basic_message` are a single
+file.** So the table compares buf's front end on compile throughput and startup
+cost, and does not exercise import-graph resolution or the parallelism buf gets
+from a many-file build. A multi-file generated tier would close that gap and is
+the obvious next thing to add here.
 
 ### Published compliance results
 
@@ -237,9 +330,12 @@ Shape and rough cost of a weekly run (measured on a 4-core box):
 | leg | wall | note |
 | --- | ---: | --- |
 | correctness, per shard | ~35s | ~1,370 of 5,497 comparisons |
-| performance | ~2min | `bench_large`/`plugin`, the longest row, is ~30s of it |
+| performance | ~4min | three compilers over every row; `bench_large`/`plugin` is the longest |
 
-Neither leg is worth sharding further, and the performance one is no longer the
+Adding buf roughly doubled the performance leg: it is a third full pass over
+every row except `google_corpus`, and buf runs about 1.5–5× slower than C++
+protoc depending on the row, so its pass is the most expensive of the three.
+Neither leg is worth sharding further, and the performance one is still not the
 critical path. It used to run ~20 minutes, ~17 of them in a single row, but that
 row was never measuring a compiler: on `bench_large`/`plugin`, protoc-go
 compiled and shipped the whole request in 243ms and protoc-gen-dump then spent
