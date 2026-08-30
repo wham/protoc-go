@@ -128,7 +128,14 @@ jobs:
         continue-on-error: true
         run: sudo apt-get install -y time
 
-      - name: Performance — Go protoc-go vs C++ protoc
+      - name: Install buf
+        # Third compiler in the published perf table. Non-fatal: without it the
+        # buf columns read n/a and the C++/Go comparison — the one this project
+        # actually has a contract with — is unaffected.
+        continue-on-error: true
+        run: .github/install-buf.sh
+
+      - name: Performance — C++ protoc vs Go protoc-go vs buf
         run: scripts/bench --summary --sizes "tiny small medium large"
 
       - name: Upload bench results

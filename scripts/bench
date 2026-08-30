@@ -1,37 +1,72 @@
 #!/bin/bash
-# Performance harness: C++ protoc vs Go protoc-go.
+# Performance harness: C++ protoc vs Go protoc-go vs buf.
 #
 # This is the perf counterpart to scripts/test (which checks correctness). It
-# runs both compilers on the same corpus — the size-scaled generated tiers plus
-# the vendored upstream protobuf corpus, which is what real-world .proto
-# actually looks like — under controlled conditions (serial, warmed up,
-# repeated) and reports per-case latency with its spread (±stddev), the Go/C++
-# ratio, and a noise-aware verdict so that run-to-run jitter is never mistaken
-# for a real win.
+# runs each available compiler on the same corpus — the size-scaled generated
+# tiers plus the vendored upstream protobuf corpus, which is what real-world
+# .proto actually looks like — under controlled conditions (serial, warmed up,
+# repeated) and reports per-case latency with its spread (±stddev), the ratio
+# against C++ protoc, and a noise-aware verdict so that run-to-run jitter is
+# never mistaken for a real win.
 #
 # Fairness rules baked into this harness:
 #   * Every measurement reports stddev, not just a point estimate.
-#   * Each row's noise-aware verdict is recorded in bench.json (not the human
-#     tables, which show the raw ratios instead): a row is only called "go"
-#     (Go faster) or "cpp" (C++ faster) when the medians differ by MORE than
-#     both the combined stddev (run-to-run noise) and a relative margin
-#     (--margin, default 3%). Otherwise it is a "tie". A difference inside
-#     the noise is NOT a win for anyone.
+#   * Each row's noise-aware verdicts are recorded in bench.json (not the human
+#     tables, which show the raw ratios instead): a pair is only called for one
+#     side when the medians differ by MORE than both the combined stddev
+#     (run-to-run noise) and a relative margin (--margin, default 3%).
+#     Otherwise it is a "tie". A difference inside the noise is NOT a win for
+#     anyone.
 #   * The startup_empty row measures pure process-launch cost, not compilation,
 #     so it is flagged "informational" and excluded from win/loss aggregation.
 #     Starting up faster is not the same as compiling faster.
-#   * A row is timed only when both compilers compile it cleanly. A failed
-#     compile is not a measurement of compiling, and the two give up at
-#     different points, so a failing row would time two error paths against
-#     each other. Rows that cannot compile are dropped and reported.
+#   * An implementation is timed on a row only when it compiles that row
+#     cleanly. A failed compile is not a measurement of compiling, and the
+#     implementations give up at different points, so timing one would compare
+#     error paths. The gate is per implementation, not per row: a row that buf
+#     cannot compile still publishes its C++/Go numbers, with buf reading n/a
+#     and the reason printed under the table. (Go protoc-go failing is the one
+#     case that drops the whole row — there is nothing left worth timing.)
 #   * hyperfine is strongly preferred. The built-in fallback timer has ~1ms
 #     resolution, which is unreliable for the sub-30ms rows; verdicts from it
 #     should not be trusted.
-#   * Each timed row also reports peak memory (max RSS) for both compilers,
+#   * Each timed row also reports peak memory (max RSS) for each compiler,
 #     read from the kernel's rusage accounting — GNU/BSD time when available,
 #     otherwise a python3 getrusage fallback reading the same counter. It
 #     covers the whole invocation, so the plugin variant includes the
-#     protoc-gen-dump subprocess on both sides (same binary, so still fair).
+#     protoc-gen-dump subprocess on every side (same binary, so still fair).
+#   * CPU time (user+sys, same rusage read) is recorded in bench.json but kept
+#     out of the tables. It is what separates "faster" from "spends fewer
+#     cycles". The three do not use cores the same way: C++ protoc is
+#     single-threaded, protoc-go parses files in parallel, and buf compiles
+#     through a worker pool, so a row can be won on wall-clock while losing on
+#     cycles burned. Wall-clock stays the headline — it is what a developer
+#     waits for — but a row whose cpu_ms far exceeds its ms got there with
+#     cores rather than efficiency, and only cpu_ms says so.
+#
+# What buf is doing here, and where it is not comparable:
+#   * buf (github.com/bufbuild/buf) is a different compiler front end
+#     (bufbuild/protocompile) wrapped in a workspace-oriented CLI. It is
+#     included because it is what a lot of projects actually run, not because
+#     it is a port target: this project's correctness contract is with C++
+#     protoc, and scripts/test says nothing about buf.
+#   * buf takes a directory as its input and compiles every .proto under it,
+#     where protoc takes an explicit file list. Every row here is gated on
+#     those two sets being identical (see buf_input_matches); a case where
+#     they would differ reads n/a for buf rather than timing a different
+#     amount of work.
+#   * buf embeds its own copies of the well-known types and ignores -I for
+#     them, so on a corpus that needs a newer descriptor.proto than the buf
+#     release carries, buf is compiling against different inputs — which
+#     surfaces as a compile failure and an n/a, not as a fast number.
+#   * `buf build` writes a buf Image (a FileDescriptorSet superset) and
+#     includes source info by default; protoc's --descriptor_set_out does
+#     neither. The descriptor variant passes --as-file-descriptor-set and
+#     --exclude-source-info so all three are asked for the same artifact.
+#   * `buf generate` needs a template file rather than --plugin/--x_out flags;
+#     the harness writes one per case. The resulting CodeGeneratorRequest is
+#     byte-comparable to protoc's apart from the compiler_version field, so
+#     the plugin variant is a like-for-like comparison.
 #
 # Usage:
 #   scripts/bench                 # default corpus + variants, human table
@@ -41,11 +76,14 @@
 #   scripts/bench --margin 0.03   # relative "tie" margin (default 0.03 = 3%)
 #   scripts/bench --sizes "tiny small medium large"   # which scaled tiers
 #   scripts/bench --mem-runs 3    # peak-RSS runs per case (default 3, 0 = off)
+#   scripts/bench --no-buf        # skip buf even when it is installed
 #
 # Outputs results-bench/bench.json (machine-readable, one object per
-# case/variant with verdict + stddev + peak RSS) and results-bench/bench.md.
+# case/variant with verdicts + stddev + peak RSS + CPU time) and
+# results-bench/bench.md.
 #
-# Requires Go. C++ protoc is optional: if absent, only Go numbers are reported.
+# Requires Go. C++ protoc and buf are both optional: if either is absent, its
+# columns read n/a and the ratios against it are dropped.
 # If `hyperfine` is on PATH it drives the CLI timing (better statistics);
 # otherwise a built-in median-of-N loop is used (verdicts unreliable).
 set -uo pipefail
@@ -66,6 +104,7 @@ WARMUP=3
 MARGIN=0.03
 SIZES="tiny small medium"
 MEM_RUNS=3
+WANT_BUF=true
 while [ $# -gt 0 ]; do
   case "$1" in
     --summary)  SUMMARY_ONLY=true; shift ;;
@@ -74,6 +113,7 @@ while [ $# -gt 0 ]; do
     --margin)   MARGIN="$2"; shift 2 ;;
     --sizes)    SIZES="$2"; shift 2 ;;
     --mem-runs) MEM_RUNS="$2"; shift 2 ;;
+    --no-buf)   WANT_BUF=false; shift ;;
     *) echo "Unknown flag: $1" >&2; exit 2 ;;
   esac
 done
@@ -94,11 +134,29 @@ done
 INC_FLAG=""
 [ -n "$PROTOC_INCLUDE" ] && INC_FLAG="-I$PROTOC_INCLUDE"
 
-# -- locate a peak-RSS reader (non-fatal; columns read n/a without one) ----
-# All three read the same kernel counter (ru_maxrss via wait4), which folds in
-# every waited-for descendant — so the plugin variant includes the plugin
-# subprocess. GNU time reports kbytes, BSD time bytes, python3 whatever
-# getrusage says for the platform (KB on Linux, bytes on macOS).
+# -- locate buf (non-fatal, same as protoc) -------------------------------
+# $BUF wins so a run can pin an exact release; otherwise the CI install
+# location, then PATH. buf carries its own well-known types, so unlike protoc
+# it needs no include directory.
+
+BUF_FROM_ENV="${BUF:-}"
+BUF=""
+if [ "$WANT_BUF" = true ]; then
+  if [ -n "$BUF_FROM_ENV" ] && [ -x "$BUF_FROM_ENV" ]; then
+    BUF="$BUF_FROM_ENV"
+  elif [ -x "/tmp/buf-install/bin/buf" ]; then
+    BUF="/tmp/buf-install/bin/buf"
+  elif command -v buf >/dev/null 2>&1; then
+    BUF="$(command -v buf)"
+  fi
+fi
+
+# -- locate a peak-RSS / CPU-time reader (non-fatal; columns read n/a) -----
+# All three read the same kernel counters (ru_maxrss, ru_utime, ru_stime via
+# wait4), which fold in every waited-for descendant — so the plugin variant
+# includes the plugin subprocess. GNU time reports kbytes, BSD time bytes,
+# python3 whatever getrusage says for the platform (KB on Linux, bytes on
+# macOS).
 
 MEM_TOOL=""
 TIME_BIN=""
@@ -122,9 +180,22 @@ echo "Building protoc-gen-dump..."
 (cd "$PROJECT_DIR" && go build -o "$PROTOC_GEN_DUMP" ./tools/protoc-gen-dump/) || exit 1
 
 if [ -n "$PROTOC" ]; then
-  echo "C++ protoc: $PROTOC ($("$PROTOC" --version))"
+  PROTOC_VERSION="$("$PROTOC" --version)"
+  echo "C++ protoc: $PROTOC ($PROTOC_VERSION)"
 else
-  echo "C++ protoc: NOT FOUND — reporting Go protoc-go numbers only (no verdicts)."
+  PROTOC_VERSION=""
+  echo "C++ protoc: NOT FOUND — its columns and every ratio against it read n/a."
+fi
+if [ -n "$BUF" ]; then
+  BUF_VERSION="$("$BUF" --version 2>&1 | head -1)"
+  echo "buf: $BUF (v$BUF_VERSION)"
+else
+  BUF_VERSION=""
+  if [ "$WANT_BUF" = true ]; then
+    echo "buf: NOT FOUND — its columns read n/a. Install from github.com/bufbuild/buf."
+  else
+    echo "buf: disabled (--no-buf)."
+  fi
 fi
 if command -v hyperfine >/dev/null 2>&1; then
   echo "Timing driver: hyperfine ($(hyperfine --version))"
@@ -137,9 +208,9 @@ else
   RELIABLE=false
   echo "Timing driver: built-in median-of-${RUNS} (hyperfine not found)"
   echo "WARNING: the built-in timer has ~1ms resolution. Verdicts on sub-30ms"
-  echo "         rows are unreliable — a 'tie' or 'go'/'cpp' call there is noise."
+  echo "         rows are unreliable — a 'tie' or a win called there is noise."
   echo "         Install hyperfine before trusting any verdict (and before using"
-  echo "         this harness to certify that one compiler beats the other)."
+  echo "         this harness to certify that one compiler beats another)."
 fi
 if [ -n "$MEM_TOOL" ]; then
   echo "Memory driver: $MEM_TOOL (peak RSS, median of $MEM_RUNS runs)"
@@ -156,6 +227,10 @@ for size in $SIZES; do
     "$SCRIPT_DIR/gen-large-stress" "$size" >/dev/null
   fi
 done
+if [ ! -f "$TESTS_DIR/bench/multi/common.proto" ]; then
+  echo "Generating corpus tier: multi"
+  "$SCRIPT_DIR/gen-large-stress" multi >/dev/null
+fi
 
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
@@ -177,6 +252,16 @@ for size in $SIZES; do
 done
 CASES+=("329_large_stress|$TESTS_DIR/329_large_stress")
 
+# The one generated row that is many files rather than one. Every other tier
+# measures raw parse/link throughput on a single file, which says nothing about
+# import resolution and gives a compiler that parses concurrently nothing to
+# work with — so a front end is judged there on its worst dimension. This row
+# is 42 files in one flat directory with a real import graph (public import
+# included) and no well-known-type imports, so it needs no -I and all three
+# compile it unaided. They also produce byte-identical descriptor sets on it,
+# which is as close to like-for-like as this harness gets.
+CASES+=("bench_multi|$TESTS_DIR/bench/multi")
+
 # The vendored upstream corpus (testdata/google/, see AGENTS.md) compiled in a
 # single invocation: 53 real .proto files written by the protobuf maintainers,
 # not by this project or its generator. It is the one row here whose shape —
@@ -184,15 +269,21 @@ CASES+=("329_large_stress|$TESTS_DIR/329_large_stress")
 # editions, generic services — is what a real project hands a compiler, so it is
 # the row that says something about real-world performance. It needs the C++
 # protoc include directory (four files import google/protobuf/cpp_features.proto
-# or java_features.proto), and the guard below drops the row rather than time a
-# failed compile when that is missing.
+# or java_features.proto), and the guard below drops that side of the row rather
+# than time a failed compile when it is missing.
+#
+# buf does not compile this corpus at all, and that is a finding rather than a
+# harness problem: the corpus tracks the protoc release protoc-go targets, which
+# uses editions newer than bufbuild/protocompile accepts and a descriptor.proto
+# newer than the one buf embeds. The row publishes its C++/Go numbers with buf
+# reading n/a and the compiler's own first error printed under the table.
 CASES+=("google_corpus|$TESTS_DIR/google|google/protobuf/*.proto")
 
 # Variants: how each compiler is invoked.
 #   descriptor — pure compile + serialize, no plugin/disk noise
 #   plugin     — adds the protoc-gen-dump subprocess round-trip (the realistic
-#                mode: protoc almost always drives a protoc-gen-* plugin), with
-#                the plugin's debugging JSON dump switched off so the row
+#                mode: these tools almost always drive a protoc-gen-* plugin),
+#                with the plugin's debugging JSON dump switched off so the row
 #                measures the compilers rather than the fixture between them
 VARIANTS="descriptor plugin"
 
@@ -231,7 +322,8 @@ stats_hyperfine() {
   local cmd="$1" jf="$OUT_DIR/.hf.json"
   hyperfine --warmup "$WARMUP" --runs "$RUNS" --export-json "$jf" "$cmd" \
     >/dev/null 2>&1 || { echo ""; return; }
-  jq -r '.results[0] | [ (.median*1000), (.stddev*1000), (.mean*1000) ] | @tsv' "$jf" \
+  jq -r '.results[0] | [ (.median*1000), (.stddev*1000), (.mean*1000) ]
+         | map(. * 100 | round / 100) | @tsv' "$jf" \
     | { tr '\t' ' '; } | sed 's/$/ hyperfine/'
 }
 
@@ -249,19 +341,25 @@ stats() {
   echo "$out"
 }
 
-# peak_rss_kb_once <cmd> — one run, echo peak RSS in KB (nothing on failure).
+# res_once <cmd> — one run, echo "peak_rss_kb cpu_ms" (nothing on failure).
 # The command's own output is discarded inside the inner shell so that only the
-# measuring tool's report reaches the pipe.
-peak_rss_kb_once() {
+# measuring tool's report reaches the pipe. cpu_ms is user+sys, which is what
+# distinguishes a compiler that is quick from one that is merely parallel.
+res_once() {
   local cmd="$1"
   case "$MEM_TOOL" in
     gnu-time)
-      "$TIME_BIN" -v sh -c "$cmd >/dev/null 2>&1" 2>&1 >/dev/null \
-        | awk '/Maximum resident set size/ {print $NF}'
+      "$TIME_BIN" -v sh -c "$cmd >/dev/null 2>&1" 2>&1 >/dev/null | awk '
+        /User time \(seconds\)/          {u=$NF}
+        /System time \(seconds\)/        {s=$NF}
+        /Maximum resident set size/      {kb=$NF}
+        END{ if (kb != "") printf "%d %.0f\n", kb, (u+s)*1000 }'
       ;;
     bsd-time)
-      "$TIME_BIN" -l sh -c "$cmd >/dev/null 2>&1" 2>&1 >/dev/null \
-        | awk '/maximum resident set size/ {print int($1/1024)}'
+      "$TIME_BIN" -l sh -c "$cmd >/dev/null 2>&1" 2>&1 >/dev/null | awk '
+        $2 == "real" && $4 == "user"     {u=$3; s=$5}
+        /maximum resident set size/      {b=$1}
+        END{ if (b != "") printf "%d %.0f\n", int(b/1024), (u+s)*1000 }'
       ;;
     python3-rusage)
       # The forked shell starts out sharing python's resident pages, so the
@@ -270,25 +368,46 @@ peak_rss_kb_once() {
       python3 - "$cmd" <<'PY'
 import resource, subprocess, sys
 subprocess.run(["sh", "-c", sys.argv[1] + " >/dev/null 2>&1"])
-kb = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
-print(kb // 1024 if sys.platform == "darwin" else kb)
+r = resource.getrusage(resource.RUSAGE_CHILDREN)
+kb = r.ru_maxrss // 1024 if sys.platform == "darwin" else r.ru_maxrss
+print(kb, round((r.ru_utime + r.ru_stime) * 1000))
 PY
       ;;
   esac
 }
 
-# peak_rss_kb <cmd> — median peak RSS in KB over MEM_RUNS runs, or "" when
-# memory cannot be measured. Peak RSS is far more stable than wall-clock, so a
-# short median is enough to shrug off a one-off outlier.
-peak_rss_kb() {
-  local cmd="$1" i kb vals=()
+# res_median <cmd> — echo "peak_rss_kb cpu_ms", each the median over MEM_RUNS
+# runs, or "" when resource usage cannot be measured. Both counters are far
+# more stable than wall-clock, so a short median is enough to shrug off a
+# one-off outlier.
+res_median() {
+  local cmd="$1" i line kbs=() cpus=()
   [ -n "$MEM_TOOL" ] || { echo ""; return; }
   for ((i=0; i<MEM_RUNS; i++)); do
-    kb=$(peak_rss_kb_once "$cmd")
-    [[ "$kb" =~ ^[0-9]+$ ]] && vals+=("$kb")
+    line=$(res_once "$cmd")
+    set -- $line
+    [[ "${1:-}" =~ ^[0-9]+$ ]] && kbs+=("$1")
+    [[ "${2:-}" =~ ^[0-9]+$ ]] && cpus+=("$2")
   done
-  [ "${#vals[@]}" -gt 0 ] || { echo ""; return; }
-  printf '%s\n' "${vals[@]}" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}'
+  [ "${#kbs[@]}" -gt 0 ] || { echo ""; return; }
+  local kb cpu
+  kb=$(printf '%s\n' "${kbs[@]}" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}')
+  cpu=""
+  [ "${#cpus[@]}" -gt 0 ] && \
+    cpu=$(printf '%s\n' "${cpus[@]}" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}')
+  echo "$kb ${cpu:-}"
+}
+
+# measure <prefix> <cmd> — time and profile one implementation, setting
+# <prefix>_med, _sd, _mean, _driver, _mem_kb and _cpu_ms. Every one of them is
+# left empty when the value could not be measured, which is what the cell and
+# JSON helpers below turn into "n/a" and null.
+measure() {
+  local p="$1" cmd="$2" m s mn d kb cpu
+  read -r m s mn d <<< "$(stats "$cmd")"
+  read -r kb cpu <<< "$(res_median "$cmd")"
+  eval "${p}_med=\$m; ${p}_sd=\$s; ${p}_mean=\$mn; ${p}_driver=\$d"
+  eval "${p}_mem_kb=\$kb; ${p}_cpu_ms=\$cpu"
 }
 
 # -- display formatting ---------------------------------------------------
@@ -301,12 +420,27 @@ peak_rss_kb() {
 fmt_ms() { awk -v m="$1" -v s="$2" 'BEGIN{printf "%.2f±%.2f", m, s}'; }
 # fmt_mb <kb> — "24.3"
 fmt_mb() { awk -v k="$1" 'BEGIN{printf "%.1f", k/1024}'; }
-# fmt_ratio <go> <cpp> — "0.90", or n/a when there is nothing to divide by
-fmt_ratio() { awk -v g="$1" -v c="$2" 'BEGIN{ if(c>0) printf "%.2f", g/c; else print "n/a" }'; }
+# fmt_ratio <a> <b> — "0.90", or n/a when there is nothing to divide
+fmt_ratio() { awk -v a="$1" -v b="$2" 'BEGIN{ if(a!="" && b!="" && b>0) printf "%.2f", a/b; else print "n/a" }'; }
+
+# Cell helpers: an implementation that was not measured reads n/a rather than
+# dropping the column, so every row has the same shape.
+ms_cell()  { if [ -n "$1" ]; then fmt_ms "$1" "$2"; else echo "n/a"; fi; }
+mb_cell()  { if [ -n "$1" ]; then fmt_mb "$1"; else echo "n/a"; fi; }
+# JSON helpers: same values, but absent means null rather than the string n/a.
+jnum2()    { if [ -n "$1" ]; then awk -v v="$1" 'BEGIN{printf "%.2f", v}'; else echo null; fi; }
+jint()     { if [ -n "$1" ]; then echo "$1"; else echo null; fi; }
+jratio()   { local r; r=$(fmt_ratio "$1" "$2"); if [ "$r" = "n/a" ]; then echo null; else echo "$r"; fi; }
+jstr()     { if [ -n "$1" ]; then printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; else echo null; fi; }
 
 # The table's columns, shared by the terminal table and bench.md so a row reads
 # the same in the log as it does in the README.
-COL_HEADS=("case" "variant" "cpp ms(±sd)" "go ms(±sd)" "go/cpp" "cpp peak MB" "go peak MB" "go/cpp")
+# buf carries its own time and memory but no ratio against C++ protoc: it is a
+# third implementation offered for reference, not a rival being scored. The
+# go/cpp ratios stay because that pair is what this project is a port of.
+COL_HEADS=("case" "variant" \
+           "cpp ms(±sd)" "go ms(±sd)" "buf ms(±sd)" "go/cpp" \
+           "cpp peak MB" "go peak MB" "buf peak MB" "go/cpp")
 
 # rpad <width> <cell> — right-align a cell in `width` display columns. printf
 # pads to a byte count, and the ± in a timing cell is two bytes, so a plain
@@ -317,53 +451,118 @@ rpad() {
   printf "%${w}s" "$2"
 }
 
-# print_row <8 cells> — one line of the terminal table.
+# print_row <10 cells> — one line of the terminal table.
 print_row() {
   printf '%-18s %-11s ' "$1" "$2"
-  rpad 16 "$3"; printf ' '; rpad 16 "$4"; printf ' %7s ' "$5"
-  rpad 11 "$6"; printf ' '; rpad 11 "$7"; printf ' %7s\n' "$8"
+  rpad 15 "$3"; printf ' '; rpad 15 "$4"; printf ' '; rpad 15 "$5"
+  printf ' %7s ' "$6"
+  rpad 11 "$7"; printf ' '; rpad 11 "$8"; printf ' '; rpad 11 "$9"
+  printf ' %7s\n' "${10}"
 }
 
-# verdict <go_med> <go_sd> <cpp_med> <cpp_sd> — echo go|cpp|tie. Recorded in
-# bench.json for machine consumers (the README tally), not shown in
-# the human tables. "tie" unless the medians differ by more than BOTH the
-# combined stddev (run-to-run noise) AND a relative margin. This refuses to
-# call noise a win.
+# verdict <a_med> <a_sd> <b_med> <b_sd> <a_name> <b_name> — echo the faster
+# side's name, or "tie". Recorded in bench.json for machine consumers (the
+# README tally), not shown in the human tables. "tie" unless the medians differ
+# by more than BOTH the combined stddev (run-to-run noise) AND a relative
+# margin. This refuses to call noise a win. Echoes "n/a" if either side is
+# missing, so a row only one implementation could compile claims nothing.
 verdict() {
-  awk -v gm="$1" -v gs="$2" -v cm="$3" -v cs="$4" -v margin="$MARGIN" 'BEGIN{
-    diff=gm-cm; ad=(diff<0)?-diff:diff;
-    noise=gs+cs; relm=margin*cm; thr=(noise>relm)?noise:relm;
+  if [ -z "$1" ] || [ -z "$3" ]; then echo "n/a"; return; fi
+  awk -v am="$1" -v as="$2" -v bm="$3" -v bs="$4" -v an="$5" -v bn="$6" -v margin="$MARGIN" 'BEGIN{
+    diff=am-bm; ad=(diff<0)?-diff:diff;
+    noise=as+bs; relm=margin*bm; thr=(noise>relm)?noise:relm;
     if(ad<=thr){print "tie"; exit}
-    print (diff<0)?"go":"cpp"
+    print (diff<0)?an:bn
   }'
 }
 
-# build_cmd <impl> <variant> <dir> <sources> — emit the shell command string.
+# build_cmd <impl> <variant> <dir> <sources> <label> — emit the shell command
+# string that runs one implementation over one case.
 build_cmd() {
-  local bin="$1" variant="$2" dir="$3" sources="$4"
-  case "$variant" in
-    descriptor)
+  local impl="$1" variant="$2" dir="$3" sources="$4" label="$5"
+  local bin=""
+  case "$impl" in
+    cpp) bin="$PROTOC" ;;
+    go)  bin="$PROTOC_GO" ;;
+  esac
+  local od="$OUT_DIR/dump_${label}_${impl}"
+  case "$impl:$variant" in
+    buf:descriptor)
+      # --as-file-descriptor-set drops the buf-specific extensions from the
+      # Image and --exclude-source-info drops the source info buf includes by
+      # default, so all three implementations are asked for exactly the
+      # artifact protoc's --descriptor_set_out produces. buf carries its own
+      # well-known types and ignores -I for them, so it gets no include flag.
+      echo "(cd '$dir' && '$BUF' build . -o /dev/null --as-file-descriptor-set --exclude-source-info)"
+      ;;
+    buf:plugin)
+      # buf has no --plugin/--x_out flags: a local plugin is named in a
+      # generation template, which the harness writes per case. Every case
+      # here keeps its .proto files in a single directory, so buf's default
+      # per-directory plugin strategy issues exactly one plugin call, the
+      # same as protoc.
+      mkdir -p "$od"
+      local tpl="$OUT_DIR/bufgen_${label}.yaml"
+      cat > "$tpl" <<YAML
+version: v2
+plugins:
+  - local: $PROTOC_GEN_DUMP
+    out: $od
+    opt: $od
+YAML
+      echo "(cd '$dir' && PROTOC_GEN_DUMP_SKIP_JSON=1 '$BUF' generate . --template '$tpl')"
+      ;;
+    *:descriptor)
       echo "(cd '$dir' && '$bin' --descriptor_set_out=/dev/null $INC_FLAG -I. $sources)"
       ;;
-    plugin)
-      local od="$OUT_DIR/dump_$(basename "$dir")_$(basename "$bin")"
+    *:plugin)
       mkdir -p "$od"
       # PROTOC_GEN_DUMP_SKIP_JSON keeps protoc-gen-dump from rendering its
       # 150MB debugging JSON, which the correctness harness never reads and
       # which on the big tiers costs far more than the compile being timed.
-      # Both compilers inherit it, so the row stays a fair comparison — it is
-      # simply one that measures the compilers rather than the fixture plugin.
+      # Every implementation inherits it, so the row stays a fair comparison —
+      # it is simply one that measures the compilers rather than the fixture
+      # plugin between them.
       echo "(cd '$dir' && PROTOC_GEN_DUMP_SKIP_JSON=1 '$bin' --plugin=protoc-gen-dump='$PROTOC_GEN_DUMP' --dump_out='$od' --dump_opt='$od' $INC_FLAG -I. $sources)"
       ;;
   esac
 }
 
-# compiles_ok <cmd> — run the command once and report whether it exited 0.
-# Every timed row is gated on this for both compilers: a failed compile is not
-# a measurement of compiling, and the two give up at different points, so a
-# failing row would be timing two different error paths against each other.
-compiles_ok() {
-  eval "$1" >/dev/null 2>&1
+# compile_gate <cmd> — run the command once; return 0 if it exited clean, or
+# echo its first line of stderr and return 1. Every implementation is gated on
+# this before it is timed: a failed compile is not a measurement of compiling,
+# and the implementations give up at different points, so a failing side would
+# contribute an error path's timing to the table. The reason is carried through
+# to the report so an n/a always says why.
+compile_gate() {
+  local out rc first
+  out=$(eval "$1" 2>&1 >/dev/null); rc=$?
+  [ $rc -eq 0 ] && return 0
+  # sed on a here-string rather than `grep | head`: an early-exiting reader
+  # would SIGPIPE the writer, and a compiler that failed loudly (the google
+  # corpus gives buf 677 lines of stderr) would print "grep: write error:
+  # Broken pipe" into the harness's own output.
+  first=$(sed -n '/[^[:space:]]/{s/^\(.\{0,160\}\).*/\1/p;q}' <<< "$out")
+  [ -n "$first" ] || first="exit status $rc"
+  echo "$first"
+  return 1
+}
+
+# buf_input_matches <dir> <sources> — true when compiling the whole directory
+# (all buf can be asked to do) covers exactly the file list protoc is given.
+# Where it does not, buf would be doing a different amount of work and the row
+# reads n/a for buf instead of publishing an unequal comparison.
+buf_input_matches() {
+  local dir="$1" sources="$2" walked listed
+  walked=$(cd "$dir" && find . -name '*.proto' | sed 's|^\./||' | LC_ALL=C sort | tr '\n' ' ')
+  listed=$(cd "$dir" && printf '%s\n' $sources | LC_ALL=C sort | tr '\n' ' ')
+  [ "$walked" = "$listed" ]
+}
+
+# reset_measure <prefix> — clear one implementation's slot so a row that does
+# not measure it reports n/a rather than the previous row's numbers.
+reset_measure() {
+  eval "$1_med=''; $1_sd=''; $1_mean=''; $1_driver=''; $1_mem_kb=''; $1_cpu_ms=''"
 }
 
 # -- run ------------------------------------------------------------------
@@ -373,7 +572,8 @@ print_row $(printf '%s\n' "${COL_HEADS[@]}" | sed 's/±/-/g; s/./-/g')
 
 ROWS_MD=()
 FALLBACK_ROWS=0
-SKIPPED_ROWS=()
+DROPPED_ROWS=()
+NOTES=()
 for spec in "${CASES[@]}"; do
   IFS='|' read -r label dir sources_glob <<< "$spec"
   [ -d "$dir" ] || continue
@@ -385,73 +585,82 @@ for spec in "${CASES[@]}"; do
   [ "$label" = "startup_empty" ] && info=true
 
   for variant in $VARIANTS; do
-    go_cmd=$(build_cmd "$PROTOC_GO" "$variant" "$dir" "$sources")
-    cpp_cmd=""
-    [ -n "$PROTOC" ] && cpp_cmd=$(build_cmd "$PROTOC" "$variant" "$dir" "$sources")
+    go_cmd=$(build_cmd go "$variant" "$dir" "$sources" "$label")
+    cpp_cmd=""; buf_cmd=""
+    [ -n "$PROTOC" ] && cpp_cmd=$(build_cmd cpp "$variant" "$dir" "$sources" "$label")
+    [ -n "$BUF" ] && buf_cmd=$(build_cmd buf "$variant" "$dir" "$sources" "$label")
 
-    # Gate on a clean compile before spending any time measuring one.
-    skip_why=""
-    compiles_ok "$go_cmd" || skip_why="Go protoc-go exits non-zero"
-    if [ -z "$skip_why" ] && [ -n "$cpp_cmd" ] && ! compiles_ok "$cpp_cmd"; then
-      skip_why="C++ protoc exits non-zero"
+    cpp_note=""; buf_note=""
+
+    if [ -n "$buf_cmd" ] && ! buf_input_matches "$dir" "$sources"; then
+      buf_note="input set differs (buf compiles every .proto under the directory)"
+      buf_cmd=""
     fi
-    if [ -n "$skip_why" ]; then
-      SKIPPED_ROWS+=("$label/$variant: $skip_why")
-      print_row "$label" "$variant" "-" "-" "skip" "-" "-" "-"
+
+    # Go protoc-go failing takes the whole row: this harness exists to place
+    # protoc-go against the others, so there is nothing left worth timing.
+    if ! go_note=$(compile_gate "$go_cmd"); then
+      DROPPED_ROWS+=("$label/$variant: Go protoc-go exits non-zero — $go_note")
+      print_row "$label" "$variant" "-" "-" "-" "skip" "-" "-" "-" "-"
       continue
     fi
-
-    read -r go_med go_sd go_mean go_driver <<< "$(stats "$go_cmd")"
-    go_disp=$(fmt_ms "$go_med" "$go_sd")
-
-    go_mem_kb=$(peak_rss_kb "$go_cmd")
-    go_mem_disp="n/a"; go_mem_json=null
-    if [ -n "$go_mem_kb" ]; then
-      go_mem_disp=$(fmt_mb "$go_mem_kb")
-      go_mem_json=$go_mem_kb
+    if [ -n "$cpp_cmd" ] && ! cpp_note=$(compile_gate "$cpp_cmd"); then
+      cpp_cmd=""
     fi
-    cpp_mem_kb=""
-    [ -n "$PROTOC" ] && cpp_mem_kb=$(peak_rss_kb "$cpp_cmd")
-    cpp_mem_disp="n/a"; cpp_mem_json=null
-    if [ -n "$cpp_mem_kb" ]; then
-      cpp_mem_disp=$(fmt_mb "$cpp_mem_kb")
-      cpp_mem_json=$cpp_mem_kb
+    if [ -n "$buf_cmd" ] && ! buf_note=$(compile_gate "$buf_cmd"); then
+      buf_cmd=""
     fi
-    mem_ratio_disp="n/a"; mem_ratio_json=null
-    if [ -n "$go_mem_kb" ] && [ -n "$cpp_mem_kb" ] && [ "$cpp_mem_kb" -gt 0 ]; then
-      mem_ratio_json=$(fmt_ratio "$go_mem_kb" "$cpp_mem_kb")
-      mem_ratio_disp=$mem_ratio_json
-    fi
+    [ -n "$cpp_note" ] && NOTES+=("$label/$variant: C++ protoc not timed — $cpp_note")
+    [ -n "$buf_note" ] && NOTES+=("$label/$variant: buf not timed — $buf_note")
 
-    if [ -n "$PROTOC" ]; then
-      read -r cpp_med cpp_sd cpp_mean cpp_driver <<< "$(stats "$cpp_cmd")"
-      cpp_disp=$(fmt_ms "$cpp_med" "$cpp_sd")
-      ratio=$(fmt_ratio "$go_med" "$cpp_med")
-      verd=$(verdict "$go_med" "$go_sd" "$cpp_med" "$cpp_sd")
-      # A row is only as reliable as its weaker measurement: both sides must
-      # have been timed by hyperfine for the row to count as hyperfine-timed.
-      if [ "$go_driver" = "hyperfine" ] && [ "$cpp_driver" = "hyperfine" ]; then
-        row_driver="hyperfine"; row_reliable=true
-      else
+    reset_measure go; reset_measure cpp; reset_measure buf
+    measure go "$go_cmd"
+    [ -n "$cpp_cmd" ] && measure cpp "$cpp_cmd"
+    [ -n "$buf_cmd" ] && measure buf "$buf_cmd"
+
+    # A row is only as reliable as its weakest measurement: every side that was
+    # timed at all must have been timed by hyperfine for the row to count.
+    row_driver="hyperfine"; row_reliable=true
+    for d in "$go_driver" "$cpp_driver" "$buf_driver"; do
+      [ -n "$d" ] || continue
+      if [ "$d" != "hyperfine" ]; then
         row_driver="builtin-median-$RUNS"; row_reliable=false
-        FALLBACK_ROWS=$((FALLBACK_ROWS + 1))
       fi
-      printf '{"case":"%s","variant":"%s","informational":%s,"cpp_ms":%.2f,"cpp_sd":%.2f,"go_ms":%.2f,"go_sd":%.2f,"ratio":%s,"verdict":"%s","driver":"%s","reliable":%s,"runs":%s,"cpp_peak_kb":%s,"go_peak_kb":%s,"mem_ratio":%s}\n' \
-        "$label" "$variant" "$info" "$cpp_med" "$cpp_sd" "$go_med" "$go_sd" "$ratio" "$verd" "$row_driver" "$row_reliable" "$RUNS" "$cpp_mem_json" "$go_mem_json" "$mem_ratio_json" >> "$ROWS_JSONL"
-    else
-      cpp_disp="n/a"; ratio="n/a"; verd="n/a"
-      if [ "$go_driver" = "hyperfine" ]; then
-        row_driver="hyperfine"; row_reliable=true
-      else
-        row_driver="builtin-median-$RUNS"; row_reliable=false
-        [ "$USE_HYPERFINE" = true ] && FALLBACK_ROWS=$((FALLBACK_ROWS + 1))
-      fi
-      printf '{"case":"%s","variant":"%s","informational":%s,"cpp_ms":null,"cpp_sd":null,"go_ms":%.2f,"go_sd":%.2f,"ratio":null,"verdict":"n/a","driver":"%s","reliable":%s,"runs":%s,"cpp_peak_kb":null,"go_peak_kb":%s,"mem_ratio":null}\n' \
-        "$label" "$variant" "$info" "$go_med" "$go_sd" "$row_driver" "$row_reliable" "$RUNS" "$go_mem_json" >> "$ROWS_JSONL"
+    done
+    if [ "$row_reliable" != true ] && [ "$USE_HYPERFINE" = true ]; then
+      FALLBACK_ROWS=$((FALLBACK_ROWS + 1))
     fi
 
-    print_row "$label" "$variant" "$cpp_disp" "$go_disp" "$ratio" "$cpp_mem_disp" "$go_mem_disp" "$mem_ratio_disp"
-    ROWS_MD+=("| $label | $variant | $cpp_disp | $go_disp | $ratio | $cpp_mem_disp | $go_mem_disp | $mem_ratio_disp |")
+    cpp_disp=$(ms_cell "$cpp_med" "$cpp_sd")
+    go_disp=$(ms_cell "$go_med" "$go_sd")
+    buf_disp=$(ms_cell "$buf_med" "$buf_sd")
+    cpp_mem_disp=$(mb_cell "$cpp_mem_kb")
+    go_mem_disp=$(mb_cell "$go_mem_kb")
+    buf_mem_disp=$(mb_cell "$buf_mem_kb")
+    r_go_cpp=$(fmt_ratio "$go_med" "$cpp_med")
+    m_go_cpp=$(fmt_ratio "$go_mem_kb" "$cpp_mem_kb")
+
+    printf '{"case":%s,"variant":%s,"informational":%s,' \
+      "$(jstr "$label")" "$(jstr "$variant")" "$info" >> "$ROWS_JSONL"
+    printf '"cpp_ms":%s,"cpp_sd":%s,"go_ms":%s,"go_sd":%s,"buf_ms":%s,"buf_sd":%s,' \
+      "$(jnum2 "$cpp_med")" "$(jnum2 "$cpp_sd")" \
+      "$(jnum2 "$go_med")" "$(jnum2 "$go_sd")" \
+      "$(jnum2 "$buf_med")" "$(jnum2 "$buf_sd")" >> "$ROWS_JSONL"
+    printf '"ratio":%s,"verdict":%s,' \
+      "$(jratio "$go_med" "$cpp_med")" \
+      "$(jstr "$(verdict "$go_med" "$go_sd" "$cpp_med" "$cpp_sd" go cpp)")" >> "$ROWS_JSONL"
+    printf '"driver":%s,"reliable":%s,"runs":%s,' \
+      "$(jstr "$row_driver")" "$row_reliable" "$RUNS" >> "$ROWS_JSONL"
+    printf '"cpp_peak_kb":%s,"go_peak_kb":%s,"buf_peak_kb":%s,"mem_ratio":%s,' \
+      "$(jint "$cpp_mem_kb")" "$(jint "$go_mem_kb")" "$(jint "$buf_mem_kb")" \
+      "$(jratio "$go_mem_kb" "$cpp_mem_kb")" >> "$ROWS_JSONL"
+    printf '"cpp_cpu_ms":%s,"go_cpu_ms":%s,"buf_cpu_ms":%s,"cpp_note":%s,"buf_note":%s}\n' \
+      "$(jint "$cpp_cpu_ms")" "$(jint "$go_cpu_ms")" "$(jint "$buf_cpu_ms")" \
+      "$(jstr "$cpp_note")" "$(jstr "$buf_note")" >> "$ROWS_JSONL"
+
+    print_row "$label" "$variant" "$cpp_disp" "$go_disp" "$buf_disp" "$r_go_cpp" \
+      "$cpp_mem_disp" "$go_mem_disp" "$buf_mem_disp" "$m_go_cpp"
+    ROWS_MD+=("| $label | $variant | $cpp_disp | $go_disp | $buf_disp | $r_go_cpp | $cpp_mem_disp | $go_mem_disp | $buf_mem_disp | $m_go_cpp |")
   done
 done
 
@@ -460,14 +669,19 @@ done
 jq -s '.' "$ROWS_JSONL" > "$OUT_DIR/bench.json"
 
 {
-  echo "# Performance: C++ protoc vs Go protoc-go"
+  echo "# Performance: C++ protoc vs Go protoc-go vs buf"
   echo ""
   if [ -n "$PROTOC" ]; then
-    echo "- C++ protoc: \`$("$PROTOC" --version)\`"
+    echo "- C++ protoc: \`$PROTOC_VERSION\`"
   else
-    echo "- C++ protoc: not available (Go-only run, no verdicts)"
+    echo "- C++ protoc: not available (its columns and ratios read n/a)"
   fi
   echo "- Go: \`$(go version | awk '{print $3, $4}')\`"
+  if [ -n "$BUF" ]; then
+    echo "- buf: \`v$BUF_VERSION\`"
+  else
+    echo "- buf: not available (its columns and ratios read n/a)"
+  fi
   echo "- Driver: $DRIVER, warmup=$WARMUP, runs=$RUNS, tie-margin=$MARGIN"
   if [ -n "$MEM_TOOL" ]; then
     echo "- Memory: peak RSS via $MEM_TOOL, median of $MEM_RUNS runs"
@@ -479,13 +693,25 @@ jq -s '.' "$ROWS_JSONL" > "$OUT_DIR/bench.json"
   fi
   echo ""
   printf '|'; printf ' %s |' "${COL_HEADS[@]}"; echo ""
-  echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |"
+  echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
   printf '%s\n' "${ROWS_MD[@]}"
-  if [ "${#SKIPPED_ROWS[@]}" -gt 0 ]; then
+  echo ""
+  echo "The three do not use cores the same way — C++ protoc is single-threaded,"
+  echo "protoc-go parses files in parallel, buf compiles through a worker pool —"
+  echo "so wall-clock alone does not separate \"faster\" from \"spends fewer"
+  echo "cycles\". Per-row CPU time (user+sys) is recorded in \`bench.json\` as"
+  echo "\`*_cpu_ms\` for that reason."
+  if [ "${#NOTES[@]}" -gt 0 ]; then
     echo ""
-    echo "Not measured (a compile that fails is not a measurement of compiling):"
+    echo "Not timed (a compile that fails is not a measurement of compiling):"
     echo ""
-    printf -- '- %s\n' "${SKIPPED_ROWS[@]}"
+    printf -- '- %s\n' "${NOTES[@]}"
+  fi
+  if [ "${#DROPPED_ROWS[@]}" -gt 0 ]; then
+    echo ""
+    echo "Rows dropped entirely:"
+    echo ""
+    printf -- '- %s\n' "${DROPPED_ROWS[@]}"
   fi
 } > "$OUT_DIR/bench.md"
 
@@ -496,8 +722,12 @@ if [ "$USE_HYPERFINE" = true ] && [ "$FALLBACK_ROWS" -gt 0 ]; then
   echo "         driver=builtin/reliable=false in bench.json and their verdicts"
   echo "         should not be trusted or published."
 fi
-if [ "${#SKIPPED_ROWS[@]}" -gt 0 ]; then
-  echo "WARNING: ${#SKIPPED_ROWS[@]} row(s) skipped — they did not compile cleanly:"
-  printf '         %s\n' "${SKIPPED_ROWS[@]}"
+if [ "${#NOTES[@]}" -gt 0 ]; then
+  echo "Not timed — ${#NOTES[@]} implementation(s) did not compile a row cleanly:"
+  printf '         %s\n' "${NOTES[@]}"
+fi
+if [ "${#DROPPED_ROWS[@]}" -gt 0 ]; then
+  echo "WARNING: ${#DROPPED_ROWS[@]} row(s) dropped — Go protoc-go did not compile them:"
+  printf '         %s\n' "${DROPPED_ROWS[@]}"
 fi
 echo "Wrote $OUT_DIR/bench.json and $OUT_DIR/bench.md"

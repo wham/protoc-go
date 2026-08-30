@@ -124,10 +124,10 @@ changes in it. The compliance table above is what says which protoc we match.
 
 ```bash
 scripts/test            # compare Go protoc-go output against C++ protoc
-scripts/bench           # performance comparison
+scripts/bench           # performance comparison: C++ protoc vs protoc-go vs buf
 ```
 
-Requires Go 1.23+, plus a C++ `protoc` on your PATH for the comparison suites (e.g. `brew install protobuf`).
+Requires Go 1.23+, plus a C++ `protoc` on your PATH for the comparison suites (e.g. `brew install protobuf`). `scripts/bench` also times [buf](https://github.com/bufbuild/buf) when it is installed; buf is a performance reference point only, never a correctness target.
 
 Releases are cut by a `release: major|minor|patch|none` label on the pull
 request, so a change nobody can observe never mints a version.

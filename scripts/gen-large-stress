@@ -7,10 +7,19 @@
 #   gen-large-stress SIZE            # named tier -> testdata/bench/SIZE/test.proto
 #   gen-large-stress SIZE OUTFILE    # named tier, custom output path
 #   gen-large-stress NUM  OUTFILE    # explicit message count, custom output path
+#   gen-large-stress multi [OUTDIR]  # multi-file tier -> testdata/bench/multi/
 #
 # Named tiers (message count grows ~geometrically so the perf harness can plot
 # a scaling curve and expose algorithmic differences that tiny inputs hide):
 #   tiny small medium large xl
+#
+# The `multi` tier is a different dimension, not another point on that curve.
+# Every other tier is ONE file, which measures raw parse/link throughput and
+# nothing else -- no import resolution, and no opportunity for a compiler that
+# parses files concurrently to use it. `multi` is many small files in one flat
+# directory with a real import graph (including a public import), which is the
+# shape a real project actually has. It is deliberately free of well-known-type
+# imports so it needs no -I and every compiler can build it unaided.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -32,12 +41,120 @@ if [ -n "$size" ]; then
     medium) NUM_MESSAGES=500;   FIELDS_PER_MSG=20; NESTING_DEPTH=15; NUM_ENUMS=50;  NUM_SERVICES=10 ;;
     large)  NUM_MESSAGES=2000;  FIELDS_PER_MSG=25; NESTING_DEPTH=20; NUM_ENUMS=100; NUM_SERVICES=20 ;;
     xl)     NUM_MESSAGES=10000; FIELDS_PER_MSG=30; NESTING_DEPTH=25; NUM_ENUMS=200; NUM_SERVICES=40 ;;
+    multi)  MULTI=true; NUM_FILES=40; MSGS_PER_FILE=12 ;;
     *[!0-9]*)
-      echo "Unknown size '$size' (use a tier: tiny small medium large xl, or a number)" >&2
+      echo "Unknown size '$size' (use a tier: tiny small medium large xl, multi, or a number)" >&2
       exit 1 ;;
     *) NUM_MESSAGES="$size" ;;  # explicit numeric message count
   esac
   OUT="${2:-$PROJECT_DIR/testdata/bench/$size/test.proto}"
+fi
+
+# -- multi-file tier ------------------------------------------------------
+# Many files, one flat directory (so buf's directory walk sees exactly the file
+# list protoc is handed, and its per-directory plugin strategy issues one call),
+# proto3 only (no edition newer than a third-party compiler may accept), and no
+# well-known-type imports (so no -I is needed and a Go-only run can still build
+# it). base.proto is reached only through common.proto's `import public`, so
+# resolving this corpus genuinely exercises public-import re-export.
+if [ "${MULTI:-false}" = true ]; then
+  OUTDIR="${2:-$PROJECT_DIR/testdata/bench/multi}"
+  mkdir -p "$OUTDIR"
+  rm -f "$OUTDIR"/*.proto
+
+  cat > "$OUTDIR/base.proto" << 'EOF'
+syntax = "proto3";
+
+package bench_multi;
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_OK = 1;
+  STATUS_FAILED = 2;
+}
+
+message Meta {
+  string id = 1;
+  int64 revision = 2;
+  map<string, string> attributes = 3;
+}
+EOF
+
+  cat > "$OUTDIR/common.proto" << 'EOF'
+syntax = "proto3";
+
+package bench_multi;
+
+import public "base.proto";
+
+message Common {
+  Meta meta = 1;
+  Status status = 2;
+  repeated string notes = 3;
+}
+EOF
+
+  for ((i=0; i<NUM_FILES; i++)); do
+    f=$(printf '%s/mod_%03d.proto' "$OUTDIR" "$i")
+    {
+      echo "syntax = \"proto3\";"
+      echo ""
+      echo "package bench_multi;"
+      echo ""
+      echo "import \"common.proto\";"
+      # Each module leans on earlier ones, so the graph has depth rather than
+      # being a fan of independent files a compiler could shard trivially.
+      ((i > 0)) && printf 'import "mod_%03d.proto";\n' $((i - 1))
+      # i/2 collides with i-1 at i==2; protoc rejects a doubled import.
+      ((i > 1)) && ((i / 2 != i - 1)) && printf 'import "mod_%03d.proto";\n' $((i / 2))
+      echo ""
+      echo "enum Kind${i} {"
+      echo "  KIND_${i}_UNSPECIFIED = 0;"
+      for ((v=1; v<=6; v++)); do echo "  KIND_${i}_V${v} = ${v};"; done
+      echo "}"
+      echo ""
+      for ((m=0; m<MSGS_PER_FILE; m++)); do
+        echo "message M${i}_${m} {"
+        fn=1
+        for ((x=0; x<10; x++)); do
+          case $((x % 5)) in
+            0) echo "  string s_${x} = ${fn};" ;;
+            1) echo "  int32 i_${x} = ${fn};" ;;
+            2) echo "  bool b_${x} = ${fn};" ;;
+            3) echo "  double d_${x} = ${fn};" ;;
+            4) echo "  bytes y_${x} = ${fn};" ;;
+          esac
+          fn=$((fn + 1))
+        done
+        # Types from common.proto, and from base.proto reached only through
+        # common's public import.
+        echo "  Common common = ${fn};"; fn=$((fn + 1))
+        echo "  Meta meta = ${fn};";     fn=$((fn + 1))
+        echo "  Status status = ${fn};"; fn=$((fn + 1))
+        echo "  Kind${i} kind = ${fn};"; fn=$((fn + 1))
+        echo "  map<string, int32> counts = ${fn};"; fn=$((fn + 1))
+        ((m > 0)) && { echo "  M${i}_$((m - 1)) prev = ${fn};"; fn=$((fn + 1)); }
+        ((i > 0)) && { echo "  M$((i - 1))_0 imported = ${fn};"; fn=$((fn + 1)); }
+        ((i > 1)) && { echo "  repeated M$((i / 2))_0 refs = ${fn};"; fn=$((fn + 1)); }
+        echo "  oneof variant {"
+        echo "    string var_s = ${fn};"; fn=$((fn + 1))
+        echo "    int32 var_i = ${fn};";  fn=$((fn + 1))
+        echo "  }"
+        echo "}"
+        echo ""
+      done
+      if ((i % 5 == 0)); then
+        echo "service Service${i} {"
+        for ((r=0; r<4; r++)); do
+          echo "  rpc Method${r}(M${i}_${r}) returns (M${i}_$((r + 1)));"
+        done
+        echo "}"
+      fi
+    } > "$f"
+  done
+
+  echo "Generated $(ls "$OUTDIR"/*.proto | wc -l | tr -d ' ') files in $OUTDIR"
+  exit 0
 fi
 
 mkdir -p "$(dirname "$OUT")"
