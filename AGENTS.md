@@ -297,8 +297,48 @@ The practical consequence is worth stating plainly: **every row buf is timed on
 is a single-directory corpus, and all but `01_basic_message` are a single
 file.** So the table compares buf's front end on compile throughput and startup
 cost, and does not exercise import-graph resolution or the parallelism buf gets
-from a many-file build. A multi-file generated tier would close that gap and is
-the obvious next thing to add here.
+from a many-file build.
+
+That is not a cosmetic gap — it moves the number. Measured on a 4-core box
+against the largest subset of the vendored corpus buf can compile (32 of the 53
+files, real upstream protos with a real import graph), against the synthetic
+`bench_medium` tier:
+
+| corpus | cpp | go | buf | buf/cpp |
+| --- | ---: | ---: | ---: | ---: |
+| `bench_medium` (1 generated file) | 135ms | 50ms | 440ms | 3.26 |
+| 32 upstream files, import graph | 92ms | 44ms | 192ms | 2.09 |
+
+So the rows buf is currently timed on are close to its worst case, and the one
+row whose shape would be kindest to it is the one it cannot compile. Read the
+published `buf/cpp` ratios with that in mind. A multi-file generated tier would
+close the gap and is the obvious next thing to add here.
+
+### Re-checking that buf is measured fairly
+
+The gap is large enough to invite the suspicion that the harness is calling buf
+wrong. Four checks say it is not, and they are worth repeating whenever the buf
+pin moves:
+
+- **The flags do not penalize it.** `--exclude-source-info` makes buf's compile
+  slightly *faster* than its default, not slower, so asking it for protoc's
+  artifact is not extra work.
+- **Two independent timers agree.** `buf build --debug` reports its own
+  `bufimage.BuildImage` duration. On `bench_medium` that is ~400ms against the
+  ~389ms left when the measured startup floor is subtracted from wall clock —
+  so the harness's number is buf's own number.
+- **Startup is isolated, not smeared.** buf's process-launch floor is ~51ms
+  against protoc's ~4ms (a 54MB binary against 10MB). That cost dominates the
+  small rows, which is exactly why `startup_empty` is flagged informational and
+  excluded from the tallies.
+- **It is not thrashing on a small box.** buf scales with cores (310ms at
+  `GOMAXPROCS=1`, 175ms at 4 on the 32-file corpus), so its default is already
+  its best configuration here.
+
+What the CPU column shows is that buf buys its wall-clock with cores: on that
+corpus it spends 431ms of CPU to protoc's 91ms and protoc-go's 62ms. It is not
+that buf is being measured unfairly; it is that buf is doing considerably more
+work and hiding some of it behind parallelism.
 
 ### Published compliance results
 
