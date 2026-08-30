@@ -291,6 +291,39 @@ peak_rss_kb() {
   printf '%s\n' "${vals[@]}" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}'
 }
 
+# -- display formatting ---------------------------------------------------
+# One format for every surface: this table, results-bench/bench.md, and the
+# README block that scripts/render-readme builds from bench.json. Same columns,
+# same digits, so the numbers can be read against each other. render-readme
+# reimplements these in jq — keep the digit counts in step.
+
+# fmt_ms <median> <stddev> — "1.42±0.06"
+fmt_ms() { awk -v m="$1" -v s="$2" 'BEGIN{printf "%.2f±%.2f", m, s}'; }
+# fmt_mb <kb> — "24.3"
+fmt_mb() { awk -v k="$1" 'BEGIN{printf "%.1f", k/1024}'; }
+# fmt_ratio <go> <cpp> — "0.90", or n/a when there is nothing to divide by
+fmt_ratio() { awk -v g="$1" -v c="$2" 'BEGIN{ if(c>0) printf "%.2f", g/c; else print "n/a" }'; }
+
+# The table's columns, shared by the terminal table and bench.md so a row reads
+# the same in the log as it does in the README.
+COL_HEADS=("case" "variant" "cpp ms(±sd)" "go ms(±sd)" "go/cpp" "cpp peak MB" "go peak MB" "go/cpp")
+
+# rpad <width> <cell> — right-align a cell in `width` display columns. printf
+# pads to a byte count, and the ± in a timing cell is two bytes, so a plain
+# %16s would leave those two columns a character narrow.
+rpad() {
+  local w="$1"
+  case "$2" in *±*) w=$((w + 1)) ;; esac
+  printf "%${w}s" "$2"
+}
+
+# print_row <8 cells> — one line of the terminal table.
+print_row() {
+  printf '%-18s %-11s ' "$1" "$2"
+  rpad 16 "$3"; printf ' '; rpad 16 "$4"; printf ' %7s ' "$5"
+  rpad 11 "$6"; printf ' '; rpad 11 "$7"; printf ' %7s\n' "$8"
+}
+
 # verdict <go_med> <go_sd> <cpp_med> <cpp_sd> — echo go|cpp|tie. Recorded in
 # bench.json for machine consumers (the README tally), not shown in
 # the human tables. "tie" unless the medians differ by more than BOTH the
@@ -335,8 +368,8 @@ compiles_ok() {
 
 # -- run ------------------------------------------------------------------
 
-printf '%-18s %-11s %14s %14s %7s %9s %9s %7s\n' "case" "variant" "cpp ms(±sd)" "go ms(±sd)" "go/cpp" "cpp MB" "go MB" "go/cpp"
-printf '%-18s %-11s %14s %14s %7s %9s %9s %7s\n' "----" "-------" "-----------" "----------" "------" "------" "-----" "------"
+print_row "${COL_HEADS[@]}"
+print_row $(printf '%s\n' "${COL_HEADS[@]}" | sed 's/±/-/g; s/./-/g')
 
 ROWS_MD=()
 FALLBACK_ROWS=0
@@ -364,36 +397,36 @@ for spec in "${CASES[@]}"; do
     fi
     if [ -n "$skip_why" ]; then
       SKIPPED_ROWS+=("$label/$variant: $skip_why")
-      printf '%-18s %-11s %14s %14s %7s %9s %9s %7s\n' "$label" "$variant" "-" "-" "skip" "-" "-" "-"
+      print_row "$label" "$variant" "-" "-" "skip" "-" "-" "-"
       continue
     fi
 
     read -r go_med go_sd go_mean go_driver <<< "$(stats "$go_cmd")"
-    go_disp=$(awk -v m="$go_med" -v s="$go_sd" 'BEGIN{printf "%d±%d", m+0.5, s+0.5}')
+    go_disp=$(fmt_ms "$go_med" "$go_sd")
 
     go_mem_kb=$(peak_rss_kb "$go_cmd")
     go_mem_disp="n/a"; go_mem_json=null
     if [ -n "$go_mem_kb" ]; then
-      go_mem_disp=$(awk -v k="$go_mem_kb" 'BEGIN{printf "%.1f", k/1024}')
+      go_mem_disp=$(fmt_mb "$go_mem_kb")
       go_mem_json=$go_mem_kb
     fi
     cpp_mem_kb=""
     [ -n "$PROTOC" ] && cpp_mem_kb=$(peak_rss_kb "$cpp_cmd")
     cpp_mem_disp="n/a"; cpp_mem_json=null
     if [ -n "$cpp_mem_kb" ]; then
-      cpp_mem_disp=$(awk -v k="$cpp_mem_kb" 'BEGIN{printf "%.1f", k/1024}')
+      cpp_mem_disp=$(fmt_mb "$cpp_mem_kb")
       cpp_mem_json=$cpp_mem_kb
     fi
     mem_ratio_disp="n/a"; mem_ratio_json=null
     if [ -n "$go_mem_kb" ] && [ -n "$cpp_mem_kb" ] && [ "$cpp_mem_kb" -gt 0 ]; then
-      mem_ratio_json=$(awk -v g="$go_mem_kb" -v c="$cpp_mem_kb" 'BEGIN{printf "%.2f", g/c}')
+      mem_ratio_json=$(fmt_ratio "$go_mem_kb" "$cpp_mem_kb")
       mem_ratio_disp=$mem_ratio_json
     fi
 
     if [ -n "$PROTOC" ]; then
       read -r cpp_med cpp_sd cpp_mean cpp_driver <<< "$(stats "$cpp_cmd")"
-      cpp_disp=$(awk -v m="$cpp_med" -v s="$cpp_sd" 'BEGIN{printf "%d±%d", m+0.5, s+0.5}')
-      ratio=$(awk -v g="$go_med" -v c="$cpp_med" 'BEGIN{ if(c>0) printf "%.2f", g/c; else print "n/a" }')
+      cpp_disp=$(fmt_ms "$cpp_med" "$cpp_sd")
+      ratio=$(fmt_ratio "$go_med" "$cpp_med")
       verd=$(verdict "$go_med" "$go_sd" "$cpp_med" "$cpp_sd")
       # A row is only as reliable as its weaker measurement: both sides must
       # have been timed by hyperfine for the row to count as hyperfine-timed.
@@ -417,7 +450,7 @@ for spec in "${CASES[@]}"; do
         "$label" "$variant" "$info" "$go_med" "$go_sd" "$row_driver" "$row_reliable" "$RUNS" "$go_mem_json" >> "$ROWS_JSONL"
     fi
 
-    printf '%-18s %-11s %14s %14s %7s %9s %9s %7s\n' "$label" "$variant" "$cpp_disp" "$go_disp" "$ratio" "$cpp_mem_disp" "$go_mem_disp" "$mem_ratio_disp"
+    print_row "$label" "$variant" "$cpp_disp" "$go_disp" "$ratio" "$cpp_mem_disp" "$go_mem_disp" "$mem_ratio_disp"
     ROWS_MD+=("| $label | $variant | $cpp_disp | $go_disp | $ratio | $cpp_mem_disp | $go_mem_disp | $mem_ratio_disp |")
   done
 done
@@ -445,8 +478,8 @@ jq -s '.' "$ROWS_JSONL" > "$OUT_DIR/bench.json"
     echo "- **WARNING:** built-in ~1ms timer — verdicts on sub-30ms rows are noise."
   fi
   echo ""
-  echo "| case | variant | cpp ms(±sd) | go ms(±sd) | go/cpp | cpp peak MB | go peak MB | go/cpp |"
-  echo "| ---- | ------- | ----------- | ---------- | ------ | ----------- | ---------- | ------ |"
+  printf '|'; printf ' %s |' "${COL_HEADS[@]}"; echo ""
+  echo "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |"
   printf '%s\n' "${ROWS_MD[@]}"
   if [ "${#SKIPPED_ROWS[@]}" -gt 0 ]; then
     echo ""

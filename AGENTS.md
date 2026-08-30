@@ -180,9 +180,22 @@ memory rather than verdict columns; the noise-aware wall-clock verdict is
 still computed into `bench.json` per row, where the README tally consumes it.
 Memory rows read `n/a` when no reader is available.
 
+There is exactly one performance table, and it looks the same everywhere it is
+read — the run's own log, `results-bench/bench.md` (which the weekly compliance
+pull request quotes), and the README block:
+
+| case | variant | cpp ms(±sd) | go ms(±sd) | go/cpp | cpp peak MB | go peak MB | go/cpp |
+
+`scripts/bench` formats it once (`fmt_ms`/`fmt_mb`/`fmt_ratio`) for both the log
+and the markdown; `scripts/render-readme` rebuilds the same table from
+`bench.json` with fixed-decimal jq helpers, because jq's `tostring` would print
+`0.90` as `0.9` and quietly desync the two. Change the columns or the digits in
+one and change them in the other.
+
 `tests.yml` runs this harness (tiny/small/medium tiers) on every pull request
-and posts `bench.md` as a sticky comment on the pull request, updated in place
-on each push.
+and uploads `results-bench/` as an artifact. It used to also post `bench.md` as
+a sticky pull-request comment; that was noise on every push and was removed —
+the numbers that get published are the weekly ones.
 
 If `hyperfine` is installed it drives the timing for better statistics;
 otherwise a built-in median-of-N loop is used. C++ `protoc` is optional — when
