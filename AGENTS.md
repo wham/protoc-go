@@ -61,6 +61,9 @@ scripts/bench --summary
 scripts/bench --summary --no-buf   # two-way, when buf is installed but not wanted
 # In-process library core (ns/op, B/op, allocs/op)
 go test ./protoc/ -run='^$' -bench=. -benchmem
+# Compile + protoc-gen-go on the kaja.tools demo schemas (testdata/kaja/),
+# in-process and as a subprocess; the latter needs protoc-gen-go on PATH
+go test ./protoc/ -run='^$' -bench=GenerateGo -benchmem
 ```
 
 The test harness:

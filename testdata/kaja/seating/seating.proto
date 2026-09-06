@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+package seating;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "internal/api";
+
+// Live seat inventory for the Theatre chain.
+//
+// Buying a ticket is two calls: look at the house, buy some seats. Show ids
+// come from the Theatre service's schedule — start at
+// https://theatre.kaja.tools/shows and copy any `id`. One reads
+// `dune-part-two@the-lantern`: the film, at the house playing it.
+//
+// The house is busy. Other customers are holding and buying these seats the
+// whole time, so a seat map is only true for a moment: call GetSeatMap twice
+// and it will have changed underneath you. Losing a seat to somebody faster
+// is a normal thing to see here.
+//
+// There is a box office queue too: 120 calls per 30 seconds per caller. Every
+// response says what is left of that budget in its RateLimit metadata, and
+// one call past it comes back as RESOURCE_EXHAUSTED with a Retry-After.
+service Seating {
+    // The whole house for a screening: every seat with its section, price,
+    // and whether it is free. Houses are not all the same size, so how many
+    // rows come back depends on which theater the screening is at.
+    rpc GetSeatMap(GetSeatMapRequest) returns (GetSeatMapResponse);
+    // Buy up to 6 seats. This is the one call that spends money, and it is
+    // all or nothing: if somebody took one of the seats first, nothing is
+    // bought and the response says which ones were lost.
+    rpc BookSeats(BookSeatsRequest) returns (BookSeatsResponse);
+
+    // Streaming bonus: a snapshot of the house, then every seat change in
+    // it, live, until you disconnect. Needs a client that speaks gRPC
+    // streaming — the kaja desktop app does; the web demo does not, so
+    // there it is fine to just call GetSeatMap again.
+    rpc WatchSeats(WatchSeatsRequest) returns (stream SeatUpdate);
+}
+
+enum SeatStatus {
+    SEAT_STATUS_UNKNOWN = 0;
+    SEAT_STATUS_AVAILABLE = 1;
+    SEAT_STATUS_HELD = 2;
+    SEAT_STATUS_SOLD = 3;
+}
+
+enum Section {
+    SECTION_UNKNOWN = 0;
+    SECTION_ORCHESTRA = 1;
+    SECTION_BALCONY = 2;
+}
+
+enum ChangeReason {
+    CHANGE_REASON_UNKNOWN = 0;
+    CHANGE_REASON_HOLD = 1;
+    CHANGE_REASON_PURCHASE = 2;
+    CHANGE_REASON_RELEASE = 3;
+    CHANGE_REASON_EXPIRE = 4;
+}
+
+message Seat {
+    string id = 1;        // "F7" - row letter + seat number
+    Section section = 2;
+    string row = 3;
+    int32 number = 4;
+    SeatStatus status = 5;
+    int32 price_cents = 6;
+}
+
+message Row {
+    string letter = 1;
+    repeated Seat seats = 2;
+}
+
+message SectionMap {
+    Section section = 1;
+    repeated Row rows = 2;
+}
+
+message SeatMap {
+    string show_id = 1;
+    repeated SectionMap sections = 2;
+    int32 available = 3;
+    int32 held = 4;
+    int32 sold = 5;
+    // Available seat counts keyed by section name, e.g. "ORCHESTRA" -> 96.
+    map<string, int32> available_by_section = 6;
+}
+
+message SeatChange {
+    string show_id = 1;
+    string seat_id = 2;
+    SeatStatus status = 3;
+    ChangeReason reason = 4;
+    google.protobuf.Timestamp changed_at = 5;
+}
+
+message GetSeatMapRequest {
+    string show_id = 1;
+}
+
+message GetSeatMapResponse {
+    SeatMap seat_map = 1;
+}
+
+message BookSeatsRequest {
+    string show_id = 1;
+    // Seat ids from the seat map, e.g. ["F7", "F8"]. At most 6.
+    repeated string seat_ids = 2;
+}
+
+message BookSeatsResponse {
+    string booking_id = 1;
+    repeated Seat seats = 2;
+    int32 total_price_cents = 3;
+    google.protobuf.Timestamp booked_at = 4;
+}
+
+message WatchSeatsRequest {
+    string show_id = 1;
+}
+
+// One frame of a WatchSeats stream: the opening snapshot, then a change
+// every time anybody's seat changes state.
+message SeatUpdate {
+    oneof update {
+        SeatMap snapshot = 1;
+        SeatChange change = 2;
+    }
+}
