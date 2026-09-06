@@ -75,10 +75,16 @@ func init() {
 }
 
 func New(input string) *Tokenizer {
-	// Pre-allocate the token slice for the densest realistic input (~4 bytes
-	// per token): one slightly generous allocation beats growing a multi-MB
-	// slice, which copies the whole prefix each step.
+	// Size the token slice from two upper bounds and take the tighter: the
+	// densest realistic input runs ~4 bytes per token, and no file has more
+	// than about four tokens per `;`, `=`, `{` or `}` (real ones 2-3.5,
+	// generated ones 2.6). Bytes alone overshoot commented files two- to
+	// three-fold; the punctuation count, four SIMD scans, brings them within
+	// ~30%. push extrapolates the rest if either bound was still wrong.
 	est := len(input) / 4
+	if punct := 4*(strings.Count(input, ";")+strings.Count(input, "=")+strings.Count(input, "{")+strings.Count(input, "}")) + 64; punct < est {
+		est = punct
+	}
 	if est < 64 {
 		est = 64
 	}
@@ -94,6 +100,27 @@ func New(input string) *Tokenizer {
 	}
 	t.tokenize()
 	return t
+}
+
+// push appends a token. When the slice is full it is regrown to the count the
+// whole input projects to at the density tokenized so far, rather than doubled,
+// so an estimate that fell a little short costs a little, and a multi-MB input
+// settles its final size in one or two copies. It always grows by at least a
+// quarter, so a run of bad projections still stays a short one.
+func (t *Tokenizer) push(tok Token) {
+	if len(t.tokens) == cap(t.tokens) {
+		n := len(t.tokens)
+		want := n + n/4
+		if t.pos > 0 {
+			if proj := int(float64(n) * float64(len(t.input)) / float64(t.pos)); proj+proj/8 > want {
+				want = proj + proj/8
+			}
+		}
+		grown := make([]Token, n, want+16)
+		copy(grown, t.tokens)
+		t.tokens = grown
+	}
+	t.tokens = append(t.tokens, tok)
 }
 
 func (t *Tokenizer) tokenize() {
@@ -143,7 +170,7 @@ func (t *Tokenizer) tokenize() {
 			} else {
 				symStr = string(ch)
 			}
-			t.tokens = append(t.tokens, Token{Type: TokenSymbol, Value: symStr, Line: t.line, Column: t.col})
+			t.push(Token{Type: TokenSymbol, Value: symStr, Line: t.line, Column: t.col})
 			t.advance()
 		}
 		prevTokenLine = t.tokens[len(t.tokens)-1].Line
@@ -152,7 +179,7 @@ func (t *Tokenizer) tokenize() {
 	if t.commentSlots < len(t.tokens)+1 {
 		t.addComments(t.collectComments(prevTokenLine))
 	}
-	t.tokens = append(t.tokens, Token{Type: TokenEOF, Value: "", Line: t.line, Column: t.col})
+	t.push(Token{Type: TokenEOF, Value: "", Line: t.line, Column: t.col})
 }
 
 // addComments records cd for the next comment slot, storing only non-empty
@@ -171,7 +198,7 @@ func (t *Tokenizer) addComments(cd TokenComments) {
 func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 	var result TokenComments
 	canAttachToPrev := prevTokenLine >= 0
-	var commentBuf strings.Builder
+	var commentBuf commentText
 	hasComment := false
 	isLineComment := false
 
@@ -237,7 +264,7 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 			t.advance() // skip /
 			t.advance() // skip /
 			text := t.readLineCommentText()
-			commentBuf.WriteString(text)
+			commentBuf.add(text)
 			hasComment = true
 			isLineComment = true
 		} else if t.pos+1 < len(t.input) && t.input[t.pos] == '/' && t.input[t.pos+1] == '*' {
@@ -250,7 +277,7 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 			t.advance() // skip /
 			t.advance() // skip *
 			text := t.readBlockCommentText(bcStartLine, bcStartCol)
-			commentBuf.WriteString(text)
+			commentBuf.add(text)
 			hasComment = true
 			isLineComment = false
 			// Consume trailing whitespace and newline
@@ -293,7 +320,42 @@ func (t *Tokenizer) collectComments(prevTokenLine int) TokenComments {
 	return result
 }
 
-func (t *Tokenizer) flushComment(result *TokenComments, buf *strings.Builder, canAttachToPrev bool) {
+// commentText accumulates the pieces of one comment. A single piece, which is
+// most comments, is handed back as the substring of the input it already is;
+// only a run of consecutive line comments is joined in a builder.
+type commentText struct {
+	first string
+	n     int
+	buf   strings.Builder
+}
+
+func (c *commentText) add(s string) {
+	switch c.n {
+	case 0:
+		c.first = s
+	case 1:
+		c.buf.WriteString(c.first)
+		fallthrough
+	default:
+		c.buf.WriteString(s)
+	}
+	c.n++
+}
+
+func (c *commentText) String() string {
+	if c.n <= 1 {
+		return c.first
+	}
+	return c.buf.String()
+}
+
+func (c *commentText) Reset() {
+	c.first = ""
+	c.n = 0
+	c.buf.Reset()
+}
+
+func (t *Tokenizer) flushComment(result *TokenComments, buf *commentText, canAttachToPrev bool) {
 	text := buf.String()
 	if canAttachToPrev {
 		result.PrevTrailing = text
@@ -309,13 +371,12 @@ func (t *Tokenizer) readLineCommentText() string {
 	for t.pos < len(t.input) && t.input[t.pos] != '\n' && t.input[t.pos] != 0 {
 		t.advance()
 	}
-	text := t.input[start:t.pos]
 	if t.pos < len(t.input) && t.input[t.pos] == '\n' {
-		t.advance() // skip \n
-		return text + "\n"
+		t.advance() // skip \n, which the text keeps
+		return t.input[start:t.pos]
 	}
 	// EOF or null byte without trailing newline
-	return text
+	return t.input[start:t.pos]
 }
 
 // readBlockCommentText reads text between /* and */, returns content without delimiters.
@@ -552,7 +613,7 @@ func (t *Tokenizer) readString() {
 	} else if t.pos >= len(t.input) {
 		t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Unexpected end of string."})
 	}
-	t.tokens = append(t.tokens, Token{Type: TokenString, Value: sb.String(), Line: startLine, Column: startCol, RawLen: t.col - startCol})
+	t.push(Token{Type: TokenString, Value: sb.String(), Line: startLine, Column: startCol, RawLen: t.col - startCol})
 }
 
 func (t *Tokenizer) readNumber() {
@@ -572,7 +633,7 @@ func (t *Tokenizer) readNumber() {
 			// "0x" with no hex digits following
 			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: `"0x" must be followed by hex digits.`})
 			// Still emit a token so the parser sees something
-			t.tokens = append(t.tokens, Token{Type: TokenInt, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
+			t.push(Token{Type: TokenInt, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
 			return
 		}
 	} else {
@@ -606,7 +667,7 @@ func (t *Tokenizer) readNumber() {
 	if isFloat {
 		tokType = TokenFloat
 	}
-	t.tokens = append(t.tokens, Token{Type: tokType, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
+	t.push(Token{Type: tokType, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
 }
 
 // readFloatStartingWithDot handles float literals that begin with '.' (e.g., .5, .25).
@@ -631,7 +692,7 @@ func (t *Tokenizer) readFloatStartingWithDot() {
 			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: `"e" must be followed by exponent.`})
 		}
 	}
-	t.tokens = append(t.tokens, Token{Type: TokenFloat, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
+	t.push(Token{Type: TokenFloat, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
 }
 
 func (t *Tokenizer) readIdent() {
@@ -641,7 +702,7 @@ func (t *Tokenizer) readIdent() {
 	for t.pos < len(t.input) && isIdentPart(t.input[t.pos]) {
 		t.advance()
 	}
-	t.tokens = append(t.tokens, Token{Type: TokenIdent, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
+	t.push(Token{Type: TokenIdent, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
 }
 
 const tabWidth = 8
