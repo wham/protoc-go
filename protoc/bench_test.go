@@ -54,20 +54,30 @@ var benchCases = []benchCase{
 		glob:               "google/protobuf/*.proto",
 		needsProtocInclude: true,
 	},
-	// The kaja.tools demo services (testdata/kaja/README.md): an application's
-	// own schemas, the input its build feeds protoc-go together with
-	// protoc-gen-go. Small, commented, with imports and a well-known type:
-	// the shape of a compile an embedding program actually does.
+	// The kaja.tools demo services: an application's own schemas, the input
+	// its build feeds protoc-go together with protoc-gen-go. Small, commented,
+	// with imports and a well-known type: the shape of a compile an embedding
+	// program actually does. They are read from a checkout of
+	// kaja-tools/website named by KAJA_WEBSITE rather than vendored here, and
+	// skipped without one.
 	{
 		name: "kaja_quirks",
-		dir:  "../testdata/kaja/quirks",
+		dir:  kajaDir("apps/quirks/proto"),
 		files: []string{
 			"v1/basics.proto", "v1/quirks.proto",
 			"v1/lib/enum.proto", "v1/lib/message.proto",
 			"v2/quirks.proto",
 		},
 	},
-	{name: "kaja_seating", dir: "../testdata/kaja/seating"},
+	{name: "kaja_seating", dir: kajaDir("apps/seating/proto")},
+}
+
+func kajaDir(sub string) string {
+	root := os.Getenv("KAJA_WEBSITE")
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, sub)
 }
 
 // protoIncludeDirs lists the usual homes of the C++ protoc include directory,
@@ -92,6 +102,9 @@ func protocInclude() string {
 // paths to resolve them against. ok is false when the case cannot be run as
 // specified, with why saying so.
 func benchInputs(bc benchCase) (sources, paths []string, why string, ok bool) {
+	if bc.dir == "" {
+		return nil, nil, "KAJA_WEBSITE not set (a checkout of kaja-tools/website)", false
+	}
 	glob := bc.glob
 	if glob == "" {
 		glob = "*.proto"
