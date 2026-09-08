@@ -3,14 +3,10 @@ package protoc_test
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/wham/protoc-go/protoc"
-	gengo "google.golang.org/protobuf/cmd/protoc-gen-go/internal_gengo"
-	"google.golang.org/protobuf/compiler/protogen"
 	pluginpb "google.golang.org/protobuf/types/pluginpb"
 )
 
@@ -28,9 +24,6 @@ type benchCase struct {
 	// vendored here. Without that directory the case is skipped rather than
 	// benchmarked on a subset, so the numbers always describe the same work.
 	needsProtocInclude bool
-	// files names the sources explicitly, relative to dir, for a case whose
-	// inputs are not one glob's worth.
-	files []string
 }
 
 var benchCases = []benchCase{
@@ -54,30 +47,6 @@ var benchCases = []benchCase{
 		glob:               "google/protobuf/*.proto",
 		needsProtocInclude: true,
 	},
-	// The kaja.tools demo services: an application's own schemas, the input
-	// its build feeds protoc-go together with protoc-gen-go. Small, commented,
-	// with imports and a well-known type: the shape of a compile an embedding
-	// program actually does. They are read from a checkout of
-	// kaja-tools/website named by KAJA_WEBSITE rather than vendored here, and
-	// skipped without one.
-	{
-		name: "kaja_quirks",
-		dir:  kajaDir("apps/quirks/proto"),
-		files: []string{
-			"v1/basics.proto", "v1/quirks.proto",
-			"v1/lib/enum.proto", "v1/lib/message.proto",
-			"v2/quirks.proto",
-		},
-	},
-	{name: "kaja_seating", dir: kajaDir("apps/seating/proto")},
-}
-
-func kajaDir(sub string) string {
-	root := os.Getenv("KAJA_WEBSITE")
-	if root == "" {
-		return ""
-	}
-	return filepath.Join(root, sub)
 }
 
 // protoIncludeDirs lists the usual homes of the C++ protoc include directory,
@@ -102,26 +71,12 @@ func protocInclude() string {
 // paths to resolve them against. ok is false when the case cannot be run as
 // specified, with why saying so.
 func benchInputs(bc benchCase) (sources, paths []string, why string, ok bool) {
-	if bc.dir == "" {
-		return nil, nil, "KAJA_WEBSITE not set (a checkout of kaja-tools/website)", false
-	}
 	glob := bc.glob
 	if glob == "" {
 		glob = "*.proto"
 	}
-	var matches []string
-	if bc.files != nil {
-		for _, f := range bc.files {
-			matches = append(matches, filepath.Join(bc.dir, f))
-		}
-	} else {
-		var err error
-		matches, err = filepath.Glob(filepath.Join(bc.dir, glob))
-		if err != nil {
-			return nil, nil, err.Error(), false
-		}
-	}
-	if len(matches) == 0 {
+	matches, err := filepath.Glob(filepath.Join(bc.dir, glob))
+	if err != nil || len(matches) == 0 {
 		return nil, nil, fmt.Sprintf("corpus %s missing (run: scripts/gen-large-stress %s)", bc.dir, bc.name), false
 	}
 	sources = make([]string, len(matches))
@@ -184,69 +139,6 @@ func BenchmarkCompileSourceInfo(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				if _, err := c.Compile(files...); err != nil {
 					b.Fatalf("compile failed: %v", err)
-				}
-			}
-		})
-	}
-}
-
-// goPlugin is protoc-gen-go run in-process: the same generator the binary
-// wraps, given the request straight from the compiler.
-var goPlugin = protoc.PluginFunc(func(req *pluginpb.CodeGeneratorRequest) (*pluginpb.CodeGeneratorResponse, error) {
-	gen, err := protogen.Options{}.New(req)
-	if err != nil {
-		return nil, err
-	}
-	for _, f := range gen.Files {
-		if f.Generate {
-			gengo.GenerateFile(gen, f)
-		}
-	}
-	return gen.Response(), nil
-})
-
-// BenchmarkGenerateGo is what an embedding program does per change: compile
-// the demo services' schemas, then run protoc-gen-go on the result. "library"
-// runs the generator in-process; "subprocess" runs the protoc-gen-go binary
-// from PATH the way the CLI would, and is skipped when there is none. The
-// difference between the two is what running plugins in-process buys on a
-// real generator, plugin work included, rather than on a nop.
-func BenchmarkGenerateGo(b *testing.B) {
-	pluginBin, lookErr := exec.LookPath("protoc-gen-go")
-	for _, bc := range benchCases {
-		if !strings.HasPrefix(bc.name, "kaja_") {
-			continue
-		}
-		files, paths, why, ok := benchInputs(bc)
-		if !ok {
-			b.Run(bc.name, func(b *testing.B) { b.Skip(why) })
-			continue
-		}
-		c := protoc.New(protoc.WithProtoPaths(paths...))
-		b.Run(bc.name+"/library", func(b *testing.B) {
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				result, err := c.Compile(files...)
-				if err != nil {
-					b.Fatalf("compile failed: %v", err)
-				}
-				if _, err := result.RunLibraryPlugin(goPlugin, ""); err != nil {
-					b.Fatalf("protoc-gen-go failed: %v", err)
-				}
-			}
-		})
-		b.Run(bc.name+"/subprocess", func(b *testing.B) {
-			if lookErr != nil {
-				b.Skip("protoc-gen-go not on PATH (run: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest)")
-			}
-			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
-				result, err := c.Compile(files...)
-				if err != nil {
-					b.Fatalf("compile failed: %v", err)
-				}
-				if _, err := result.RunPlugin(pluginBin, ""); err != nil {
-					b.Fatalf("protoc-gen-go failed: %v", err)
 				}
 			}
 		})
