@@ -213,14 +213,12 @@ type compileInput struct {
 // It always returns a non-nil *compileOutput (which may contain warnings
 // collected before the error point). On success error is nil.
 func compileInternal(in *compileInput) (*compileOutput, error) {
-	resetLocationCache()
-	defer clearLocationCache()
-
 	co := &compileOutput{
 		relFiles: in.relFiles,
 	}
 
 	parsed := make(map[string]*descriptorpb.FileDescriptorProto)
+	defer releaseLocationIndexes(parsed)
 	explicitJsonNames := make(map[*descriptorpb.FieldDescriptorProto]bool)
 	parseResults := make(map[string]*parser.ParseResult)
 	var orderedFiles []string

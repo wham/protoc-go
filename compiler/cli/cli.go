@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unicode/utf8"
 	"unsafe"
 
@@ -535,9 +536,6 @@ func expandResponseFiles(args []string) ([]string, error) {
 }
 
 func Run(args []string) error {
-	resetLocationCache()
-	defer clearLocationCache()
-
 	expandedArgs, err := expandResponseFiles(args[1:])
 	if err != nil {
 		return err
@@ -935,6 +933,7 @@ func writeDependencyOut(depPath, target string, orderedFiles []string, srcTree *
 type parseCache struct {
 	srcTree *importer.SourceTree
 	sem     chan struct{}
+	inline  atomic.Int64 // bytes parsed inline so far, against inlineBudget
 	mu      sync.Mutex
 	entries map[string]*parseCacheEntry
 }
@@ -955,6 +954,18 @@ func newParseCache(srcTree *importer.SourceTree) *parseCache {
 	}
 }
 
+// A file is parsed on the caller's goroutine rather than handed to a worker
+// while it is small and the compilation has not yet parsed inlineBudget bytes
+// that way. A worker costs a thread wake-up and a scheduler round trip, which a
+// small file parses faster than, so a project of a few small files, the
+// common embedding case, compiles with no goroutines at all; the budget keeps
+// a project of many small files from being serialized on that account, since
+// past it every file goes to a worker again.
+const (
+	inlineParseMax = 8 << 10
+	inlineBudget   = 16 << 10
+)
+
 // prefetch queues filename and, transitively, everything it imports.
 func (c *parseCache) prefetch(filename string) {
 	c.mu.Lock()
@@ -965,24 +976,34 @@ func (c *parseCache) prefetch(filename string) {
 	e := &parseCacheEntry{done: make(chan struct{})}
 	c.entries[filename] = e
 	c.mu.Unlock()
+	e.content, e.openErr = c.srcTree.Open(filename)
+	if e.openErr != nil || (len(e.content) <= inlineParseMax && c.inline.Add(int64(len(e.content))) <= inlineBudget) {
+		c.parse(e, filename)
+		return
+	}
 	go func() {
 		c.sem <- struct{}{}
-		e.content, e.openErr = c.srcTree.Open(filename)
-		if e.openErr == nil {
-			e.result, e.parseErr = parser.ParseFile(filename, e.content)
-		}
+		c.parse(e, filename)
 		<-c.sem
-		// Deps must be read before done is closed: once a consumer holds the
-		// result it may mutate the descriptor.
-		var deps []string
-		if e.result != nil {
-			deps = allDependencies(e.result.FD)
-		}
-		close(e.done)
-		for _, dep := range deps {
-			c.prefetch(dep)
-		}
 	}()
+}
+
+// parse completes an entry: it parses the content, publishes the result and
+// queues the file's imports.
+func (c *parseCache) parse(e *parseCacheEntry, filename string) {
+	if e.openErr == nil {
+		e.result, e.parseErr = parser.ParseFile(filename, e.content)
+	}
+	// Deps must be read before done is closed: once a consumer holds the
+	// result it may mutate the descriptor.
+	var deps []string
+	if e.result != nil {
+		deps = allDependencies(e.result.FD)
+	}
+	close(e.done)
+	for _, dep := range deps {
+		c.prefetch(dep)
+	}
 }
 
 // load returns the entry for filename, waiting for a queued parse or doing
@@ -1086,6 +1107,7 @@ func parseRecursive(filename string, srcTree *importer.SourceTree, cache *parseC
 
 	parsed[filename] = fd
 	parseResults[filename] = result
+	registerLocationIndex(fd.GetSourceCodeInfo())
 
 	// Parse dependencies
 	newStack := append(importStack, filename)
@@ -5146,24 +5168,53 @@ func (idx locationIndex) lookup(target []int32) (int, int) {
 	return 0, 0
 }
 
-// locationCache maps SourceCodeInfo pointers to pre-built indexes.
-// Cleared at the start of each compilation via resetLocationCache.
-var locationCache map[*descriptorpb.SourceCodeInfo]locationIndex
-
-func resetLocationCache() {
-	locationCache = make(map[*descriptorpb.SourceCodeInfo]locationIndex)
+// locationIndexes holds the path→position index of every file a running
+// compilation has parsed, keyed by the file's SourceCodeInfo. Compilations may
+// run concurrently and never share a SourceCodeInfo, so one registry serves
+// them all: parseRecursive registers a file when it enters the pool, the index
+// is built on the first lookup, and compileInternal drops its files on exit.
+// A lookup on an unregistered file (the CLI's post-compile checks) scans.
+var locationIndexes struct {
+	sync.Mutex
+	m map[*descriptorpb.SourceCodeInfo]*locationIndex
 }
 
-func clearLocationCache() {
-	locationCache = nil
-}
-
-func getLocationIndex(sci *descriptorpb.SourceCodeInfo) locationIndex {
-	if idx, ok := locationCache[sci]; ok {
-		return idx
+func registerLocationIndex(sci *descriptorpb.SourceCodeInfo) {
+	if sci == nil {
+		return
 	}
-	idx := buildLocationIndex(sci)
-	locationCache[sci] = idx
+	locationIndexes.Lock()
+	if locationIndexes.m == nil {
+		locationIndexes.m = map[*descriptorpb.SourceCodeInfo]*locationIndex{}
+	}
+	if _, ok := locationIndexes.m[sci]; !ok {
+		locationIndexes.m[sci] = nil
+	}
+	locationIndexes.Unlock()
+}
+
+func releaseLocationIndexes(parsed map[string]*descriptorpb.FileDescriptorProto) {
+	locationIndexes.Lock()
+	for _, fd := range parsed {
+		delete(locationIndexes.m, fd.GetSourceCodeInfo())
+	}
+	locationIndexes.Unlock()
+}
+
+// getLocationIndex returns the index for a registered file, building it on
+// first use, or nil when the file is not part of a running compilation.
+func getLocationIndex(sci *descriptorpb.SourceCodeInfo) *locationIndex {
+	locationIndexes.Lock()
+	defer locationIndexes.Unlock()
+	idx, ok := locationIndexes.m[sci]
+	if !ok {
+		return nil
+	}
+	if idx == nil {
+		built := buildLocationIndex(sci)
+		idx = &built
+		locationIndexes.m[sci] = idx
+	}
 	return idx
 }
 
@@ -5171,10 +5222,9 @@ func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, 
 	if sci == nil {
 		return 0, 0
 	}
-	if locationCache != nil {
-		return getLocationIndex(sci).lookup(target)
+	if idx := getLocationIndex(sci); idx != nil {
+		return idx.lookup(target)
 	}
-	// Fallback: linear scan (used outside compilation context)
 	for _, loc := range sci.GetLocation() {
 		path := loc.GetPath()
 		if len(path) != len(target) {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unsafe"
 )
 
 // Mapping represents a virtual-path to disk-path mapping.
@@ -104,17 +105,26 @@ func (st *SourceTree) Open(filename string) (string, error) {
 	if diskPath, ok := st.findFile(filename); ok {
 		data, err := os.ReadFile(diskPath)
 		if err == nil {
-			return string(data), nil
+			return ownedString(data), nil
 		}
 	}
 	// Fallback to embedded filesystem (e.g. bundled well-known types).
 	if st.FallbackFS != nil {
 		data, err := fs.ReadFile(st.FallbackFS, filename)
 		if err == nil {
-			return string(data), nil
+			return ownedString(data), nil
 		}
 	}
 	return "", fmt.Errorf("file not found: %s", filename)
+}
+
+// ownedString views a freshly read buffer as a string without copying it. The
+// buffer is this function's caller's alone, and nothing writes to it again.
+func ownedString(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return unsafe.String(&b[0], len(b))
 }
 
 // VirtualPathError is returned when a filename contains disallowed path components.
