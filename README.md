@@ -50,7 +50,7 @@ A [weekly run](.github/workflows/compliance.yml) compiles the same corpus with C
 <!-- BEGIN COMPLIANCE -->
 **5609 / 5609 comparisons produce byte-identical output to C++ protoc 36.0**
 
-Last verified 2026-08-30 · commit `187d7e8` · Go 1.23.12 on ubuntu24 · [run log](https://github.com/wham/protoc-go/actions/runs/33296147848)
+Last verified 2026-10-26 · commit `9b332b3` · Go 1.23.12 on ubuntu24 · [run log](https://github.com/wham/protoc-go/actions/runs/40282800116)
 
 <details><summary>Per-suite results</summary>
 
@@ -79,28 +79,28 @@ Last verified 2026-08-30 · commit `187d7e8` · Go 1.23.12 on ubuntu24 · [run l
 
 <details><summary>Performance: C++ protoc vs Go protoc-go vs buf</summary>
 
-Across 16 compile cases: Go faster on 12, C++ faster on 2, tie on 2.
+Across 16 compile cases: Go faster on 11, C++ faster on 2, tie on 3.
 
 | case | variant | cpp ms(±sd) | go ms(±sd) | buf ms(±sd) | go/cpp | cpp peak MB | go peak MB | buf peak MB | go/cpp |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| startup_empty | descriptor | 1.39±0.04 | 1.91±0.06 | 27.52±1.07 | 1.37 | 5.0 | 6.8 | 46.1 | 1.36 |
-| startup_empty | plugin | 3.26±0.06 | 4.07±0.22 | 29.39±0.70 | 1.25 | 5.5 | 7.0 | 46.3 | 1.26 |
-| 01_basic_message | descriptor | 1.52±0.01 | 2.27±0.06 | 27.94±0.75 | 1.49 | 5.0 | 9.1 | 48.6 | 1.81 |
-| 01_basic_message | plugin | 3.68±0.04 | 4.63±0.13 | 31.92±0.76 | 1.26 | 5.5 | 9.1 | 48.5 | 1.64 |
-| bench_tiny | descriptor | 2.74±0.01 | 2.78±0.06 | 31.74±0.44 | 1.01 | 5.5 | 9.4 | 46.4 | 1.69 |
-| bench_tiny | plugin | 6.84±0.21 | 6.88±0.12 | 36.76±0.95 | 1.01 | 7.6 | 9.5 | 48.6 | 1.26 |
-| bench_small | descriptor | 13.65±0.15 | 6.15±0.18 | 72.14±0.86 | 0.45 | 10.3 | 13.4 | 55.0 | 1.31 |
-| bench_small | plugin | 43.93±0.86 | 30.71±0.81 | 98.44±1.30 | 0.70 | 19.0 | 18.9 | 55.3 | 1.00 |
-| bench_medium | descriptor | 75.02±2.10 | 22.27±0.54 | 277.89±4.08 | 0.30 | 34.6 | 31.7 | 92.2 | 0.92 |
-| bench_medium | plugin | 247.01±4.41 | 148.59±3.59 | 412.68±2.63 | 0.60 | 74.1 | 74.0 | 98.2 | 1.00 |
-| bench_large | descriptor | 419.76±7.09 | 96.33±1.39 | 1208.33±22.67 | 0.23 | 138.8 | 106.6 | 281.1 | 0.77 |
-| bench_large | plugin | 1189.67±11.79 | 645.11±7.01 | 1792.75±34.11 | 0.54 | 313.1 | 313.2 | 309.6 | 1.00 |
-| 329_large_stress | descriptor | 75.57±1.41 | 22.26±0.35 | 277.85±2.21 | 0.29 | 34.6 | 31.7 | 96.2 | 0.92 |
-| 329_large_stress | plugin | 247.87±4.07 | 148.51±4.12 | 411.62±2.78 | 0.60 | 74.1 | 74.2 | 98.8 | 1.00 |
-| bench_multi | descriptor | 51.99±1.32 | 15.57±0.22 | 158.37±0.94 | 0.30 | 20.1 | 29.6 | 86.3 | 1.47 |
-| bench_multi | plugin | 174.58±1.59 | 103.43±1.38 | 253.37±1.81 | 0.59 | 53.6 | 53.7 | 90.6 | 1.00 |
-| google_corpus | descriptor | 90.22±0.52 | 31.74±0.39 | n/a | 0.35 | 17.5 | 40.9 | n/a | 2.34 |
-| google_corpus | plugin | 204.39±1.96 | 97.06±2.00 | n/a | 0.47 | 43.8 | 43.8 | n/a | 1.00 |
+| startup_empty | descriptor | 1.44±0.03 | 1.96±0.08 | 27.18±0.43 | 1.36 | 5.0 | 6.8 | 45.8 | 1.35 |
+| startup_empty | plugin | 3.78±0.08 | 4.38±0.10 | 30.14±0.58 | 1.16 | 5.5 | 6.8 | 48.1 | 1.23 |
+| 01_basic_message | descriptor | 1.62±0.03 | 2.28±0.06 | 28.25±0.78 | 1.41 | 5.0 | 7.1 | 48.0 | 1.41 |
+| 01_basic_message | plugin | 4.15±0.08 | 5.05±0.13 | 32.22±6.27 | 1.22 | 5.5 | 7.6 | 46.6 | 1.37 |
+| bench_tiny | descriptor | 2.87±0.04 | 2.98±0.39 | 32.49±1.48 | 1.04 | 5.5 | 9.4 | 48.6 | 1.70 |
+| bench_tiny | plugin | 7.34±0.17 | 7.27±0.23 | 37.42±0.58 | 0.99 | 7.6 | 9.4 | 46.6 | 1.25 |
+| bench_small | descriptor | 13.85±0.13 | 6.40±0.25 | 70.66±1.98 | 0.46 | 10.3 | 11.6 | 55.5 | 1.13 |
+| bench_small | plugin | 43.82±1.05 | 29.18±23.90 | 95.03±1.00 | 0.67 | 18.8 | 19.0 | 55.4 | 1.01 |
+| bench_medium | descriptor | 77.04±1.41 | 23.77±0.50 | 270.19±4.13 | 0.31 | 34.6 | 31.7 | 96.2 | 0.92 |
+| bench_medium | plugin | 244.51±2.87 | 140.63±4.44 | 400.74±7.36 | 0.58 | 73.9 | 74.1 | 96.5 | 1.00 |
+| bench_large | descriptor | 453.28±4.78 | 101.57±1.78 | 1170.26±25.03 | 0.22 | 138.7 | 110.7 | 278.4 | 0.80 |
+| bench_large | plugin | 1252.08±18.16 | 618.02±12.46 | 1716.49±14.21 | 0.49 | 315.3 | 313.3 | 313.6 | 0.99 |
+| 329_large_stress | descriptor | 81.37±0.89 | 22.97±0.63 | 272.99±2.81 | 0.28 | 34.6 | 31.7 | 96.3 | 0.92 |
+| 329_large_stress | plugin | 247.35±5.83 | 139.09±2.65 | 403.64±4.88 | 0.56 | 72.3 | 74.0 | 98.4 | 1.02 |
+| bench_multi | descriptor | 53.35±0.42 | 15.85±0.17 | 159.31±1.85 | 0.30 | 20.1 | 29.6 | 88.0 | 1.47 |
+| bench_multi | plugin | 176.56±2.97 | 98.88±0.77 | 248.15±2.79 | 0.56 | 53.6 | 53.8 | 90.1 | 1.00 |
+| google_corpus | descriptor | 91.70±0.50 | 32.67±0.33 | n/a | 0.36 | 17.5 | 41.3 | n/a | 2.36 |
+| google_corpus | plugin | 204.76±1.64 | 94.76±2.44 | n/a | 0.46 | 43.9 | 43.8 | n/a | 1.00 |
 
 buf was not timed on some rows:
 
