@@ -30,10 +30,10 @@ import (
 const (
 	upstreamMajor = 7
 	upstreamMinor = 36
-	upstreamPatch = 0
+	upstreamPatch = 2
 )
 
-// UpstreamVersion is that release as protoc --version reports it, e.g. "36.0".
+// UpstreamVersion is that release as protoc --version reports it, e.g. "36.2".
 // The libprotoc major is not part of it; protoc prints only minor and patch.
 var UpstreamVersion = fmt.Sprintf("%d.%d", upstreamMinor, upstreamPatch)
 
