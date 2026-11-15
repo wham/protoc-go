@@ -945,6 +945,10 @@ type parseCache struct {
 	inline  atomic.Int64 // bytes parsed inline so far, against inlineBudget
 	mu      sync.Mutex
 	entries map[string]*parseCacheEntry
+
+	// provided names files a descriptor set supplies; they are never read
+	// from the source tree, and neither are imports only they would reach.
+	provided map[string]bool
 }
 
 type parseCacheEntry struct {
@@ -955,16 +959,17 @@ type parseCacheEntry struct {
 	parseErr error
 }
 
-func newParseCache(srcTree *importer.SourceTree, skipSourceInfo bool) *parseCache {
+func newParseCache(srcTree *importer.SourceTree, skipSourceInfo bool, provided map[string]bool) *parseCache {
 	parse1 := parser.ParseFile
 	if skipSourceInfo {
 		parse1 = parser.ParseFileWithoutSourceInfo
 	}
 	return &parseCache{
-		srcTree: srcTree,
-		parse1:  parse1,
-		sem:     make(chan struct{}, runtime.GOMAXPROCS(0)),
-		entries: map[string]*parseCacheEntry{},
+		srcTree:  srcTree,
+		provided: provided,
+		parse1:   parse1,
+		sem:      make(chan struct{}, runtime.GOMAXPROCS(0)),
+		entries:  map[string]*parseCacheEntry{},
 	}
 }
 
@@ -982,6 +987,9 @@ const (
 
 // prefetch queues filename and, transitively, everything it imports.
 func (c *parseCache) prefetch(filename string) {
+	if c.provided[filename] {
+		return
+	}
 	c.mu.Lock()
 	if _, ok := c.entries[filename]; ok {
 		c.mu.Unlock()

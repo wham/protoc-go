@@ -55,6 +55,11 @@ type CompileRequest struct {
 	// to use for resolving imports.
 	DescriptorSetIn []string
 
+	// Descriptors are pre-compiled files used exactly as those read from
+	// DescriptorSetIn, and ahead of them. Compile only reads them, so the
+	// caller may keep using them, including from concurrent compiles.
+	Descriptors []*descriptorpb.FileDescriptorProto
+
 	// DirectDependencies, if non-nil, restricts which imports are allowed.
 	// Only the listed files may appear in import statements.
 	DirectDependencies []string
@@ -257,6 +262,7 @@ func (co *compileOutput) stripped(name string) *descriptorpb.FileDescriptorProto
 type compileInput struct {
 	relFiles               []string
 	srcTree                *importer.SourceTree
+	descriptors            []*descriptorpb.FileDescriptorProto
 	descriptorSetIn        []string
 	directDeps             map[string]bool
 	directDepsSet          bool
@@ -305,28 +311,33 @@ func compilePass(in *compileInput, skipSourceInfo bool) (*compileOutput, error) 
 	var orderedFiles []string
 	var collectErrors []string
 
-	// Load pre-compiled descriptor sets
+	// Load pre-compiled descriptors. They may belong to the caller, so every
+	// later pass treats them as read-only.
+	provided := make(map[string]bool)
+	addProvided := func(fd *descriptorpb.FileDescriptorProto) {
+		if _, exists := parsed[fd.GetName()]; exists {
+			return
+		}
+		parsed[fd.GetName()] = fd
+		provided[fd.GetName()] = true
+		orderedFiles = append(orderedFiles, fd.GetName())
+	}
+	for _, fd := range in.descriptors {
+		addProvided(fd)
+	}
 	for _, dsFile := range in.descriptorSetIn {
-		data, err := os.ReadFile(dsFile)
+		files, err := readDescriptorSet(dsFile)
 		if err != nil {
-			return co, fmt.Errorf("%s: %s", dsFile, err.Error())
+			return co, err
 		}
-		var fds descriptorpb.FileDescriptorSet
-		if err := proto.Unmarshal(data, &fds); err != nil {
-			return co, fmt.Errorf("%s: Unable to parse.", dsFile)
-		}
-		for _, fd := range fds.GetFile() {
-			if _, exists := parsed[fd.GetName()]; exists {
-				continue
-			}
-			parsed[fd.GetName()] = fd
-			orderedFiles = append(orderedFiles, fd.GetName())
+		for _, fd := range files {
+			addProvided(fd)
 		}
 	}
 
 	// Parse all proto files recursively. The cache parses ahead in parallel;
 	// parseRecursive consumes results in its usual deterministic order.
-	cache := newParseCache(in.srcTree, skipSourceInfo)
+	cache := newParseCache(in.srcTree, skipSourceInfo, provided)
 	for _, f := range in.relFiles {
 		cache.prefetch(f)
 	}
@@ -368,7 +379,17 @@ func compilePass(in *compileInput, skipSourceInfo bool) (*compileOutput, error) 
 	// Resolve type references across all files
 	var resolveErrors []string
 	for _, name := range orderedFiles {
-		resolveErrors = append(resolveErrors, parser.ResolveTypes(parsed[name], parsed)...)
+		fd := parsed[name]
+		if provided[name] {
+			errs, changes := parser.CheckTypes(fd, parsed)
+			if !changes {
+				resolveErrors = append(resolveErrors, errs...)
+				continue
+			}
+			fd = proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
+			parsed[name] = fd
+		}
+		resolveErrors = append(resolveErrors, parser.ResolveTypes(fd, parsed)...)
 	}
 	if len(resolveErrors) > 0 {
 		return co, &CompileErrors{Errors: resolveErrors}
@@ -530,6 +551,19 @@ func compilePass(in *compileInput, skipSourceInfo bool) (*compileOutput, error) 
 	return co, nil
 }
 
+// readDescriptorSet reads the files of a serialized FileDescriptorSet.
+func readDescriptorSet(path string) ([]*descriptorpb.FileDescriptorProto, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %s", path, err.Error())
+	}
+	var fds descriptorpb.FileDescriptorSet
+	if err := proto.Unmarshal(data, &fds); err != nil {
+		return nil, fmt.Errorf("%s: Unable to parse.", path)
+	}
+	return fds.GetFile(), nil
+}
+
 // ---------------------------------------------------------------------------
 // Output building helpers
 // ---------------------------------------------------------------------------
@@ -674,9 +708,32 @@ func Compile(req *CompileRequest) (*CompileResult, error) {
 	var rootWarnings []string
 	rootWarnings = append(rootWarnings, srcTree.ValidateRoots()...)
 
+	// Descriptor sets are loaded up front, once for every pass, so that a
+	// requested name they provide is taken as given and never looked up in the
+	// source tree.
+	descriptors := req.Descriptors
+	if len(req.DescriptorSetIn) > 0 {
+		descriptors = append([]*descriptorpb.FileDescriptorProto(nil), req.Descriptors...)
+		for _, dsFile := range req.DescriptorSetIn {
+			files, err := readDescriptorSet(dsFile)
+			if err != nil {
+				return nil, err
+			}
+			descriptors = append(descriptors, files...)
+		}
+	}
+	provided := make(map[string]bool, len(descriptors))
+	for _, fd := range descriptors {
+		provided[fd.GetName()] = true
+	}
+
 	// Make proto files relative to source tree
 	relFiles := make([]string, len(req.ProtoFiles))
 	for i, f := range req.ProtoFiles {
+		if provided[f] {
+			relFiles[i] = f
+			continue
+		}
 		rel, err := srcTree.MakeRelative(f)
 		if err != nil {
 			return nil, err
@@ -685,10 +742,10 @@ func Compile(req *CompileRequest) (*CompileResult, error) {
 	}
 
 	in := &compileInput{
-		relFiles:        relFiles,
-		srcTree:         srcTree,
-		descriptorSetIn: req.DescriptorSetIn,
-		skipSourceInfo:  req.SkipSourceInfo && !req.IncludeSourceInfo,
+		relFiles:       relFiles,
+		srcTree:        srcTree,
+		descriptors:    descriptors,
+		skipSourceInfo: req.SkipSourceInfo && !req.IncludeSourceInfo,
 	}
 	if req.DirectDependencies != nil {
 		in.directDepsSet = true

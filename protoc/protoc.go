@@ -46,6 +46,14 @@
 //	)
 //	result, err := c.Compile("api/v1/service.proto")
 //
+// # Compiling from descriptors
+//
+// Files already compiled to descriptors, such as those a server returns over
+// gRPC reflection, can be compiled from directly with [WithDescriptors]:
+//
+//	c := protoc.New(protoc.WithDescriptors(files...))
+//	result, err := c.Compile("api/v1/service.proto")
+//
 // # Thread safety
 //
 // A [Compiler] is safe for concurrent use by multiple goroutines. Each call
@@ -81,6 +89,7 @@ type Compiler struct {
 	retainOptions   bool
 	descriptorsOnly bool
 	descriptorSets  []string
+	descriptors     []*descriptorpb.FileDescriptorProto
 	overlay         map[string]string
 }
 
@@ -174,6 +183,24 @@ func WithDescriptorSetIn(paths ...string) Option {
 	}
 }
 
+// WithDescriptors provides already-compiled files for resolving imports and for
+// compiling from, exactly as [WithDescriptorSetIn] does, without reading a file.
+// A name passed to [Compiler.Compile] that one of them provides is compiled
+// from it and never looked up on disk, and plugins see its SourceCodeInfo as
+// given. They take precedence over WithDescriptorSetIn; where two share a
+// name, the first wins.
+//
+// The descriptors are only read, never modified — not even with
+// [WithDescriptorsOnly] — so the caller may keep using them, including in
+// concurrent compiles.
+//
+// This is a protoc-go extension with no protoc flag behind it.
+func WithDescriptors(files ...*descriptorpb.FileDescriptorProto) Option {
+	return func(c *Compiler) {
+		c.descriptors = append(c.descriptors, files...)
+	}
+}
+
 // WithOverlay provides in-memory .proto file contents that take precedence
 // over files on disk. The keys are virtual paths (e.g., "mypackage/foo.proto")
 // and values are the .proto file contents.
@@ -244,6 +271,7 @@ func (c *Compiler) Compile(protoFiles ...string) (*Result, error) {
 		RetainOptions:     c.retainOptions,
 		SkipSourceInfo:    c.descriptorsOnly,
 		DescriptorSetIn:   c.descriptorSets,
+		Descriptors:       c.descriptors,
 	})
 }
 

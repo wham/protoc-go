@@ -6922,7 +6922,47 @@ var builtinTypes = map[string]descriptorpb.FieldDescriptorProto_Type{
 
 // ResolveTypes resolves type references in the file descriptor.
 // allFiles maps filename to parsed FileDescriptorProto for cross-file resolution.
+// A field already holding its resolved value is not written to.
 func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*descriptorpb.FileDescriptorProto) []string {
+	return resolveTypes(fd, allFiles, &typeWriter{})
+}
+
+// CheckTypes reports what [ResolveTypes] would for fd without writing to it,
+// and whether resolving it would change it.
+func CheckTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*descriptorpb.FileDescriptorProto) (errors []string, changes bool) {
+	w := &typeWriter{dryRun: true}
+	errors = resolveTypes(fd, allFiles, w)
+	return errors, w.dirty
+}
+
+// typeWriter applies the writes of type resolution, skipping those that would
+// not change anything, so an already-resolved file is only ever read.
+type typeWriter struct {
+	dryRun bool
+	dirty  bool
+}
+
+func (w *typeWriter) str(p **string, v string) {
+	if *p != nil && **p == v {
+		return
+	}
+	w.dirty = true
+	if !w.dryRun {
+		*p = proto.String(v)
+	}
+}
+
+func (w *typeWriter) typ(p **descriptorpb.FieldDescriptorProto_Type, v descriptorpb.FieldDescriptorProto_Type) {
+	if *p != nil && **p == v {
+		return
+	}
+	w.dirty = true
+	if !w.dryRun {
+		*p = v.Enum()
+	}
+}
+
+func resolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*descriptorpb.FileDescriptorProto, w *typeWriter) []string {
 	pkg := fd.GetPackage()
 	prefix := ""
 	if pkg != "" {
@@ -6954,14 +6994,14 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 	var errors []string
 	filename := fd.GetName()
 
-	resolveMessageFieldsWithErrors(fd.GetMessageType(), prefix, types, filename, fd, &errors)
+	resolveMessageFieldsWithErrors(fd.GetMessageType(), prefix, types, filename, fd, &errors, w)
 
 	for svcIdx, svc := range fd.GetService() {
 		for methodIdx, m := range svc.GetMethod() {
 			if m.InputType != nil {
 				origName := m.GetInputType()
 				resolved, shadow := resolveTypeName(origName, prefix, types)
-				m.InputType = proto.String(resolved)
+				w.str(&m.InputType, resolved)
 				if tp, ok := types[resolved]; !ok {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 2}
 					if line, col, ok := findSCISpanStart(fd, path); ok {
@@ -6981,7 +7021,7 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 			if m.OutputType != nil {
 				origName := m.GetOutputType()
 				resolved, shadow := resolveTypeName(origName, prefix, types)
-				m.OutputType = proto.String(resolved)
+				w.str(&m.OutputType, resolved)
 				if tp, ok := types[resolved]; !ok {
 					path := []int32{6, int32(svcIdx), 2, int32(methodIdx), 3}
 					if line, col, ok := findSCISpanStart(fd, path); ok {
@@ -7006,7 +7046,7 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 		if ext.Extendee != nil {
 			origName := ext.GetExtendee()
 			resolved, shadow := resolveTypeName(origName, prefix, types)
-			ext.Extendee = proto.String(resolved)
+			w.str(&ext.Extendee, resolved)
 			if tp, ok := types[resolved]; !ok {
 				path := []int32{7, int32(extIdx), 2}
 				if line, col, ok := findSCISpanStart(fd, path); ok {
@@ -7026,10 +7066,10 @@ func ResolveTypes(fd *descriptorpb.FileDescriptorProto, allFiles map[string]*des
 		if ext.TypeName != nil {
 			origName := ext.GetTypeName()
 			resolved, shadow := resolveTypeName(origName, prefix, types)
-			ext.TypeName = proto.String(resolved)
+			w.str(&ext.TypeName, resolved)
 			if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 				if tp, ok := types[resolved]; ok {
-					ext.Type = tp.Enum()
+					w.typ(&ext.Type, tp)
 				} else {
 					path := []int32{7, int32(extIdx), 6}
 					if line, col, ok := findSCISpanStart(fd, path); ok {
@@ -7096,44 +7136,11 @@ func collectTypes(msgs []*descriptorpb.DescriptorProto, prefix string, types map
 	}
 }
 
-func resolveMessageFields(msgs []*descriptorpb.DescriptorProto, prefix string, types map[string]descriptorpb.FieldDescriptorProto_Type) {
-	for _, msg := range msgs {
-		msgPrefix := prefix + "." + msg.GetName()
-		for _, f := range msg.GetField() {
-			if f.TypeName != nil {
-				resolved, _ := resolveTypeName(f.GetTypeName(), msgPrefix, types)
-				f.TypeName = proto.String(resolved)
-				if f.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
-					if tp, ok := types[resolved]; ok {
-						f.Type = tp.Enum()
-					}
-				}
-			}
-		}
-		resolveMessageFields(msg.GetNestedType(), msgPrefix, types)
-		for _, ext := range msg.GetExtension() {
-			if ext.Extendee != nil {
-				resolved, _ := resolveTypeName(ext.GetExtendee(), msgPrefix, types)
-				ext.Extendee = proto.String(resolved)
-			}
-			if ext.TypeName != nil {
-				resolved, _ := resolveTypeName(ext.GetTypeName(), msgPrefix, types)
-				ext.TypeName = proto.String(resolved)
-				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
-					if tp, ok := types[resolved]; ok {
-						ext.Type = tp.Enum()
-					}
-				}
-			}
-		}
-	}
+func resolveMessageFieldsWithErrors(msgs []*descriptorpb.DescriptorProto, prefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, filename string, fd *descriptorpb.FileDescriptorProto, errors *[]string, w *typeWriter) {
+	resolveMessageFieldsWithErrorsPath(msgs, prefix, types, filename, fd, nil, errors, w)
 }
 
-func resolveMessageFieldsWithErrors(msgs []*descriptorpb.DescriptorProto, prefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, filename string, fd *descriptorpb.FileDescriptorProto, errors *[]string) {
-	resolveMessageFieldsWithErrorsPath(msgs, prefix, types, filename, fd, nil, errors)
-}
-
-func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, prefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, filename string, fd *descriptorpb.FileDescriptorProto, parentPath []int32, errors *[]string) {
+func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, prefix string, types map[string]descriptorpb.FieldDescriptorProto_Type, filename string, fd *descriptorpb.FileDescriptorProto, parentPath []int32, errors *[]string, w *typeWriter) {
 	for msgIdx, msg := range msgs {
 		msgPrefix := prefix + "." + msg.GetName()
 		var msgPath []int32
@@ -7146,10 +7153,10 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 			if f.TypeName != nil {
 				origName := f.GetTypeName()
 				resolved, shadow := resolveTypeName(origName, msgPrefix, types)
-				f.TypeName = proto.String(resolved)
+				w.str(&f.TypeName, resolved)
 				if f.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					if tp, ok := types[resolved]; ok {
-						f.Type = tp.Enum()
+						w.typ(&f.Type, tp)
 					} else {
 						path := pathWith(msgPath, 2, int32(fieldIdx), 6)
 						if line, col, ok := findSCISpanStart(fd, path); ok {
@@ -7165,12 +7172,12 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 				}
 			}
 		}
-		resolveMessageFieldsWithErrorsPath(msg.GetNestedType(), msgPrefix, types, filename, fd, msgPath, errors)
+		resolveMessageFieldsWithErrorsPath(msg.GetNestedType(), msgPrefix, types, filename, fd, msgPath, errors, w)
 		for extIdx, ext := range msg.GetExtension() {
 			if ext.Extendee != nil {
 				origName := ext.GetExtendee()
 				resolved, shadow := resolveTypeName(origName, msgPrefix, types)
-				ext.Extendee = proto.String(resolved)
+				w.str(&ext.Extendee, resolved)
 				if tp, ok := types[resolved]; !ok {
 					path := pathWith(msgPath, 6, int32(extIdx), 2)
 					if line, col, ok := findSCISpanStart(fd, path); ok {
@@ -7190,10 +7197,10 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 			if ext.TypeName != nil {
 				origName := ext.GetTypeName()
 				resolved, shadow := resolveTypeName(origName, msgPrefix, types)
-				ext.TypeName = proto.String(resolved)
+				w.str(&ext.TypeName, resolved)
 				if ext.GetType() != descriptorpb.FieldDescriptorProto_TYPE_GROUP {
 					if tp, ok := types[resolved]; ok {
-						ext.Type = tp.Enum()
+						w.typ(&ext.Type, tp)
 					} else {
 						path := pathWith(msgPath, 6, int32(extIdx), 6)
 						if line, col, ok := findSCISpanStart(fd, path); ok {
