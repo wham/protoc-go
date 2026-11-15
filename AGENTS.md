@@ -482,6 +482,23 @@ silent for every file. A new location lookup has to start with the same
 `compiler/cli/sourceinfo_skip_test.go` holds the line by running both passes
 over every fixture and the vendored corpus.
 
+## Descriptors from a set are read-only
+
+Files supplied by `--descriptor_set_in`, `protoc.WithDescriptorSetIn` or
+`protoc.WithDescriptors` go into the same `parsed` pool as parsed sources, but
+under `WithDescriptors` they belong to the caller, who may be linking them or
+compiling from them concurrently. So no pass may write to a provided file.
+Type resolution checks first (`parser.CheckTypes`) and resolves a copy only when
+something would change; writes elsewhere go to copies (`stripSourceRetention`,
+canonicalization). `protoc/descriptors_test.go` holds the line: every fixture
+compiled from memory must leave its descriptors `proto.Equal` to a prior clone,
+and concurrent compiles share descriptors, so run it with
+`go test -race ./protoc/` (CI runs no Go unit tests).
+
+A provided file is also never looked up in the source tree: the library loads
+the sets before relativizing the requested names, takes a provided name as
+given, and the parse cache skips provided names.
+
 ## C++ protoc Pipeline (What We're Porting)
 
 ```

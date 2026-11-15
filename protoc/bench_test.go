@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/wham/protoc-go/protoc"
+	"google.golang.org/protobuf/proto"
 	pluginpb "google.golang.org/protobuf/types/pluginpb"
 )
 
@@ -166,6 +167,53 @@ func BenchmarkCompileDescriptorsOnly(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// BenchmarkCompileFromDescriptors compiles each case from descriptors it has
+// already been compiled to — with imports and source info, as a reflected or
+// published set comes — once read from a FileDescriptorSet file and once
+// handed over in memory. The difference between the two is the unmarshal.
+func BenchmarkCompileFromDescriptors(b *testing.B) {
+	for _, bc := range benchCases {
+		files, paths, why, ok := benchInputs(bc)
+		if !ok {
+			b.Run(bc.name, func(b *testing.B) { b.Skip(why) })
+			continue
+		}
+		res, err := protoc.New(
+			protoc.WithProtoPaths(paths...),
+			protoc.WithIncludeImports(),
+			protoc.WithIncludeSourceInfo(),
+		).Compile(files...)
+		if err != nil {
+			b.Fatalf("%s: compile failed: %v", bc.name, err)
+		}
+		data, err := proto.Marshal(res.AsFileDescriptorSet())
+		if err != nil {
+			b.Fatal(err)
+		}
+		setPath := filepath.Join(b.TempDir(), "set.binpb")
+		if err := os.WriteFile(setPath, data, 0o644); err != nil {
+			b.Fatal(err)
+		}
+		variants := []struct {
+			name string
+			c    *protoc.Compiler
+		}{
+			{"set_file", protoc.New(protoc.WithDescriptorSetIn(setPath))},
+			{"in_memory", protoc.New(protoc.WithDescriptors(res.Files...))},
+		}
+		for _, v := range variants {
+			b.Run(bc.name+"/"+v.name, func(b *testing.B) {
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					if _, err := v.c.Compile(files...); err != nil {
+						b.Fatalf("compile failed: %v", err)
+					}
+				}
+			})
+		}
 	}
 }
 
