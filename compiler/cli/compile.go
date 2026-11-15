@@ -200,12 +200,12 @@ func (e *CompileErrors) Error() string {
 // pipeline. It is always returned (even on error) so that callers can
 // access warnings collected before the error occurred.
 type compileOutput struct {
-	relFiles          []string
-	orderedFiles      []string
-	parsed            map[string]*descriptorpb.FileDescriptorProto
-	warnings          []string
-	srcRetFields      sourceRetentionFields
-	canonical         map[string]*descriptorpb.FileDescriptorProto
+	relFiles     []string
+	orderedFiles []string
+	parsed       map[string]*descriptorpb.FileDescriptorProto
+	warnings     []string
+	srcRetFields sourceRetentionFields
+	canonical    map[string]*descriptorpb.FileDescriptorProto
 
 	// needsSourceInfo is set by a pass run without source info that produced
 	// a diagnostic it could not position.
