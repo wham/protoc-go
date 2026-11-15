@@ -203,11 +203,8 @@ type compileOutput struct {
 	relFiles          []string
 	orderedFiles      []string
 	parsed            map[string]*descriptorpb.FileDescriptorProto
-	explicitJsonNames map[*descriptorpb.FieldDescriptorProto]bool
-	parseResults      map[string]*parser.ParseResult
 	warnings          []string
 	srcRetFields      sourceRetentionFields
-	optionFields      optionFields
 	canonical         map[string]*descriptorpb.FileDescriptorProto
 
 	// needsSourceInfo is set by a pass run without source info that produced
@@ -513,10 +510,15 @@ func compilePass(in *compileInput, skipSourceInfo bool) (*compileOutput, error) 
 		}
 	}
 	if len(needsCanonical) > 0 {
-		co.optionFields = collectOptionFields(orderedFiles, parsed)
+		optionFields := collectOptionFields(orderedFiles, parsed)
 		for _, name := range needsCanonical {
-			fd := proto.Clone(parsed[name]).(*descriptorpb.FileDescriptorProto)
-			canonicalizeFDOptions(fd, co.optionFields)
+			// Re-encoding touches options only, so the copy shares the
+			// original's source info rather than duplicating it.
+			shallow := shallowFileWithoutSourceInfo(parsed[name])
+			shallow.ProtoReflect().SetUnknown(parsed[name].ProtoReflect().GetUnknown())
+			fd := proto.Clone(shallow).(*descriptorpb.FileDescriptorProto)
+			fd.SourceCodeInfo = parsed[name].SourceCodeInfo
+			canonicalizeFDOptions(fd, optionFields)
 			co.canonical[name] = fd
 		}
 	}
@@ -524,8 +526,6 @@ func compilePass(in *compileInput, skipSourceInfo bool) (*compileOutput, error) 
 	// Store all intermediate state
 	co.orderedFiles = orderedFiles
 	co.parsed = parsed
-	co.explicitJsonNames = explicitJsonNames
-	co.parseResults = parseResults
 
 	return co, nil
 }

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/wham/protoc-go/compiler/importer"
@@ -67,9 +68,13 @@ func TestSkippingSourceInfoNeverHidesADiagnostic(t *testing.T) {
 
 		fullWarned := false
 		if fullErr == nil {
-			// Everything the full pass warned about before its unused-import
-			// check is something the skipping pass must flag as well.
-			fullWarned = len(full.warnings) > len(detectUnusedImports(full.relFiles, full.orderedFiles, full.parsed, full.parseResults))
+			// Unused imports are the one warning a skipping pass can
+			// position; anything else it must flag.
+			for _, w := range full.warnings {
+				if !strings.HasSuffix(w, " is unused.") {
+					fullWarned = true
+				}
+			}
 		}
 		if fullErr != nil || fullWarned {
 			flagged++
