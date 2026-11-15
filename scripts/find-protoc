@@ -16,12 +16,12 @@ else
 fi
 
 # Find include directory for well-known types
-if [ -d "/opt/homebrew/include/google/protobuf" ]; then
+if [ -x "/tmp/protoc-install/bin/protoc" ] && [ -d "/tmp/protoc-install/include/google/protobuf" ]; then
+    PROTOC_INCLUDE="/tmp/protoc-install/include"
+elif [ -d "/opt/homebrew/include/google/protobuf" ]; then
     PROTOC_INCLUDE="/opt/homebrew/include"
 elif [ -d "/usr/local/include/google/protobuf" ]; then
     PROTOC_INCLUDE="/usr/local/include"
-elif [ -d "/tmp/protoc-install/include/google/protobuf" ]; then
-    PROTOC_INCLUDE="/tmp/protoc-install/include"
 elif [ -d "/usr/include/google/protobuf" ]; then
     PROTOC_INCLUDE="/usr/include"
 else
