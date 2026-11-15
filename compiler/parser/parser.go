@@ -266,6 +266,7 @@ type ParseResult struct {
 // ParseFile parses a .proto file and returns a ParseResult.
 func ParseFile(filename string, content string) (*ParseResult, error) {
 	tok := tokenizer.New(content)
+	defer tok.Release()
 	// Pre-allocate locations based on token count (~1 location per 3 tokens)
 	// Real files produce ~0.7-0.75 locations per token, so size for that;
 	// undershooting repays the estimate in slice regrowth and arena refills.
