@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/wham/protoc-go/compiler/importer"
 	"github.com/wham/protoc-go/compiler/parser"
@@ -196,6 +197,25 @@ type compileOutput struct {
 	srcRetFields      sourceRetentionFields
 	optionFields      optionFields
 	canonical         map[string]*descriptorpb.FileDescriptorProto
+
+	strippedMu    sync.Mutex
+	strippedFiles map[string]*descriptorpb.FileDescriptorProto
+}
+
+// stripped returns the named file with source-retention options removed. The
+// result is built once and shared: every output that wants it only reads it.
+func (co *compileOutput) stripped(name string) *descriptorpb.FileDescriptorProto {
+	co.strippedMu.Lock()
+	defer co.strippedMu.Unlock()
+	if fd, ok := co.strippedFiles[name]; ok {
+		return fd
+	}
+	fd := stripSourceRetention(co.canonical[name], co.srcRetFields)
+	if co.strippedFiles == nil {
+		co.strippedFiles = map[string]*descriptorpb.FileDescriptorProto{}
+	}
+	co.strippedFiles[name] = fd
+	return fd
 }
 
 // compileInput holds the parameters for compileInternal, after the caller
@@ -468,7 +488,7 @@ func (co *compileOutput) buildProtoFiles() []*descriptorpb.FileDescriptorProto {
 		// so only re-encodes — the files it was asked to generate.
 		fd := co.parsed[name]
 		if relFileSet[name] {
-			fd = stripSourceRetention(co.canonical[name], co.srcRetFields)
+			fd = co.stripped(name)
 		}
 		protoFiles = append(protoFiles, fd)
 	}
@@ -525,7 +545,7 @@ func (co *compileOutput) buildDescriptorSetFiles(includeImports, retainOptions, 
 			fd = protoFileMap[name]
 			// For includeImports, dependency files also need source-retention stripped
 			if includeImports && !relFileSet[name] {
-				fd = stripSourceRetention(co.canonical[name], co.srcRetFields)
+				fd = co.stripped(name)
 			}
 		}
 

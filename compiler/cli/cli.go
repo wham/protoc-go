@@ -5486,7 +5486,12 @@ func stripSourceRetention(fd *descriptorpb.FileDescriptorProto, srcRetFields sou
 	if !needsClone {
 		return fd
 	}
-	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
+	// Stripping rewrites options, never locations, so the copy shares the
+	// original's Location values instead of cloning them — they are most of a
+	// file's descriptor — and only the list of them is rebuilt.
+	shallow := shallowFileWithoutSourceInfo(fd)
+	shallow.ProtoReflect().SetUnknown(fd.ProtoReflect().GetUnknown())
+	fdCopy := proto.Clone(shallow).(*descriptorpb.FileDescriptorProto)
 	// Collect paths of ext ranges whose options become nil after stripping verification.
 	var emptyOptsPaths [][]int32
 	clearExtRangeOptsCollect(fdCopy.GetMessageType(), []int32{4}, &emptyOptsPaths)
@@ -5496,16 +5501,20 @@ func stripSourceRetention(fd *descriptorpb.FileDescriptorProto, srcRetFields sou
 	// Strip the built-in features descriptor.proto marks RETENTION_SOURCE
 	var strippedFeaturePaths [][]int32
 	stripSourceRetentionFeatures(fdCopy, &strippedFeaturePaths)
-	if fdCopy.SourceCodeInfo != nil {
-		var filtered []*descriptorpb.SourceCodeInfo_Location
-		for _, loc := range fdCopy.SourceCodeInfo.Location {
+	if sci := fd.SourceCodeInfo; sci != nil {
+		filtered := make([]*descriptorpb.SourceCodeInfo_Location, 0, len(sci.Location))
+		for _, loc := range sci.Location {
 			if !isStrippedExtRangeOptsPath(loc.Path, emptyOptsPaths) &&
 				!isStrippedSourceRetentionPath(loc.Path, strippedOptsPaths) &&
 				!pathIn(loc.Path, strippedFeaturePaths) {
 				filtered = append(filtered, loc)
 			}
 		}
-		fdCopy.SourceCodeInfo.Location = filtered
+		if len(filtered) == 0 {
+			filtered = nil
+		}
+		fdCopy.SourceCodeInfo = &descriptorpb.SourceCodeInfo{Location: filtered}
+		fdCopy.SourceCodeInfo.ProtoReflect().SetUnknown(sci.ProtoReflect().GetUnknown())
 	}
 	return fdCopy
 }
