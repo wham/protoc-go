@@ -45,6 +45,12 @@ type CompileRequest struct {
 	// precedence over files on disk.
 	Overlay map[string]string
 
+	// SkipSourceInfo declares that the result is wanted for its descriptors
+	// alone, letting the compiler skip recording source locations and
+	// comments. It is ignored with IncludeSourceInfo. Running a plugin on such
+	// a result still works, at the cost of compiling the inputs a second time.
+	SkipSourceInfo bool
+
 	// DescriptorSetIn is a list of files containing pre-compiled FileDescriptorSets
 	// to use for resolving imports.
 	DescriptorSetIn []string
@@ -102,7 +108,10 @@ type GeneratedFile struct {
 // parameter is passed to the plugin as the code generation parameter
 // (e.g., "paths=source_relative").
 func (r *CompileResult) RunPlugin(pluginPath string, parameter string) ([]GeneratedFile, error) {
-	co := r.co
+	co, err := r.co.withSourceInfo()
+	if err != nil {
+		return nil, err
+	}
 	protoFiles := co.buildProtoFiles()
 	sourceFileDescriptors := co.buildSourceFileDescriptors()
 
@@ -143,7 +152,10 @@ type LibraryPlugin interface {
 // parameter is passed to the plugin as the code generation parameter
 // (e.g., "paths=source_relative").
 func (r *CompileResult) RunLibraryPlugin(p LibraryPlugin, parameter string) ([]GeneratedFile, error) {
-	co := r.co
+	co, err := r.co.withSourceInfo()
+	if err != nil {
+		return nil, err
+	}
 	protoFiles := co.buildProtoFiles()
 	sourceFileDescriptors := co.buildSourceFileDescriptors()
 
@@ -198,8 +210,33 @@ type compileOutput struct {
 	optionFields      optionFields
 	canonical         map[string]*descriptorpb.FileDescriptorProto
 
+	// needsSourceInfo is set by a pass run without source info that produced
+	// a diagnostic it could not position.
+	needsSourceInfo bool
+	// in is kept by a compile that skipped source info, so it can be run
+	// again in full if the result is later asked for something that needs it.
+	in       *compileInput
+	fullOnce sync.Once
+	full     *compileOutput
+	fullErr  error
+
 	strippedMu    sync.Mutex
 	strippedFiles map[string]*descriptorpb.FileDescriptorProto
+}
+
+// withSourceInfo returns the compilation with source info present: itself, or
+// for one that skipped it, a full recompile of the same inputs, run once.
+func (co *compileOutput) withSourceInfo() (*compileOutput, error) {
+	if co.in == nil {
+		return co, nil
+	}
+	co.fullOnce.Do(func() {
+		co.full, co.fullErr = compilePass(co.in, false)
+	})
+	if co.fullErr != nil {
+		return nil, co.fullErr
+	}
+	return co.full, nil
 }
 
 // stripped returns the named file with source-retention options removed. The
@@ -227,6 +264,7 @@ type compileInput struct {
 	directDeps             map[string]bool
 	directDepsSet          bool
 	directDepsViolationMsg string
+	skipSourceInfo         bool
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +274,29 @@ type compileInput struct {
 // compileInternal runs the parse → resolve → validate pipeline.
 // It always returns a non-nil *compileOutput (which may contain warnings
 // collected before the error point). On success error is nil.
+//
+// With in.skipSourceInfo it first compiles without recording locations, which
+// is all a clean compile needs. That pass may report a diagnostic the full one
+// would not, never the reverse, and cannot position either, so anything it
+// reports beyond an unused import sends the whole compile round again in full,
+// and that second answer is the one returned.
 func compileInternal(in *compileInput) (*compileOutput, error) {
+	if in.skipSourceInfo {
+		co, err := compilePass(in, true)
+		if err == nil && !co.needsSourceInfo {
+			for _, fd := range co.parsed {
+				if parser.SourceInfoSkipped(fd.SourceCodeInfo) {
+					fd.SourceCodeInfo = nil
+				}
+			}
+			co.in = in
+			return co, nil
+		}
+	}
+	return compilePass(in, false)
+}
+
+func compilePass(in *compileInput, skipSourceInfo bool) (*compileOutput, error) {
 	co := &compileOutput{
 		relFiles: in.relFiles,
 	}
@@ -269,7 +329,7 @@ func compileInternal(in *compileInput) (*compileOutput, error) {
 
 	// Parse all proto files recursively. The cache parses ahead in parallel;
 	// parseRecursive consumes results in its usual deterministic order.
-	cache := newParseCache(in.srcTree)
+	cache := newParseCache(in.srcTree, skipSourceInfo)
 	for _, f := range in.relFiles {
 		cache.prefetch(f)
 	}
@@ -430,7 +490,9 @@ func compileInternal(in *compileInput) (*compileOutput, error) {
 		return co, &CompileErrors{Errors: valErrors}
 	}
 
-	// Unused import warnings
+	// Unused import warnings are positioned from the import locations alone,
+	// which a pass without source info still has; any earlier warning is not.
+	co.needsSourceInfo = len(co.warnings) > 0
 	co.warnings = append(co.warnings, detectUnusedImports(in.relFiles, orderedFiles, parsed, parseResults)...)
 
 	// Collect source retention fields for output processing
@@ -626,6 +688,7 @@ func Compile(req *CompileRequest) (*CompileResult, error) {
 		relFiles:        relFiles,
 		srcTree:         srcTree,
 		descriptorSetIn: req.DescriptorSetIn,
+		skipSourceInfo:  req.SkipSourceInfo && !req.IncludeSourceInfo,
 	}
 	if req.DirectDependencies != nil {
 		in.directDepsSet = true

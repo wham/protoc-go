@@ -659,6 +659,14 @@ func Run(args []string) error {
 	if cfg.descriptorSetIn != "" {
 		in.descriptorSetIn = strings.Split(cfg.descriptorSetIn, ":")
 	}
+	// Source info reaches the outside only through a plugin request or a
+	// descriptor set written with --include_source_info.
+	in.skipSourceInfo = !cfg.includeSourceInfo && cfg.editionDefaultsOut == ""
+	for _, plug := range cfg.plugins {
+		if plug.hasOutput {
+			in.skipSourceInfo = false
+		}
+	}
 	if cfg.directDependenciesSet {
 		in.directDepsSet = true
 		in.directDeps = cfg.directDependencies
@@ -932,6 +940,7 @@ func writeDependencyOut(depPath, target string, orderedFiles []string, srcTree *
 // never reaches are discarded.
 type parseCache struct {
 	srcTree *importer.SourceTree
+	parse1  func(filename, content string) (*parser.ParseResult, error)
 	sem     chan struct{}
 	inline  atomic.Int64 // bytes parsed inline so far, against inlineBudget
 	mu      sync.Mutex
@@ -946,9 +955,14 @@ type parseCacheEntry struct {
 	parseErr error
 }
 
-func newParseCache(srcTree *importer.SourceTree) *parseCache {
+func newParseCache(srcTree *importer.SourceTree, skipSourceInfo bool) *parseCache {
+	parse1 := parser.ParseFile
+	if skipSourceInfo {
+		parse1 = parser.ParseFileWithoutSourceInfo
+	}
 	return &parseCache{
 		srcTree: srcTree,
+		parse1:  parse1,
 		sem:     make(chan struct{}, runtime.GOMAXPROCS(0)),
 		entries: map[string]*parseCacheEntry{},
 	}
@@ -992,7 +1006,7 @@ func (c *parseCache) prefetch(filename string) {
 // queues the file's imports.
 func (c *parseCache) parse(e *parseCacheEntry, filename string) {
 	if e.openErr == nil {
-		e.result, e.parseErr = parser.ParseFile(filename, e.content)
+		e.result, e.parseErr = c.parse1(filename, e.content)
 	}
 	// Deps must be read before done is closed: once a consumer holds the
 	// result it may mutate the descriptor.
@@ -1016,7 +1030,7 @@ func (c *parseCache) load(filename string) *parseCacheEntry {
 		e = &parseCacheEntry{}
 		e.content, e.openErr = c.srcTree.Open(filename)
 		if e.openErr == nil {
-			e.result, e.parseErr = parser.ParseFile(filename, e.content)
+			e.result, e.parseErr = c.parse1(filename, e.content)
 		}
 		return e
 	}
@@ -2665,6 +2679,9 @@ func collectDuplicateFieldNumberErrors(filename string, msg *descriptorpb.Descri
 }
 
 func findFieldNumberLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -2738,6 +2755,9 @@ func collectReservedNumberConflictErrors(filename string, msg *descriptorpb.Desc
 }
 
 func findReservedRangeStartLocation(msgPath []int32, rangeIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -3146,6 +3166,9 @@ func collectEnumPrefixConflictErrors(filename string, e *descriptorpb.EnumDescri
 }
 
 func findEnumValueNameLocation(enumPath []int32, valueIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -4055,6 +4078,9 @@ func collectProto3EnumZeroErrors(filename string, e *descriptorpb.EnumDescriptor
 }
 
 func findEnumValueNumberLocation(enumPath []int32, valueIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -4100,6 +4126,9 @@ func collectProto3RequiredErrors(filename string, msg *descriptorpb.DescriptorPr
 }
 
 func findFieldTypeLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -4172,6 +4201,9 @@ func collectProto3MessageErrors(filename string, msg *descriptorpb.DescriptorPro
 }
 
 func findDefaultValueLocation(field *descriptorpb.FieldDescriptorProto, msg *descriptorpb.DescriptorProto, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -5180,7 +5212,7 @@ var locationIndexes struct {
 }
 
 func registerLocationIndex(sci *descriptorpb.SourceCodeInfo) {
-	if sci == nil {
+	if sci == nil || parser.SourceInfoSkipped(sci) {
 		return
 	}
 	locationIndexes.Lock()
@@ -5219,6 +5251,9 @@ func getLocationIndex(sci *descriptorpb.SourceCodeInfo) *locationIndex {
 }
 
 func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -5253,6 +5288,9 @@ func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, 
 // path (option name keyword, then option value); C++ protoc's OPTION_NAME
 // legacy location corresponds to the first (keyword) entry.
 func findFirstLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -6448,7 +6486,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 				}
 
 				// Update SCI path with actual field numbers
-				if opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
+				if !parser.SourceInfoSkipped(fd.GetSourceCodeInfo()) && opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
 					fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = sciPath
 				}
 
@@ -6491,7 +6529,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 					append(fd.Options.ProtoReflect().GetUnknown(), rawBytes...))
 			} else {
 				// Update SCI path with actual field number
-				if opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
+				if !parser.SourceInfoSkipped(fd.GetSourceCodeInfo()) && opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
 					if isRepeated {
 						idx := repeatedIdx[ext.GetNumber()]
 						fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = []int32{8, ext.GetNumber(), idx}

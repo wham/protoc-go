@@ -74,13 +74,14 @@ import (
 //
 // Compiler is safe for concurrent use — see package documentation.
 type Compiler struct {
-	protoPaths     []string
-	mappings       []importer.Mapping
-	includeImports bool
-	sourceInfo     bool
-	retainOptions  bool
-	descriptorSets []string
-	overlay        map[string]string
+	protoPaths      []string
+	mappings        []importer.Mapping
+	includeImports  bool
+	sourceInfo      bool
+	retainOptions   bool
+	descriptorsOnly bool
+	descriptorSets  []string
+	overlay         map[string]string
 }
 
 // Option configures a [Compiler].
@@ -134,6 +135,23 @@ func WithIncludeImports() Option {
 func WithIncludeSourceInfo() Option {
 	return func(c *Compiler) {
 		c.sourceInfo = true
+	}
+}
+
+// WithDescriptorsOnly declares that results are wanted for their descriptors
+// and not for running plugins, which lets [Compiler.Compile] skip recording
+// source locations and comments — close to half of what a compile allocates.
+// Errors and warnings are unaffected.
+//
+// [Result.RunPlugin] still works on such a result, but has to compile the
+// inputs a second time to get the source info plugins are entitled to, so
+// leave this off when plugins are the point. It has no effect together with
+// [WithIncludeSourceInfo].
+//
+// This is a protoc-go extension with no protoc flag behind it.
+func WithDescriptorsOnly() Option {
+	return func(c *Compiler) {
+		c.descriptorsOnly = true
 	}
 }
 
@@ -224,6 +242,7 @@ func (c *Compiler) Compile(protoFiles ...string) (*Result, error) {
 		IncludeImports:    c.includeImports,
 		IncludeSourceInfo: c.sourceInfo,
 		RetainOptions:     c.retainOptions,
+		SkipSourceInfo:    c.descriptorsOnly,
 		DescriptorSetIn:   c.descriptorSets,
 	})
 }

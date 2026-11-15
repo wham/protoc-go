@@ -63,6 +63,8 @@ type parser struct {
 	tok       *tokenizer.Tokenizer
 	locations []*descriptorpb.SourceCodeInfo_Location
 	locArena  locArena
+	skipLocs   bool
+	importLocs []*descriptorpb.SourceCodeInfo_Location
 	i32Arena  i32Arena
 	pathBuf   []int32 // scratch for spanPath
 	lastLine  int
@@ -263,9 +265,32 @@ type ParseResult struct {
 	CustomExtRangeOptions   []CustomExtRangeOption
 }
 
+// skipMarker heads the location list of a file parsed without source info.
+var skipMarker = &descriptorpb.SourceCodeInfo_Location{}
+
+// SourceInfoSkipped reports whether sci belongs to a file parsed by
+// [ParseFileWithoutSourceInfo]. Such a file knows where its imports are and
+// nothing else, so any other position looked up in it is unknown rather than
+// absent — a caller about to report one has to parse the file again in full.
+func SourceInfoSkipped(sci *descriptorpb.SourceCodeInfo) bool {
+	locs := sci.GetLocation()
+	return len(locs) > 0 && locs[0] == skipMarker
+}
+
 // ParseFile parses a .proto file and returns a ParseResult.
 func ParseFile(filename string, content string) (*ParseResult, error) {
-	tok := tokenizer.New(content)
+	return parseFile(filename, content, false)
+}
+
+// ParseFileWithoutSourceInfo parses like [ParseFile] but records no locations
+// or comments beyond those of the import statements. Descriptors and errors
+// are the same; what is lost is the ability to position anything later.
+func ParseFileWithoutSourceInfo(filename string, content string) (*ParseResult, error) {
+	return parseFile(filename, content, true)
+}
+
+func parseFile(filename string, content string, skipLocs bool) (*ParseResult, error) {
+	tok := tokenizer.NewTokenizer(content, !skipLocs)
 	defer tok.Release()
 	// Pre-allocate locations based on token count (~1 location per 3 tokens)
 	// Real files produce ~0.7-0.75 locations per token, so size for that;
@@ -282,7 +307,10 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 		seenImports:       map[string]bool{},
 		explicitJsonNames: map[*descriptorpb.FieldDescriptorProto]bool{},
 		locations:         make([]*descriptorpb.SourceCodeInfo_Location, 0, estLocs),
+		skipLocs:          skipLocs,
 	}
+	p.locArena.skip = skipLocs
+	p.i32Arena.skip = skipLocs
 	// Each location carries a path (~4 ints) and a span (3-4 ints).
 	p.locArena.next = estLocs
 	p.i32Arena.next = estLocs * 8
@@ -461,8 +489,14 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 	// Update file-level span using first token start and last real token end
 	p.locations[fileLocIdx].Span = p.multiSpan(fileStartLine, fileStartCol, p.lastLine, p.lastCol)
 
-	fd.SourceCodeInfo = &descriptorpb.SourceCodeInfo{
-		Location: p.locations,
+	if skipLocs {
+		fd.SourceCodeInfo = &descriptorpb.SourceCodeInfo{
+			Location: append([]*descriptorpb.SourceCodeInfo_Location{skipMarker}, p.importLocs...),
+		}
+	} else {
+		fd.SourceCodeInfo = &descriptorpb.SourceCodeInfo{
+			Location: p.locations,
+		}
 	}
 
 	if len(p.errors) > 0 {
@@ -6563,6 +6597,10 @@ func (p *parser) skipBracketedOptions() {
 }
 
 func (p *parser) addLocationPlaceholder(path []int32) int {
+	if p.skipLocs {
+		p.locations = append(p.locations, p.locArena.alloc())
+		return len(p.locations) - 1
+	}
 	pathCopy := make([]int32, len(path))
 	copy(pathCopy, path)
 	idx := len(p.locations)
@@ -6584,6 +6622,14 @@ func (p *parser) spanPath(path []int32, elems ...int32) []int32 {
 }
 
 func (p *parser) addLocationSpan(path []int32, startLine, startCol, endLine, endCol int) {
+	if p.skipLocs && len(path) == 2 && (path[0] == 3 || path[0] == 15) {
+		// Import positions are kept: the unused-import warning is the one
+		// diagnostic an otherwise clean compile still has to position.
+		p.importLocs = append(p.importLocs, &descriptorpb.SourceCodeInfo_Location{
+			Path: copyPath(path),
+			Span: []int32{int32(startLine), int32(startCol), int32(endLine), int32(endCol)},
+		})
+	}
 	loc := p.locArena.alloc()
 	loc.Path = p.i32Arena.copyOf(path)
 	loc.Span = p.multiSpan(startLine, startCol, endLine, endCol)
@@ -6605,6 +6651,10 @@ func (p *parser) addLocationSpanReturn(path []int32, startLine, startCol, endLin
 // estimate of the whole file's needs, so small files pay for what they use)
 // and grow geometrically up to a cap.
 type locArena struct {
+	// skip makes every alloc return the same scratch value: the parser still
+	// goes through the motions of recording locations, into nothing.
+	skip    bool
+	scratch descriptorpb.SourceCodeInfo_Location
 	cur    []descriptorpb.SourceCodeInfo_Location
 	idx    int
 	next   int
@@ -6619,6 +6669,9 @@ const (
 )
 
 func (a *locArena) alloc() *descriptorpb.SourceCodeInfo_Location {
+	if a.skip {
+		return &a.scratch
+	}
 	if a.idx >= len(a.cur) {
 		n := a.next
 		if n < locBlockMin {
@@ -6647,6 +6700,7 @@ func (a *locArena) alloc() *descriptorpb.SourceCodeInfo_Location {
 // backing blocks. Returned slices have cap == len so callers appending to them
 // would not corrupt neighbours.
 type i32Arena struct {
+	skip   bool
 	cur    []int32
 	idx    int
 	next   int
@@ -6659,6 +6713,12 @@ const (
 )
 
 func (a *i32Arena) get(n int) []int32 {
+	if a.skip {
+		if n > len(a.cur) {
+			a.cur = make([]int32, n+16)
+		}
+		return a.cur[:n:n]
+	}
 	if a.idx+n > len(a.cur) {
 		size := a.next
 		if size < i32BlockMin {
@@ -6694,7 +6754,7 @@ func (a *i32Arena) copyOf(src []int32) []int32 {
 // firstTokenIdx: the token index of the first token of the declaration (for leading/detached)
 // The trailing comment comes from the next token after the declaration's terminator.
 func (p *parser) attachComments(locIdx int, firstTokenIdx int) {
-	if locIdx < 0 || locIdx >= len(p.locations) {
+	if p.skipLocs || locIdx < 0 || locIdx >= len(p.locations) {
 		return
 	}
 	loc := p.locations[locIdx]
@@ -7318,6 +7378,9 @@ func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, 
 }
 
 func findSCISpanStart(fd *descriptorpb.FileDescriptorProto, path []int32) (int, int, bool) {
+	if SourceInfoSkipped(fd.GetSourceCodeInfo()) {
+		return 1, 1, true
+	}
 	for _, loc := range fd.GetSourceCodeInfo().GetLocation() {
 		locPath := loc.GetPath()
 		if len(locPath) != len(path) {

@@ -77,6 +77,7 @@ type Tokenizer struct {
 	col          int // 0-based
 	tokens       []packedToken
 	strs         []stringLit
+	noComments   bool
 	comments     []indexedComments // sparse, ascending by idx
 	commentSlots int               // next comment slot (mirrors the old dense length)
 	idx          int
@@ -93,6 +94,12 @@ func init() {
 }
 
 func New(input string) *Tokenizer {
+	return NewTokenizer(input, true)
+}
+
+// NewTokenizer tokenizes input. Without keepComments the comments are still
+// scanned, and still report their errors, but CommentsAt returns none.
+func NewTokenizer(input string, keepComments bool) *Tokenizer {
 	// Size the token slice from two upper bounds and take the tighter: the
 	// densest realistic input runs ~4 bytes per token, and no file has more
 	// than about four tokens per `;`, `=`, `{` or `}` (real ones 2-3.5,
@@ -107,8 +114,9 @@ func New(input string) *Tokenizer {
 		est = 64
 	}
 	t := &Tokenizer{
-		input:  input,
-		tokens: getTokenBuf(est),
+		input:      input,
+		tokens:     getTokenBuf(est),
+		noComments: !keepComments,
 	}
 	// Skip UTF-8 BOM if present (matching C++ protoc behavior).
 	// Keep in input so positions account for BOM bytes.
@@ -252,7 +260,7 @@ func (t *Tokenizer) tokenize() {
 // entries. The slot counter advances either way so sparse indexes stay
 // identical to the dense array this replaces.
 func (t *Tokenizer) addComments(cd TokenComments) {
-	if cd.PrevTrailing != "" || cd.Leading != "" || len(cd.Detached) > 0 {
+	if !t.noComments && (cd.PrevTrailing != "" || cd.Leading != "" || len(cd.Detached) > 0) {
 		t.comments = append(t.comments, indexedComments{idx: t.commentSlots, cd: cd})
 	}
 	t.commentSlots++
