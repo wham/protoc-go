@@ -1236,6 +1236,19 @@ func findImportLocation(fd *descriptorpb.FileDescriptorProto, importedFile strin
 // detectUnusedImports checks for imports that are not referenced by any type,
 // extension, or custom option in the importing file. Returns warnings.
 func detectUnusedImports(relFiles []string, orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+	// Without an import among the requested files there is nothing to warn
+	// about, and no reason to index every symbol in the pool.
+	anyImports := false
+	for _, f := range relFiles {
+		if fd := parsed[f]; fd != nil && len(fd.GetDependency())+len(fd.GetOptionDependency()) > 0 {
+			anyImports = true
+			break
+		}
+	}
+	if !anyImports {
+		return nil
+	}
+
 	// Build FQN → defining filename map for all symbols
 	fqnToFile := map[string]string{}
 	for _, name := range orderedFiles {
@@ -4284,6 +4297,9 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 	for _, name := range orderedFiles {
 		total += countSymbols(parsed[name])
 	}
+	if !mayHaveDuplicateNames(orderedFiles, parsed, total) {
+		return nil
+	}
 	seen := make(map[symbolKey]string, total)  // symbol -> filename where first defined
 	var enumValParent map[symbolKey]string     // enum value -> enum short name
 	for _, name := range orderedFiles {
@@ -4380,6 +4396,98 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 		}
 	}
 	return errs
+}
+
+// mayHaveDuplicateNames is a cheap screen in front of the exact check below:
+// it hashes every (scope, name) pair that check would register and reports
+// whether any two hashes coincide. Equal pairs always hash alike, so false
+// means there is no duplicate to find; true means only that the exact pass
+// has to look. A scope is hashed as its dotted name, byte for byte, so the
+// same scope reached as a package in one file and a message in another still
+// collides here as it does there.
+func mayHaveDuplicateNames(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, total int) bool {
+	seen := make(map[uint64]struct{}, total)
+	dup := false
+	add := func(scope uint64, name string) {
+		h := fnvString(fnvByte(scope, 0), name)
+		if _, ok := seen[h]; ok {
+			dup = true
+		}
+		seen[h] = struct{}{}
+	}
+	child := func(scope uint64, scopeEmpty bool, name string) uint64 {
+		if scopeEmpty {
+			return fnvString(scope, name)
+		}
+		return fnvString(fnvByte(scope, '.'), name)
+	}
+	var inMsg func(msg *descriptorpb.DescriptorProto, scope uint64)
+	inMsg = func(msg *descriptorpb.DescriptorProto, scope uint64) {
+		for _, oneof := range msg.GetOneofDecl() {
+			add(scope, oneof.GetName())
+		}
+		for _, field := range msg.GetField() {
+			add(scope, field.GetName())
+		}
+		for _, ext := range msg.GetExtension() {
+			add(scope, ext.GetName())
+		}
+		for _, enum := range msg.GetEnumType() {
+			for _, val := range enum.GetValue() {
+				add(scope, val.GetName())
+			}
+			add(scope, enum.GetName())
+		}
+		for _, nested := range msg.GetNestedType() {
+			inMsg(nested, child(scope, false, nested.GetName()))
+			add(scope, nested.GetName())
+		}
+	}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		scope := fnvString(fnvOffset, pkg)
+		for _, msg := range fd.GetMessageType() {
+			inMsg(msg, child(scope, pkg == "", msg.GetName()))
+			add(scope, msg.GetName())
+		}
+		for _, enum := range fd.GetEnumType() {
+			for _, val := range enum.GetValue() {
+				add(scope, val.GetName())
+			}
+			add(scope, enum.GetName())
+		}
+		for _, svc := range fd.GetService() {
+			svcScope := child(scope, pkg == "", svc.GetName())
+			for _, method := range svc.GetMethod() {
+				add(svcScope, method.GetName())
+			}
+			add(scope, svc.GetName())
+		}
+		for _, ext := range fd.GetExtension() {
+			add(scope, ext.GetName())
+		}
+		if dup {
+			return true
+		}
+	}
+	return dup
+}
+
+const (
+	fnvOffset = 14695981039346656037
+	fnvPrime  = 1099511628211
+)
+
+func fnvByte(h uint64, b byte) uint64 {
+	return (h ^ uint64(b)) * fnvPrime
+}
+
+func fnvString(h uint64, s string) uint64 {
+	for i := 0; i < len(s); i++ {
+		h = (h ^ uint64(s[i])) * fnvPrime
+	}
+	return h
 }
 
 func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, check func(shortName, scope string, path []int32, enumName string)) {
