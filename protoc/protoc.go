@@ -60,7 +60,7 @@ package protoc
 
 import (
 	"fmt"
-	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/wham/protoc-go/compiler/cli"
@@ -74,13 +74,14 @@ import (
 //
 // Compiler is safe for concurrent use — see package documentation.
 type Compiler struct {
-	protoPaths     []string
-	mappings       []importer.Mapping
-	includeImports bool
-	sourceInfo     bool
-	retainOptions  bool
-	descriptorSets []string
-	overlay        map[string]string
+	protoPaths      []string
+	mappings        []importer.Mapping
+	includeImports  bool
+	sourceInfo      bool
+	retainOptions   bool
+	descriptorsOnly bool
+	descriptorSets  []string
+	overlay         map[string]string
 }
 
 // Option configures a [Compiler].
@@ -137,6 +138,23 @@ func WithIncludeSourceInfo() Option {
 	}
 }
 
+// WithDescriptorsOnly declares that results are wanted for their descriptors
+// and not for running plugins, which lets [Compiler.Compile] skip recording
+// source locations and comments — close to half of what a compile allocates.
+// Errors and warnings are unaffected.
+//
+// [Result.RunPlugin] still works on such a result, but has to compile the
+// inputs a second time to get the source info plugins are entitled to, so
+// leave this off when plugins are the point. It has no effect together with
+// [WithIncludeSourceInfo].
+//
+// This is a protoc-go extension with no protoc flag behind it.
+func WithDescriptorsOnly() Option {
+	return func(c *Compiler) {
+		c.descriptorsOnly = true
+	}
+}
+
 // WithRetainOptions keeps all options in the output, including source-retention
 // options that are normally stripped.
 // Equivalent to protoc's --retain_options flag.
@@ -168,7 +186,7 @@ func WithOverlay(files map[string]string) Option {
 			c.overlay = make(map[string]string)
 		}
 		for k, v := range files {
-			c.overlay[k] = v
+			c.overlay[path.Clean(filepath.ToSlash(k))] = v
 		}
 	}
 }
@@ -216,37 +234,15 @@ func (c *Compiler) Compile(protoFiles ...string) (*Result, error) {
 		return nil, fmt.Errorf("protoc: no proto files specified")
 	}
 
-	// If overlay is set, write files to a temp directory and add it as a proto path
-	var cleanupDir string
-	protoPaths := c.protoPaths
-	if len(c.overlay) > 0 {
-		tmpDir, err := os.MkdirTemp("", "protoc-overlay-*")
-		if err != nil {
-			return nil, fmt.Errorf("protoc: creating overlay temp dir: %w", err)
-		}
-		cleanupDir = tmpDir
-		defer os.RemoveAll(cleanupDir)
-
-		for name, content := range c.overlay {
-			p := filepath.Join(tmpDir, name)
-			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-				return nil, fmt.Errorf("protoc: creating overlay dir: %w", err)
-			}
-			if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-				return nil, fmt.Errorf("protoc: writing overlay file: %w", err)
-			}
-		}
-		// Overlay directory takes precedence (prepended)
-		protoPaths = append([]string{tmpDir}, protoPaths...)
-	}
-
 	return cli.Compile(&cli.CompileRequest{
 		ProtoFiles:        protoFiles,
-		ProtoPaths:        protoPaths,
+		ProtoPaths:        c.protoPaths,
+		Overlay:           c.overlay,
 		ProtoPathMappings: c.mappings,
 		IncludeImports:    c.includeImports,
 		IncludeSourceInfo: c.sourceInfo,
 		RetainOptions:     c.retainOptions,
+		SkipSourceInfo:    c.descriptorsOnly,
 		DescriptorSetIn:   c.descriptorSets,
 	})
 }

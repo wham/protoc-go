@@ -61,6 +61,8 @@ scripts/bench --summary
 scripts/bench --summary --no-buf   # two-way, when buf is installed but not wanted
 # In-process library core (ns/op, B/op, allocs/op)
 go test ./protoc/ -run='^$' -bench=. -benchmem
+# Unit tests, including the source-info-skipping invariant (see below)
+go test ./...
 ```
 
 The test harness:
@@ -449,6 +451,36 @@ The scaled corpus is generated on demand by `scripts/gen-large-stress <tier>`
 - **Reuse existing proto types**: We use `google.golang.org/protobuf/types/descriptorpb` for FileDescriptorProto etc.
 - **No built-in generators**: The Go protoc is plugin-only. No C++/Java/Python code generators.
 - **Fake plugin**: `protoc-gen-dump` captures what protoc sends to plugins. It writes JSON + binary + human-readable summary.
+
+## Source info is built only when something will read it
+
+Locations and comments are most of what a compile allocates, and only two
+things ever read them: a plugin request, and a descriptor set written with
+`--include_source_info`. So the CLI compiles without them whenever neither is
+asked for, and the library does the same under `protoc.WithDescriptorsOnly()`
+(off by default, because `Result.RunPlugin` needs them and would have to
+compile a second time).
+
+The mechanism is two passes, in `compileInternal`:
+
+- The first pass parses with `parser.ParseFileWithoutSourceInfo`, which keeps
+  the positions of import statements and nothing else. Every location lookup
+  on such a file answers "found, at 1:1" rather than "absent".
+- A first pass that comes back clean, or with nothing but unused-import
+  warnings (which the kept import positions place exactly), is the result.
+- Anything else — any error, any other warning — throws that pass away and
+  compiles again in full, and the second answer is the one reported. No
+  diagnostic text ever comes from the first pass.
+
+The invariant that makes this safe is one-sided, and it is the thing to
+preserve: **the first pass may report a diagnostic the full pass would not,
+never the reverse.** Over-reporting costs a second pass; under-reporting would
+be a wrong answer. That is why a lookup on a skipped file must say "found": a
+check that stays silent when it cannot find a position would otherwise go
+silent for every file. A new location lookup has to start with the same
+`parser.SourceInfoSkipped` check the existing ones do, and
+`compiler/cli/sourceinfo_skip_test.go` holds the line by running both passes
+over every fixture and the vendored corpus.
 
 ## C++ protoc Pipeline (What We're Porting)
 

@@ -145,6 +145,30 @@ func BenchmarkCompileSourceInfo(b *testing.B) {
 	}
 }
 
+// BenchmarkCompileDescriptorsOnly measures a compile that was told up front its
+// result is wanted for descriptors alone, so no source info is recorded.
+func BenchmarkCompileDescriptorsOnly(b *testing.B) {
+	for _, bc := range benchCases {
+		files, paths, why, ok := benchInputs(bc)
+		if !ok {
+			b.Run(bc.name, func(b *testing.B) { b.Skip(why) })
+			continue
+		}
+		c := protoc.New(
+			protoc.WithProtoPaths(paths...),
+			protoc.WithDescriptorsOnly(),
+		)
+		b.Run(bc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				if _, err := c.Compile(files...); err != nil {
+					b.Fatalf("compile failed: %v", err)
+				}
+			}
+		})
+	}
+}
+
 // nopPlugin is a trivial in-process plugin that produces no files. It isolates
 // plugin-dispatch overhead (request building + invocation) from generation.
 type nopPlugin struct{}

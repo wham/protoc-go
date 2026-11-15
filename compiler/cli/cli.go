@@ -659,6 +659,14 @@ func Run(args []string) error {
 	if cfg.descriptorSetIn != "" {
 		in.descriptorSetIn = strings.Split(cfg.descriptorSetIn, ":")
 	}
+	// Source info reaches the outside only through a plugin request or a
+	// descriptor set written with --include_source_info.
+	in.skipSourceInfo = !cfg.includeSourceInfo && cfg.editionDefaultsOut == ""
+	for _, plug := range cfg.plugins {
+		if plug.hasOutput {
+			in.skipSourceInfo = false
+		}
+	}
 	if cfg.directDependenciesSet {
 		in.directDepsSet = true
 		in.directDeps = cfg.directDependencies
@@ -932,6 +940,7 @@ func writeDependencyOut(depPath, target string, orderedFiles []string, srcTree *
 // never reaches are discarded.
 type parseCache struct {
 	srcTree *importer.SourceTree
+	parse1  func(filename, content string) (*parser.ParseResult, error)
 	sem     chan struct{}
 	inline  atomic.Int64 // bytes parsed inline so far, against inlineBudget
 	mu      sync.Mutex
@@ -946,9 +955,14 @@ type parseCacheEntry struct {
 	parseErr error
 }
 
-func newParseCache(srcTree *importer.SourceTree) *parseCache {
+func newParseCache(srcTree *importer.SourceTree, skipSourceInfo bool) *parseCache {
+	parse1 := parser.ParseFile
+	if skipSourceInfo {
+		parse1 = parser.ParseFileWithoutSourceInfo
+	}
 	return &parseCache{
 		srcTree: srcTree,
+		parse1:  parse1,
 		sem:     make(chan struct{}, runtime.GOMAXPROCS(0)),
 		entries: map[string]*parseCacheEntry{},
 	}
@@ -992,7 +1006,7 @@ func (c *parseCache) prefetch(filename string) {
 // queues the file's imports.
 func (c *parseCache) parse(e *parseCacheEntry, filename string) {
 	if e.openErr == nil {
-		e.result, e.parseErr = parser.ParseFile(filename, e.content)
+		e.result, e.parseErr = c.parse1(filename, e.content)
 	}
 	// Deps must be read before done is closed: once a consumer holds the
 	// result it may mutate the descriptor.
@@ -1016,7 +1030,7 @@ func (c *parseCache) load(filename string) *parseCacheEntry {
 		e = &parseCacheEntry{}
 		e.content, e.openErr = c.srcTree.Open(filename)
 		if e.openErr == nil {
-			e.result, e.parseErr = parser.ParseFile(filename, e.content)
+			e.result, e.parseErr = c.parse1(filename, e.content)
 		}
 		return e
 	}
@@ -1222,6 +1236,19 @@ func findImportLocation(fd *descriptorpb.FileDescriptorProto, importedFile strin
 // detectUnusedImports checks for imports that are not referenced by any type,
 // extension, or custom option in the importing file. Returns warnings.
 func detectUnusedImports(relFiles []string, orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, parseResults map[string]*parser.ParseResult) []string {
+	// Without an import among the requested files there is nothing to warn
+	// about, and no reason to index every symbol in the pool.
+	anyImports := false
+	for _, f := range relFiles {
+		if fd := parsed[f]; fd != nil && len(fd.GetDependency())+len(fd.GetOptionDependency()) > 0 {
+			anyImports = true
+			break
+		}
+	}
+	if !anyImports {
+		return nil
+	}
+
 	// Build FQN → defining filename map for all symbols
 	fqnToFile := map[string]string{}
 	for _, name := range orderedFiles {
@@ -2665,6 +2692,9 @@ func collectDuplicateFieldNumberErrors(filename string, msg *descriptorpb.Descri
 }
 
 func findFieldNumberLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -2738,6 +2768,9 @@ func collectReservedNumberConflictErrors(filename string, msg *descriptorpb.Desc
 }
 
 func findReservedRangeStartLocation(msgPath []int32, rangeIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -3146,6 +3179,9 @@ func collectEnumPrefixConflictErrors(filename string, e *descriptorpb.EnumDescri
 }
 
 func findEnumValueNameLocation(enumPath []int32, valueIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -4055,6 +4091,9 @@ func collectProto3EnumZeroErrors(filename string, e *descriptorpb.EnumDescriptor
 }
 
 func findEnumValueNumberLocation(enumPath []int32, valueIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -4100,6 +4139,9 @@ func collectProto3RequiredErrors(filename string, msg *descriptorpb.DescriptorPr
 }
 
 func findFieldTypeLocation(msgPath []int32, fieldIdx int, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -4172,6 +4214,9 @@ func collectProto3MessageErrors(filename string, msg *descriptorpb.DescriptorPro
 }
 
 func findDefaultValueLocation(field *descriptorpb.FieldDescriptorProto, msg *descriptorpb.DescriptorProto, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -4251,6 +4296,9 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 	total := 0
 	for _, name := range orderedFiles {
 		total += countSymbols(parsed[name])
+	}
+	if !mayHaveDuplicateNames(orderedFiles, parsed, total) {
+		return nil
 	}
 	seen := make(map[symbolKey]string, total)  // symbol -> filename where first defined
 	var enumValParent map[symbolKey]string     // enum value -> enum short name
@@ -4348,6 +4396,98 @@ func validateDuplicateNames(orderedFiles []string, parsed map[string]*descriptor
 		}
 	}
 	return errs
+}
+
+// mayHaveDuplicateNames is a cheap screen in front of the exact check below:
+// it hashes every (scope, name) pair that check would register and reports
+// whether any two hashes coincide. Equal pairs always hash alike, so false
+// means there is no duplicate to find; true means only that the exact pass
+// has to look. A scope is hashed as its dotted name, byte for byte, so the
+// same scope reached as a package in one file and a message in another still
+// collides here as it does there.
+func mayHaveDuplicateNames(orderedFiles []string, parsed map[string]*descriptorpb.FileDescriptorProto, total int) bool {
+	seen := make(map[uint64]struct{}, total)
+	dup := false
+	add := func(scope uint64, name string) {
+		h := fnvString(fnvByte(scope, 0), name)
+		if _, ok := seen[h]; ok {
+			dup = true
+		}
+		seen[h] = struct{}{}
+	}
+	child := func(scope uint64, scopeEmpty bool, name string) uint64 {
+		if scopeEmpty {
+			return fnvString(scope, name)
+		}
+		return fnvString(fnvByte(scope, '.'), name)
+	}
+	var inMsg func(msg *descriptorpb.DescriptorProto, scope uint64)
+	inMsg = func(msg *descriptorpb.DescriptorProto, scope uint64) {
+		for _, oneof := range msg.GetOneofDecl() {
+			add(scope, oneof.GetName())
+		}
+		for _, field := range msg.GetField() {
+			add(scope, field.GetName())
+		}
+		for _, ext := range msg.GetExtension() {
+			add(scope, ext.GetName())
+		}
+		for _, enum := range msg.GetEnumType() {
+			for _, val := range enum.GetValue() {
+				add(scope, val.GetName())
+			}
+			add(scope, enum.GetName())
+		}
+		for _, nested := range msg.GetNestedType() {
+			inMsg(nested, child(scope, false, nested.GetName()))
+			add(scope, nested.GetName())
+		}
+	}
+	for _, name := range orderedFiles {
+		fd := parsed[name]
+		pkg := fd.GetPackage()
+		scope := fnvString(fnvOffset, pkg)
+		for _, msg := range fd.GetMessageType() {
+			inMsg(msg, child(scope, pkg == "", msg.GetName()))
+			add(scope, msg.GetName())
+		}
+		for _, enum := range fd.GetEnumType() {
+			for _, val := range enum.GetValue() {
+				add(scope, val.GetName())
+			}
+			add(scope, enum.GetName())
+		}
+		for _, svc := range fd.GetService() {
+			svcScope := child(scope, pkg == "", svc.GetName())
+			for _, method := range svc.GetMethod() {
+				add(svcScope, method.GetName())
+			}
+			add(scope, svc.GetName())
+		}
+		for _, ext := range fd.GetExtension() {
+			add(scope, ext.GetName())
+		}
+		if dup {
+			return true
+		}
+	}
+	return dup
+}
+
+const (
+	fnvOffset = 14695981039346656037
+	fnvPrime  = 1099511628211
+)
+
+func fnvByte(h uint64, b byte) uint64 {
+	return (h ^ uint64(b)) * fnvPrime
+}
+
+func fnvString(h uint64, s string) uint64 {
+	for i := 0; i < len(s); i++ {
+		h = (h ^ uint64(s[i])) * fnvPrime
+	}
+	return h
 }
 
 func collectDupNamesInMsg(msg *descriptorpb.DescriptorProto, msgFQN string, msgPath []int32, sci *descriptorpb.SourceCodeInfo, check func(shortName, scope string, path []int32, enumName string)) {
@@ -5180,7 +5320,7 @@ var locationIndexes struct {
 }
 
 func registerLocationIndex(sci *descriptorpb.SourceCodeInfo) {
-	if sci == nil {
+	if sci == nil || parser.SourceInfoSkipped(sci) {
 		return
 	}
 	locationIndexes.Lock()
@@ -5219,6 +5359,9 @@ func getLocationIndex(sci *descriptorpb.SourceCodeInfo) *locationIndex {
 }
 
 func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -5253,6 +5396,9 @@ func findLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, 
 // path (option name keyword, then option value); C++ protoc's OPTION_NAME
 // legacy location corresponds to the first (keyword) entry.
 func findFirstLocationByPath(target []int32, sci *descriptorpb.SourceCodeInfo) (int, int) {
+	if parser.SourceInfoSkipped(sci) {
+		return 1, 1
+	}
 	if sci == nil {
 		return 0, 0
 	}
@@ -5486,7 +5632,12 @@ func stripSourceRetention(fd *descriptorpb.FileDescriptorProto, srcRetFields sou
 	if !needsClone {
 		return fd
 	}
-	fdCopy := proto.Clone(fd).(*descriptorpb.FileDescriptorProto)
+	// Stripping rewrites options, never locations, so the copy shares the
+	// original's Location values instead of cloning them — they are most of a
+	// file's descriptor — and only the list of them is rebuilt.
+	shallow := shallowFileWithoutSourceInfo(fd)
+	shallow.ProtoReflect().SetUnknown(fd.ProtoReflect().GetUnknown())
+	fdCopy := proto.Clone(shallow).(*descriptorpb.FileDescriptorProto)
 	// Collect paths of ext ranges whose options become nil after stripping verification.
 	var emptyOptsPaths [][]int32
 	clearExtRangeOptsCollect(fdCopy.GetMessageType(), []int32{4}, &emptyOptsPaths)
@@ -5496,16 +5647,20 @@ func stripSourceRetention(fd *descriptorpb.FileDescriptorProto, srcRetFields sou
 	// Strip the built-in features descriptor.proto marks RETENTION_SOURCE
 	var strippedFeaturePaths [][]int32
 	stripSourceRetentionFeatures(fdCopy, &strippedFeaturePaths)
-	if fdCopy.SourceCodeInfo != nil {
-		var filtered []*descriptorpb.SourceCodeInfo_Location
-		for _, loc := range fdCopy.SourceCodeInfo.Location {
+	if sci := fd.SourceCodeInfo; sci != nil {
+		filtered := make([]*descriptorpb.SourceCodeInfo_Location, 0, len(sci.Location))
+		for _, loc := range sci.Location {
 			if !isStrippedExtRangeOptsPath(loc.Path, emptyOptsPaths) &&
 				!isStrippedSourceRetentionPath(loc.Path, strippedOptsPaths) &&
 				!pathIn(loc.Path, strippedFeaturePaths) {
 				filtered = append(filtered, loc)
 			}
 		}
-		fdCopy.SourceCodeInfo.Location = filtered
+		if len(filtered) == 0 {
+			filtered = nil
+		}
+		fdCopy.SourceCodeInfo = &descriptorpb.SourceCodeInfo{Location: filtered}
+		fdCopy.SourceCodeInfo.ProtoReflect().SetUnknown(sci.ProtoReflect().GetUnknown())
 	}
 	return fdCopy
 }
@@ -6439,7 +6594,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 				}
 
 				// Update SCI path with actual field numbers
-				if opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
+				if !parser.SourceInfoSkipped(fd.GetSourceCodeInfo()) && opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
 					fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = sciPath
 				}
 
@@ -6482,7 +6637,7 @@ func resolveCustomFileOptions(orderedFiles []string, parsed map[string]*descript
 					append(fd.Options.ProtoReflect().GetUnknown(), rawBytes...))
 			} else {
 				// Update SCI path with actual field number
-				if opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
+				if !parser.SourceInfoSkipped(fd.GetSourceCodeInfo()) && opt.SCIIndex < len(fd.GetSourceCodeInfo().GetLocation()) {
 					if isRepeated {
 						idx := repeatedIdx[ext.GetNumber()]
 						fd.GetSourceCodeInfo().GetLocation()[opt.SCIIndex].Path = []int32{8, ext.GetNumber(), idx}

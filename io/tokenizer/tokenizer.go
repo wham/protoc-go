@@ -5,6 +5,7 @@ package tokenizer
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 )
@@ -53,12 +54,30 @@ type indexedComments struct {
 	cd  TokenComments
 }
 
+// packedToken is how a token is stored: 20 pointer-free bytes against the 48
+// of a Token, which is rebuilt on demand. n is the length of the token's text
+// in the input, or for a string literal its index in Tokenizer.strs.
+type packedToken struct {
+	start uint32
+	n     uint32
+	line  uint32
+	col   uint32
+	typ   uint8
+}
+
+type stringLit struct {
+	value  string
+	rawLen int
+}
+
 type Tokenizer struct {
 	input        string
 	pos          int
 	line         int // 0-based
 	col          int // 0-based
-	tokens       []Token
+	tokens       []packedToken
+	strs         []stringLit
+	noComments   bool
 	comments     []indexedComments // sparse, ascending by idx
 	commentSlots int               // next comment slot (mirrors the old dense length)
 	idx          int
@@ -75,6 +94,12 @@ func init() {
 }
 
 func New(input string) *Tokenizer {
+	return NewTokenizer(input, true)
+}
+
+// NewTokenizer tokenizes input. Without keepComments the comments are still
+// scanned, and still report their errors, but CommentsAt returns none.
+func NewTokenizer(input string, keepComments bool) *Tokenizer {
 	// Size the token slice from two upper bounds and take the tighter: the
 	// densest realistic input runs ~4 bytes per token, and no file has more
 	// than about four tokens per `;`, `=`, `{` or `}` (real ones 2-3.5,
@@ -89,8 +114,9 @@ func New(input string) *Tokenizer {
 		est = 64
 	}
 	t := &Tokenizer{
-		input:  input,
-		tokens: make([]Token, 0, est),
+		input:      input,
+		tokens:     getTokenBuf(est),
+		noComments: !keepComments,
 	}
 	// Skip UTF-8 BOM if present (matching C++ protoc behavior).
 	// Keep in input so positions account for BOM bytes.
@@ -107,20 +133,74 @@ func New(input string) *Tokenizer {
 // so an estimate that fell a little short costs a little, and a multi-MB input
 // settles its final size in one or two copies. It always grows by at least a
 // quarter, so a run of bad projections still stays a short one.
-func (t *Tokenizer) push(tok Token) {
+func (t *Tokenizer) push(typ TokenType, start, n, line, col int) {
 	if len(t.tokens) == cap(t.tokens) {
-		n := len(t.tokens)
-		want := n + n/4
+		have := len(t.tokens)
+		want := have + have/4
 		if t.pos > 0 {
-			if proj := int(float64(n) * float64(len(t.input)) / float64(t.pos)); proj+proj/8 > want {
+			if proj := int(float64(have) * float64(len(t.input)) / float64(t.pos)); proj+proj/8 > want {
 				want = proj + proj/8
 			}
 		}
-		grown := make([]Token, n, want+16)
+		grown := getTokenBuf(want + 16)[:have]
 		copy(grown, t.tokens)
+		putTokenBuf(t.tokens)
 		t.tokens = grown
 	}
-	t.tokens = append(t.tokens, tok)
+	t.tokens = append(t.tokens, packedToken{start: uint32(start), n: uint32(n), line: uint32(line), col: uint32(col), typ: uint8(typ)})
+}
+
+// tokenBufs recycles token arrays between parses. They hold no pointers and
+// nothing outlives the parse that filled them: a Token's Value points into the
+// input, never into the array.
+var tokenBufs sync.Pool
+
+func getTokenBuf(n int) []packedToken {
+	if b, ok := tokenBufs.Get().(*[]packedToken); ok {
+		if cap(*b) >= n {
+			return (*b)[:0]
+		}
+		tokenBufs.Put(b)
+	}
+	return make([]packedToken, 0, n)
+}
+
+func putTokenBuf(b []packedToken) {
+	if cap(b) > maxPooledTokens {
+		return
+	}
+	b = b[:0]
+	tokenBufs.Put(&b)
+}
+
+// A pooled array is kept across parses, so cap what one may pin (20 MB).
+const maxPooledTokens = 1 << 20
+
+// Release returns the token array for reuse. The tokenizer must not be used
+// afterwards; tokens already handed out stay valid.
+func (t *Tokenizer) Release() {
+	putTokenBuf(t.tokens)
+	t.tokens = nil
+}
+
+func (t *Tokenizer) at(i int) Token {
+	pt := &t.tokens[i]
+	tok := Token{Type: TokenType(pt.typ), Line: int(pt.line), Column: int(pt.col)}
+	switch tok.Type {
+	case TokenString:
+		lit := &t.strs[pt.n]
+		tok.Value, tok.RawLen = lit.value, lit.rawLen
+	case TokenSymbol:
+		if ch := t.input[pt.start]; ch < 128 {
+			tok.Value = symbolStrings[ch]
+		} else {
+			tok.Value = string(rune(ch))
+		}
+	case TokenEOF:
+	default:
+		tok.Value = t.input[pt.start : pt.start+pt.n]
+	}
+	return tok
 }
 
 func (t *Tokenizer) tokenize() {
@@ -164,29 +244,23 @@ func (t *Tokenizer) tokenize() {
 			if ch&0x80 != 0 {
 				t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: fmt.Sprintf("Interpreting non ascii codepoint %d.", ch)})
 			}
-			var symStr string
-			if ch < 128 {
-				symStr = symbolStrings[ch]
-			} else {
-				symStr = string(ch)
-			}
-			t.push(Token{Type: TokenSymbol, Value: symStr, Line: t.line, Column: t.col})
+			t.push(TokenSymbol, t.pos, 1, t.line, t.col)
 			t.advance()
 		}
-		prevTokenLine = t.tokens[len(t.tokens)-1].Line
+		prevTokenLine = int(t.tokens[len(t.tokens)-1].line)
 	}
 	// EOF token
 	if t.commentSlots < len(t.tokens)+1 {
 		t.addComments(t.collectComments(prevTokenLine))
 	}
-	t.push(Token{Type: TokenEOF, Value: "", Line: t.line, Column: t.col})
+	t.push(TokenEOF, t.pos, 0, t.line, t.col)
 }
 
 // addComments records cd for the next comment slot, storing only non-empty
 // entries. The slot counter advances either way so sparse indexes stay
 // identical to the dense array this replaces.
 func (t *Tokenizer) addComments(cd TokenComments) {
-	if cd.PrevTrailing != "" || cd.Leading != "" || len(cd.Detached) > 0 {
+	if !t.noComments && (cd.PrevTrailing != "" || cd.Leading != "" || len(cd.Detached) > 0) {
 		t.comments = append(t.comments, indexedComments{idx: t.commentSlots, cd: cd})
 	}
 	t.commentSlots++
@@ -613,7 +687,8 @@ func (t *Tokenizer) readString() {
 	} else if t.pos >= len(t.input) {
 		t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: "Unexpected end of string."})
 	}
-	t.push(Token{Type: TokenString, Value: sb.String(), Line: startLine, Column: startCol, RawLen: t.col - startCol})
+	t.strs = append(t.strs, stringLit{value: sb.String(), rawLen: t.col - startCol})
+	t.push(TokenString, 0, len(t.strs)-1, startLine, startCol)
 }
 
 func (t *Tokenizer) readNumber() {
@@ -633,7 +708,7 @@ func (t *Tokenizer) readNumber() {
 			// "0x" with no hex digits following
 			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: `"0x" must be followed by hex digits.`})
 			// Still emit a token so the parser sees something
-			t.push(Token{Type: TokenInt, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
+			t.push(TokenInt, start, t.pos-start, startLine, startCol)
 			return
 		}
 	} else {
@@ -667,7 +742,7 @@ func (t *Tokenizer) readNumber() {
 	if isFloat {
 		tokType = TokenFloat
 	}
-	t.push(Token{Type: tokType, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
+	t.push(tokType, start, t.pos-start, startLine, startCol)
 }
 
 // readFloatStartingWithDot handles float literals that begin with '.' (e.g., .5, .25).
@@ -692,7 +767,7 @@ func (t *Tokenizer) readFloatStartingWithDot() {
 			t.Errors = append(t.Errors, TokenError{Line: t.line, Column: t.col, Message: `"e" must be followed by exponent.`})
 		}
 	}
-	t.push(Token{Type: TokenFloat, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
+	t.push(TokenFloat, start, t.pos-start, startLine, startCol)
 }
 
 func (t *Tokenizer) readIdent() {
@@ -702,7 +777,7 @@ func (t *Tokenizer) readIdent() {
 	for t.pos < len(t.input) && isIdentPart(t.input[t.pos]) {
 		t.advance()
 	}
-	t.push(Token{Type: TokenIdent, Value: t.input[start:t.pos], Line: startLine, Column: startCol})
+	t.push(TokenIdent, start, t.pos-start, startLine, startCol)
 }
 
 const tabWidth = 8
@@ -724,7 +799,7 @@ func (t *Tokenizer) advance() {
 // Peek returns the current token without advancing.
 func (t *Tokenizer) Peek() Token {
 	if t.idx < len(t.tokens) {
-		return t.tokens[t.idx]
+		return t.at(t.idx)
 	}
 	return Token{Type: TokenEOF}
 }
@@ -738,7 +813,7 @@ func (t *Tokenizer) Len() int {
 func (t *Tokenizer) PeekAt(offset int) Token {
 	idx := t.idx + offset
 	if idx < len(t.tokens) {
-		return t.tokens[idx]
+		return t.at(idx)
 	}
 	return Token{Type: TokenEOF}
 }
