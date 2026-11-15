@@ -271,8 +271,8 @@ func ParseFile(filename string, content string) (*ParseResult, error) {
 	// Real files produce ~0.7-0.75 locations per token, so size for that;
 	// undershooting repays the estimate in slice regrowth and arena refills.
 	estLocs := tok.Len() * 3 / 4
-	if estLocs < 64 {
-		estLocs = 64
+	if estLocs < 8 {
+		estLocs = 8
 	}
 	p := &parser{
 		tok:               tok,
@@ -6612,7 +6612,7 @@ type locArena struct {
 }
 
 const (
-	locBlockMin = 64
+	locBlockMin = 8
 	// The block cap only matters when the per-file estimate is wildly off;
 	// clamping a well-seeded block just turns one allocation into dozens.
 	locBlockMax = 1 << 16
@@ -6654,7 +6654,7 @@ type i32Arena struct {
 }
 
 const (
-	i32BlockMin = 256
+	i32BlockMin = 64
 	i32BlockMax = 1 << 19
 )
 

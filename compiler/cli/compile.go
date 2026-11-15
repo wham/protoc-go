@@ -40,6 +40,10 @@ type CompileRequest struct {
 	// those only useful during compilation (source-retention options).
 	RetainOptions bool
 
+	// Overlay holds in-memory .proto contents keyed by virtual path; they take
+	// precedence over files on disk.
+	Overlay map[string]string
+
 	// DescriptorSetIn is a list of files containing pre-compiled FileDescriptorSets
 	// to use for resolving imports.
 	DescriptorSetIn []string
@@ -579,11 +583,11 @@ func Compile(req *CompileRequest) (*CompileResult, error) {
 	}
 
 	protoPaths := req.ProtoPaths
-	if len(protoPaths) == 0 && len(req.ProtoPathMappings) == 0 {
+	if len(protoPaths) == 0 && len(req.ProtoPathMappings) == 0 && len(req.Overlay) == 0 {
 		protoPaths = []string{"."}
 	}
 
-	srcTree := &importer.SourceTree{Roots: protoPaths, Mappings: req.ProtoPathMappings, FallbackFS: wellknown.ProtoFiles}
+	srcTree := &importer.SourceTree{Roots: protoPaths, Mappings: req.ProtoPathMappings, FallbackFS: wellknown.ProtoFiles, Overlay: req.Overlay}
 
 	var rootWarnings []string
 	rootWarnings = append(rootWarnings, srcTree.ValidateRoots()...)

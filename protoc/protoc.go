@@ -60,7 +60,7 @@ package protoc
 
 import (
 	"fmt"
-	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/wham/protoc-go/compiler/cli"
@@ -168,7 +168,7 @@ func WithOverlay(files map[string]string) Option {
 			c.overlay = make(map[string]string)
 		}
 		for k, v := range files {
-			c.overlay[k] = v
+			c.overlay[path.Clean(filepath.ToSlash(k))] = v
 		}
 	}
 }
@@ -216,33 +216,10 @@ func (c *Compiler) Compile(protoFiles ...string) (*Result, error) {
 		return nil, fmt.Errorf("protoc: no proto files specified")
 	}
 
-	// If overlay is set, write files to a temp directory and add it as a proto path
-	var cleanupDir string
-	protoPaths := c.protoPaths
-	if len(c.overlay) > 0 {
-		tmpDir, err := os.MkdirTemp("", "protoc-overlay-*")
-		if err != nil {
-			return nil, fmt.Errorf("protoc: creating overlay temp dir: %w", err)
-		}
-		cleanupDir = tmpDir
-		defer os.RemoveAll(cleanupDir)
-
-		for name, content := range c.overlay {
-			p := filepath.Join(tmpDir, name)
-			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-				return nil, fmt.Errorf("protoc: creating overlay dir: %w", err)
-			}
-			if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-				return nil, fmt.Errorf("protoc: writing overlay file: %w", err)
-			}
-		}
-		// Overlay directory takes precedence (prepended)
-		protoPaths = append([]string{tmpDir}, protoPaths...)
-	}
-
 	return cli.Compile(&cli.CompileRequest{
 		ProtoFiles:        protoFiles,
-		ProtoPaths:        protoPaths,
+		ProtoPaths:        c.protoPaths,
+		Overlay:           c.overlay,
 		ProtoPathMappings: c.mappings,
 		IncludeImports:    c.includeImports,
 		IncludeSourceInfo: c.sourceInfo,

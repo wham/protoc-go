@@ -3,11 +3,13 @@
 package importer
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"unsafe"
 )
 
@@ -28,6 +30,15 @@ type SourceTree struct {
 	// types (e.g. google/protobuf/timestamp.proto) into the binary,
 	// mirroring how C++ protoc uses compiled-in descriptors.
 	FallbackFS fs.FS
+
+	// Overlay holds in-memory file contents keyed by virtual path. They take
+	// precedence over the disk and are never written to it.
+	Overlay map[string]string
+
+	// found remembers where a virtual file was located, so a file checked
+	// with Exists is not searched for again when it is opened.
+	foundMu sync.Mutex
+	found   map[string]string
 }
 
 // allMappings returns all mappings including those from Roots.
@@ -44,38 +55,100 @@ func (st *SourceTree) allMappings() []Mapping {
 // Includes a round-trip check matching C++ DiskSourceTree::Open: after finding
 // a disk file, verifies that the disk path maps back to the same virtual filename.
 func (st *SourceTree) findFile(filename string) (string, bool) {
-	for _, m := range st.allMappings() {
-		prefix := m.VirtualPath
+	st.foundMu.Lock()
+	diskFile, ok := st.found[filename]
+	st.foundMu.Unlock()
+	if ok {
+		return diskFile, true
+	}
+	found := false
+	st.candidates(filename, func(candidate string) bool {
+		if _, err := os.Stat(candidate); err != nil {
+			return true
+		}
+		diskFile, found = candidate, true
+		return false
+	})
+	if found {
+		st.remember(filename, diskFile)
+	}
+	return diskFile, found
+}
+
+func (st *SourceTree) remember(filename, diskFile string) {
+	st.foundMu.Lock()
+	if st.found == nil {
+		st.found = map[string]string{}
+	}
+	st.found[filename] = diskFile
+	st.foundMu.Unlock()
+}
+
+// candidates yields, in mapping order, each disk path filename could live at,
+// until yield returns false. A candidate must map back to the same virtual
+// name, matching C++ DiskSourceTree::Open: filepath.Join normalizes paths
+// (strips a leading "/" from the remainder), so "/dep.proto" reaches the same
+// disk file as "dep.proto" but maps back to "dep.proto", not "/dep.proto".
+func (st *SourceTree) candidates(filename string, yield func(diskFile string) bool) {
+	try := func(virtualPath, diskPath string) bool {
+		prefix := virtualPath
 		if prefix != "" {
 			prefix += "/"
 		}
 		if !startsWith(filename, prefix) {
-			continue
+			return true
 		}
-		remainder := filename[len(prefix):]
-		diskFile := filepath.Join(m.DiskPath, remainder)
-		if _, err := os.Stat(diskFile); err == nil {
-			// Round-trip check: verify disk file maps back to same virtual filename.
-			// filepath.Join normalizes paths (strips leading "/" from remainder),
-			// so "/dep.proto" resolves to the same disk file as "dep.proto" but
-			// the reverse mapping gives "dep.proto", not "/dep.proto".
-			rel, err := filepath.Rel(m.DiskPath, diskFile)
-			if err != nil {
-				continue
-			}
-			var roundTrip string
-			if m.VirtualPath != "" {
-				roundTrip = m.VirtualPath + "/" + rel
-			} else {
-				roundTrip = rel
-			}
-			if roundTrip != filename {
-				continue
-			}
-			return diskFile, true
+		diskFile := filepath.Join(diskPath, filename[len(prefix):])
+		rel, err := filepath.Rel(diskPath, diskFile)
+		if err != nil {
+			return true
+		}
+		if virtualPath != "" {
+			rel = virtualPath + "/" + rel
+		}
+		if rel != filename {
+			return true
+		}
+		return yield(diskFile)
+	}
+	for _, root := range st.Roots {
+		if !try("", root) {
+			return
 		}
 	}
-	return "", false
+	for _, m := range st.Mappings {
+		if !try(m.VirtualPath, m.DiskPath) {
+			return
+		}
+	}
+}
+
+// readDisk finds and reads filename in one pass: each candidate is opened
+// outright rather than checked first, so a file costs no stat of its own.
+func (st *SourceTree) readDisk(filename string) (data []byte, ok bool) {
+	st.foundMu.Lock()
+	known, isKnown := st.found[filename]
+	st.foundMu.Unlock()
+	if isKnown {
+		data, err := os.ReadFile(known)
+		return data, err == nil
+	}
+	st.candidates(filename, func(candidate string) bool {
+		d, err := os.ReadFile(candidate)
+		if err == nil {
+			data, ok = d, true
+			st.remember(filename, candidate)
+			return false
+		}
+		if errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+		// Something is there but cannot be read (a directory, no permission):
+		// it still shadows later mappings, as long as it can be stat'ed.
+		_, statErr := os.Stat(candidate)
+		return statErr != nil
+	})
+	return data, ok
 }
 
 // IsVirtualPathInvalid checks if a virtual path contains disallowed components.
@@ -102,11 +175,11 @@ func (st *SourceTree) Open(filename string) (string, error) {
 	if IsVirtualPathInvalid(filename) {
 		return "", &VirtualPathError{Filename: filename}
 	}
-	if diskPath, ok := st.findFile(filename); ok {
-		data, err := os.ReadFile(diskPath)
-		if err == nil {
-			return ownedString(data), nil
-		}
+	if content, ok := st.Overlay[filename]; ok {
+		return content, nil
+	}
+	if data, ok := st.readDisk(filename); ok {
+		return ownedString(data), nil
 	}
 	// Fallback to embedded filesystem (e.g. bundled well-known types).
 	if st.FallbackFS != nil {
@@ -138,6 +211,9 @@ func (e *VirtualPathError) Error() string {
 
 // Exists checks if a .proto file exists in the source tree.
 func (st *SourceTree) Exists(filename string) bool {
+	if _, ok := st.Overlay[filename]; ok {
+		return true
+	}
 	_, ok := st.findFile(filename)
 	return ok
 }
