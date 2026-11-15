@@ -64,6 +64,11 @@ type parser struct {
 	locations []*descriptorpb.SourceCodeInfo_Location
 	locArena  locArena
 	skipLocs   bool
+	strSlab    slab[string]
+	i32Slab    slab[int32]
+	labelSlab  slab[descriptorpb.FieldDescriptorProto_Label]
+	typeSlab   slab[descriptorpb.FieldDescriptorProto_Type]
+	fieldSlab  slab[descriptorpb.FieldDescriptorProto]
 	importLocs []*descriptorpb.SourceCodeInfo_Location
 	i32Arena  i32Arena
 	pathBuf   []int32 // scratch for spanPath
@@ -570,7 +575,7 @@ func (p *parser) parseSyntax(fd *descriptorpb.FileDescriptorProto) error {
 
 	// proto2 files omit the syntax field; proto3 sets it explicitly
 	if valTok.Value != "proto2" {
-		fd.Syntax = proto.String(valTok.Value)
+		fd.Syntax = p.str(valTok.Value)
 	}
 	p.syntax = valTok.Value
 	p.syntaxParsed = true
@@ -712,7 +717,7 @@ func (p *parser) parseEdition(fd *descriptorpb.FileDescriptorProto) error {
 		return fmt.Errorf("%d:%d: Edition %s is later than the maximum supported edition 2026", startTok.Line+1, startTok.Column+1, valTok.Value)
 	}
 
-	fd.Syntax = proto.String("editions")
+	fd.Syntax = p.str("editions")
 	fd.Edition = edEnum.Enum()
 	p.syntax = "editions"
 	p.syntaxParsed = true
@@ -749,7 +754,7 @@ func (p *parser) parsePackage(fd *descriptorpb.FileDescriptorProto) error {
 		return err
 	}
 
-	fd.Package = proto.String(name)
+	fd.Package = p.str(name)
 	p.trackEnd(endTok)
 	// path [2] = package field
 	p.addLocationSpan([]int32{2}, startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
@@ -859,7 +864,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 	}
 
 	msg := &descriptorpb.DescriptorProto{
-		Name: proto.String(nameTok.Value),
+		Name: p.str(nameTok.Value),
 	}
 
 	if _, err := p.tok.Expect("{"); err != nil {
@@ -889,14 +894,14 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 
 		switch tok.Value {
 		case "message":
-			nested, err := p.parseMessage(append(copyPath(path), 3, nestedMsgIdx))
+			nested, err := p.parseMessage(pathWith(path, 3, nestedMsgIdx))
 			if err != nil {
 				return nil, err
 			}
 			msg.NestedType = append(msg.NestedType, nested)
 			nestedMsgIdx++
 		case "enum":
-			e, err := p.parseEnum(append(copyPath(path), 4, nestedEnumIdx))
+			e, err := p.parseEnum(pathWith(path, 4, nestedEnumIdx))
 			if err != nil {
 				return nil, err
 			}
@@ -925,7 +930,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 				fieldIdx++
 				nestedMsgIdx++
 			} else {
-				field, err := p.parseField(append(copyPath(path), 2, fieldIdx))
+				field, err := p.parseField(pathWith(path, 2, fieldIdx))
 				if err != nil {
 					return nil, err
 				}
@@ -978,7 +983,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 				fieldIdx++
 				nestedMsgIdx++
 			} else {
-				field, err := p.parseField(append(copyPath(path), 2, fieldIdx))
+				field, err := p.parseField(pathWith(path, 2, fieldIdx))
 				if err != nil {
 					return nil, err
 				}
@@ -1010,9 +1015,9 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 				oneofName = "X" + oneofName
 			}
 			names[oneofName] = true
-			so.field.OneofIndex = proto.Int32(oneofIdx)
+			so.field.OneofIndex = p.i32(oneofIdx)
 			msg.OneofDecl = append(msg.OneofDecl, &descriptorpb.OneofDescriptorProto{
-				Name: proto.String(oneofName),
+				Name: p.str(oneofName),
 			})
 			oneofIdx++
 		}
@@ -1029,7 +1034,7 @@ func (p *parser) parseMessage(path []int32) (*descriptorpb.DescriptorProto, erro
 	if msg.GetOptions().GetMessageSetWireFormat() {
 		for _, er := range msg.ExtensionRange {
 			if er.GetEnd() == 536870912 {
-				er.End = proto.Int32(2147483647)
+				er.End = p.i32(2147483647)
 			}
 		}
 	}
@@ -1050,7 +1055,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 			return nil
 		}
 		// reserved "name1", "name2";
-		stmtPath := append(copyPath(msgPath), 10) // field 10 = reserved_name
+		stmtPath := pathWith(msgPath, 10) // field 10 = reserved_name
 		startNameCount := *nameIdx
 		for {
 			nameTok, err := p.tok.ExpectString()
@@ -1094,7 +1099,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 		p.attachComments(len(p.locations)-namesAdded-1, firstIdx)
 	} else if p.tok.Peek().Type == tokenizer.TokenIdent && p.syntax == "editions" {
 		// Editions supports bare identifier reserved names: reserved foo, bar;
-		stmtPath := append(copyPath(msgPath), 10) // field 10 = reserved_name
+		stmtPath := pathWith(msgPath, 10) // field 10 = reserved_name
 		startNameCount := *nameIdx
 		for {
 			nameTok := p.tok.Next() // consume identifier
@@ -1127,7 +1132,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 		p.attachComments(len(p.locations)-namesAdded-1, firstIdx)
 	} else {
 		// reserved 2, 15, 9 to 11;
-		stmtPath := append(copyPath(msgPath), 9) // field 9 = reserved_range
+		stmtPath := pathWith(msgPath, 9) // field 9 = reserved_range
 		startCount := *rangeIdx
 
 		// Check if the first token is valid for a number range
@@ -1187,11 +1192,11 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 			}
 
 			msg.ReservedRange = append(msg.ReservedRange, &descriptorpb.DescriptorProto_ReservedRange{
-				Start: proto.Int32(int32(startNum)),
-				End:   proto.Int32(int32(endNum)),
+				Start: p.i32(int32(startNum)),
+				End:   p.i32(int32(endNum)),
 			})
 
-			rangePath := append(copyPath(stmtPath), *rangeIdx)
+			rangePath := pathWith(stmtPath, *rangeIdx)
 			// Range span covers from start number to end number
 			p.addLocationSpan(rangePath, numTok.Line, numTok.Column, endSpanLine, endSpanCol)
 			// Start field (1) — spans just the start number token
@@ -1226,7 +1231,7 @@ func (p *parser) parseMessageReserved(msg *descriptorpb.DescriptorProto, msgPath
 func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath []int32, rangeIdx *int32) error {
 	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Next() // consume "extensions"
-	stmtPath := append(copyPath(msgPath), 5) // field 5 = extension_range
+	stmtPath := pathWith(msgPath, 5) // field 5 = extension_range
 	startCount := *rangeIdx
 	locsBefore := len(p.locations)
 
@@ -1280,11 +1285,11 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 		}
 
 		msg.ExtensionRange = append(msg.ExtensionRange, &descriptorpb.DescriptorProto_ExtensionRange{
-			Start: proto.Int32(int32(startNum)),
-			End:   proto.Int32(int32(endNum)),
+			Start: p.i32(int32(startNum)),
+			End:   p.i32(int32(endNum)),
 		})
 
-		rangePath := append(copyPath(stmtPath), *rangeIdx)
+		rangePath := pathWith(stmtPath, *rangeIdx)
 		p.addLocationSpan(rangePath, numTok.Line, numTok.Column, endSpanLine, endSpanCol)
 		p.addLocationSpan(p.spanPath(rangePath, 1), numTok.Line, numTok.Column, numTok.Line, numTok.Column+len(numTok.Value))
 		p.addLocationSpan(p.spanPath(rangePath, 2), endNumLine, endNumCol, endNumLine, endNumCol+endNumLen)
@@ -1475,11 +1480,11 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 		}
 		// Add SCI for each range's options
 		for i := startCount; i < *rangeIdx; i++ {
-			rangePath := append(copyPath(stmtPath), i)
-			optsPath := append(copyPath(rangePath), 3) // field 3 = options
+			rangePath := pathWith(stmtPath, i)
+			optsPath := pathWith(rangePath, 3) // field 3 = options
 			p.addLocationSpan(optsPath, openTok.Line, openTok.Column, closeTok.Line, closeTok.Column+1)
 			for _, opt := range parsedOpts {
-				optPath := append(copyPath(optsPath), opt.fieldNum)
+				optPath := pathWith(optsPath, opt.fieldNum)
 				p.addLocationSpan(optPath, opt.nameTok.Line, opt.nameTok.Column, opt.valTok.Line, opt.valTok.Column+len(opt.valTok.Value))
 			}
 			// SCI for custom ext range options (placeholder field number 0, resolved post-parse)
@@ -1488,7 +1493,7 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 				if len(co.Ranges) == 0 || co.Ranges[0] != msg.ExtensionRange[startCount] {
 					continue // not from this statement
 				}
-				sciPath := append(copyPath(optsPath), 0) // placeholder
+				sciPath := pathWith(optsPath, 0) // placeholder
 				for range co.SubFieldPath {
 					sciPath = append(sciPath, 0)
 				}
@@ -1497,7 +1502,7 @@ func (p *parser) parseExtensionRange(msg *descriptorpb.DescriptorProto, msgPath 
 			}
 			// SCI for declaration entries (field 2 = declaration in ExtensionRangeOptions)
 			for j, ds := range declSCIs {
-				declPath := append(copyPath(optsPath), 2, int32(j)) // field 2 = declaration, index j
+				declPath := pathWith(optsPath, 2, int32(j)) // field 2 = declaration, index j
 				p.addLocationSpan(declPath, ds.nameTok.Line, ds.nameTok.Column, ds.closeBraceTok.Line, ds.closeBraceTok.Column+1)
 			}
 		}
@@ -1527,13 +1532,13 @@ func (p *parser) parseDeclarationLiteral(decl *descriptorpb.ExtensionRangeOption
 		case "number":
 			valTok := p.tok.Next()
 			num, _ := strconv.ParseInt(valTok.Value, 0, 32)
-			decl.Number = proto.Int32(int32(num))
+			decl.Number = p.i32(int32(num))
 		case "full_name":
 			valTok := p.tok.Next()
-			decl.FullName = proto.String(valTok.Value)
+			decl.FullName = p.str(valTok.Value)
 		case "type":
 			valTok := p.tok.Next()
-			decl.Type = proto.String(valTok.Value)
+			decl.Type = p.str(valTok.Value)
 		case "reserved":
 			valTok := p.tok.Next()
 			decl.Reserved = proto.Bool(valTok.Value == "true")
@@ -1634,12 +1639,12 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 		if err != nil {
 			return err
 		}
-		field.Extendee = proto.String(extendeeName)
+		field.Extendee = p.str(extendeeName)
 
 		// Insert extendee source code info right after field declaration span (index locCountBefore)
 		// to match C++ ordering: field, extendee, label, type, name, number
 		extendeeLoc := &descriptorpb.SourceCodeInfo_Location{
-			Path: append(copyPath(fieldPath), 2),
+			Path: pathWith(fieldPath, 2),
 			Span: p.multiSpan(extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol),
 		}
 		insertIdx := locCountBefore + 1
@@ -1663,17 +1668,17 @@ func (p *parser) parseExtend(fd *descriptorpb.FileDescriptorProto) error {
 // The extension field goes to fd.Extension, the nested message to fd.MessageType (or msg.NestedType).
 func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendeeName string, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol int) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
 	firstIdx := p.tok.CurrentIndex()
-	field := &descriptorpb.FieldDescriptorProto{}
+	field := p.newField()
 
 	// Label
 	labelTok := p.tok.Next()
 	switch labelTok.Value {
 	case "required":
-		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REQUIRED.Enum()
+		field.Label = p.label(descriptorpb.FieldDescriptorProto_LABEL_REQUIRED)
 	case "optional":
-		field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+		field.Label = p.label(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL)
 	case "repeated":
-		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum()
+		field.Label = p.label(descriptorpb.FieldDescriptorProto_LABEL_REPEATED)
 	}
 
 	// "group" keyword
@@ -1690,11 +1695,11 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 	}
 	fieldName := strings.ToLower(groupName)
 
-	field.Name = proto.String(fieldName)
-	field.JsonName = proto.String(tokenizer.ToJSONName(fieldName))
-	field.Type = descriptorpb.FieldDescriptorProto_TYPE_GROUP.Enum()
-	field.TypeName = proto.String(groupName)
-	field.Extendee = proto.String(extendeeName)
+	field.Name = p.str(fieldName)
+	field.JsonName = p.str(tokenizer.ToJSONName(fieldName))
+	field.Type = p.typ(descriptorpb.FieldDescriptorProto_TYPE_GROUP)
+	field.TypeName = p.str(groupName)
+	field.Extendee = p.str(extendeeName)
 
 	// = number
 	if _, err := p.tok.Expect("="); err != nil {
@@ -1708,7 +1713,7 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
 		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 	}
-	field.Number = proto.Int32(int32(num))
+	field.Number = p.i32(int32(num))
 
 	// Optional field options [deprecated = true, etc.]
 	var optionLocs []*descriptorpb.SourceCodeInfo_Location
@@ -1764,7 +1769,7 @@ func (p *parser) parseGroupFieldInExtend(fieldPath, nestedPath []int32, extendee
 
 	// Parse group body (full message body: fields, enums, nested messages, etc.)
 	nested := &descriptorpb.DescriptorProto{
-		Name: proto.String(groupName),
+		Name: p.str(groupName),
 	}
 	if err := p.parseGroupBody(nested, nestedPath); err != nil {
 		return nil, nil, err
@@ -1818,7 +1823,7 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 	}
 
 	// Placeholder for extend block span — field 6 = extension in DescriptorProto
-	blockPath := append(copyPath(msgPath), 6)
+	blockPath := pathWith(msgPath, 6)
 	blockLocIdx := p.addLocationPlaceholder(blockPath)
 	p.attachComments(blockLocIdx, firstIdx)
 
@@ -1832,11 +1837,11 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 			return fmt.Errorf("%d:%d: Map fields are not allowed to be extensions.", ltTok.Line+1, ltTok.Column+1)
 		}
 
-		fieldPath := append(copyPath(msgPath), 6, *extIdx)
+		fieldPath := pathWith(msgPath, 6, *extIdx)
 
 		// Check if this is a group field in extend block
 		if isGroupField(peek.Value, p.tok.PeekAt(1).Value) {
-			nestedPath := append(copyPath(msgPath), 3, *nestedMsgIdx)
+			nestedPath := pathWith(msgPath, 3, *nestedMsgIdx)
 			field, nested, err := p.parseGroupFieldInExtend(fieldPath, nestedPath, extendeeName, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
 			if err != nil {
 				return err
@@ -1848,7 +1853,7 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 			continue
 		}
 		if peek.Value == "group" {
-			nestedPath := append(copyPath(msgPath), 3, *nestedMsgIdx)
+			nestedPath := pathWith(msgPath, 3, *nestedMsgIdx)
 			field, nested, err := p.parseGroupFieldNoLabelInExtend(fieldPath, nestedPath, extendeeName, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol)
 			if err != nil {
 				return err
@@ -1866,11 +1871,11 @@ func (p *parser) parseNestedExtend(msg *descriptorpb.DescriptorProto, msgPath []
 		if err != nil {
 			return err
 		}
-		field.Extendee = proto.String(extendeeName)
+		field.Extendee = p.str(extendeeName)
 
 		// Insert extendee source code info right after field declaration span
 		extendeeLoc := &descriptorpb.SourceCodeInfo_Location{
-			Path: append(copyPath(fieldPath), 2),
+			Path: pathWith(fieldPath, 2),
 			Span: p.multiSpan(extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol),
 		}
 		insertIdx := locCountBefore + 1
@@ -2012,7 +2017,7 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		}
 
 		// SCI: [msgPath..., 7] for options statement, [msgPath..., 7, 0, ...] placeholder
-		optPath := append(copyPath(msgPath), 7)
+		optPath := pathWith(msgPath, 7)
 		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
@@ -2020,9 +2025,9 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 		})
 		extPath := optPath
 		if onFeatures {
-			extPath = append(copyPath(optPath), 12)
+			extPath = pathWith(optPath, 12)
 		}
-		sciPath := append(copyPath(extPath), 0)
+		sciPath := pathWith(extPath, 0)
 		if len(subFieldPath) > 0 {
 			sciPath = make([]int32, len(extPath)+1+len(subFieldPath))
 			copy(sciPath, extPath)
@@ -2121,14 +2126,14 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 				return ferr
 			}
 			// SCI: [msgPath..., 7] for options statement, [msgPath..., 7, 12, featFieldNum] for specific feature
-			optPath := append(copyPath(msgPath), 7)
+			optPath := pathWith(msgPath, 7)
 			span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 				Path: optPath,
 				Span: span,
 			})
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
-				Path: append(copyPath(optPath), 12, featFieldNum),
+				Path: pathWith(optPath, 12, featFieldNum),
 				Span: span,
 			})
 			p.attachComments(len(p.locations)-1, firstIdx)
@@ -2138,14 +2143,14 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 	}
 
 	// Source code info: [msgPath..., 7] for options, [msgPath..., 7, fieldNum] for specific option
-	optPath := append(copyPath(msgPath), 7)
+	optPath := pathWith(msgPath, 7)
 	span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 		Path: optPath,
 		Span: span,
 	})
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
-		Path: append(copyPath(optPath), fieldNum),
+		Path: pathWith(optPath, fieldNum),
 		Span: span,
 	})
 	p.attachComments(len(p.locations)-1, firstIdx)
@@ -2154,7 +2159,7 @@ func (p *parser) parseMessageOption(msg *descriptorpb.DescriptorProto, msgPath [
 }
 
 func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, error) {
-	field := &descriptorpb.FieldDescriptorProto{}
+	field := p.newField()
 	firstIdx := p.tok.CurrentIndex()
 	startTok := p.tok.Peek()
 	startLine := startTok.Line
@@ -2166,14 +2171,14 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	case "required":
 		lt := p.tok.Next()
 		labelTok = &lt
-		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REQUIRED.Enum()
+		field.Label = p.label(descriptorpb.FieldDescriptorProto_LABEL_REQUIRED)
 		if p.syntax == "editions" {
 			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Label \"required\" is not supported in editions, use features.field_presence = LEGACY_REQUIRED.", p.filename, lt.Line+1, lt.Column+1))
 		}
 	case "optional":
 		lt := p.tok.Next()
 		labelTok = &lt
-		field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+		field.Label = p.label(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL)
 		if p.syntax == "proto3" {
 			field.Proto3Optional = proto.Bool(true)
 		}
@@ -2183,12 +2188,12 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	case "repeated":
 		lt := p.tok.Next()
 		labelTok = &lt
-		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum()
+		field.Label = p.label(descriptorpb.FieldDescriptorProto_LABEL_REPEATED)
 	default:
 		if p.syntax == "proto2" && !p.inOneof {
 			p.errors = append(p.errors, fmt.Sprintf("%s:%d:%d: Expected \"required\", \"optional\", or \"repeated\".", p.filename, startTok.Line+1, startTok.Column+1))
 		}
-		field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+		field.Label = p.label(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL)
 	}
 
 	// Type
@@ -2203,7 +2208,7 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 
 	typeEndTok := typeTok
 	if builtinType, ok := builtinTypes[typeTok.Value]; ok {
-		field.Type = builtinType.Enum()
+		field.Type = p.typ(builtinType)
 	} else {
 		// Message or enum reference (may start with "." for FQN)
 		typeName := typeTok.Value
@@ -2218,7 +2223,7 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 			typeName += "." + part.Value
 			typeEndTok = part
 		}
-		field.TypeName = proto.String(typeName)
+		field.TypeName = p.str(typeName)
 	}
 
 	// Name
@@ -2226,8 +2231,8 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 	if nameTok.Type != tokenizer.TokenIdent {
 		return nil, fmt.Errorf("%d:%d: Expected field name.", nameTok.Line+1, nameTok.Column+1)
 	}
-	field.Name = proto.String(nameTok.Value)
-	field.JsonName = proto.String(tokenizer.ToJSONName(nameTok.Value))
+	field.Name = p.str(nameTok.Value)
+	field.JsonName = p.str(tokenizer.ToJSONName(nameTok.Value))
 
 	// = number
 	if eqTok := p.tok.Peek(); eqTok.Value != "=" {
@@ -2250,7 +2255,7 @@ func (p *parser) parseField(path []int32) (*descriptorpb.FieldDescriptorProto, e
 		}
 		return nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 	}
-	field.Number = proto.Int32(int32(num))
+	field.Number = p.i32(int32(num))
 
 	// Optional field options [deprecated = true, etc.]
 	var optionLocs []*descriptorpb.SourceCodeInfo_Location
@@ -2316,12 +2321,12 @@ func isGroupField(tok1, tok2 string) bool {
 // parseGroupFieldInOneof parses a group field inside a oneof block (no label).
 // "group" Name "=" Number "{" fields... "}"
 func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
-	fieldPath := append(copyPath(msgPath), 2, fieldIdx)
-	nestedPath := append(copyPath(msgPath), 3, nestedMsgIdx)
+	fieldPath := pathWith(msgPath, 2, fieldIdx)
+	nestedPath := pathWith(msgPath, 3, nestedMsgIdx)
 
 	firstIdx := p.tok.CurrentIndex()
-	field := &descriptorpb.FieldDescriptorProto{}
-	field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+	field := p.newField()
+	field.Label = p.label(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL)
 
 	// "group" keyword
 	groupTok := p.tok.Next()
@@ -2337,10 +2342,10 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	}
 	fieldName := strings.ToLower(groupName)
 
-	field.Name = proto.String(fieldName)
-	field.JsonName = proto.String(tokenizer.ToJSONName(fieldName))
-	field.Type = descriptorpb.FieldDescriptorProto_TYPE_GROUP.Enum()
-	field.TypeName = proto.String(groupName)
+	field.Name = p.str(fieldName)
+	field.JsonName = p.str(tokenizer.ToJSONName(fieldName))
+	field.Type = p.typ(descriptorpb.FieldDescriptorProto_TYPE_GROUP)
+	field.TypeName = p.str(groupName)
 
 	// = number
 	if _, err := p.tok.Expect("="); err != nil {
@@ -2354,7 +2359,7 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
 		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 	}
-	field.Number = proto.Int32(int32(num))
+	field.Number = p.i32(int32(num))
 
 	// Optional field options [deprecated = true, etc.]
 	var optionLocs []*descriptorpb.SourceCodeInfo_Location
@@ -2404,7 +2409,7 @@ func (p *parser) parseGroupFieldInOneof(msgPath []int32, fieldIdx, nestedMsgIdx 
 
 	// Parse group body (full message body: fields, enums, nested messages, etc.)
 	nested := &descriptorpb.DescriptorProto{
-		Name: proto.String(groupName),
+		Name: p.str(groupName),
 	}
 	if err := p.parseGroupBody(nested, nestedPath); err != nil {
 		return nil, nil, err
@@ -2430,8 +2435,8 @@ func (p *parser) parseGroupFieldNoLabel(msgPath []int32, fieldIdx, nestedMsgIdx 
 // parseGroupFieldNoLabelInExtend parses a group field without a label inside an extend block.
 func (p *parser) parseGroupFieldNoLabelInExtend(fieldPath, nestedPath []int32, extendeeName string, extNameStartLine, extNameStartCol, extNameEndLine, extNameEndCol int) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
 	firstIdx := p.tok.CurrentIndex()
-	field := &descriptorpb.FieldDescriptorProto{}
-	field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+	field := p.newField()
+	field.Label = p.label(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL)
 
 	// "group" keyword
 	groupTok := p.tok.Next()
@@ -2447,11 +2452,11 @@ func (p *parser) parseGroupFieldNoLabelInExtend(fieldPath, nestedPath []int32, e
 	}
 	fieldName := strings.ToLower(groupName)
 
-	field.Name = proto.String(fieldName)
-	field.JsonName = proto.String(tokenizer.ToJSONName(fieldName))
-	field.Type = descriptorpb.FieldDescriptorProto_TYPE_GROUP.Enum()
-	field.TypeName = proto.String(groupName)
-	field.Extendee = proto.String(extendeeName)
+	field.Name = p.str(fieldName)
+	field.JsonName = p.str(tokenizer.ToJSONName(fieldName))
+	field.Type = p.typ(descriptorpb.FieldDescriptorProto_TYPE_GROUP)
+	field.TypeName = p.str(groupName)
+	field.Extendee = p.str(extendeeName)
 
 	// = number
 	if _, err := p.tok.Expect("="); err != nil {
@@ -2465,7 +2470,7 @@ func (p *parser) parseGroupFieldNoLabelInExtend(fieldPath, nestedPath []int32, e
 	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
 		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 	}
-	field.Number = proto.Int32(int32(num))
+	field.Number = p.i32(int32(num))
 
 	// Optional field options [deprecated = true, etc.]
 	var optionLocs []*descriptorpb.SourceCodeInfo_Location
@@ -2519,7 +2524,7 @@ func (p *parser) parseGroupFieldNoLabelInExtend(fieldPath, nestedPath []int32, e
 
 	// Parse group body
 	nested := &descriptorpb.DescriptorProto{
-		Name: proto.String(groupName),
+		Name: p.str(groupName),
 	}
 	if err := p.parseGroupBody(nested, nestedPath); err != nil {
 		return nil, nil, err
@@ -2555,14 +2560,14 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 
 		switch tok.Value {
 		case "message":
-			msg, err := p.parseMessage(append(copyPath(nestedPath), 3, nestedMsgIdx))
+			msg, err := p.parseMessage(pathWith(nestedPath, 3, nestedMsgIdx))
 			if err != nil {
 				return err
 			}
 			nested.NestedType = append(nested.NestedType, msg)
 			nestedMsgIdx++
 		case "enum":
-			e, err := p.parseEnum(append(copyPath(nestedPath), 4, nestedEnumIdx))
+			e, err := p.parseEnum(pathWith(nestedPath, 4, nestedEnumIdx))
 			if err != nil {
 				return err
 			}
@@ -2591,7 +2596,7 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 				fieldIdx++
 				nestedMsgIdx++
 			} else {
-				field, err := p.parseField(append(copyPath(nestedPath), 2, fieldIdx))
+				field, err := p.parseField(pathWith(nestedPath, 2, fieldIdx))
 				if err != nil {
 					return err
 				}
@@ -2642,7 +2647,7 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 				fieldIdx++
 				nestedMsgIdx++
 			} else {
-				field, err := p.parseField(append(copyPath(nestedPath), 2, fieldIdx))
+				field, err := p.parseField(pathWith(nestedPath, 2, fieldIdx))
 				if err != nil {
 					return err
 				}
@@ -2672,9 +2677,9 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 				oneofName = "X" + oneofName
 			}
 			names[oneofName] = true
-			so.field.OneofIndex = proto.Int32(oneofIdx)
+			so.field.OneofIndex = p.i32(oneofIdx)
 			nested.OneofDecl = append(nested.OneofDecl, &descriptorpb.OneofDescriptorProto{
-				Name: proto.String(oneofName),
+				Name: p.str(oneofName),
 			})
 			oneofIdx++
 		}
@@ -2683,7 +2688,7 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 	if nested.GetOptions().GetMessageSetWireFormat() {
 		for _, er := range nested.ExtensionRange {
 			if er.GetEnd() == 536870912 {
-				er.End = proto.Int32(2147483647)
+				er.End = p.i32(2147483647)
 			}
 		}
 	}
@@ -2694,21 +2699,21 @@ func (p *parser) parseGroupBody(nested *descriptorpb.DescriptorProto, nestedPath
 // parseGroupField parses a group field declaration: label "group" Name "=" Number "{" fields... "}"
 // Returns the group field and the nested message type.
 func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
-	fieldPath := append(copyPath(msgPath), 2, fieldIdx)
-	nestedPath := append(copyPath(msgPath), 3, nestedMsgIdx)
+	fieldPath := pathWith(msgPath, 2, fieldIdx)
+	nestedPath := pathWith(msgPath, 3, nestedMsgIdx)
 
 	firstIdx := p.tok.CurrentIndex()
-	field := &descriptorpb.FieldDescriptorProto{}
+	field := p.newField()
 
 	// Label
 	labelTok := p.tok.Next()
 	switch labelTok.Value {
 	case "required":
-		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REQUIRED.Enum()
+		field.Label = p.label(descriptorpb.FieldDescriptorProto_LABEL_REQUIRED)
 	case "optional":
-		field.Label = descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum()
+		field.Label = p.label(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL)
 	case "repeated":
-		field.Label = descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum()
+		field.Label = p.label(descriptorpb.FieldDescriptorProto_LABEL_REPEATED)
 	}
 
 	// "group" keyword
@@ -2725,10 +2730,10 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 	}
 	fieldName := strings.ToLower(groupName)
 
-	field.Name = proto.String(fieldName)
-	field.JsonName = proto.String(tokenizer.ToJSONName(fieldName))
-	field.Type = descriptorpb.FieldDescriptorProto_TYPE_GROUP.Enum()
-	field.TypeName = proto.String(groupName)
+	field.Name = p.str(fieldName)
+	field.JsonName = p.str(tokenizer.ToJSONName(fieldName))
+	field.Type = p.typ(descriptorpb.FieldDescriptorProto_TYPE_GROUP)
+	field.TypeName = p.str(groupName)
 
 	// = number
 	if _, err := p.tok.Expect("="); err != nil {
@@ -2742,7 +2747,7 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 	if parseErr != nil || num > math.MaxInt32 || num < math.MinInt32 {
 		return nil, nil, fmt.Errorf("%d:%d: Integer out of range.", numTok.Line+1, numTok.Column+1)
 	}
-	field.Number = proto.Int32(int32(num))
+	field.Number = p.i32(int32(num))
 
 	// Optional field options [deprecated = true, etc.]
 	var optionLocs []*descriptorpb.SourceCodeInfo_Location
@@ -2794,7 +2799,7 @@ func (p *parser) parseGroupField(msgPath []int32, fieldIdx, nestedMsgIdx int32) 
 
 	// Parse group body (full message body: fields, enums, nested messages, etc.)
 	nested := &descriptorpb.DescriptorProto{
-		Name: proto.String(groupName),
+		Name: p.str(groupName),
 	}
 	if err := p.parseGroupBody(nested, nestedPath); err != nil {
 		return nil, nil, err
@@ -2820,7 +2825,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 	}
 
 	e := &descriptorpb.EnumDescriptorProto{
-		Name: proto.String(nameTok.Value),
+		Name: p.str(nameTok.Value),
 	}
 
 	if _, err := p.tok.Expect("{"); err != nil {
@@ -3215,8 +3220,8 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 			return nil, fmt.Errorf("%d:%d: Integer out of range.", valNumTok.Line+1, valNumTok.Column+1)
 		}
 		evd := &descriptorpb.EnumValueDescriptorProto{
-			Name:   proto.String(valNameTok.Value),
-			Number: proto.Int32(int32(num)),
+			Name:   p.str(valNameTok.Value),
+			Number: p.i32(int32(num)),
 		}
 		if enumValOpts != nil {
 			evd.Options = enumValOpts
@@ -3232,7 +3237,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 		e.Value = append(e.Value, evd)
 
 		// Source code info for enum value
-		valuePath := append(copyPath(path), 2, valueIdx)
+		valuePath := pathWith(path, 2, valueIdx)
 		valueLocIdx := p.addLocationPlaceholder(valuePath)
 		p.locations[valueLocIdx].Span = p.multiSpan(valNameTok.Line, valNameTok.Column, endValTok.Line, endValTok.Column+1)
 		p.attachComments(valueLocIdx, valFirstIdx)
@@ -3251,7 +3256,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 
 		// Source code info for enum value options
 		if hasOpts {
-			optPath := append(copyPath(valuePath), 3)
+			optPath := pathWith(valuePath, 3)
 			p.addLocationSpan(optPath, optsBracketStartLine, optsBracketStartCol,
 				optsBracketEndLine, optsBracketEndCol+1)
 			for _, entry := range optOrder {
@@ -3267,7 +3272,7 @@ func (p *parser) parseEnum(path []int32) (*descriptorpb.EnumDescriptorProto, err
 				} else {
 					cust := pendingCustEnumValOpts[entry.index]
 					sciLoc := cust.SCILoc
-					basePath := append(copyPath(optPath), 0) // placeholder field num, resolved later
+					basePath := pathWith(optPath, 0) // placeholder field num, resolved later
 					if len(cust.SubFieldPath) > 0 {
 						sciPath := make([]int32, len(basePath)+len(cust.SubFieldPath))
 						copy(sciPath, basePath)
@@ -3421,13 +3426,13 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 		}
 
 		// SCI: [enumPath..., 3] for options statement, [enumPath..., 3, 0] placeholder
-		optPath := append(copyPath(enumPath), 3)
+		optPath := pathWith(enumPath, 3)
 		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
 			Span: span,
 		})
-		sciPath := append(copyPath(optPath), 0) // placeholder field num
+		sciPath := pathWith(optPath, 0) // placeholder field num
 		if len(subFieldPath) > 0 {
 			sciPath = make([]int32, len(optPath)+1+len(subFieldPath))
 			copy(sciPath, optPath)
@@ -3517,14 +3522,14 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 				return ferr
 			}
 			// SCI: [enumPath..., 3] for options statement, [enumPath..., 3, 7, featFieldNum] for specific feature
-			optPath := append(copyPath(enumPath), 3)
+			optPath := pathWith(enumPath, 3)
 			span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 				Path: optPath,
 				Span: span,
 			})
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
-				Path: append(copyPath(optPath), 7, featFieldNum),
+				Path: pathWith(optPath, 7, featFieldNum),
 				Span: span,
 			})
 			p.attachComments(len(p.locations)-1, firstIdx)
@@ -3534,14 +3539,14 @@ func (p *parser) parseEnumOption(e *descriptorpb.EnumDescriptorProto, enumPath [
 	}
 
 	// Source code info: [enumPath..., 3] for options, [enumPath..., 3, fieldNum] for specific option
-	optPath := append(copyPath(enumPath), 3)
+	optPath := pathWith(enumPath, 3)
 	span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 		Path: optPath,
 		Span: span,
 	})
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
-		Path: append(copyPath(optPath), fieldNum),
+		Path: pathWith(optPath, fieldNum),
 		Span: span,
 	})
 	p.attachComments(len(p.locations)-1, firstIdx)
@@ -3561,7 +3566,7 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 			return nil
 		}
 		// reserved "NAME1", "NAME2";
-		stmtPath := append(copyPath(enumPath), 5) // field 5 = reserved_name
+		stmtPath := pathWith(enumPath, 5) // field 5 = reserved_name
 		startNameCount := *nameIdx
 		for {
 			nameTok, err := p.tok.ExpectString()
@@ -3603,7 +3608,7 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 		p.attachComments(len(p.locations)-namesAdded-1, firstIdx)
 	} else {
 		// reserved 2, 3, 10 to 20;
-		stmtPath := append(copyPath(enumPath), 4) // field 4 = reserved_range
+		stmtPath := pathWith(enumPath, 4) // field 4 = reserved_range
 		startCount := *rangeIdx
 
 		// Check if the first token is an unquoted identifier (not allowed in proto2/proto3)
@@ -3614,7 +3619,7 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 				return nil
 			}
 			// Editions spells reserved names as bare identifiers: reserved foo, bar;
-			namePath := append(copyPath(enumPath), 5) // field 5 = reserved_name
+			namePath := pathWith(enumPath, 5) // field 5 = reserved_name
 			startNameCount := *nameIdx
 			for {
 				nameTok := p.tok.Next()
@@ -3732,11 +3737,11 @@ func (p *parser) parseEnumReserved(e *descriptorpb.EnumDescriptorProto, enumPath
 			}
 
 			e.ReservedRange = append(e.ReservedRange, &descriptorpb.EnumDescriptorProto_EnumReservedRange{
-				Start: proto.Int32(int32(startNum)),
-				End:   proto.Int32(int32(endNum)),
+				Start: p.i32(int32(startNum)),
+				End:   p.i32(int32(endNum)),
 			})
 
-			rangePath := append(copyPath(stmtPath), *rangeIdx)
+			rangePath := pathWith(stmtPath, *rangeIdx)
 			p.addLocationSpan(rangePath, spanStartLine, spanStartCol, endSpanLine, endSpanCol)
 			p.addLocationSpan(p.spanPath(rangePath, 1), spanStartLine, spanStartCol, numTok.Line, numTok.Column+len(numTok.Value))
 			p.addLocationSpan(p.spanPath(rangePath, 2), endNumLine, endNumCol, endNumLine, endNumCol+endNumLen)
@@ -3773,7 +3778,7 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 	}
 
 	svc := &descriptorpb.ServiceDescriptorProto{
-		Name: proto.String(nameTok.Value),
+		Name: p.str(nameTok.Value),
 	}
 
 	if _, err := p.tok.Expect("{"); err != nil {
@@ -3799,7 +3804,7 @@ func (p *parser) parseService(path []int32) (*descriptorpb.ServiceDescriptorProt
 			}
 			continue
 		}
-		method, err := p.parseMethod(append(copyPath(path), 2, methodIdx))
+		method, err := p.parseMethod(pathWith(path, 2, methodIdx))
 		if err != nil {
 			return nil, err
 		}
@@ -3913,13 +3918,13 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 			svc.Options = &descriptorpb.ServiceOptions{}
 		}
 
-		optPath := append(copyPath(svcPath), 3)
+		optPath := pathWith(svcPath, 3)
 		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
 			Span: span,
 		})
-		sciPath := append(copyPath(optPath), 0)
+		sciPath := pathWith(optPath, 0)
 		if len(subFieldPath) > 0 {
 			sciPath = make([]int32, len(optPath)+1+len(subFieldPath))
 			copy(sciPath, optPath)
@@ -3990,14 +3995,14 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 			if ferr != nil {
 				return ferr
 			}
-			optPath := append(copyPath(svcPath), 3)
+			optPath := pathWith(svcPath, 3)
 			span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 				Path: optPath,
 				Span: span,
 			})
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
-				Path: append(copyPath(optPath), 34, featFieldNum),
+				Path: pathWith(optPath, 34, featFieldNum),
 				Span: span,
 			})
 			p.attachComments(len(p.locations)-1, firstIdx)
@@ -4006,14 +4011,14 @@ func (p *parser) parseServiceOption(svc *descriptorpb.ServiceDescriptorProto, sv
 		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
-	optPath := append(copyPath(svcPath), 3)
+	optPath := pathWith(svcPath, 3)
 	span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 		Path: optPath,
 		Span: span,
 	})
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
-		Path: append(copyPath(optPath), fieldNum),
+		Path: pathWith(optPath, fieldNum),
 		Span: span,
 	})
 	p.attachComments(len(p.locations)-1, firstIdx)
@@ -4118,13 +4123,13 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 			method.Options = &descriptorpb.MethodOptions{}
 		}
 
-		optPath := append(copyPath(methodPath), 4)
+		optPath := pathWith(methodPath, 4)
 		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
 			Span: span,
 		})
-		sciPath := append(copyPath(optPath), 0)
+		sciPath := pathWith(optPath, 0)
 		if len(subFieldPath) > 0 {
 			sciPath = make([]int32, len(optPath)+1+len(subFieldPath))
 			copy(sciPath, optPath)
@@ -4211,14 +4216,14 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 			if ferr != nil {
 				return ferr
 			}
-			optPath := append(copyPath(methodPath), 4)
+			optPath := pathWith(methodPath, 4)
 			span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 				Path: optPath,
 				Span: span,
 			})
 			p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
-				Path: append(copyPath(optPath), 35, featFieldNum),
+				Path: pathWith(optPath, 35, featFieldNum),
 				Span: span,
 			})
 			p.attachComments(len(p.locations)-1, firstIdx)
@@ -4227,14 +4232,14 @@ func (p *parser) parseMethodOption(method *descriptorpb.MethodDescriptorProto, m
 		return fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", nameTok.Line+1, nameTok.Column+1, optName)
 	}
 
-	optPath := append(copyPath(methodPath), 4)
+	optPath := pathWith(methodPath, 4)
 	span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 		Path: optPath,
 		Span: span,
 	})
 	p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
-		Path: append(copyPath(optPath), fieldNum),
+		Path: pathWith(optPath, fieldNum),
 		Span: span,
 	})
 	p.attachComments(len(p.locations)-1, firstIdx)
@@ -4330,9 +4335,9 @@ func (p *parser) parseMethod(path []int32) (*descriptorpb.MethodDescriptorProto,
 
 	// Method might end with ; or { ... }
 	method := &descriptorpb.MethodDescriptorProto{
-		Name:       proto.String(nameTok.Value),
-		InputType:  proto.String(inputType),
-		OutputType: proto.String(outputType),
+		Name:       p.str(nameTok.Value),
+		InputType:  p.str(inputType),
+		OutputType: p.str(outputType),
 	}
 	if clientStreaming {
 		method.ClientStreaming = proto.Bool(true)
@@ -4403,7 +4408,7 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32, ne
 		return nil, nil, nil, err
 	}
 
-	oneofPath := append(copyPath(msgPath), 8, oneofIdx)
+	oneofPath := pathWith(msgPath, 8, oneofIdx)
 
 	if _, err := p.tok.Expect("{"); err != nil {
 		return nil, nil, nil, err
@@ -4415,7 +4420,7 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32, ne
 		nameTok.Line, nameTok.Column, nameTok.Line, nameTok.Column+len(nameTok.Value))
 
 	decl := &descriptorpb.OneofDescriptorProto{
-		Name: proto.String(nameTok.Value),
+		Name: p.str(nameTok.Value),
 	}
 
 	var fields []*descriptorpb.FieldDescriptorProto
@@ -4453,20 +4458,20 @@ func (p *parser) parseOneof(msgPath []int32, oneofIdx int32, fieldIdx *int32, ne
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			field.OneofIndex = proto.Int32(oneofIdx)
+			field.OneofIndex = p.i32(oneofIdx)
 			fields = append(fields, field)
 			nestedTypes = append(nestedTypes, nested)
 			*fieldIdx++
 			*nestedMsgIdx++
 		} else {
-			fieldPath := append(copyPath(msgPath), 2, *fieldIdx)
+			fieldPath := pathWith(msgPath, 2, *fieldIdx)
 			p.inOneof = true
 			field, err := p.parseField(fieldPath)
 			p.inOneof = false
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			field.OneofIndex = proto.Int32(oneofIdx)
+			field.OneofIndex = p.i32(oneofIdx)
 			fields = append(fields, field)
 			*fieldIdx++
 		}
@@ -4579,13 +4584,13 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 		}
 
 		// SCI: [oneofPath..., 2] for options statement, [oneofPath..., 2, 0] placeholder
-		optPath := append(copyPath(oneofPath), 2)
+		optPath := pathWith(oneofPath, 2)
 		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
 			Span: span,
 		})
-		sciPath := append(copyPath(optPath), 0)
+		sciPath := pathWith(optPath, 0)
 		if len(subFieldPath) > 0 {
 			sciPath = make([]int32, len(optPath)+1+len(subFieldPath))
 			copy(sciPath, optPath)
@@ -4637,14 +4642,14 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 			return ferr
 		}
 		// SCI: [oneofPath..., 2] for options statement, [oneofPath..., 2, 1, featFieldNum] for specific feature
-		optPath := append(copyPath(oneofPath), 2)
+		optPath := pathWith(oneofPath, 2)
 		span := p.multiSpan(startTok.Line, startTok.Column, endTok.Line, endTok.Column+1)
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
 			Path: optPath,
 			Span: span,
 		})
 		p.locations = append(p.locations, &descriptorpb.SourceCodeInfo_Location{
-			Path: append(copyPath(optPath), 1, featFieldNum),
+			Path: pathWith(optPath, 1, featFieldNum),
 			Span: span,
 		})
 		p.attachComments(len(p.locations)-1, firstIdx)
@@ -4655,7 +4660,7 @@ func (p *parser) parseOneofOption(oneofPath []int32, decl *descriptorpb.OneofDes
 }
 
 func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*descriptorpb.FieldDescriptorProto, *descriptorpb.DescriptorProto, error) {
-	fieldPath := append(copyPath(msgPath), 2, fieldIdx)
+	fieldPath := pathWith(msgPath, 2, fieldIdx)
 
 	firstIdx := p.tok.CurrentIndex()
 	mapTok := p.tok.Next() // consume "map"
@@ -4737,12 +4742,12 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 
 	// Create the field early so parseFieldOptions can set options on it
 	field := &descriptorpb.FieldDescriptorProto{
-		Name:     proto.String(nameTok.Value),
-		Number:   proto.Int32(int32(num)),
-		Label:    descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum(),
-		Type:     descriptorpb.FieldDescriptorProto_TYPE_MESSAGE.Enum(),
-		TypeName: proto.String(entryName),
-		JsonName: proto.String(tokenizer.ToJSONName(nameTok.Value)),
+		Name:     p.str(nameTok.Value),
+		Number:   p.i32(int32(num)),
+		Label:    p.label(descriptorpb.FieldDescriptorProto_LABEL_REPEATED),
+		Type:     p.typ(descriptorpb.FieldDescriptorProto_TYPE_MESSAGE),
+		TypeName: p.str(entryName),
+		JsonName: p.str(tokenizer.ToJSONName(nameTok.Value)),
 	}
 
 	// Optional field options [deprecated = true, etc.]
@@ -4763,20 +4768,20 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 
 	// Create synthetic entry message
 	entry := &descriptorpb.DescriptorProto{
-		Name: proto.String(entryName),
+		Name: p.str(entryName),
 		Field: []*descriptorpb.FieldDescriptorProto{
 			{
-				Name:     proto.String("key"),
-				Number:   proto.Int32(1),
-				Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+				Name:     p.str("key"),
+				Number:   p.i32(1),
+				Label:    p.label(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL),
 				Type:     keyType.Enum(),
-				JsonName: proto.String("key"),
+				JsonName: p.str("key"),
 			},
 			{
-				Name:     proto.String("value"),
-				Number:   proto.Int32(2),
-				Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
-				JsonName: proto.String("value"),
+				Name:     p.str("value"),
+				Number:   p.i32(2),
+				Label:    p.label(descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL),
+				JsonName: p.str("value"),
 			},
 		},
 		Options: &descriptorpb.MessageOptions{
@@ -4785,12 +4790,12 @@ func (p *parser) parseMapField(msgPath []int32, fieldIdx, nestedMsgIdx int32) (*
 	}
 
 	if keyTypeName != "" {
-		entry.Field[0].TypeName = proto.String(keyTypeName)
+		entry.Field[0].TypeName = p.str(keyTypeName)
 	}
 
 	if valTypeName != "" {
-		entry.Field[1].Type = descriptorpb.FieldDescriptorProto_TYPE_MESSAGE.Enum()
-		entry.Field[1].TypeName = proto.String(valTypeName)
+		entry.Field[1].Type = p.typ(descriptorpb.FieldDescriptorProto_TYPE_MESSAGE)
+		entry.Field[1].TypeName = p.str(valTypeName)
 	} else {
 		entry.Field[1].Type = valType.Enum()
 	}
@@ -5040,13 +5045,13 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		if err := validateString("java_package"); err != nil {
 			return err
 		}
-		fd.Options.JavaPackage = proto.String(valTok.Value)
+		fd.Options.JavaPackage = p.str(valTok.Value)
 		fieldNum = 1
 	case "java_outer_classname":
 		if err := validateString("java_outer_classname"); err != nil {
 			return err
 		}
-		fd.Options.JavaOuterClassname = proto.String(valTok.Value)
+		fd.Options.JavaOuterClassname = p.str(valTok.Value)
 		fieldNum = 8
 	case "java_multiple_files":
 		if err := validateBool("java_multiple_files"); err != nil {
@@ -5058,7 +5063,7 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		if err := validateString("go_package"); err != nil {
 			return err
 		}
-		fd.Options.GoPackage = proto.String(valTok.Value)
+		fd.Options.GoPackage = p.str(valTok.Value)
 		fieldNum = 11
 	case "optimize_for":
 		if valTok.Type != tokenizer.TokenIdent {
@@ -5121,43 +5126,43 @@ func (p *parser) parseFileOption(fd *descriptorpb.FileDescriptorProto) error {
 		if err := validateString("php_namespace"); err != nil {
 			return err
 		}
-		fd.Options.PhpNamespace = proto.String(valTok.Value)
+		fd.Options.PhpNamespace = p.str(valTok.Value)
 		fieldNum = 41
 	case "php_class_prefix":
 		if err := validateString("php_class_prefix"); err != nil {
 			return err
 		}
-		fd.Options.PhpClassPrefix = proto.String(valTok.Value)
+		fd.Options.PhpClassPrefix = p.str(valTok.Value)
 		fieldNum = 40
 	case "php_metadata_namespace":
 		if err := validateString("php_metadata_namespace"); err != nil {
 			return err
 		}
-		fd.Options.PhpMetadataNamespace = proto.String(valTok.Value)
+		fd.Options.PhpMetadataNamespace = p.str(valTok.Value)
 		fieldNum = 44
 	case "ruby_package":
 		if err := validateString("ruby_package"); err != nil {
 			return err
 		}
-		fd.Options.RubyPackage = proto.String(valTok.Value)
+		fd.Options.RubyPackage = p.str(valTok.Value)
 		fieldNum = 45
 	case "objc_class_prefix":
 		if err := validateString("objc_class_prefix"); err != nil {
 			return err
 		}
-		fd.Options.ObjcClassPrefix = proto.String(valTok.Value)
+		fd.Options.ObjcClassPrefix = p.str(valTok.Value)
 		fieldNum = 36
 	case "csharp_namespace":
 		if err := validateString("csharp_namespace"); err != nil {
 			return err
 		}
-		fd.Options.CsharpNamespace = proto.String(valTok.Value)
+		fd.Options.CsharpNamespace = p.str(valTok.Value)
 		fieldNum = 37
 	case "swift_prefix":
 		if err := validateString("swift_prefix"); err != nil {
 			return err
 		}
-		fd.Options.SwiftPrefix = proto.String(valTok.Value)
+		fd.Options.SwiftPrefix = p.str(valTok.Value)
 		fieldNum = 39
 	default:
 		if featSubField != "" {
@@ -5791,9 +5796,9 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			}
 
 			// Add SCI: option span [fieldPath..., 8, 0, ...subfields] (placeholder; field number resolved later)
-			sciPath := append(copyPath(fieldPath), 8, 0)
+			sciPath := pathWith(fieldPath, 8, 0)
 			if onFeatures {
-				sciPath = append(copyPath(fieldPath), 8, 21, 0)
+				sciPath = pathWith(fieldPath, 8, 21, 0)
 			}
 			if len(subFieldPath) > 0 {
 				for range subFieldPath {
@@ -5867,10 +5872,10 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			valEndLine := msgLitEndTok.Line
 			switch optName {
 			case "edition_defaults":
-				addLoc(append(copyPath(fieldPath), 8, 20, int32(len(field.Options.EditionDefaults)-1)),
+				addLoc(pathWith(fieldPath, 8, 20, int32(len(field.Options.EditionDefaults)-1)),
 					msgLitStartTok.Line, msgLitStartTok.Column, valEndLine, valEnd)
 			case "feature_support":
-				addLoc(append(copyPath(fieldPath), 8, 22),
+				addLoc(pathWith(fieldPath, 8, 22),
 					msgLitStartTok.Line, msgLitStartTok.Column, valEndLine, valEnd)
 			}
 			// Check for comma (more options) or closing bracket
@@ -5920,7 +5925,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				if negative {
 					defVal = "-" + defVal
 				}
-				field.DefaultValue = proto.String(defVal)
+				field.DefaultValue = p.str(defVal)
 			} else {
 			// String/bytes fields require a string literal default value
 			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_STRING ||
@@ -6015,13 +6020,13 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if field.GetType() == descriptorpb.FieldDescriptorProto_TYPE_BYTES {
 				defVal = cEscape(defVal)
 			}
-			field.DefaultValue = proto.String(defVal)
+			field.DefaultValue = p.str(defVal)
 			} // end else (field.Type != nil)
 		case "json_name":
 			if valTok.Type != tokenizer.TokenString {
 				return nil, fmt.Errorf("%d:%d: Expected string for JSON name.", valTok.Line+1, valTok.Column+1)
 			}
-			field.JsonName = proto.String(valTok.Value)
+			field.JsonName = p.str(valTok.Value)
 			p.explicitJsonNames[field] = true
 		case "deprecated":
 			if valTok.Type != tokenizer.TokenIdent {
@@ -6185,7 +6190,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				if ferr != nil {
 					return nil, ferr
 				}
-				addLoc(append(copyPath(fieldPath), 8, 22, subNum),
+				addLoc(pathWith(fieldPath, 8, 22, subNum),
 					optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 			} else if featSubField != "" {
 				if field.Options == nil {
@@ -6198,7 +6203,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 				if ferr != nil {
 					return nil, ferr
 				}
-				addLoc(append(copyPath(fieldPath), 8, 21, featFieldNum),
+				addLoc(pathWith(fieldPath, 8, 21, featFieldNum),
 					optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 			} else {
 				return nil, fmt.Errorf("%d:%d: Option \"%s\" unknown. Ensure that your proto definition file imports the proto which defines the option (i.e. via import option after edition 2024).", optNameTok.Line+1, optNameTok.Column+1, optName)
@@ -6213,43 +6218,43 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 			if negative {
 				defStartCol = minusTok.Column
 			}
-			addLoc(append(copyPath(fieldPath), 7),
+			addLoc(pathWith(fieldPath, 7),
 				valTok.Line, defStartCol, valEndLine, valEnd)
 		case "json_name":
 			// json_name goes to path [10] (field 10 of FieldDescriptorProto)
-			addLoc(append(copyPath(fieldPath), 10),
+			addLoc(pathWith(fieldPath, 10),
 				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
-			addLoc(append(copyPath(fieldPath), 10),
+			addLoc(pathWith(fieldPath, 10),
 				valTok.Line, valTok.Column, valEndLine, valEnd)
 		case "deprecated":
-			addLoc(append(copyPath(fieldPath), 8, 3),
+			addLoc(pathWith(fieldPath, 8, 3),
 				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "packed":
-			addLoc(append(copyPath(fieldPath), 8, 2),
+			addLoc(pathWith(fieldPath, 8, 2),
 				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "lazy":
-			addLoc(append(copyPath(fieldPath), 8, 5),
+			addLoc(pathWith(fieldPath, 8, 5),
 				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "jstype":
-			addLoc(append(copyPath(fieldPath), 8, 6),
+			addLoc(pathWith(fieldPath, 8, 6),
 				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "ctype":
-			addLoc(append(copyPath(fieldPath), 8, 1),
+			addLoc(pathWith(fieldPath, 8, 1),
 				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "debug_redact":
-			addLoc(append(copyPath(fieldPath), 8, 16),
+			addLoc(pathWith(fieldPath, 8, 16),
 				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "unverified_lazy":
-			addLoc(append(copyPath(fieldPath), 8, 15),
+			addLoc(pathWith(fieldPath, 8, 15),
 				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "weak":
-			addLoc(append(copyPath(fieldPath), 8, 10),
+			addLoc(pathWith(fieldPath, 8, 10),
 				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "retention":
-			addLoc(append(copyPath(fieldPath), 8, 17),
+			addLoc(pathWith(fieldPath, 8, 17),
 				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 		case "targets":
-			addLoc(append(copyPath(fieldPath), 8, 19, targetsCount),
+			addLoc(pathWith(fieldPath, 8, 19, targetsCount),
 				optNameTok.Line, optNameTok.Column, valEndLine, valEnd)
 			targetsCount++
 		}
@@ -6286,7 +6291,7 @@ func (p *parser) parseFieldOptions(field *descriptorpb.FieldDescriptorProto, fie
 
 	// Options container span [fieldPath..., 8]
 	containerLoc := &descriptorpb.SourceCodeInfo_Location{
-		Path: append(copyPath(fieldPath), 8),
+		Path: pathWith(fieldPath, 8),
 		Span: p.multiSpan(bracketTok.Line, bracketTok.Column, closeTok.Line, closeTok.Column+1),
 	}
 	result = append(result, containerLoc)
@@ -6317,7 +6322,7 @@ func (p *parser) parseMessageLiteralFieldOption(optName string, field *descripto
 					ed.Edition = descriptorpb.Edition(v).Enum()
 				}
 			case "value":
-				ed.Value = proto.String(valTok.Value)
+				ed.Value = p.str(valTok.Value)
 			}
 			// consume optional comma/semicolon
 			if p.tok.Peek().Value == "," || p.tok.Peek().Value == ";" {
@@ -6762,7 +6767,7 @@ func (p *parser) attachComments(locIdx int, firstTokenIdx int) {
 	// Leading and detached comments from the first token of the declaration
 	cd := p.tok.CommentsAt(firstTokenIdx)
 	if cd.Leading != "" {
-		loc.LeadingComments = proto.String(cd.Leading)
+		loc.LeadingComments = p.str(cd.Leading)
 	}
 	for _, d := range cd.Detached {
 		loc.LeadingDetachedComments = append(loc.LeadingDetachedComments, d)
@@ -6775,7 +6780,7 @@ func (p *parser) attachComments(locIdx int, firstTokenIdx int) {
 	if nextIdx > 0 && p.tok.PeekAt(-1).Value != "}" {
 		nextCd := p.tok.CommentsAt(nextIdx)
 		if nextCd.PrevTrailing != "" {
-			loc.TrailingComments = proto.String(nextCd.PrevTrailing)
+			loc.TrailingComments = p.str(nextCd.PrevTrailing)
 		}
 	}
 }
@@ -6801,6 +6806,75 @@ func (p *parser) multiSpan(startLine, startCol, endLine, endCol int) []int32 {
 	s := p.i32Arena.get(4)
 	s[0], s[1], s[2], s[3] = int32(startLine), int32(startCol), int32(endLine), int32(endCol)
 	return s
+}
+
+// pathWith returns a fresh path holding path followed by elems, sized exactly.
+func pathWith(path []int32, elems ...int32) []int32 {
+	c := make([]int32, len(path)+len(elems))
+	copy(c, path)
+	copy(c[len(path):], elems)
+	return c
+}
+
+// slab hands out pointers into blocks of T, so the many small values a
+// descriptor points at (names, numbers, labels) cost an allocation per block
+// rather than one each. Every pointer is distinct, exactly as if separately
+// allocated; a block lives as long as anything in it does, which for one
+// file's descriptors is the same lifetime anyway.
+type slab[T any] struct {
+	buf   []T
+	total int
+}
+
+const (
+	slabMin = 4
+	slabMax = 512
+)
+
+func (s *slab[T]) alloc() *T {
+	if len(s.buf) == 0 {
+		// Each block is half of what has been handed out so far, so the
+		// unused tail of the last one stays under a third of the total.
+		n := s.total / 2
+		if n < slabMin {
+			n = slabMin
+		} else if n > slabMax {
+			n = slabMax
+		}
+		s.buf = make([]T, n)
+		s.total += n
+	}
+	v := &s.buf[0]
+	s.buf = s.buf[1:]
+	return v
+}
+
+func (p *parser) str(v string) *string {
+	x := p.strSlab.alloc()
+	*x = v
+	return x
+}
+
+func (p *parser) i32(v int32) *int32 {
+	x := p.i32Slab.alloc()
+	*x = v
+	return x
+}
+
+func (p *parser) label(v descriptorpb.FieldDescriptorProto_Label) *descriptorpb.FieldDescriptorProto_Label {
+	x := p.labelSlab.alloc()
+	*x = v
+	return x
+}
+
+func (p *parser) typ(v descriptorpb.FieldDescriptorProto_Type) *descriptorpb.FieldDescriptorProto_Type {
+	x := p.typeSlab.alloc()
+	*x = v
+	return x
+}
+
+func (p *parser) newField() *descriptorpb.FieldDescriptorProto {
+	return p.fieldSlab.alloc()
 }
 
 func copyPath(path []int32) []int32 {
@@ -7066,7 +7140,7 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 		if parentPath == nil {
 			msgPath = []int32{4, int32(msgIdx)}
 		} else {
-			msgPath = append(copyPath(parentPath), 3, int32(msgIdx))
+			msgPath = pathWith(parentPath, 3, int32(msgIdx))
 		}
 		for fieldIdx, f := range msg.GetField() {
 			if f.TypeName != nil {
@@ -7077,7 +7151,7 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 					if tp, ok := types[resolved]; ok {
 						f.Type = tp.Enum()
 					} else {
-						path := append(copyPath(msgPath), 2, int32(fieldIdx), 6)
+						path := pathWith(msgPath, 2, int32(fieldIdx), 6)
 						if line, col, ok := findSCISpanStart(fd, path); ok {
 							if shadow != "" {
 								*errors = append(*errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
@@ -7098,7 +7172,7 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 				resolved, shadow := resolveTypeName(origName, msgPrefix, types)
 				ext.Extendee = proto.String(resolved)
 				if tp, ok := types[resolved]; !ok {
-					path := append(copyPath(msgPath), 6, int32(extIdx), 2)
+					path := pathWith(msgPath, 6, int32(extIdx), 2)
 					if line, col, ok := findSCISpanStart(fd, path); ok {
 						if shadow != "" {
 							*errors = append(*errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
@@ -7107,7 +7181,7 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 						}
 					}
 				} else if tp == descriptorpb.FieldDescriptorProto_TYPE_ENUM {
-					path := append(copyPath(msgPath), 6, int32(extIdx), 2)
+					path := pathWith(msgPath, 6, int32(extIdx), 2)
 					if line, col, ok := findSCISpanStart(fd, path); ok {
 						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: \"%s\" is not a message type.", filename, line, col, origName))
 					}
@@ -7121,7 +7195,7 @@ func resolveMessageFieldsWithErrorsPath(msgs []*descriptorpb.DescriptorProto, pr
 					if tp, ok := types[resolved]; ok {
 						ext.Type = tp.Enum()
 					} else {
-						path := append(copyPath(msgPath), 6, int32(extIdx), 6)
+						path := pathWith(msgPath, 6, int32(extIdx), 6)
 						if line, col, ok := findSCISpanStart(fd, path); ok {
 							if shadow != "" {
 								*errors = append(*errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
@@ -7359,7 +7433,7 @@ func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, 
 			origName := f.GetTypeName()
 			resolved, shadow := resolveTypeName(origName, msgPrefix, types)
 			if _, ok := types[resolved]; !ok {
-				path := append(copyPath(msgPath), 2, int32(fieldIdx), 6)
+				path := pathWith(msgPath, 2, int32(fieldIdx), 6)
 				if line, col, ok := findSCISpanStart(fd, path); ok {
 					if shadow != "" {
 						*errors = append(*errors, fmt.Sprintf("%s:%d:%d: %s", filename, line, col, shadowErrorMsg(origName, shadow)))
@@ -7372,7 +7446,7 @@ func checkMsgUnresolved(msg *descriptorpb.DescriptorProto, parentPrefix string, 
 	}
 
 	for i, nested := range msg.GetNestedType() {
-		nestedPath := append(copyPath(msgPath), 3, int32(i))
+		nestedPath := pathWith(msgPath, 3, int32(i))
 		checkMsgUnresolved(nested, msgPrefix, types, allTypes, typeToFile, filename, fd, nestedPath, errors)
 	}
 }
